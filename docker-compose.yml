@@ -40,6 +40,22 @@ services:
       timeout: 5s
       retries: 10
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}}
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-false}
+      SCHEDULER_JOBS: ${SCHEDULER_JOBS:-scryfall_mtg:daily,fixture_local:manual}
+    volumes:
+      - ./backend:/app
+    command: python -m app.jobs.schedule --once
+    profiles: ["worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend

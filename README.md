@@ -68,3 +68,38 @@ Comando:
 - Ingest scryfall fixture: `docker compose exec backend python -m app.ingest.run scryfall_mtg --fixture --path backend/data/fixtures/scryfall --set woe --limit 50`
 - Search v1: `curl -i "http://localhost:3000/api/v1/search?q=hope&game=mtg"`
 - Prints v1: `curl -i "http://localhost:3000/api/v1/prints?game=mtg&set_code=woe"`
+
+
+## G) Operations (Dev/Prod)
+
+### Jobs y scheduler
+
+- Variables de entorno:
+  - `ENABLE_SCHEDULER=true|false` (default false)
+  - `SCHEDULER_JOBS="scryfall_mtg:daily,fixture_local:manual"`
+- CLI manual recomendada (cron externo):
+  - `python -m app.jobs.run --job scryfall_mtg --set woe --limit 50`
+  - `python -m app.jobs.run --job fixture_local --path backend/data/fixtures`
+  - `python -m app.jobs.schedule --once`
+- Worker opcional en compose:
+  - `docker compose --profile worker up worker`
+
+### Cron de ejemplo
+
+```bash
+# cada día 03:00
+0 3 * * * cd /workspace/API-PROJECT/backend && ENABLE_SCHEDULER=true python -m app.jobs.schedule --once
+```
+
+### Data Quality endpoints (admin)
+
+Habilitar con `ADMIN_ENDPOINTS_ENABLED=true`.
+
+- `GET /api/v1/admin/quality/summary`
+- `GET /api/v1/admin/quality/missing-primary-images?limit=100`
+- `GET /api/v1/admin/quality/duplicate-suspects?limit=100`
+- `GET /api/v1/admin/quality/conflicts?limit=100`
+
+Además, endpoints `/api/v1/*` retornan headers:
+- `X-Ingest-Last-Run`
+- `X-Data-Version`

@@ -10,6 +10,7 @@ import requests
 from sqlalchemy import select
 
 from app.ingest.base import SourceConnector
+from app.ingest.provenance import upsert_print_provenance
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 
@@ -22,11 +23,28 @@ class ScryfallMtgConnector(SourceConnector):
         limit = kwargs.get("limit")
         fixture = bool(kwargs.get("fixture", False))
 
+        last_run_at = kwargs.get("last_run_at")
         if fixture:
             fixture_dir = path or (Path(__file__).resolve().parents[3] / "data" / "fixtures" / "scryfall")
-            return self._load_fixture(fixture_dir, set_code=set_code, limit=limit)
+            items = self._load_fixture(fixture_dir, set_code=set_code, limit=limit)
+        else:
+            items = self._load_remote(set_code=set_code, limit=limit)
 
-        return self._load_remote(set_code=set_code, limit=limit)
+        if last_run_at is None:
+            return items
+
+        if getattr(last_run_at, "tzinfo", None) is None:
+            from datetime import timezone
+
+            last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+
+        filtered: list[tuple[Path, dict]] = []
+        for file_path, payload in items:
+            updated_at = self._payload_updated_at(payload)
+            if updated_at and updated_at <= last_run_at:
+                continue
+            filtered.append((file_path, payload))
+        return filtered
 
     def _load_fixture(self, fixture_dir: Path, set_code: str | None, limit: int | None) -> list[tuple[Path, dict]]:
         files = sorted(fixture_dir.glob("*.json"))
@@ -121,8 +139,8 @@ class ScryfallMtgConnector(SourceConnector):
             return {"set": payload.get("set"), "card": None}
         return {"set": payload.get("_set"), "card": payload}
 
-    def upsert(self, session, payload: dict) -> dict:
-        stats = {"games": 0, "sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0, "updates": 0}
+    def upsert(self, session, payload: dict, **kwargs) -> dict:
+        stats = {"games": 0, "sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0, "updates": 0, "conflicts": 0}
 
         game = session.execute(select(Game).where(Game.slug == "mtg")).scalar_one_or_none()
         if game is None:
@@ -213,10 +231,34 @@ class ScryfallMtgConnector(SourceConnector):
                     session.add(PrintIdentifier(print_id=print_row.id, source=self.name, external_id=external_variant))
                     stats["identifiers"] += 1
 
+            stats["conflicts"] += upsert_print_provenance(
+                session,
+                print_row.id,
+                kwargs.get("source_name", self.name),
+                {
+                    "rarity": print_row.rarity,
+                    "language": print_row.language,
+                    "collector_number": print_row.collector_number,
+                },
+            )
             self._upsert_images(session, print_row.id, card_payload, stats)
 
         return stats
 
+
+    def supports_incremental(self) -> bool:
+        return True
+
+    def _payload_updated_at(self, payload: dict):
+        from datetime import datetime
+
+        value = payload.get("updated_at")
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     def _external_id(self, external_id: str, is_foil: bool) -> str:
         return f"{external_id}:foil" if is_foil else f"{external_id}:nonfoil"
 

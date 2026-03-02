@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -149,3 +150,77 @@ def test_scryfall_fixture_ingest_dedupes_by_identifier(client):
 
     assert first_prints == second_prints
     assert first_ids == second_ids
+
+
+def test_ingest_runs_created(client, tmp_path):
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text('{"game":{"slug":"pokemon","name":"Pokemon"},"sets":[{"code":"SVX","name":"Set X"}],"cards":[{"name":"Card X"}],"prints":[{"card_name":"Card X","set_code":"SVX","collector_number":"1","language":"EN","rarity":"common","is_foil":false}]}', encoding="utf-8")
+
+    run_ingest("fixture_local", str(fixture))
+
+    from app.models import IngestRun, Source
+
+    with db.SessionLocal() as session:
+        source = session.execute(select(Source).where(Source.name == "fixture_local")).scalar_one()
+        runs = session.execute(select(IngestRun).where(IngestRun.source_id == source.id)).scalars().all()
+        assert len(runs) >= 1
+        assert runs[-1].status == "success"
+        assert "prints" in runs[-1].counts_json
+
+
+def test_quality_summary_shape(client):
+    run_seed()
+    run_seed_catalog()
+    client.application.config["ADMIN_ENDPOINTS_ENABLED"] = True
+
+    response = client.get("/api/v1/admin/quality/summary")
+    assert response.status_code == 200
+    payload = response.get_json()
+    for key in ["games", "sets", "cards", "prints", "prints_without_primary_image", "prints_without_identifiers", "sets_without_release_date", "last_ingest_runs"]:
+        assert key in payload
+
+
+def test_admin_endpoints_disabled_by_default(client):
+    response = client.get("/api/v1/admin/quality/summary")
+    assert response.status_code == 404
+
+
+def test_incremental_state_updates(client, tmp_path):
+    from app.models import Source, SourceSyncState
+
+    fixture_dir = tmp_path / "scryfall"
+    fixture_dir.mkdir(parents=True)
+
+    payload_old = {
+        "object": "card",
+        "id": "id-1",
+        "name": "Inc Card",
+        "set": "woe",
+        "lang": "en",
+        "collector_number": "10",
+        "rarity": "common",
+        "foil": False,
+        "nonfoil": True,
+        "updated_at": "2024-01-01T00:00:00Z",
+        "_set": {"code": "woe", "name": "Wilds", "released_at": "2023-09-01"},
+    }
+    payload_new = {
+        **payload_old,
+        "id": "id-2",
+        "collector_number": "11",
+        "updated_at": "2025-01-01T00:00:00Z",
+    }
+    (fixture_dir / "old.json").write_text(json.dumps(payload_old), encoding="utf-8")
+    (fixture_dir / "new.json").write_text(json.dumps(payload_new), encoding="utf-8")
+
+    run_ingest("scryfall_mtg", str(fixture_dir), fixture=True)
+    with db.SessionLocal() as session:
+        source = session.execute(select(Source).where(Source.name == "scryfall")).scalar_one()
+        state1 = session.execute(select(SourceSyncState).where(SourceSyncState.source_id == source.id)).scalar_one()
+        first_run = state1.last_run_at
+
+    run_ingest("scryfall_mtg", str(fixture_dir), fixture=True)
+    with db.SessionLocal() as session:
+        source = session.execute(select(Source).where(Source.name == "scryfall")).scalar_one()
+        state2 = session.execute(select(SourceSyncState).where(SourceSyncState.source_id == source.id)).scalar_one()
+        assert state2.last_run_at >= first_run

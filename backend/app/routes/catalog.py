@@ -9,7 +9,7 @@ from flask import Blueprint, Response, current_app, jsonify, request
 from sqlalchemy import and_, func, or_, select, text
 
 from app import db
-from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+from app.models import Card, Game, IngestRun, Print, PrintIdentifier, PrintImage, Set
 
 catalog_bp = Blueprint("catalog", __name__)
 
@@ -68,7 +68,17 @@ def _print_to_summary(row: Print, card_name: str, set_code: str, set_name: str, 
 
 
 def _is_v1() -> bool:
-    return request.path.startswith("/api/v1/")
+    return request.path.startswith("/api/v1/") and not request.path.startswith("/api/v1/admin/")
+
+
+def _add_ingest_headers(response: Response) -> Response:
+    with db.SessionLocal() as session:
+        last_run = session.execute(select(IngestRun).order_by(IngestRun.finished_at.desc())).scalars().first()
+        data_version = session.execute(select(func.count(IngestRun.id))).scalar_one()
+    if last_run and last_run.finished_at:
+        response.headers["X-Ingest-Last-Run"] = last_run.finished_at.isoformat()
+    response.headers["X-Data-Version"] = str(data_version)
+    return response
 
 
 def rate_limited(func):
@@ -110,7 +120,7 @@ def cached_response(func):
                 for key, value in headers.items():
                     response.headers[key] = value
                 response.headers["X-Cache"] = "HIT"
-                return response
+                return _add_ingest_headers(response)
 
         response = func(*args, **kwargs)
         if not isinstance(response, Response):
@@ -123,7 +133,7 @@ def cached_response(func):
             with _CACHE_LOCK:
                 _CACHE[cache_key] = (now + ttl_seconds, response.get_data(as_text=True), response.status_code, cache_headers)
             response.headers["X-Cache"] = "MISS"
-        return response
+        return _add_ingest_headers(response)
 
     return wrapper
 
