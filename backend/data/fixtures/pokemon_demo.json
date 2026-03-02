@@ -1,0 +1,41 @@
+{
+  "game": {
+    "slug": "pokemon",
+    "name": "Pokémon"
+  },
+  "sets": [
+    {
+      "code": "SV1",
+      "name": "Scarlet & Violet",
+      "release_date": "2023-03-31"
+    }
+  ],
+  "cards": [
+    {
+      "name": "Pikachu"
+    }
+  ],
+  "prints": [
+    {
+      "set_code": "SV1",
+      "card_name": "Pikachu",
+      "collector_number": "001",
+      "language": "EN",
+      "rarity": "common",
+      "is_foil": false,
+      "images": [
+        {
+          "url": "https://example.com/images/pokemon/sv1/001-en.png",
+          "is_primary": true,
+          "source": "fixture_local"
+        }
+      ],
+      "identifiers": [
+        {
+          "source": "demo",
+          "external_id": "sv1-001-en-nf"
+        }
+      ]
+    }
+  ]
+}

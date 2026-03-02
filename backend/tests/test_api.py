@@ -1,3 +1,10 @@
+from pathlib import Path
+
+from sqlalchemy import func, select
+
+from app import db
+from app.ingest.run import run_ingest
+from app.models import Print
 from app.scripts.seed import run_seed
 from app.scripts.seed_catalog import run_seed_catalog
 
@@ -62,3 +69,29 @@ def test_print_detail(client):
     assert payload["print"]["id"] == first_print_id
     assert payload["set"]["code"] == "SV1"
     assert isinstance(payload["images"], list)
+
+
+def test_search_returns_results_after_seed_or_ingest(client):
+    run_seed()
+    run_seed_catalog()
+
+    response = client.get("/api/search?q=pika&game=pokemon")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data) >= 1
+    assert any("Pikachu" in item["title"] for item in data)
+
+
+def test_ingest_fixture_local_idempotent(client):
+    run_seed()
+    fixtures_path = Path(__file__).resolve().parents[1] / "data" / "fixtures"
+
+    run_ingest("fixture_local", str(fixtures_path))
+    with db.SessionLocal() as session:
+        first_count = session.execute(select(func.count(Print.id))).scalar_one()
+
+    run_ingest("fixture_local", str(fixtures_path))
+    with db.SessionLocal() as session:
+        second_count = session.execute(select(func.count(Print.id))).scalar_one()
+
+    assert first_count == second_count

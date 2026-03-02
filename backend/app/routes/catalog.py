@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 
 from app import db
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
@@ -11,20 +11,20 @@ TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
 FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
 
 
-def _parse_pagination() -> tuple[int, int]:
-    limit_raw = request.args.get("limit", "50")
+def _parse_pagination(default_limit: int = 50, max_limit: int = 200) -> tuple[int, int]:
+    limit_raw = request.args.get("limit", str(default_limit))
     offset_raw = request.args.get("offset", "0")
 
     try:
         limit = int(limit_raw)
     except ValueError:
-        limit = 50
+        limit = default_limit
     try:
         offset = int(offset_raw)
     except ValueError:
         offset = 0
 
-    limit = max(1, min(limit, 200))
+    limit = max(1, min(limit, max_limit))
     offset = max(0, offset)
     return limit, offset
 
@@ -38,12 +38,6 @@ def _parse_bool(value: str | None) -> bool | None:
     if lowered in FALSE_VALUES:
         return False
     return None
-
-
-def _resolve_game_id(session, game_slug: str | None):
-    if not game_slug:
-        return None
-    return session.execute(select(Game.id).where(Game.slug == game_slug)).scalar_one_or_none()
 
 
 def _print_to_summary(row: Print, card_name: str, set_code: str, set_name: str, primary_image_url: str | None):
@@ -172,6 +166,131 @@ def list_prints():
         rows = session.execute(query).all()
 
     return jsonify([_print_to_summary(*row) for row in rows])
+
+
+@catalog_bp.get("/api/search")
+def search():
+    query_text = request.args.get("q", "").strip()
+    if len(query_text) < 2:
+        return jsonify({"error": "q must be at least 2 characters"}), 400
+
+    result_type = request.args.get("type")
+    if result_type not in {None, "card", "set", "print"}:
+        return jsonify({"error": "type must be one of: card, set, print"}), 400
+
+    game_slug = request.args.get("game")
+    limit, offset = _parse_pagination(default_limit=20, max_limit=100)
+
+    with db.SessionLocal() as session:
+        if session.bind.dialect.name == "postgresql":
+            rows = session.execute(
+                text(
+                    """
+                    SELECT
+                        sd.doc_type AS type,
+                        sd.object_id AS id,
+                        sd.title,
+                        sd.subtitle,
+                        ts_rank(sd.tsv, plainto_tsquery('simple', :q)) AS score,
+                        s.code AS set_code,
+                        p.collector_number,
+                        pi.primary_image_url
+                    FROM search_documents sd
+                    JOIN games g ON g.id = sd.game_id
+                    LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
+                    LEFT JOIN sets s ON p.set_id = s.id
+                    LEFT JOIN (
+                        SELECT print_id, MIN(url) AS primary_image_url
+                        FROM print_images
+                        WHERE is_primary IS TRUE
+                        GROUP BY print_id
+                    ) pi ON pi.print_id = p.id
+                    WHERE sd.tsv @@ plainto_tsquery('simple', :q)
+                      AND (:type IS NULL OR sd.doc_type = :type)
+                      AND (:game IS NULL OR g.slug = :game)
+                    ORDER BY score DESC, sd.title ASC
+                    LIMIT :limit OFFSET :offset
+                    """
+                ),
+                {"q": query_text, "type": result_type, "game": game_slug, "limit": limit, "offset": offset},
+            ).mappings().all()
+            payload = []
+            for row in rows:
+                item = {
+                    "type": row["type"],
+                    "id": row["id"],
+                    "title": row["title"],
+                    "subtitle": row["subtitle"],
+                    "score": float(row["score"] or 0),
+                }
+                if row["type"] == "print":
+                    item["set_code"] = row["set_code"]
+                    item["collector_number"] = row["collector_number"]
+                    item["primary_image_url"] = row["primary_image_url"]
+                payload.append(item)
+            return jsonify(payload)
+
+        # SQLite/test fallback: emulate search semantics with ILIKE.
+        like_term = f"%{query_text}%"
+        payload = []
+        if result_type in {None, "card"}:
+            card_query = select(Card.id, Card.name, Game.slug).join(Game, Game.id == Card.game_id).where(Card.name.ilike(like_term))
+            if game_slug:
+                card_query = card_query.where(Game.slug == game_slug)
+            for card_id, name, _ in session.execute(card_query):
+                payload.append({"type": "card", "id": card_id, "title": name, "subtitle": None, "score": 1.0})
+
+        if result_type in {None, "set"}:
+            set_query = (
+                select(Set.id, Set.name, Set.code, Game.slug)
+                .join(Game, Game.id == Set.game_id)
+                .where(or_(Set.name.ilike(like_term), Set.code.ilike(like_term)))
+            )
+            if game_slug:
+                set_query = set_query.where(Game.slug == game_slug)
+            for set_id, name, code, _ in session.execute(set_query):
+                payload.append({"type": "set", "id": set_id, "title": name, "subtitle": code, "score": 1.0})
+
+        if result_type in {None, "print"}:
+            primary_image_subquery = (
+                select(PrintImage.print_id, func.min(PrintImage.url).label("primary_image_url"))
+                .where(PrintImage.is_primary.is_(True))
+                .group_by(PrintImage.print_id)
+                .subquery()
+            )
+            print_query = (
+                select(Print.id, Card.name, Set.code, Print.collector_number, primary_image_subquery.c.primary_image_url, Game.slug)
+                .join(Card, Card.id == Print.card_id)
+                .join(Set, Set.id == Print.set_id)
+                .join(Game, Game.id == Card.game_id)
+                .outerjoin(primary_image_subquery, primary_image_subquery.c.print_id == Print.id)
+                .where(
+                    or_(
+                        Card.name.ilike(like_term),
+                        Set.name.ilike(like_term),
+                        Set.code.ilike(like_term),
+                        Print.collector_number.ilike(like_term),
+                    )
+                )
+            )
+            if game_slug:
+                print_query = print_query.where(Game.slug == game_slug)
+            for print_id, card_name, set_code, collector_number, primary_image_url, _ in session.execute(print_query):
+                payload.append(
+                    {
+                        "type": "print",
+                        "id": print_id,
+                        "title": card_name,
+                        "subtitle": f"{set_code} #{collector_number}",
+                        "score": 1.0,
+                        "set_code": set_code,
+                        "collector_number": collector_number,
+                        "primary_image_url": primary_image_url,
+                    }
+                )
+
+        payload = sorted(payload, key=lambda x: (-x["score"], x["title"]))[offset : offset + limit]
+        return jsonify(payload)
 
 
 @catalog_bp.get("/api/prints/<int:print_id>")
