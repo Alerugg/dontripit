@@ -114,3 +114,39 @@ class PrintIdentifier(Base):
     source: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
     external_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class SourceSyncState(Base):
+    __tablename__ = "source_sync_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), unique=True, index=True, nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cursor_json: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class IngestRun(Base):
+    __tablename__ = "ingest_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), index=True, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    counts_json: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PrintFieldProvenance(Base):
+    __tablename__ = "print_field_provenance"
+    __table_args__ = (
+        UniqueConstraint("print_id", "field_name", "source", name="uq_print_field_provenance"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    print_id: Mapped[int] = mapped_column(ForeignKey("prints.id"), index=True, nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    value_text: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.ingest.provenance import upsert_print_provenance
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 from app.ingest.base import SourceConnector
 
@@ -31,8 +32,8 @@ class FixtureLocalConnector(SourceConnector):
             "prints": payload.get("prints") or [],
         }
 
-    def upsert(self, session, payload: dict) -> dict:
-        stats = {"games": 0, "sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0, "updates": 0}
+    def upsert(self, session, payload: dict, **kwargs) -> dict:
+        stats = {"games": 0, "sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0, "updates": 0, "conflicts": 0}
 
         game_payload = payload.get("game") or {}
         game_slug = game_payload.get("slug")
@@ -145,6 +146,17 @@ class FixtureLocalConnector(SourceConnector):
                     changed = True
                 if changed:
                     stats["updates"] += 1
+
+            stats["conflicts"] += upsert_print_provenance(
+                session,
+                print_row.id,
+                kwargs.get("source_name", self.name),
+                {
+                    "rarity": print_row.rarity,
+                    "language": print_row.language,
+                    "collector_number": print_row.collector_number,
+                },
+            )
 
             for image in item.get("images", []):
                 image_url = image.get("url")

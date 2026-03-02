@@ -16,5 +16,8 @@ class SourceConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert(self, session, payload: dict) -> dict:
+    def upsert(self, session, payload: dict, **kwargs) -> dict:
         raise NotImplementedError
+
+    def supports_incremental(self) -> bool:
+        return False
