@@ -1,13 +1,15 @@
 /** @type {import('next').NextConfig} */
+const backendTarget =
+  process.env.BACKEND_INTERNAL_URL ||
+  process.env.BACKEND_URL ||
+  'http://localhost:5000'
+
 const nextConfig = {
   rewrites: async () => {
     return [
       {
         source: '/api/:path*',
-        destination:
-          process.env.NODE_ENV === 'development'
-            ? 'http://localhost:5000/api/:path*'
-            : '/api/',
+        destination: `${backendTarget}/api/:path*`,
       },
     ]
   },
