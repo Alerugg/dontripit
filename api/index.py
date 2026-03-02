@@ -1,6 +1,13 @@
-from flask import Flask
+from flask import Flask, jsonify
+
 app = Flask(__name__)
 
-@app.route("/api/python")
+
+@app.get('/api/health')
+def health():
+    return jsonify({'ok': True})
+
+
+@app.get('/api/python')
 def hello_world():
-    return "<p>Hello, World!</p>"
+    return '<p>Hello, World!</p>'
