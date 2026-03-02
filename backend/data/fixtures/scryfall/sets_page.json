@@ -1,0 +1,13 @@
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    {
+      "object": "set",
+      "id": "set-woe-id",
+      "code": "woe",
+      "name": "Wilds of Eldraine",
+      "released_at": "2023-09-08"
+    }
+  ]
+}

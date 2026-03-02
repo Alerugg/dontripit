@@ -8,11 +8,11 @@ class SourceConnector(ABC):
     name: str
 
     @abstractmethod
-    def load(self, path: Path) -> list[tuple[Path, dict]]:
+    def load(self, path: Path | None, **kwargs) -> list[tuple[Path, dict]]:
         raise NotImplementedError
 
     @abstractmethod
-    def normalize(self, payload: dict) -> dict:
+    def normalize(self, payload: dict, **kwargs) -> dict:
         raise NotImplementedError
 
     @abstractmethod

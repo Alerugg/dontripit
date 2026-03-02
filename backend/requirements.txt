@@ -3,3 +3,4 @@ SQLAlchemy==2.0.36
 alembic==1.13.3
 psycopg2-binary==2.9.9
 pytest==8.3.3
+requests==2.32.3

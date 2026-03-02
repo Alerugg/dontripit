@@ -1,0 +1,45 @@
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    {
+      "object": "card",
+      "id": "scryfall-card-001",
+      "oracle_id": "oracle-card-001",
+      "name": "Hopeful Vigil",
+      "collector_number": "17",
+      "lang": "en",
+      "rarity": "common",
+      "foil": true,
+      "nonfoil": true,
+      "image_uris": {
+        "normal": "https://cards.scryfall.io/normal/front/1/7/hopeful-vigil.jpg"
+      }
+    },
+    {
+      "object": "card",
+      "id": "scryfall-card-002",
+      "oracle_id": "oracle-card-002",
+      "name": "Twining Twins",
+      "collector_number": "82",
+      "lang": "en",
+      "rarity": "rare",
+      "foil": true,
+      "nonfoil": false,
+      "card_faces": [
+        {
+          "name": "Twining Twins",
+          "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/front/8/2/twining-twins-front.jpg"
+          }
+        },
+        {
+          "name": "Corridor Monitor",
+          "image_uris": {
+            "normal": "https://cards.scryfall.io/normal/back/8/2/twining-twins-back.jpg"
+          }
+        }
+      ]
+    }
+  ]
+}

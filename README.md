@@ -7,74 +7,64 @@
 3) `docker compose exec backend alembic upgrade head`
 4) `docker compose exec backend python -m app.scripts.seed`
 5) (opcional) `docker compose exec backend python -m app.scripts.seed_catalog`
-6) Ingest por conector `fixture_local` (recomendado para carga incremental):
+6) Ingest inicial con fixtures locales:
    - `docker compose exec backend python -m app.ingest.run fixture_local --path backend/data/fixtures`
-7) Pruebas rápidas:
-   - `curl -i http://localhost:3000/api/health`
-   - `curl -i http://localhost:3000/api/db-check`
-   - `curl -i http://localhost:3000/api/games`
-   - `curl -i "http://localhost:3000/api/sets?game=pokemon"`
-   - `curl -i "http://localhost:3000/api/prints?set_code=SV1&language=EN"`
-   - `curl -i "http://localhost:3000/api/search?q=pika&game=pokemon"`
+7) Ingest real Scryfall (MTG):
+   - `docker compose exec backend python -m app.ingest.run scryfall_mtg --set woe --limit 50`
+8) Ingest Scryfall en modo offline fixture (CI/dev sin internet):
+   - `docker compose exec backend python -m app.ingest.run scryfall_mtg --fixture --path backend/data/fixtures/scryfall --set woe --limit 50`
 
-## B) Run without Docker (2 terminales)
+## B) API versionada
 
-Backend:
+- Endpoints existentes `/api/*` se mantienen por compatibilidad.
+- Endpoints estables nuevos: `/api/v1/*` (read-only), por ejemplo:
+  - `GET /api/v1/health`
+  - `GET /api/v1/search?q=pika&game=pokemon`
+  - `GET /api/v1/games`
+  - `GET /api/v1/sets?game=mtg`
+  - `GET /api/v1/prints?game=mtg&set_code=woe`
+  - `GET /api/v1/prints/{id}`
 
-- `cd backend`
-- `python -m venv .venv`
-- `source .venv/bin/activate`
-- `pip install -r requirements.txt`
-- `export DATABASE_URL=postgresql+psycopg2://USER:PASS@localhost:5432/DB`
-- `alembic upgrade head`
-- `python -m app.scripts.seed`
-- `python -m app.ingest.run fixture_local --path backend/data/fixtures`
-- `flask --app app.main:app run --host=0.0.0.0 --port=5000`
+### Ejemplos curl
 
-Frontend:
+- `curl -i http://localhost:3000/api/v1/health`
+- `curl -i "http://localhost:3000/api/v1/search?q=hope&game=mtg"`
+- `curl -i "http://localhost:3000/api/v1/prints?game=mtg&set_code=woe&limit=5"`
 
-- `cd frontend`
-- `npm install`
-- `npm run dev`
+## C) Rate limit + cache
 
-Pruebas:
+- Rate limit in-memory para `/api/v1/search` y `/api/v1/prints`: `60 req/min` por IP (configurable).
+- Cache in-memory (TTL default 30s) para `/api/v1/search` y `/api/v1/prints`.
+- Header de depuración: `X-Cache: MISS|HIT`.
+- En producción se recomienda reemplazar ambos mecanismos por Redis.
 
-- `curl -i http://localhost:3000/api/db-check`
-- `curl -i http://localhost:3000/api/games`
-- `curl -i "http://localhost:3000/api/sets?game=pokemon"`
-- `curl -i "http://localhost:3000/api/prints?set_code=SV1&language=EN"`
-- `curl -i "http://localhost:3000/api/search?q=pika&game=pokemon"`
-
-## Ingest: fixture_local
+## D) Ingest: fixture_local
 
 Comando:
 
 - Docker: `docker compose exec backend python -m app.ingest.run fixture_local --path backend/data/fixtures`
 - No docker: `python -m app.ingest.run fixture_local --path backend/data/fixtures`
 
-Formato JSON (`backend/data/fixtures/pokemon_demo.json`):
+## E) Ingest: scryfall_mtg
 
-- `game`: `{ slug, name }`
-- `sets`: `[{ code, name, release_date }]`
-- `cards`: `[{ name }]`
-- `prints`: `[{ set_code, card_name, collector_number, language, rarity, is_foil, images, identifiers }]`
-- `images`: `[{ url, is_primary, source }]`
-- `identifiers`: `[{ source, external_id }]`
+- Conector real público (sin scraping): consume Scryfall API.
+- Soporta filtros:
+  - `--set <code>`: ingesta solo un set.
+  - `--limit <n>`: limita cartas por set para pruebas.
+  - `--fixture`: usa JSON locales en `backend/data/fixtures/scryfall` para tests/CI.
+- Dedupe canónico:
+  - Primario por `print_identifiers(source='scryfall', external_id='<card_id>:foil|nonfoil')`.
+  - Secundario por `(game_id, card.name)` para concepto de carta.
+- Trazabilidad:
+  - Guarda `raw_json` y checksum en `source_records`; si existe checksum, se salta.
 
-Notas:
+## F) Comandos útiles (docker)
 
-- El ingest guarda payload crudo en `source_records.raw_json` con checksum SHA256.
-- Si el checksum ya existe para el source, se salta el archivo (idempotente).
-- Además, los upserts usan uniques para evitar duplicados en sets/prints/identifiers.
-
----
-
-## Estructura
-
-- `frontend/` → aplicación Next.js (JavaScript)
-- `backend/app/` → API Flask + SQLAlchemy
-- `backend/app/ingest/` → framework de conectores e ingest CLI
-- `backend/data/fixtures/` → fixtures JSON locales
-- `backend/alembic/` → migraciones Alembic
-- `backend/tests/` → tests pytest
-- `docker-compose.yml` → stack db + backend + frontend
+- Migraciones: `docker compose exec backend alembic upgrade head`
+- Seed base: `docker compose exec backend python -m app.scripts.seed`
+- Seed catálogo demo: `docker compose exec backend python -m app.scripts.seed_catalog`
+- Ingest fixture_local: `docker compose exec backend python -m app.ingest.run fixture_local --path backend/data/fixtures`
+- Ingest scryfall real: `docker compose exec backend python -m app.ingest.run scryfall_mtg --set woe --limit 50`
+- Ingest scryfall fixture: `docker compose exec backend python -m app.ingest.run scryfall_mtg --fixture --path backend/data/fixtures/scryfall --set woe --limit 50`
+- Search v1: `curl -i "http://localhost:3000/api/v1/search?q=hope&game=mtg"`
+- Prints v1: `curl -i "http://localhost:3000/api/v1/prints?game=mtg&set_code=woe"`

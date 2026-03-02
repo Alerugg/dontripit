@@ -1,4 +1,11 @@
-from flask import Blueprint, jsonify, request
+from __future__ import annotations
+
+import json
+import threading
+import time
+from functools import wraps
+
+from flask import Blueprint, Response, current_app, jsonify, request
 from sqlalchemy import and_, func, or_, select, text
 
 from app import db
@@ -9,6 +16,10 @@ catalog_bp = Blueprint("catalog", __name__)
 
 TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
 FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
+_CACHE: dict[str, tuple[float, str, int, dict[str, str]]] = {}
+_CACHE_LOCK = threading.Lock()
+_RATE_LIMIT_BUCKETS: dict[str, tuple[int, float]] = {}
+_RATE_LIMIT_LOCK = threading.Lock()
 
 
 def _parse_pagination(default_limit: int = 50, max_limit: int = 200) -> tuple[int, int]:
@@ -54,6 +65,67 @@ def _print_to_summary(row: Print, card_name: str, set_code: str, set_name: str, 
         "set": {"code": set_code, "name": set_name},
         "primary_image_url": primary_image_url,
     }
+
+
+def _is_v1() -> bool:
+    return request.path.startswith("/api/v1/")
+
+
+def rate_limited(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not _is_v1():
+            return func(*args, **kwargs)
+
+        max_requests = int(current_app.config.get("RATE_LIMIT_PER_MINUTE", 60))
+        key_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "anonymous").split(",")[0].strip()
+        key = f"{request.endpoint}:{key_ip}"
+        now = time.time()
+        with _RATE_LIMIT_LOCK:
+            count, window_start = _RATE_LIMIT_BUCKETS.get(key, (0, now))
+            if now - window_start >= 60:
+                count, window_start = 0, now
+            if count >= max_requests:
+                return jsonify({"error": "rate limit exceeded"}), 429
+            _RATE_LIMIT_BUCKETS[key] = (count + 1, window_start)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def cached_response(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not _is_v1():
+            return func(*args, **kwargs)
+
+        ttl_seconds = int(current_app.config.get("CACHE_TTL_SECONDS", 30))
+        cache_key = f"{request.path}?{request.query_string.decode('utf-8')}"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _CACHE.get(cache_key)
+            if cached and cached[0] > now:
+                _, body, status_code, headers = cached
+                response = Response(body, status=status_code, mimetype="application/json")
+                for key, value in headers.items():
+                    response.headers[key] = value
+                response.headers["X-Cache"] = "HIT"
+                return response
+
+        response = func(*args, **kwargs)
+        if not isinstance(response, Response):
+            response = current_app.make_response(response)
+
+        if response.status_code == 200:
+            cache_headers = {
+                "Content-Type": response.headers.get("Content-Type", "application/json"),
+            }
+            with _CACHE_LOCK:
+                _CACHE[cache_key] = (now + ttl_seconds, response.get_data(as_text=True), response.status_code, cache_headers)
+            response.headers["X-Cache"] = "MISS"
+        return response
+
+    return wrapper
 
 
 @catalog_bp.get("/api/sets")
@@ -117,6 +189,8 @@ def list_cards():
 
 
 @catalog_bp.get("/api/prints")
+@rate_limited
+@cached_response
 def list_prints():
     game_slug = request.args.get("game")
     set_code = request.args.get("set_code")
@@ -165,14 +239,16 @@ def list_prints():
         query = query.order_by(Set.code.asc(), Print.collector_number.asc(), Card.name.asc()).limit(limit).offset(offset)
         rows = session.execute(query).all()
 
-    return jsonify([_print_to_summary(*row) for row in rows])
+    return jsonify([_print_to_summary(print_row, card_name, set_code_row, set_name, primary_image_url) for print_row, card_name, set_code_row, set_name, primary_image_url in rows])
 
 
 @catalog_bp.get("/api/search")
-def search():
-    query_text = request.args.get("q", "").strip()
+@rate_limited
+@cached_response
+def search_catalog():
+    query_text = (request.args.get("q") or "").strip()
     if len(query_text) < 2:
-        return jsonify({"error": "q must be at least 2 characters"}), 400
+        return jsonify({"error": "q must be at least 2 chars"}), 400
 
     result_type = request.args.get("type")
     if result_type not in {None, "card", "set", "print"}:
@@ -182,7 +258,9 @@ def search():
     limit, offset = _parse_pagination(default_limit=20, max_limit=100)
 
     with db.SessionLocal() as session:
-        if session.bind.dialect.name == "postgresql":
+        dialect_name = session.bind.dialect.name if session.bind else ""
+
+        if dialect_name == "postgresql":
             rows = session.execute(
                 text(
                     """
@@ -230,7 +308,6 @@ def search():
                 payload.append(item)
             return jsonify(payload)
 
-        # SQLite/test fallback: emulate search semantics with ILIKE.
         like_term = f"%{query_text}%"
         payload = []
         if result_type in {None, "card"}:

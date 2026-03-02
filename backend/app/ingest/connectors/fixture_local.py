@@ -13,7 +13,9 @@ from app.ingest.base import SourceConnector
 class FixtureLocalConnector(SourceConnector):
     name = "fixture_local"
 
-    def load(self, path: Path) -> list[tuple[Path, dict]]:
+    def load(self, path: Path | None, **kwargs) -> list[tuple[Path, dict]]:
+        if path is None:
+            raise ValueError("fixture_local requires --path")
         files = sorted(path.glob("*.json")) if path.is_dir() else [path]
         payloads = []
         for item in files:
@@ -21,7 +23,7 @@ class FixtureLocalConnector(SourceConnector):
                 payloads.append((item, json.load(f)))
         return payloads
 
-    def normalize(self, payload: dict) -> dict:
+    def normalize(self, payload: dict, **kwargs) -> dict:
         return {
             "game": payload.get("game"),
             "sets": payload.get("sets") or [],

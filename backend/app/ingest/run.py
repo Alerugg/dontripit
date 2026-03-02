@@ -21,7 +21,14 @@ def _ensure_source(session, name: str) -> Source:
     return source
 
 
-def run_ingest(connector_name: str, path: str) -> dict:
+def run_ingest(
+    connector_name: str,
+    path: str | None = None,
+    *,
+    set_code: str | None = None,
+    limit: int | None = None,
+    fixture: bool = False,
+) -> dict:
     connector = get_connector(connector_name)
     db.init_engine()
 
@@ -40,7 +47,7 @@ def run_ingest(connector_name: str, path: str) -> dict:
     with db.SessionLocal() as session:
         source = _ensure_source(session, connector.name)
 
-        for file_path, payload in connector.load(Path(path)):
+        for file_path, payload in connector.load(Path(path) if path else None, set_code=set_code, limit=limit, fixture=fixture):
             aggregate["files_total"] += 1
             raw_bytes = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
             checksum = hashlib.sha256(raw_bytes).hexdigest()
@@ -54,7 +61,7 @@ def run_ingest(connector_name: str, path: str) -> dict:
                 continue
 
             session.add(SourceRecord(source_id=source.id, checksum=checksum, raw_json=payload))
-            normalized = connector.normalize(payload)
+            normalized = connector.normalize(payload, set_code=set_code, limit=limit, fixture=fixture)
             stats = connector.upsert(session, normalized)
             for key in ("games", "sets", "cards", "prints", "images", "identifiers", "updates"):
                 aggregate[key] += stats.get(key, 0)
@@ -69,10 +76,13 @@ def run_ingest(connector_name: str, path: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run ingest connector")
     parser.add_argument("connector", help="connector name")
-    parser.add_argument("--path", required=True, help="Path to JSON fixture file or directory")
+    parser.add_argument("--path", help="Path to fixture file/directory")
+    parser.add_argument("--set", dest="set_code", help="Set code filter, e.g. woe")
+    parser.add_argument("--limit", type=int, help="Max cards per set in this run")
+    parser.add_argument("--fixture", action="store_true", help="Use local fixture files (no internet)")
     args = parser.parse_args()
 
-    run_ingest(args.connector, args.path)
+    run_ingest(args.connector, args.path, set_code=args.set_code, limit=args.limit, fixture=args.fixture)
 
 
 if __name__ == "__main__":
