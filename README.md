@@ -6,10 +6,14 @@
 2) `docker compose up --build`
 3) `docker compose exec backend alembic upgrade head`
 4) `docker compose exec backend python -m app.scripts.seed`
-5) Pruebas:
+5) `docker compose exec backend python -m app.scripts.seed_catalog`
+6) Pruebas:
    - `curl -i http://localhost:3000/api/health`
    - `curl -i http://localhost:3000/api/db-check`
    - `curl -i http://localhost:3000/api/games`
+   - `curl -i "http://localhost:3000/api/sets?game=pokemon"`
+   - `curl -i "http://localhost:3000/api/prints?set_code=SV1&language=EN"`
+   - `curl -i "http://localhost:3000/api/prints/1"`
 
 ## B) Run without Docker (2 terminales)
 
@@ -22,6 +26,7 @@ Backend:
 - `export DATABASE_URL=postgresql+psycopg2://USER:PASS@localhost:5432/DB`
 - `alembic upgrade head`
 - `python -m app.scripts.seed`
+- `python -m app.scripts.seed_catalog`
 - `flask --app app.main:app run --host=0.0.0.0 --port=5000`
 
 Frontend:
@@ -34,6 +39,9 @@ Pruebas:
 
 - `curl -i http://localhost:3000/api/db-check`
 - `curl -i http://localhost:3000/api/games`
+- `curl -i "http://localhost:3000/api/sets?game=pokemon"`
+- `curl -i "http://localhost:3000/api/prints?set_code=SV1&language=EN"`
+- `curl -i "http://localhost:3000/api/prints/1"`
 
 ---
 
