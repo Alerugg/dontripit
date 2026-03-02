@@ -43,7 +43,8 @@ def list_cards():
 
     with db.SessionLocal() as session:
         rows = session.execute(sql, params).mappings().all()
-    return jsonify(rows)
+    result = [dict(row) for row in rows]
+    return jsonify(result)
 
 
 @catalog_bp.get("/api/prints")
@@ -78,4 +79,5 @@ def list_prints():
 
     with db.SessionLocal() as session:
         rows = session.execute(sql, params).mappings().all()
-    return jsonify(rows)
+    result = [dict(row) for row in rows]
+    return jsonify(result)
