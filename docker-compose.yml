@@ -18,9 +18,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     environment:
-      FLASK_APP: app.py
+      FLASK_APP: app.main:app
       FLASK_ENV: development
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}}
     volumes:
       - ./backend:/app
     ports:
