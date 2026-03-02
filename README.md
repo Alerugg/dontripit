@@ -1,53 +1,45 @@
-# Next.js + Flask en GitHub Codespaces (sin Docker)
+# Monorepo limpio: `frontend` (Next.js) + `backend` (Flask)
 
-Proyecto híbrido con frontend **Next.js (JavaScript)** y backend **Flask (Python)**.
+Este repositorio está organizado en dos carpetas principales:
+
+- `frontend/` → aplicación Next.js (JavaScript)
+- `backend/` → API Flask (Python)
 
 ## Estructura
 
-- `app/` → frontend Next.js (App Router)
-- `api/index.py` → backend Flask
-- `next.config.js` → rewrite `/api/*` hacia Flask en desarrollo
-- `requirements.txt` → dependencias Python
+- `frontend/app` interfaz web (App Router)
+- `frontend/next.config.js` rewrite de `/api/*` hacia Flask en desarrollo
+- `backend/app.py` endpoints Flask (`/api/health`, `/api/python`)
+- `backend/requirements.txt` dependencias Python
 
-## Arranque en Codespaces (2 terminales)
+## Ejecución local
 
-### Terminal 1 — Backend (Flask, puerto 5000)
+### 1) Backend (puerto 5000)
 
 ```bash
-cd /workspace/API-PROJECT
+cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 -m flask --app api/index.py run --host 0.0.0.0 --port 5000
+flask --app app.py run --host 0.0.0.0 --port 5000
 ```
 
-### Terminal 2 — Frontend (Next.js, puerto 3000)
+### 2) Frontend (puerto 3000)
 
 ```bash
-cd /workspace/API-PROJECT
+cd frontend
 npm install
 npm run dev
 ```
 
-## URLs en Codespaces
+## Verificaciones esperadas
 
 - Frontend: `http://localhost:3000`
 - Backend directo: `http://localhost:5000/api/health`
-- Backend vía Next rewrite (sin CORS): `http://localhost:3000/api/health`
+- Backend vía rewrite de Next: `http://localhost:3000/api/health`
 
-## Verificación rápida
-
-1. Abre el puerto **3000** desde la pestaña **Ports** de Codespaces.
-2. Visita `http://localhost:3000/api/health`.
-3. Debe responder:
+Respuesta esperada en salud:
 
 ```json
 {"ok": true}
 ```
-
-## Scripts disponibles (frontend)
-
-- `npm run dev` → `next dev -H 0.0.0.0 -p 3000`
-- `npm run build`
-- `npm run start` → `next start -H 0.0.0.0 -p 3000`
-- `npm run lint`
