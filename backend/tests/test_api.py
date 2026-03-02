@@ -57,6 +57,22 @@ def test_search_with_empty_type_and_no_results_returns_200(client):
     assert response.get_json() == []
 
 
+def test_cards_returns_200_and_json_list(client):
+    run_seed()
+    response = client.get("/api/cards")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+
+
+def test_prints_returns_200_and_json_list(client):
+    run_seed()
+    response = client.get("/api/prints")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+
+
 def test_ingest_fixture_local_idempotent(client):
     connector = get_connector("fixture_local")
     with db.SessionLocal() as session:
