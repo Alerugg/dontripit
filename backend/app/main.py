@@ -1,4 +1,5 @@
-from flask import Flask
+from flask import Flask, jsonify
+from werkzeug.exceptions import HTTPException
 
 from app.db import init_engine
 from app.routes.catalog import catalog_bp
@@ -14,6 +15,15 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(games_bp)
     flask_app.register_blueprint(catalog_bp)
     flask_app.register_blueprint(search_bp)
+
+    @flask_app.errorhandler(HTTPException)
+    def handle_http_error(error: HTTPException):
+        return jsonify({"error": error.name.lower().replace(" ", "_"), "detail": error.description}), error.code
+
+    @flask_app.errorhandler(Exception)
+    def handle_uncaught(error: Exception):
+        return jsonify({"error": "internal_server_error", "detail": str(error)}), 500
+
     return flask_app
 
 

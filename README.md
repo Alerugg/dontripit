@@ -14,6 +14,19 @@
    - `curl -i "http://localhost:3000/api/games"`
    - `curl -i "http://localhost:3000/api/search?q=pika&game=pokemon"`
 
+
+## API endpoints
+
+- `GET /api/sets?game=pokemon&limit=50&offset=0&order=release_date_desc&q=sv`
+- `GET /api/prints/<id>`
+- `GET /api/search?q=pika&game=pokemon&type=card|set|print&limit=20&offset=0`
+
+Ejemplos curl:
+
+- `curl -i "http://localhost:3000/api/sets?game=pokemon"`
+- `curl -i "http://localhost:3000/api/prints/1"`
+- `curl -i "http://localhost:3000/api/search?q=pika&game=pokemon"`
+
 ## C) Rate limit + cache
 
 - Rate limit in-memory para `/api/v1/search` y `/api/v1/prints`: `60 req/min` por IP (configurable).

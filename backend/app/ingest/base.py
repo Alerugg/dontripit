@@ -25,9 +25,15 @@ class SourceConnector:
     def load(self, path: str) -> list[tuple[Path, dict, str]]:
         root = Path(path)
         if not root.exists():
-            alt_root = Path(__file__).resolve().parents[3] / path
-            if alt_root.exists():
-                root = alt_root
+            repo_root = Path(__file__).resolve().parents[3]
+            alt_candidates = [
+                repo_root / path,
+                repo_root / "backend" / path,
+            ]
+            for alt_root in alt_candidates:
+                if alt_root.exists():
+                    root = alt_root
+                    break
         payloads: list[tuple[Path, dict, str]] = []
         for file_path in sorted(root.glob("*.json")):
             raw = file_path.read_bytes()
