@@ -57,6 +57,9 @@ def _args(**overrides):
         "skip_pokemon": False,
         "incremental": True,
         "fixture": True,
+        "yugioh_limit": 5,
+        "riftbound_limit": 5,
+        "riftbound_fixture": True,
         "sleep_seconds": 0,
     }
     data.update(overrides)
@@ -79,7 +82,7 @@ def test_daily_refresh_calls_both_connectors_and_reindex(monkeypatch):
     assert summary["pokemon"]["ok"] is True
     assert summary["mtg"]["ok"] is True
     assert summary["reindex"]["ok"] is True
-    assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg"]
+    assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg", "ygoprodeck_yugioh", "riftbound"]
 
 
 def test_daily_refresh_exits_non_zero_when_both_connectors_fail(monkeypatch):
@@ -94,6 +97,8 @@ def test_daily_refresh_exits_non_zero_when_both_connectors_fail(monkeypatch):
 
     assert summary["pokemon"]["ok"] is False
     assert summary["mtg"]["ok"] is False
+    assert summary["yugioh"]["ok"] is False
+    assert summary["riftbound"]["ok"] is False
     assert summary["exit_code"] == 1
 
 
@@ -107,7 +112,7 @@ def test_daily_refresh_supports_explicit_pokemon_sets(monkeypatch):
     monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
     monkeypatch.setattr(daily_refresh, "rebuild_search_documents", lambda session: {"cards": 0, "sets": 0, "prints": 0})
 
-    summary = daily_refresh.run_daily_refresh(_args(pokemon_sets="base1,sv1", batch_size=7))
+    summary = daily_refresh.run_daily_refresh(_args(pokemon_sets="base1,sv1", batch_size=7, pokemon_limit=7))
 
     pokemon_calls = [call for call in calls if call["name"] == "tcgdex_pokemon"]
     assert [call["kwargs"]["set"] for call in pokemon_calls] == ["base1", "sv1"]

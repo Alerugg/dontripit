@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "id": 46986414,
+      "name": "Dark Magician",
+      "type": "Normal Monster",
+      "card_sets": [
+        {
+          "set_name": "Legend of Blue Eyes White Dragon",
+          "set_code": "LOB-005",
+          "set_rarity": "Ultra Rare"
+        }
+      ]
+    },
+    {
+      "id": 89631139,
+      "name": "Blue-Eyes White Dragon",
+      "type": "Normal Monster",
+      "card_sets": [
+        {
+          "set_name": "Legend of Blue Eyes White Dragon",
+          "set_code": "LOB-001",
+          "set_rarity": "Ultra Rare"
+        }
+      ]
+    }
+  ]
+}

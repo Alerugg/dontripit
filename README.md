@@ -223,13 +223,28 @@ cd backend
 python -m app.scripts.reindex_search
 ```
 
-### Daily refresh (Pokemon + MTG + reindex)
+### Conectores nuevos: Yu-Gi-Oh y Riftbound
+
+```bash
+cd backend
+
+# Yu-Gi-Oh con fixture
+python -m app.ingest.run ygoprodeck_yugioh --fixture true --path data/fixtures --incremental false --limit 200
+
+# Yu-Gi-Oh remoto (YGOProDeck)
+python -m app.ingest.run ygoprodeck_yugioh --incremental true --limit 200
+
+# Riftbound fixture-first (remote placeholder por ahora)
+python -m app.ingest.run riftbound --fixture true --path data/fixtures --incremental false --limit 200
+```
+
+### Daily refresh (Pokemon + MTG + Yu-Gi-Oh + Riftbound + reindex)
 
 ```bash
 cd backend
 
 # Incremental refresh for one Pokemon set + Scryfall + reindex
-python -m app.scripts.daily_refresh --pokemon-set base1 --batch-size 200 --incremental true
+python -m app.scripts.daily_refresh --pokemon-set base1 --batch-size 200 --incremental true --yugioh-limit 200 --riftbound-fixture true --riftbound-limit 200
 
 # Incremental refresh with lista explícita de sets Pokemon
 python -m app.scripts.daily_refresh --pokemon-sets "base1,sv1" --batch-size 200 --incremental true

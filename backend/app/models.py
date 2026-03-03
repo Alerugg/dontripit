@@ -36,12 +36,16 @@ class Set(Base):
     __table_args__ = (
         UniqueConstraint("game_id", "code", name="uq_sets_game_code"),
         UniqueConstraint("game_id", "tcgdex_id", name="uq_sets_game_tcgdex"),
+        UniqueConstraint("game_id", "yugioh_id", name="uq_sets_game_yugioh"),
+        UniqueConstraint("game_id", "riftbound_id", name="uq_sets_game_riftbound"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    yugioh_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    riftbound_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -53,6 +57,8 @@ class Card(Base):
         UniqueConstraint("game_id", "name", name="uq_cards_game_name"),
         UniqueConstraint("game_id", "oracle_id", name="uq_cards_game_oracle"),
         UniqueConstraint("game_id", "tcgdex_id", name="uq_cards_game_tcgdex"),
+        UniqueConstraint("game_id", "yugoprodeck_id", name="uq_cards_game_yugoprodeck"),
+        UniqueConstraint("game_id", "riftbound_id", name="uq_cards_game_riftbound"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -60,6 +66,8 @@ class Card(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     oracle_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    yugoprodeck_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    riftbound_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -69,6 +77,8 @@ class Print(Base):
         UniqueConstraint("set_id", "card_id", "collector_number", name="uq_print_identity"),
         UniqueConstraint("scryfall_id", name="uq_prints_scryfall_id"),
         UniqueConstraint("tcgdex_id", name="uq_prints_tcgdex_id"),
+        UniqueConstraint("yugioh_id", name="uq_prints_yugioh_id"),
+        UniqueConstraint("riftbound_id", name="uq_prints_riftbound_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -80,6 +90,8 @@ class Print(Base):
     is_foil: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     scryfall_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    yugioh_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    riftbound_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

@@ -409,3 +409,43 @@ def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(client,
 
     from_directory_payloads = connector.load(str(app_fixtures_dir), fixture=True, limit=1)
     assert from_directory_payloads
+
+
+def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        stats = connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one_or_none()
+        set_count = session.execute(select(func.count(Set.id)).where(Set.game_id == game.id)).scalar_one()
+        card_count = session.execute(select(func.count(Card.id)).where(Card.game_id == game.id)).scalar_one()
+        print_count = session.execute(
+            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+        ).scalar_one()
+
+    assert stats.records_inserted > 0
+    assert set_count > 0
+    assert card_count > 0
+    assert print_count > 0
+
+
+def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        stats = connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "riftbound")).scalar_one_or_none()
+        set_count = session.execute(select(func.count(Set.id)).where(Set.game_id == game.id)).scalar_one()
+        card_count = session.execute(select(func.count(Card.id)).where(Card.game_id == game.id)).scalar_one()
+        print_count = session.execute(
+            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+        ).scalar_one()
+
+    assert stats.records_inserted > 0
+    assert set_count > 0
+    assert card_count > 0
+    assert print_count > 0

@@ -1,0 +1,27 @@
+{
+  "sets": [
+    {"id": "rb-set-1", "code": "RB1", "name": "Foundations"}
+  ],
+  "cards": [
+    {"id": "rb-card-1", "name": "Skywarden Adept"},
+    {"id": "rb-card-2", "name": "Shardbreaker Titan"}
+  ],
+  "prints": [
+    {
+      "id": "rb-print-1",
+      "set_id": "rb-set-1",
+      "set_code": "RB1",
+      "card_id": "rb-card-1",
+      "collector_number": "001",
+      "primary_image_url": "https://example.com/riftbound/rb1/001.png"
+    },
+    {
+      "id": "rb-print-2",
+      "set_id": "rb-set-1",
+      "set_code": "RB1",
+      "card_id": "rb-card-2",
+      "collector_number": "002",
+      "primary_image_url": "https://example.com/riftbound/rb1/002.png"
+    }
+  ]
+}

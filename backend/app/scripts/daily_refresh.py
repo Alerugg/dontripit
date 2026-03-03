@@ -102,6 +102,8 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         "batch_size": args.batch_size,
         "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon), "runs": [], "totals": _empty_stats()},
         "mtg": {"ok": False, "run": None, "totals": _empty_stats()},
+        "yugioh": {"ok": False, "run": None, "totals": _empty_stats()},
+        "riftbound": {"ok": False, "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
@@ -113,7 +115,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
                 "tcgdex_pokemon",
                 args.path,
                 set=pokemon_set,
-                limit=args.batch_size,
+                limit=args.pokemon_limit or args.batch_size,
                 incremental=args.incremental,
                 fixture=args.fixture,
             )
@@ -127,13 +129,35 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     mtg_run = _run_connector(
         "scryfall_mtg",
         args.path,
-        limit=args.batch_size,
+        limit=args.mtg_limit or args.batch_size,
         incremental=args.incremental,
         fixture=args.fixture,
     )
     summary["mtg"]["run"] = mtg_run
     summary["mtg"]["ok"] = mtg_run["ok"]
     _accumulate(summary["mtg"]["totals"], mtg_run["stats"])
+
+    yugioh_run = _run_connector(
+        "ygoprodeck_yugioh",
+        args.path,
+        limit=args.yugioh_limit or args.batch_size,
+        incremental=args.incremental,
+        fixture=args.fixture,
+    )
+    summary["yugioh"]["run"] = yugioh_run
+    summary["yugioh"]["ok"] = yugioh_run["ok"]
+    _accumulate(summary["yugioh"]["totals"], yugioh_run["stats"])
+
+    riftbound_run = _run_connector(
+        "riftbound",
+        args.path,
+        limit=args.riftbound_limit or args.batch_size,
+        incremental=args.incremental,
+        fixture=args.riftbound_fixture,
+    )
+    summary["riftbound"]["run"] = riftbound_run
+    summary["riftbound"]["ok"] = riftbound_run["ok"]
+    _accumulate(summary["riftbound"]["totals"], riftbound_run["stats"])
 
     try:
         with db.SessionLocal() as session:
@@ -147,8 +171,8 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     summary["ended_at"] = datetime.now(timezone.utc).isoformat()
     summary["duration_seconds"] = (datetime.now(timezone.utc) - started_at).total_seconds()
 
-    both_failed = not summary["pokemon"]["ok"] and not summary["mtg"]["ok"]
-    summary["exit_code"] = 1 if both_failed else 0
+    all_failed = not summary["pokemon"]["ok"] and not summary["mtg"]["ok"] and not summary["yugioh"]["ok"] and not summary["riftbound"]["ok"]
+    summary["exit_code"] = 1 if all_failed else 0
     return summary
 
 
@@ -163,6 +187,9 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=200, help="Max records per connector call")
     parser.add_argument("--pokemon-limit", type=int, default=200)
     parser.add_argument("--mtg-limit", type=int, default=200)
+    parser.add_argument("--yugioh-limit", type=int, default=200)
+    parser.add_argument("--riftbound-limit", type=int, default=200)
+    parser.add_argument("--riftbound-fixture", type=_to_bool, default=True)
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
     parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Sleep between remote connector calls")

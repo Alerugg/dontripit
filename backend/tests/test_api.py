@@ -501,3 +501,33 @@ def test_index_endpoint_returns_value(client):
     payload = response.get_json()
     assert payload["sample_size"] >= 1
     assert payload["value"] is not None
+
+
+def test_games_includes_yugioh_and_riftbound_after_ingest(client):
+    run_seed()
+    ygo_connector = get_connector("ygoprodeck_yugioh")
+    rift_connector = get_connector("riftbound")
+
+    with db.SessionLocal() as session:
+        ygo_connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        rift_connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/games", headers=_auth_headers())
+    assert response.status_code == 200
+    slugs = {item["slug"] for item in response.get_json()}
+    assert "yugioh" in slugs
+    assert "riftbound" in slugs
+
+
+def test_search_returns_results_for_yugioh_after_fixture_ingest(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=Dark&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any("Dark Magician" in item["title"] for item in payload)

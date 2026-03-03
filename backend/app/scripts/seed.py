@@ -8,6 +8,8 @@ from app.scripts.reindex_search import rebuild_search_documents
 SEED_GAMES = [
     {"slug": "pokemon", "name": "Pokémon"},
     {"slug": "mtg", "name": "Magic: The Gathering"},
+    {"slug": "yugioh", "name": "Yu-Gi-Oh!"},
+    {"slug": "riftbound", "name": "Riftbound"},
 ]
 
 
