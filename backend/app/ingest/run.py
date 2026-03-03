@@ -10,7 +10,7 @@ def _to_bool(value: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ingest connector")
-    parser.add_argument("connector", help="Connector name (fixture_local|scryfall_mtg)")
+    parser.add_argument("connector", help="Connector name (fixture_local|scryfall_mtg|tcgdex_pokemon)")
     parser.add_argument("--path", default="backend/data/fixtures", help="Fixture path")
     parser.add_argument("--set", dest="set_code", default=None)
     parser.add_argument("--limit", type=int, default=None)

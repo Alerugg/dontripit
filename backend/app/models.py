@@ -32,11 +32,15 @@ class Game(Base):
 
 class Set(Base):
     __tablename__ = "sets"
-    __table_args__ = (UniqueConstraint("game_id", "code", name="uq_sets_game_code"),)
+    __table_args__ = (
+        UniqueConstraint("game_id", "code", name="uq_sets_game_code"),
+        UniqueConstraint("game_id", "tcgdex_id", name="uq_sets_game_tcgdex"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
+    tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -47,12 +51,14 @@ class Card(Base):
     __table_args__ = (
         UniqueConstraint("game_id", "name", name="uq_cards_game_name"),
         UniqueConstraint("game_id", "oracle_id", name="uq_cards_game_oracle"),
+        UniqueConstraint("game_id", "tcgdex_id", name="uq_cards_game_tcgdex"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     oracle_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -61,6 +67,7 @@ class Print(Base):
     __table_args__ = (
         UniqueConstraint("set_id", "card_id", "collector_number", name="uq_print_identity"),
         UniqueConstraint("scryfall_id", name="uq_prints_scryfall_id"),
+        UniqueConstraint("tcgdex_id", name="uq_prints_tcgdex_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -71,6 +78,7 @@ class Print(Base):
     rarity: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_foil: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     scryfall_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

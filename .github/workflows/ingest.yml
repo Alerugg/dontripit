@@ -46,5 +46,8 @@ jobs:
       - name: Run Scryfall MTG incremental ingest
         run: python -m app.ingest.run scryfall_mtg --incremental true --limit 500
 
+      - name: Run TCGdex Pokemon incremental ingest
+        run: python -m app.ingest.run tcgdex_pokemon --incremental true --limit 10 || true
+
       - name: Reindex search
         run: python -m app.scripts.reindex_search
