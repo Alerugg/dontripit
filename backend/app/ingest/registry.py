@@ -1,9 +1,11 @@
 from app.ingest.base import SourceConnector
 from app.ingest.connectors.fixture_local import FixtureLocalConnector
+from app.ingest.connectors.scryfall_mtg import ScryfallMtgConnector
 
 
 CONNECTORS = {
     FixtureLocalConnector.name: FixtureLocalConnector,
+    ScryfallMtgConnector.name: ScryfallMtgConnector,
 }
 
 

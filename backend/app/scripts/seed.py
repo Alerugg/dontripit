@@ -3,6 +3,7 @@ from sqlalchemy import select
 from app import db
 from app.auth.service import ensure_default_plans
 from app.models import Game, Source
+from app.scripts.reindex_search import rebuild_search_documents
 
 SEED_GAMES = [
     {"slug": "pokemon", "name": "Pokémon"},
@@ -30,6 +31,7 @@ def run_seed() -> int:
             session.add(Source(name="fixture_local", description="Local JSON fixture connector"))
             inserted += 1
 
+        rebuild_search_documents(session)
         session.commit()
 
     return inserted
