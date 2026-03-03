@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -12,6 +12,8 @@ from app.ingest.provenance import upsert_field_provenance
 from app.models import (
     Card,
     Game,
+    PriceSnapshot,
+    PriceSource,
     Print,
     PrintIdentifier,
     PrintImage,
@@ -25,6 +27,88 @@ from app.models import (
 
 class FixtureLocalConnector(SourceConnector):
     name = "fixture_local"
+
+
+    def _ensure_price_source(self, session, source_payload: dict) -> PriceSource:
+        source_name = (source_payload or {}).get("name") or "manual"
+        source_row = session.execute(select(PriceSource).where(PriceSource.name == source_name)).scalar_one_or_none()
+        if source_row is None:
+            source_row = PriceSource(name=source_name, description=(source_payload or {}).get("description"))
+            session.add(source_row)
+            session.flush()
+        elif (source_payload or {}).get("description") and source_row.description != source_payload.get("description"):
+            source_row.description = source_payload.get("description")
+        return source_row
+
+    def _resolve_print_id(self, session, entity_ref: dict) -> int | None:
+        game = entity_ref.get("game")
+        set_code = entity_ref.get("set_code")
+        collector_number = entity_ref.get("collector_number")
+        if not game or not set_code or not collector_number:
+            return None
+        language = entity_ref.get("language")
+        is_foil = bool(entity_ref.get("is_foil", False))
+        stmt = (
+            select(Print.id)
+            .join(Set, Set.id == Print.set_id)
+            .join(Game, Game.id == Set.game_id)
+            .where(Game.slug == game, Set.code == set_code, Print.collector_number == collector_number, Print.is_foil == is_foil)
+        )
+        if language is None:
+            stmt = stmt.where(Print.language.is_(None))
+        else:
+            stmt = stmt.where(Print.language == language)
+        return session.execute(stmt).scalar_one_or_none()
+
+    def _upsert_prices(self, session, payload: dict, stats: IngestStats) -> None:
+        source_row = self._ensure_price_source(session, payload.get("source") or {})
+        currency = (payload.get("currency") or "EUR").upper()
+        as_of_raw = payload.get("as_of")
+        as_of = datetime.fromisoformat(as_of_raw.replace("Z", "+00:00")) if as_of_raw else datetime.now(timezone.utc)
+
+        seen: dict[tuple[str, int, int, str, datetime], PriceSnapshot] = {}
+        for item in payload.get("prices") or []:
+            entity_type = item.get("entity_type")
+            entity_id = item.get("entity_id")
+            if entity_id is None and entity_type == "print":
+                entity_id = self._resolve_print_id(session, item.get("entity_ref") or {})
+            if entity_id is None or entity_type not in {"print", "product_variant"}:
+                continue
+
+            identity = (entity_type, entity_id, source_row.id, currency, as_of)
+            existing = seen.get(identity)
+            if existing is None:
+                existing = session.execute(
+                    select(PriceSnapshot).where(
+                        PriceSnapshot.entity_type == entity_type,
+                        PriceSnapshot.entity_id == entity_id,
+                        PriceSnapshot.source_id == source_row.id,
+                        PriceSnapshot.currency == currency,
+                        PriceSnapshot.as_of == as_of,
+                    )
+                ).scalar_one_or_none()
+            if existing is None:
+                existing = PriceSnapshot(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    source_id=source_row.id,
+                    currency=currency,
+                    as_of=as_of,
+                )
+                session.add(existing)
+                stats.records_inserted += 1
+
+            existing.price_low = item.get("low", existing.price_low)
+            existing.price_mid = item.get("mid", existing.price_mid)
+            existing.price_high = item.get("high", existing.price_high)
+            existing.price_market = item.get("market", existing.price_market)
+            existing.price_last = item.get("last", existing.price_last)
+            existing.quantity = item.get("qty", existing.quantity)
+            existing.raw_json = item
+            if identity in seen:
+                stats.records_updated += 1
+            seen[identity] = existing
+
 
     def load(self, path: str | Path | None, **kwargs) -> list[tuple[Path, dict, str]]:
         if path is None:
@@ -47,6 +131,10 @@ class FixtureLocalConnector(SourceConnector):
         return payload
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
+        if payload.get("prices") is not None:
+            self._upsert_prices(session, payload, stats)
+            return {}
+
         game_payload = payload.get("game") or {}
         game_slug = game_payload.get("slug")
         game_name = game_payload.get("name")

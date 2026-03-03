@@ -7,7 +7,7 @@ from app.auth import middleware
 from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Print, Product, SourceRecord
+from app.models import ApiKey, ApiPlan, PriceSnapshot, Print, Product, SourceRecord
 from app.scripts.seed import run_seed
 
 
@@ -400,3 +400,46 @@ def test_ingest_products_idempotent(client):
 
     assert products_first == products_second
     assert source_records_first == source_records_second
+
+
+def test_price_ingest_fixture(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/pokemon_demo.json")
+        connector.run(session, "data/fixtures/prices_demo.json")
+        session.commit()
+
+    with db.SessionLocal() as session:
+        total = session.execute(select(func.count(PriceSnapshot.id))).scalar_one()
+    assert total >= 1
+
+
+def test_prices_endpoint_returns_series(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/pokemon_demo.json")
+        connector.run(session, "data/fixtures/prices_demo.json")
+        session.commit()
+
+    response = client.get(
+        "/api/v1/prices?entity_type=print&entity_id=1&source=demo&currency=EUR&granularity=raw",
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["entity"]["id"] == 1
+    assert len(payload["series"]) >= 1
+
+
+def test_index_endpoint_returns_value(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/pokemon_demo.json")
+        connector.run(session, "data/fixtures/prices_demo.json")
+        session.commit()
+
+    response = client.get("/api/v1/index?set_code=SV1&source=demo&currency=EUR", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["sample_size"] >= 1
+    assert payload["value"] is not None

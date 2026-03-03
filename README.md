@@ -135,6 +135,9 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/products/1
 - `GET /api/v1/products`
 - `GET /api/v1/products/<id>`
 - `GET /api/v1/product-variants?product_id=<id>`
+- `GET /api/v1/prices?entity_type=print|product_variant&entity_id=<id>&source=<name>&currency=<code>`
+- `GET /api/v1/index?game=<slug>&set_code=<code>&source=<name>&currency=<code>&metric=median|mean`
+- `GET /api/v1/admin/prices/last?source=<name>` (requires `read:admin`)
 - `GET /api/v1/admin/metrics` (requires `read:admin`)
 - `GET /api/v1/docs`
 - `GET /api/v1/openapi.json`
@@ -197,6 +200,32 @@ Real API mode:
 cd backend
 python -m app.ingest.run scryfall_mtg --set woe --limit 50 --fixture false --incremental true
 ```
+
+
+### Price snapshots ingestion (fixtures)
+
+Load demo prices (audit-friendly: source + currency + timestamp):
+
+```bash
+cd backend
+python -m app.ingest.run fixture_local --path data/fixtures/prices_demo.json
+```
+
+Then query:
+
+```bash
+curl -H "X-API-Key: <key>" "http://localhost:3000/api/v1/prices?entity_type=print&entity_id=1"
+curl -H "X-API-Key: <key>" "http://localhost:3000/api/v1/index?set_code=SV1&source=demo&currency=EUR"
+```
+
+Daily aggregation for charting:
+
+```bash
+cd backend
+python -m app.scripts.aggregate_prices_daily
+```
+
+To add official sources later, implement a new connector that writes to `price_sources` and `price_snapshots` using the same idempotent identity `(entity_type, entity_id, source_id, currency, as_of)`.
 
 ### Inspect ingest state
 

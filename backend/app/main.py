@@ -10,6 +10,7 @@ from app.routes.docs import docs_bp
 from app.routes.games import games_bp
 from app.routes.health import health_bp
 from app.routes.search import search_bp
+from app.routes.prices import prices_bp
 
 
 def create_app(database_url: str | None = None) -> Flask:
@@ -22,6 +23,7 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(docs_bp)
     flask_app.register_blueprint(admin_metrics_bp)
     flask_app.register_blueprint(admin_ingest_bp)
+    flask_app.register_blueprint(prices_bp)
     register_api_product_middleware(flask_app)
 
     @flask_app.errorhandler(HTTPException)

@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -150,6 +151,69 @@ class SourceRecord(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     raw_json: Mapped[dict] = mapped_column(json_type, nullable=False)
     ingested_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PriceSource(Base):
+    __tablename__ = "price_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PriceSnapshot(Base):
+    __tablename__ = "price_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "source_id",
+            "currency",
+            "as_of",
+            name="uq_price_snapshot_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("price_sources.id"), nullable=False, index=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, index=True)
+    price_low: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_mid: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_high: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_market: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_last: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    as_of: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    raw_json: Mapped[dict | None] = mapped_column(json_type, nullable=True)
+
+
+class PriceDailyOHLC(Base):
+    __tablename__ = "price_daily_ohlc"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "source_id",
+            "currency",
+            "day",
+            name="uq_price_daily_ohlc_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_id: Mapped[int] = mapped_column(ForeignKey("price_sources.id"), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    open: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    high: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    low: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    close: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ApiPlan(Base):

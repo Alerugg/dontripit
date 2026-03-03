@@ -148,6 +148,66 @@
           ]
         }
       }
+    },
+    {
+      "name": "prices series",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/prices?entity_type=print&entity_id=1",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "prices"
+          ],
+          "query": [
+            {
+              "key": "entity_type",
+              "value": "print"
+            },
+            {
+              "key": "entity_id",
+              "value": "1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "price index",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/index?set_code=SV1&source=demo&currency=EUR",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "index"
+          ],
+          "query": [
+            {
+              "key": "set_code",
+              "value": "SV1"
+            },
+            {
+              "key": "source",
+              "value": "demo"
+            },
+            {
+              "key": "currency",
+              "value": "EUR"
+            }
+          ]
+        }
+      }
     }
   ]
 }
