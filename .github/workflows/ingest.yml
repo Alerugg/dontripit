@@ -32,8 +32,8 @@ jobs:
       run:
         working-directory: backend
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -50,6 +50,17 @@ jobs:
         run: |
           if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
           if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          database_url = os.getenv("DATABASE_URL", "")
+          host = "<not available>"
+          if database_url:
+              parsed = urlparse(database_url)
+              host = parsed.hostname or "<not available>"
+          print(f"DATABASE_URL host: {host}")
+          PY
 
       - name: Run Alembic migrations
         run: alembic upgrade head
