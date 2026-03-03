@@ -11,21 +11,37 @@ from app.models import ApiKey, ApiPlan, Print, SourceRecord
 from app.scripts.seed import run_seed
 
 
-def test_health(client):
+def _auth_headers(key: str = "test-key") -> dict[str, str]:
+    with db.SessionLocal() as session:
+        plan = session.execute(select(ApiPlan).where(ApiPlan.name == "free")).scalar_one_or_none()
+        if plan is None:
+            plan = ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60)
+            session.add(plan)
+            session.flush()
+
+        api_key = session.execute(select(ApiKey).where(ApiKey.prefix == key[:8])).scalar_one_or_none()
+        if api_key is None:
+            session.add(ApiKey(key_hash=hash_api_key(key), prefix=key[:8], plan_id=plan.id, is_active=True))
+            session.commit()
+
+    return {"X-API-Key": key}
+
+
+def test_allows_health_without_key(client):
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.get_json() == {"ok": True}
 
 
 def test_db_check(client):
-    response = client.get("/api/db-check")
+    response = client.get("/api/db-check", headers=_auth_headers())
     assert response.status_code == 200
     assert response.get_json() == {"db": "ok"}
 
 
 def test_games(client):
     run_seed()
-    response = client.get("/api/games")
+    response = client.get("/api/games", headers=_auth_headers())
     assert response.status_code == 200
     data = response.get_json()
     slugs = {item["slug"] for item in data}
@@ -38,7 +54,7 @@ def test_search_works(client):
         connector.run(session, "data/fixtures")
         session.commit()
 
-    response = client.get("/api/search?q=pika&game=pokemon")
+    response = client.get("/api/search?q=pika&game=pokemon", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert isinstance(payload, list)
@@ -50,7 +66,7 @@ def test_search_returns_results_after_seed_or_ingest(client):
         connector.run(session, "data/fixtures")
         session.commit()
 
-    response = client.get("/api/search?q=pika&game=pokemon")
+    response = client.get("/api/search?q=pika&game=pokemon", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
@@ -58,14 +74,14 @@ def test_search_returns_results_after_seed_or_ingest(client):
 
 
 def test_search_with_empty_type_and_no_results_returns_200(client):
-    response = client.get("/api/search?q=zzzz-no-results&game=pokemon&type=")
+    response = client.get("/api/search?q=zzzz-no-results&game=pokemon&type=", headers=_auth_headers())
     assert response.status_code == 200
     assert response.get_json() == []
 
 
 def test_cards_returns_200_and_json_list(client):
     run_seed()
-    response = client.get("/api/cards")
+    response = client.get("/api/cards", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert isinstance(payload, list)
@@ -73,7 +89,7 @@ def test_cards_returns_200_and_json_list(client):
 
 def test_prints_returns_200_and_json_list(client):
     run_seed()
-    response = client.get("/api/prints")
+    response = client.get("/api/prints", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert isinstance(payload, list)
@@ -107,7 +123,7 @@ def test_sets_list_200(client):
         connector.run(session, "data/fixtures")
         session.commit()
 
-    response = client.get("/api/sets?game=pokemon")
+    response = client.get("/api/sets?game=pokemon", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert isinstance(payload, list)
@@ -123,7 +139,7 @@ def test_print_detail_200(client):
     with db.SessionLocal() as session:
         print_id = session.execute(select(Print.id).order_by(Print.id)).scalars().first()
 
-    response = client.get(f"/api/prints/{print_id}")
+    response = client.get(f"/api/prints/{print_id}", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["print"]["id"] == print_id
@@ -138,7 +154,7 @@ def test_search_returns_pikachu(client):
         connector.run(session, "data/fixtures")
         session.commit()
 
-    response = client.get("/api/search?q=pika&game=pokemon&type=card")
+    response = client.get("/api/search?q=pika&game=pokemon&type=card", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
@@ -151,24 +167,39 @@ def test_search_returns_print_by_collector_number(client):
         connector.run(session, "data/fixtures")
         session.commit()
 
-    response = client.get("/api/search?q=001&game=pokemon&type=print")
+    response = client.get("/api/search?q=001&game=pokemon&type=print", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
     assert any(item["type"] == "print" and item.get("collector_number") == "001" for item in payload)
 
 
-def test_public_enabled_allows_no_key(client):
+def test_public_enabled_allows_no_key_with_ip_rate_limit(client):
     os.environ["PUBLIC_API_ENABLED"] = "true"
     response = client.get("/api/games")
     assert response.status_code == 200
 
 
-def test_public_disabled_requires_key(client):
+def test_requires_key_when_public_disabled(client):
     os.environ["PUBLIC_API_ENABLED"] = "false"
     response = client.get("/api/games")
     assert response.status_code == 401
     assert response.get_json() == {"error": "missing_api_key"}
+
+
+def test_allows_with_valid_key(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+
+    with db.SessionLocal() as session:
+        plan = ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60)
+        session.add(plan)
+        session.flush()
+        api_key = ApiKey(key_hash=hash_api_key("test-key"), prefix="test-key", plan_id=plan.id, is_active=True)
+        session.add(api_key)
+        session.commit()
+
+    response = client.get("/api/games", headers={"X-API-Key": "test-key"})
+    assert response.status_code == 200
 
 
 def test_create_key_cli_creates_record(client, monkeypatch, capsys):

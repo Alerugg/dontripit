@@ -21,6 +21,8 @@ services:
       FLASK_APP: app.main:app
       FLASK_ENV: development
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}}
+      PUBLIC_API_ENABLED: ${PUBLIC_API_ENABLED:-false}
+      PUBLIC_IP_RATE_LIMIT_RPM: ${PUBLIC_IP_RATE_LIMIT_RPM:-30}
     volumes:
       - ./backend:/app
     ports:
@@ -47,6 +49,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}}
       ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-false}
+      PUBLIC_API_ENABLED: ${PUBLIC_API_ENABLED:-false}
+      PUBLIC_IP_RATE_LIMIT_RPM: ${PUBLIC_IP_RATE_LIMIT_RPM:-30}
       SCHEDULER_JOBS: ${SCHEDULER_JOBS:-scryfall_mtg:daily,fixture_local:manual}
     volumes:
       - ./backend:/app

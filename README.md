@@ -12,10 +12,20 @@
 
 ### Environment variables
 
-- `PUBLIC_API_ENABLED=true|false`
-  - `true`: `/api/*` works without API key (except still rate-limited by IP).
+- `PUBLIC_API_ENABLED=true|false` (default: `false`)
   - `false`: API key required for all `/api/*` except `/api/health`.
+  - `true`: `/api/*` can be accessed without API key, but no-key traffic is still rate-limited by IP.
 - `PUBLIC_IP_RATE_LIMIT_RPM=30` (default)
+
+### Force API key on all protected routes
+
+Set this in `.env` (and keep the same value in Compose):
+
+```bash
+PUBLIC_API_ENABLED=false
+```
+
+With this setting, every `/api/*` endpoint requires a key except `/api/health`.
 
 ### Create API key
 
@@ -41,11 +51,17 @@ Use either option:
 ### Curl examples
 
 ```bash
-curl -H "X-API-Key: <key>" http://localhost:3000/api/games
+# default mode (PUBLIC_API_ENABLED=false): missing key => 401
 curl http://localhost:3000/api/games
+
+# with key => 200
+curl -H "X-API-Key: <key>" http://localhost:3000/api/games
+
+# bearer token alternative => 200
+curl -H "Authorization: Bearer <key>" http://localhost:3000/api/games
 ```
 
-Second example only works when `PUBLIC_API_ENABLED=true`.
+If `PUBLIC_API_ENABLED=true`, requests without key are allowed but subject to the lower IP rate limit (`PUBLIC_IP_RATE_LIMIT_RPM`).
 
 ### Response headers
 

@@ -19,7 +19,7 @@ def client(tmp_path):
     database_url = f"sqlite+pysqlite:///{db_path}"
     os.environ["DATABASE_URL"] = database_url
 
-    os.environ["PUBLIC_API_ENABLED"] = "true"
+    os.environ["PUBLIC_API_ENABLED"] = "false"
     app = create_app(database_url=database_url)
     app.config["RATE_LIMIT_PER_MINUTE"] = 5
     app.config["CACHE_TTL_SECONDS"] = 60

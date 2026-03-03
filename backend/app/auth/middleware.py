@@ -59,7 +59,7 @@ def _client_ip() -> str:
 
 
 def _excluded_path(path: str) -> bool:
-    return path in {"/api/health", "/api/docs", "/api/openapi.json"}
+    return path in {"/api/health"}
 
 
 def register_api_product_middleware(flask_app: Flask) -> None:
@@ -72,7 +72,7 @@ def register_api_product_middleware(flask_app: Flask) -> None:
         if _excluded_path(path):
             return None
 
-        public_enabled = _as_bool(os.getenv("PUBLIC_API_ENABLED"), default=True)
+        public_enabled = _as_bool(os.getenv("PUBLIC_API_ENABLED"), default=False)
         provided_key = _extract_api_key()
 
         if provided_key is None and not public_enabled:
