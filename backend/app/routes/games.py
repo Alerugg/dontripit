@@ -8,6 +8,7 @@ games_bp = Blueprint("games", __name__)
 
 
 @games_bp.get("/api/db-check")
+@games_bp.get("/api/v1/db-check")
 def db_check():
     try:
         with db.engine.connect() as connection:
@@ -18,6 +19,7 @@ def db_check():
 
 
 @games_bp.get("/api/games")
+@games_bp.get("/api/v1/games")
 def list_games():
     with db.SessionLocal() as session:
         rows = session.execute(select(Game).order_by(Game.id)).scalars().all()

@@ -17,6 +17,7 @@ def _is_missing_projection_error(error: ProgrammingError) -> bool:
 
 
 @search_bp.get("/api/search")
+@search_bp.get("/api/v1/search")
 def search():
     q = request.args.get("q", "").strip()
     if len(q) < 2:

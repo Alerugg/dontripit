@@ -125,6 +125,7 @@ class ApiKey(Base):
     plan_id: Mapped[int] = mapped_column(ForeignKey("api_plans.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", default=True)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scopes: Mapped[list[str]] = mapped_column(json_type, nullable=False, default=lambda: ["read:catalog"])
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_used_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -138,3 +139,15 @@ class ApiUsage(Base):
     period_ym: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_request_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ApiRequestMetric(Base):
+    __tablename__ = "api_request_metrics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_ym: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    api_key_prefix: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    requested_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -1,0 +1,28 @@
+{
+  "info": {
+    "name": "API-PROJECT",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "apiKey", "value": "" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    { "name": "health", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/health" } },
+    { "name": "games", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/games" } },
+    { "name": "sets", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/sets?game=pokemon" } },
+    { "name": "cards", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/cards?game=pokemon" } },
+    { "name": "prints", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/prints?game=pokemon" } },
+    { "name": "print detail", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/prints/1" } },
+    { "name": "search", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/search?q=pika&game=pokemon" } },
+    { "name": "metrics (admin)", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/metrics" } }
+  ]
+}

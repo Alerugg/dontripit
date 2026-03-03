@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timezone
 from collections import defaultdict
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 from flask import Flask, g, jsonify, request
@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app import db
 from app.auth.service import current_period_ym, find_active_key, get_or_create_usage, touch_last_used
-from app.models import ApiKey, ApiPlan
+from app.models import ApiPlan, ApiRequestMetric
 
 _RATE_WINDOWS: dict[str, list[float]] = defaultdict(list)
 
@@ -40,6 +40,16 @@ def _extract_api_key() -> str | None:
     return None
 
 
+def _required_scope(path: str) -> str | None:
+    if not path.startswith("/api/"):
+        return None
+    if path in {"/api/health", "/api/v1/health"}:
+        return None
+    if path.startswith("/api/admin/") or path.startswith("/api/v1/admin/"):
+        return "read:admin"
+    return "read:catalog"
+
+
 def _rate_limit(identity: str, limit: int) -> RateState:
     now = time.time()
     window_start = now - 60
@@ -58,18 +68,27 @@ def _client_ip() -> str:
     return request.remote_addr or "unknown"
 
 
-def _excluded_path(path: str) -> bool:
-    return path in {"/api/health"}
+def _set_headers(response, plan: str | None, rate_limit: int | None, remaining: int | None, quota_limit, quota_used):
+    if plan is not None:
+        response.headers["X-Plan"] = str(plan)
+    if rate_limit is not None:
+        response.headers["X-RateLimit-Limit"] = str(rate_limit)
+    if remaining is not None:
+        response.headers["X-RateLimit-Remaining"] = str(max(remaining, 0))
+    response.headers["X-Quota-Monthly"] = "unlimited" if quota_limit is None else str(quota_limit)
+    response.headers["X-Quota-Used"] = "n/a" if quota_used is None else str(quota_used)
 
 
 def register_api_product_middleware(flask_app: Flask) -> None:
     @flask_app.before_request
     def api_product_guard():
         g.api_meta = {}
+        g.request_started = time.perf_counter()
+        g.api_key_prefix = None
+
         path = request.path
-        if not path.startswith("/api/"):
-            return None
-        if _excluded_path(path):
+        required_scope = _required_scope(path)
+        if required_scope is None:
             return None
 
         public_enabled = _as_bool(os.getenv("PUBLIC_API_ENABLED"), default=False)
@@ -83,6 +102,10 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                 api_key = find_active_key(session, provided_key)
                 if not api_key:
                     return jsonify({"error": "invalid_api_key"}), 401
+
+                scopes = set(api_key.scopes or ["read:catalog"])
+                if required_scope not in scopes:
+                    return jsonify({"error": "insufficient_scope"}), 403
 
                 plan = session.execute(select(ApiPlan).where(ApiPlan.id == api_key.plan_id)).scalar_one_or_none()
                 if not plan:
@@ -121,9 +144,9 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                     "quota_limit": plan.monthly_quota_requests,
                     "quota_used": usage.request_count,
                 }
+                g.api_key_prefix = api_key.prefix
             return None
 
-        # public no-key fallback
         rate = _rate_limit(f"ip:{_client_ip()}", int(os.getenv("PUBLIC_IP_RATE_LIMIT_RPM", "30")))
         if rate.blocked:
             response = jsonify({"error": "rate_limited"})
@@ -142,6 +165,24 @@ def register_api_product_middleware(flask_app: Flask) -> None:
 
     @flask_app.after_request
     def append_api_headers(response):
+        path = request.path
+        if path.startswith("/api/"):
+            latency_ms = int((time.perf_counter() - getattr(g, "request_started", time.perf_counter())) * 1000)
+            try:
+                with db.SessionLocal() as session:
+                    session.add(
+                        ApiRequestMetric(
+                            endpoint=path,
+                            status_code=response.status_code,
+                            latency_ms=max(latency_ms, 0),
+                            period_ym=current_period_ym(),
+                            api_key_prefix=getattr(g, "api_key_prefix", None),
+                        )
+                    )
+                    session.commit()
+            except Exception:
+                pass
+
         meta = getattr(g, "api_meta", None)
         if not meta:
             return response
@@ -154,14 +195,3 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             meta.get("quota_used"),
         )
         return response
-
-
-def _set_headers(response, plan: str | None, rate_limit: int | None, remaining: int | None, quota_limit, quota_used):
-    if plan is not None:
-        response.headers["X-Plan"] = str(plan)
-    if rate_limit is not None:
-        response.headers["X-RateLimit-Limit"] = str(rate_limit)
-    if remaining is not None:
-        response.headers["X-RateLimit-Remaining"] = str(max(remaining, 0))
-    response.headers["X-Quota-Monthly"] = "unlimited" if quota_limit is None else str(quota_limit)
-    response.headers["X-Quota-Used"] = "n/a" if quota_used is None else str(quota_used)

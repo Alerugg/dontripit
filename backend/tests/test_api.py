@@ -5,13 +5,13 @@ from sqlalchemy import func, select
 from app import db
 from app.auth import middleware
 from app.auth.create_key import main as create_key_main
-from app.auth.service import hash_api_key
+from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.registry import get_connector
 from app.models import ApiKey, ApiPlan, Print, SourceRecord
 from app.scripts.seed import run_seed
 
 
-def _auth_headers(key: str = "test-key") -> dict[str, str]:
+def _auth_headers(key: str = "test-key", scopes: list[str] | None = None) -> dict[str, str]:
     with db.SessionLocal() as session:
         plan = session.execute(select(ApiPlan).where(ApiPlan.name == "free")).scalar_one_or_none()
         if plan is None:
@@ -21,7 +21,15 @@ def _auth_headers(key: str = "test-key") -> dict[str, str]:
 
         api_key = session.execute(select(ApiKey).where(ApiKey.prefix == key[:8])).scalar_one_or_none()
         if api_key is None:
-            session.add(ApiKey(key_hash=hash_api_key(key), prefix=key[:8], plan_id=plan.id, is_active=True))
+            session.add(
+                ApiKey(
+                    key_hash=hash_api_key(key),
+                    prefix=key[:8],
+                    plan_id=plan.id,
+                    is_active=True,
+                    scopes=scopes or ["read:catalog"],
+                )
+            )
             session.commit()
 
     return {"X-API-Key": key}
@@ -46,6 +54,16 @@ def test_games(client):
     data = response.get_json()
     slugs = {item["slug"] for item in data}
     assert {"pokemon", "mtg"}.issubset(slugs)
+
+
+def test_versioning_alias_games_matches_v1(client):
+    run_seed()
+    headers = _auth_headers()
+    legacy = client.get("/api/games", headers=headers)
+    v1 = client.get("/api/v1/games", headers=headers)
+    assert legacy.status_code == 200
+    assert v1.status_code == 200
+    assert legacy.get_json() == v1.get_json()
 
 
 def test_search_works(client):
@@ -194,12 +212,37 @@ def test_allows_with_valid_key(client):
         plan = ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60)
         session.add(plan)
         session.flush()
-        api_key = ApiKey(key_hash=hash_api_key("test-key"), prefix="test-key", plan_id=plan.id, is_active=True)
+        api_key = ApiKey(
+            key_hash=hash_api_key("test-key"),
+            prefix="test-key",
+            plan_id=plan.id,
+            is_active=True,
+            scopes=["read:catalog"],
+        )
         session.add(api_key)
         session.commit()
 
     response = client.get("/api/games", headers={"X-API-Key": "test-key"})
     assert response.status_code == 200
+
+
+def test_metrics_requires_admin_scope(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    response = client.get("/api/v1/admin/metrics", headers=_auth_headers("catalog-key", ["read:catalog"]))
+    assert response.status_code == 403
+    assert response.get_json() == {"error": "insufficient_scope"}
+
+
+def test_metrics_allows_admin_scope(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    headers = _auth_headers("admin-key", ["read:catalog", "read:admin"])
+    client.get("/api/games", headers=headers)
+    response = client.get("/api/v1/admin/metrics", headers=headers)
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert "requests_total" in payload
+    assert "average_latency_ms" in payload
+    assert "top_api_keys_month" in payload
 
 
 def test_create_key_cli_creates_record(client, monkeypatch, capsys):
@@ -216,6 +259,53 @@ def test_create_key_cli_creates_record(client, monkeypatch, capsys):
 
     assert stored.key_hash == hash_api_key(created_key)
     assert stored.prefix == created_key[:8]
+    assert stored.scopes == ["read:catalog"]
+
+
+def test_disable_and_rotate_key_functions(client):
+    with db.SessionLocal() as session:
+        plan = ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60)
+        session.add(plan)
+        session.flush()
+        session.add(
+            ApiKey(
+                key_hash=hash_api_key("rotate-key"),
+                prefix="rotate-k",
+                plan_id=plan.id,
+                is_active=True,
+                scopes=["read:catalog"],
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        assert disable_key_by_prefix(session, "rotate-k") is True
+
+    response = client.get("/api/games", headers={"X-API-Key": "rotate-key"})
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "invalid_api_key"}
+
+    with db.SessionLocal() as session:
+        plan = session.execute(select(ApiPlan).where(ApiPlan.name == "free")).scalar_one()
+        session.add(
+            ApiKey(
+                key_hash=hash_api_key("old-key"),
+                prefix="old-key",
+                plan_id=plan.id,
+                is_active=True,
+                scopes=["read:catalog"],
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        generated = rotate_key_by_prefix(session, "old-key")
+        assert generated is not None
+        old = session.execute(select(ApiKey).where(ApiKey.prefix == "old-key")).scalar_one()
+        new = session.execute(select(ApiKey).where(ApiKey.prefix == generated.prefix)).scalar_one()
+
+    assert old.is_active is False
+    assert new.is_active is True
 
 
 def test_rate_limit_blocks(client):
@@ -239,7 +329,13 @@ def test_quota_exceeded_blocks(client):
         plan = ApiPlan(name="free", monthly_quota_requests=1, burst_rpm=10)
         session.add(plan)
         session.flush()
-        api_key = ApiKey(key_hash=hash_api_key("test-key"), prefix="test-key", plan_id=plan.id, is_active=True)
+        api_key = ApiKey(
+            key_hash=hash_api_key("test-key"),
+            prefix="test-key",
+            plan_id=plan.id,
+            is_active=True,
+            scopes=["read:catalog"],
+        )
         session.add(api_key)
         session.commit()
 

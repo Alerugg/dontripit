@@ -22,6 +22,7 @@ def _json_error(error: str, detail: str, status: int):
 
 
 @catalog_bp.get("/api/cards")
+@catalog_bp.get("/api/v1/cards")
 def list_cards():
     q = request.args.get("q", "").strip()
     game = request.args.get("game", "").strip()
@@ -56,6 +57,7 @@ def list_cards():
 
 
 @catalog_bp.get("/api/sets")
+@catalog_bp.get("/api/v1/sets")
 def list_sets():
     game = request.args.get("game", "").strip()
     q = request.args.get("q", "").strip()
@@ -109,6 +111,7 @@ def list_sets():
 
 
 @catalog_bp.get("/api/prints")
+@catalog_bp.get("/api/v1/prints")
 def list_prints():
     q = request.args.get("q", "").strip()
     game = request.args.get("game", "").strip()
@@ -145,6 +148,7 @@ def list_prints():
 
 
 @catalog_bp.get("/api/prints/<int:print_id>")
+@catalog_bp.get("/api/v1/prints/<int:print_id>")
 def get_print_detail(print_id: int):
     sql = text(
         """

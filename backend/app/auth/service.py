@@ -27,10 +27,52 @@ def generate_api_key() -> GeneratedApiKey:
     return GeneratedApiKey(plain_key=raw, prefix=raw[:8], key_hash=hash_api_key(raw))
 
 
+def parse_scopes(raw_scopes: str | None) -> list[str]:
+    if not raw_scopes:
+        return ["read:catalog"]
+    scopes = [item.strip() for item in raw_scopes.split(",") if item.strip()]
+    return scopes or ["read:catalog"]
+
+
 def find_active_key(session: Session, raw_key: str) -> ApiKey | None:
     key_hash = hash_api_key(raw_key)
     stmt = select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.is_active.is_(True))
     return session.execute(stmt).scalar_one_or_none()
+
+
+def find_key_by_prefix(session: Session, prefix: str) -> ApiKey | None:
+    stmt = select(ApiKey).where(ApiKey.prefix == prefix).order_by(ApiKey.id.desc())
+    return session.execute(stmt).scalars().first()
+
+
+def disable_key_by_prefix(session: Session, prefix: str) -> bool:
+    api_key = find_key_by_prefix(session, prefix)
+    if not api_key:
+        return False
+    api_key.is_active = False
+    session.commit()
+    return True
+
+
+def rotate_key_by_prefix(session: Session, prefix: str) -> GeneratedApiKey | None:
+    current = find_key_by_prefix(session, prefix)
+    if not current:
+        return None
+
+    generated = generate_api_key()
+    current.is_active = False
+    session.add(
+        ApiKey(
+            key_hash=generated.key_hash,
+            prefix=generated.prefix,
+            plan_id=current.plan_id,
+            label=current.label,
+            is_active=True,
+            scopes=current.scopes or ["read:catalog"],
+        )
+    )
+    session.commit()
+    return generated
 
 
 def get_or_create_usage(session: Session, api_key_id: int, period_ym: str) -> ApiUsage:

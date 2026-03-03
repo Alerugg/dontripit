@@ -5,7 +5,7 @@ import argparse
 from sqlalchemy import select
 
 from app import db
-from app.auth.service import ensure_default_plans, generate_api_key
+from app.auth.service import ensure_default_plans, generate_api_key, parse_scopes
 from app.models import ApiKey, ApiPlan
 
 
@@ -13,6 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Create API key")
     parser.add_argument("--plan", required=True, choices=["free", "pro", "enterprise"])
     parser.add_argument("--label", default=None)
+    parser.add_argument("--scopes", default="read:catalog", help="comma separated scopes, e.g. read:catalog,read:admin")
     args = parser.parse_args()
 
     db.init_engine()
@@ -27,6 +28,7 @@ def main() -> None:
                 plan_id=plan.id,
                 label=args.label,
                 is_active=True,
+                scopes=parse_scopes(args.scopes),
             )
         )
         session.commit()

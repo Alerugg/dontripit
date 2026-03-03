@@ -10,11 +10,16 @@
 
 ## API access model (API as Product)
 
+### API versioning
+
+- Canonical versioned API is under `/api/v1/*`.
+- Legacy `/api/*` routes are temporary aliases to v1 behavior (same handlers), so existing clients keep working.
+
 ### Environment variables
 
 - `PUBLIC_API_ENABLED=true|false` (default: `false`)
-  - `false`: API key required for all `/api/*` except `/api/health`.
-  - `true`: `/api/*` can be accessed without API key, but no-key traffic is still rate-limited by IP.
+  - `false`: API key required for all `/api/*` and `/api/v1/*` except health.
+  - `true`: API can be accessed without API key, but no-key traffic is still rate-limited by IP.
 - `PUBLIC_IP_RATE_LIMIT_RPM=30` (default)
 
 ### Force API key on all protected routes
@@ -25,15 +30,46 @@ Set this in `.env` (and keep the same value in Compose):
 PUBLIC_API_ENABLED=false
 ```
 
-With this setting, every `/api/*` endpoint requires a key except `/api/health`.
-
 ### Create API key
 
 ```bash
 docker compose exec backend python -m app.auth.create_key --plan free --label "dev"
 ```
 
-The key is printed only once in stdout. The database stores only `key_hash` + `prefix`.
+Optional explicit scopes:
+
+```bash
+docker compose exec backend python -m app.auth.create_key --plan pro --label "admin" --scopes "read:catalog,read:admin"
+```
+
+Default scope for new keys is `read:catalog`.
+
+### Scopes
+
+- `read:catalog`: required for catalog/read endpoints.
+- `read:admin`: required for admin endpoints such as `/api/v1/admin/metrics`.
+
+If a key is valid but lacks required permission:
+
+- `403 {"error":"insufficient_scope"}`
+
+### Rotate / disable keys
+
+Disable a key by prefix:
+
+```bash
+docker compose exec backend python -m app.auth.disable_key --prefix ak_abcd1
+```
+
+Rotate a key by prefix (deactivates old key, prints new key once):
+
+```bash
+docker compose exec backend python -m app.auth.rotate_key --prefix ak_abcd1
+```
+
+Requests made with disabled keys return:
+
+- `401 {"error":"invalid_api_key"}`
 
 ### Plans and limits
 
@@ -52,16 +88,17 @@ Use either option:
 
 ```bash
 # default mode (PUBLIC_API_ENABLED=false): missing key => 401
-curl http://localhost:3000/api/games
+curl http://localhost:3000/api/v1/games
 
 # with key => 200
+curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/games
+
+# legacy alias still works => 200
 curl -H "X-API-Key: <key>" http://localhost:3000/api/games
 
-# bearer token alternative => 200
-curl -H "Authorization: Bearer <key>" http://localhost:3000/api/games
+# admin metrics with admin scope => 200
+curl -H "X-API-Key: <admin_key>" http://localhost:3000/api/v1/admin/metrics
 ```
-
-If `PUBLIC_API_ENABLED=true`, requests without key are allowed but subject to the lower IP rate limit (`PUBLIC_IP_RATE_LIMIT_RPM`).
 
 ### Response headers
 
@@ -75,21 +112,38 @@ If `PUBLIC_API_ENABLED=true`, requests without key are allowed but subject to th
 
 - `401 {"error":"missing_api_key"}`
 - `401 {"error":"invalid_api_key"}`
+- `403 {"error":"insufficient_scope"}`
 - `429 {"error":"rate_limited"}`
 - `429 {"error":"quota_exceeded"}`
 
 ## Endpoints
 
-- `GET /api/health`
-- `GET /api/db-check`
-- `GET /api/games`
-- `GET /api/cards`
-- `GET /api/prints`
-- `GET /api/prints/<id>`
-- `GET /api/sets`
-- `GET /api/search`
-- `GET /api/docs`
-- `GET /api/openapi.json`
+- `GET /api/v1/health`
+- `GET /api/v1/db-check`
+- `GET /api/v1/games`
+- `GET /api/v1/cards`
+- `GET /api/v1/prints`
+- `GET /api/v1/prints/<id>`
+- `GET /api/v1/sets`
+- `GET /api/v1/search`
+- `GET /api/v1/admin/metrics` (requires `read:admin`)
+- `GET /api/v1/docs`
+- `GET /api/v1/openapi.json`
+
+Legacy aliases without `/v1` are currently still available.
+
+## Postman Collection
+
+Collection file: `/postman/API-PROJECT.postman_collection.json`
+
+Import steps:
+
+1. Open Postman → **Import**.
+2. Select `postman/API-PROJECT.postman_collection.json`.
+3. Set collection variables:
+   - `baseUrl` (default `http://localhost:3000`)
+   - `apiKey` (your key)
+4. Run requests (header `X-API-Key` is already configured at collection level).
 
 ## SDKs
 
