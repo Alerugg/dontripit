@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Index,
     Numeric,
     String,
     Text,
@@ -174,8 +175,26 @@ class PriceSource(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="USD")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Price(Base):
+    __tablename__ = "prices"
+    __table_args__ = (
+        Index("ix_prices_source_game_captured", "source_id", "game_id", "captured_at"),
+        Index("ix_prices_print_source_captured", "print_id", "source_id", "captured_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
+    print_id: Mapped[int | None] = mapped_column(ForeignKey("prints.id"), nullable=True, index=True)
+    card_id: Mapped[int | None] = mapped_column(ForeignKey("cards.id"), nullable=True, index=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("price_sources.id"), nullable=False, index=True)
+    price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    captured_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
 
 class PriceSnapshot(Base):

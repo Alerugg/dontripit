@@ -292,6 +292,17 @@ def test_admin_ingest_status_requires_key(client):
     assert response.get_json() == {"error": "missing_api_key"}
 
 
+
+
+def test_prices_placeholder_returns_200_and_json(client):
+    run_seed()
+    response = client.get(
+        "/api/v1/prices?game=pokemon&q=pika&source=dummy&limit=5",
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert isinstance(response.get_json(), list)
+
 def test_create_key_cli_creates_record(client, monkeypatch, capsys):
     with db.SessionLocal() as session:
         session.add(ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60))
