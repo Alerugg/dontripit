@@ -284,7 +284,14 @@ Real API mode:
 
 ```bash
 cd backend
-python -m app.ingest.run tcgdex_pokemon --fixture false --limit 50 --incremental true
+python -m app.ingest.run tcgdex_pokemon --fixture false --lang en --limit 50 --incremental true
+```
+
+Real API mode by set (selective ingest):
+
+```bash
+cd backend
+python -m app.ingest.run tcgdex_pokemon --set base1 --lang en --incremental false --limit 200
 ```
 
 

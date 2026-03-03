@@ -12,7 +12,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run ingest connector")
     parser.add_argument("connector", help="Connector name (fixture_local|scryfall_mtg|tcgdex_pokemon)")
     parser.add_argument("--path", default="backend/data/fixtures", help="Fixture path")
-    parser.add_argument("--set", dest="set_code", default=None)
+    parser.add_argument("--set", default=None)
+    parser.add_argument("--lang", default="en")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
@@ -25,7 +26,8 @@ def main() -> int:
         stats = connector.run(
             session,
             args.path,
-            set_code=args.set_code,
+            set=args.set,
+            lang=args.lang,
             limit=args.limit,
             incremental=args.incremental,
             fixture=args.fixture,

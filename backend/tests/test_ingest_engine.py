@@ -300,3 +300,112 @@ def test_tcgdex_fixture_path_resolution_from_backend_data_file(client):
         limit=1,
     )
     assert from_file_payloads
+
+
+class _FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"http error: {self.status_code}")
+
+
+def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(client, monkeypatch):
+    connector = get_connector("tcgdex_pokemon")
+    requested_urls: list[str] = []
+
+    payloads = {
+        "https://api.tcgdex.net/v2/en/sets/base1": {
+            "id": "base1",
+            "abbreviation": {"official": "BS"},
+            "name": "Base",
+            "releaseDate": "1999-01-09",
+            "cards": [{"id": "base1-1"}, {"id": "base1-2"}],
+        },
+        "https://api.tcgdex.net/v2/en/cards/base1-1": {
+            "id": "base1-1",
+            "localId": "1",
+            "name": "Alakazam",
+            "image": "https://img/base1-1",
+        },
+        "https://api.tcgdex.net/v2/en/cards/base1-2": {
+            "id": "base1-2",
+            "localId": "2",
+            "name": "Blastoise",
+            "image": "https://img/base1-2",
+        },
+    }
+
+    def _fake_get(url, params=None, timeout=30):
+        requested_urls.append(url)
+        return _FakeResponse(payloads[url])
+
+    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.requests.get", _fake_get)
+
+    payloads = connector.load(None, fixture=False, set="base1", lang="en", limit=1)
+
+    assert len(payloads) == 1
+    assert requested_urls == [
+        "https://api.tcgdex.net/v2/en/sets/base1",
+        "https://api.tcgdex.net/v2/en/cards/base1-1",
+    ]
+
+
+def test_tcgdex_remote_without_set_preserves_general_list_behavior(client, monkeypatch):
+    connector = get_connector("tcgdex_pokemon")
+    requested_urls: list[str] = []
+
+    payloads = {
+        "https://api.tcgdex.net/v2/en/sets": [{"id": "base1"}],
+        "https://api.tcgdex.net/v2/en/sets/base1": {
+            "id": "base1",
+            "abbreviation": {"official": "BS"},
+            "name": "Base",
+            "releaseDate": "1999-01-09",
+            "cards": [
+                {
+                    "id": "base1-1",
+                    "localId": "1",
+                    "name": "Alakazam",
+                    "image": "https://img/base1-1",
+                }
+            ],
+        },
+    }
+
+    def _fake_get(url, params=None, timeout=30):
+        requested_urls.append(url)
+        return _FakeResponse(payloads[url])
+
+    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.requests.get", _fake_get)
+
+    out = connector.load(None, fixture=False, lang="en", limit=10)
+
+    assert len(out) == 1
+    assert requested_urls == [
+        "https://api.tcgdex.net/v2/en/sets",
+        "https://api.tcgdex.net/v2/en/sets/base1",
+    ]
+
+
+def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(client, monkeypatch, tmp_path):
+    connector = get_connector("tcgdex_pokemon")
+
+    backend_root = tmp_path / "backend"
+    connectors_dir = backend_root / "app" / "ingest" / "connectors"
+    connectors_dir.mkdir(parents=True)
+
+    payload = '{"cards": [{"id": "mew"}]}'
+    app_fixtures_dir = tmp_path / "app" / "data" / "fixtures"
+    app_fixtures_dir.mkdir(parents=True)
+    (app_fixtures_dir / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+
+    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+
+    from_directory_payloads = connector.load(str(app_fixtures_dir), fixture=True, limit=1)
+    assert from_directory_payloads

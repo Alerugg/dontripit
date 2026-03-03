@@ -104,7 +104,7 @@ class TcgdexPokemonConnector(SourceConnector):
         return str(v)
 
     name = "tcgdex_pokemon"
-    base_url = "https://api.tcgdex.net/v2/en"
+    base_url_template = "https://api.tcgdex.net/v2/{lang}"
 
     def should_bootstrap(self, session, source, **kwargs) -> bool:
         incremental = bool(kwargs.get("incremental", True))
@@ -161,12 +161,14 @@ class TcgdexPokemonConnector(SourceConnector):
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
         limit = kwargs.get("limit")
+        set_id = kwargs.get("set")
+        lang = kwargs.get("lang", "en")
 
         if fixture:
             fixture_path = self._resolve_fixture_path(path)
             cards = self._load_fixture(fixture_path, limit=limit)
         else:
-            cards = self._load_remote(limit=limit)
+            cards = self._load_remote(limit=limit, set_id=set_id, lang=lang)
 
         payloads: list[tuple[Path, dict, str]] = []
         for idx, card in enumerate(cards):
@@ -267,30 +269,46 @@ class TcgdexPokemonConnector(SourceConnector):
                 break
         return out
 
-    def _load_remote(self, limit: int | None = None) -> list[dict]:
-        sets = self._request_json(f"{self.base_url}/sets")
+    def _build_card_payload(self, set_payload: dict, card_payload: dict) -> dict:
+        return {
+            "set": {
+                "id": set_payload.get("id"),
+                "abbreviation": set_payload.get("abbreviation"),
+                "name": set_payload.get("name"),
+                "releaseDate": set_payload.get("releaseDate"),
+            },
+            "id": card_payload.get("id"),
+            "localId": card_payload.get("localId"),
+            "name": card_payload.get("name"),
+            "image": card_payload.get("image"),
+        }
+
+    def _load_remote(self, limit: int | None = None, set_id: str | None = None, lang: str = "en") -> list[dict]:
+        base_url = self.base_url_template.format(lang=lang)
         out: list[dict] = []
 
-        for item in sets:
-            set_id = item.get("id")
-            if not set_id:
-                continue
-            set_payload = self._request_json(f"{self.base_url}/sets/{set_id}")
+        if set_id:
+            set_payload = self._request_json(f"{base_url}/sets/{set_id}")
             cards = set_payload.get("cards") or []
             for card in cards:
-                combined = {
-                    "set": {
-                        "id": set_payload.get("id"),
-                        "abbreviation": set_payload.get("abbreviation"),
-                        "name": set_payload.get("name"),
-                        "releaseDate": set_payload.get("releaseDate"),
-                    },
-                    "id": card.get("id"),
-                    "localId": card.get("localId"),
-                    "name": card.get("name"),
-                    "image": card.get("image"),
-                }
-                out.append(combined)
+                card_id = card.get("id")
+                if not card_id:
+                    continue
+                card_payload = self._request_json(f"{base_url}/cards/{card_id}")
+                out.append(self._build_card_payload(set_payload, card_payload))
+                if limit and len(out) >= limit:
+                    return out
+            return out
+
+        sets = self._request_json(f"{base_url}/sets")
+        for item in sets:
+            remote_set_id = item.get("id")
+            if not remote_set_id:
+                continue
+            set_payload = self._request_json(f"{base_url}/sets/{remote_set_id}")
+            cards = set_payload.get("cards") or []
+            for card in cards:
+                out.append(self._build_card_payload(set_payload, card))
                 if limit and len(out) >= limit:
                     return out
         return out
