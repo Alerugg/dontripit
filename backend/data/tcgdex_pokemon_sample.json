@@ -1,0 +1,46 @@
+{
+  "set": {
+    "id": "sv1",
+    "abbreviation": "SVI",
+    "name": "Scarlet & Violet",
+    "releaseDate": "2023-03-31"
+  },
+  "cards": [
+    {
+      "set": {
+        "id": "sv1",
+        "abbreviation": "SVI",
+        "name": "Scarlet & Violet",
+        "releaseDate": "2023-03-31"
+      },
+      "id": "sv1-1",
+      "localId": "1",
+      "name": "Pineco",
+      "image": "https://assets.tcgdex.net/en/sv/sv1/1"
+    },
+    {
+      "set": {
+        "id": "sv1",
+        "abbreviation": "SVI",
+        "name": "Scarlet & Violet",
+        "releaseDate": "2023-03-31"
+      },
+      "id": "sv1-62",
+      "localId": "62",
+      "name": "Pikachu",
+      "image": "https://assets.tcgdex.net/en/sv/sv1/62"
+    },
+    {
+      "set": {
+        "id": "sv1",
+        "abbreviation": "SVI",
+        "name": "Scarlet & Violet",
+        "releaseDate": "2023-03-31"
+      },
+      "id": "sv1-63",
+      "localId": "63",
+      "name": "Raichu",
+      "image": "https://assets.tcgdex.net/en/sv/sv1/63"
+    }
+  ]
+}

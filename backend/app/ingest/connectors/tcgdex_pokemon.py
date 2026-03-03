@@ -170,18 +170,12 @@ class TcgdexPokemonConnector(SourceConnector):
         fixture_name = "tcgdex_pokemon_sample.json"
         backend_root = Path(__file__).resolve().parents[3]
         repo_root = backend_root.parent
-        default_fixture = backend_root / "data" / "fixtures" / fixture_name
-
-        if path is None:
-            if default_fixture.is_file():
-                return default_fixture
-            raise ValueError(
-                "tcgdex_pokemon fixture file not found. Attempted paths: "
-                f"{default_fixture}"
-            )
-
-        raw_path = Path(path)
-        candidate_paths: list[Path] = [raw_path] if raw_path.is_absolute() else [raw_path, repo_root / raw_path, backend_root / raw_path]
+        default_candidates = [
+            backend_root / "data" / fixture_name,
+            backend_root / "data" / "fixtures" / fixture_name,
+            repo_root / "data" / fixture_name,
+            repo_root / "data" / "fixtures" / fixture_name,
+        ]
 
         attempted_paths: list[Path] = []
         seen: set[Path] = set()
@@ -192,15 +186,49 @@ class TcgdexPokemonConnector(SourceConnector):
             seen.add(candidate)
             attempted_paths.append(candidate)
 
-        for candidate in candidate_paths:
+        def _resolve_candidate(candidate: Path) -> Path | None:
             _record(candidate)
             if candidate.is_file():
                 return candidate
+
             if candidate.is_dir():
                 fixture_candidate = candidate / fixture_name
                 _record(fixture_candidate)
                 if fixture_candidate.is_file():
                     return fixture_candidate
+
+                fixtures_child_candidate = candidate / "fixtures" / fixture_name
+                _record(fixtures_child_candidate)
+                if fixtures_child_candidate.is_file():
+                    return fixtures_child_candidate
+
+                if candidate.name == "fixtures":
+                    sibling_candidate = candidate.parent / fixture_name
+                    _record(sibling_candidate)
+                    if sibling_candidate.is_file():
+                        return sibling_candidate
+
+            return None
+
+        if path is None:
+            for candidate in default_candidates:
+                resolved = _resolve_candidate(candidate)
+                if resolved is not None:
+                    return resolved
+
+            attempted_display = ", ".join(str(item) for item in attempted_paths)
+            raise ValueError(
+                "tcgdex_pokemon fixture file not found. "
+                f"Attempted paths: {attempted_display}"
+            )
+
+        raw_path = Path(path)
+        candidate_paths: list[Path] = [raw_path] if raw_path.is_absolute() else [raw_path, repo_root / raw_path, backend_root / raw_path]
+
+        for candidate in candidate_paths:
+            resolved = _resolve_candidate(candidate)
+            if resolved is not None:
+                return resolved
 
         attempted_display = ", ".join(str(item) for item in attempted_paths)
         raise ValueError(
