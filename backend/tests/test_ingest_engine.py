@@ -1,3 +1,4 @@
+import json
 from sqlalchemy import func, select
 
 from app import db
@@ -193,6 +194,54 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
     assert set_backfills >= 1
     assert card_backfills >= 1 or print_backfills >= 1
 
+
+def test_tcgdex_fixture_ingest_populates_set_tcgdex_ids(client):
+    connector = get_connector("tcgdex_pokemon")
+
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False, limit=2)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        pokemon_set_ids = session.execute(
+            select(func.count(Set.id)).where(Set.game_id == pokemon_game_id, Set.tcgdex_id.is_not(None))
+        ).scalar_one()
+
+    assert pokemon_set_ids > 0
+
+
+def test_tcgdex_fixture_ingest_contains_base1_set_when_present(client, tmp_path):
+    connector = get_connector("tcgdex_pokemon")
+
+    fixture_payload = {
+        "set": {"id": "base1", "abbreviation": {"official": "BS"}, "name": "Base"},
+        "cards": [
+            {
+                "id": "base1-1",
+                "localId": "1",
+                "name": "Alakazam",
+                "image": "https://example.invalid/base1-1",
+                "set": {"id": "base1", "abbreviation": {"official": "BS"}, "name": "Base", "releaseDate": "1999-01-09"},
+            }
+        ],
+    }
+    fixture_path = tmp_path / "tcgdex_base1_fixture.json"
+    fixture_path.write_text(json.dumps(fixture_payload), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(fixture_path), fixture=True, incremental=False, limit=5)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        base_set = session.execute(
+            select(Set).where(Set.game_id == pokemon_game_id, Set.tcgdex_id == "base1")
+        ).scalar_one_or_none()
+
+    assert base_set is not None
+    assert base_set.code == "bs"
+    assert base_set.name == "Base"
 
 def test_tcgdex_fixture_path_resolution_prefers_data_fixtures_layout(client, monkeypatch, tmp_path):
     connector = get_connector("tcgdex_pokemon")

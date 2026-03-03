@@ -93,7 +93,14 @@ class TcgdexPokemonConnector(SourceConnector):
         if isinstance(v, str):
             return v
         if isinstance(v, dict):
-            return str(v.get("abbreviation") or v.get("id") or v.get("code") or v.get("name") or "")
+            return str(
+                v.get("official")
+                or v.get("abbreviation")
+                or v.get("id")
+                or v.get("code")
+                or v.get("name")
+                or ""
+            )
         return str(v)
 
     name = "tcgdex_pokemon"
@@ -303,12 +310,15 @@ class TcgdexPokemonConnector(SourceConnector):
 
     def normalize(self, payload: dict, **kwargs) -> dict:
         set_payload = payload.get("set") or {}
+        set_tcgdex_id = self._as_str(set_payload.get("id")).strip()
+        set_code = self._as_str(set_payload.get("abbreviation") or set_payload.get("id")).strip().lower()
+        set_name = self._as_str(set_payload.get("name") or set_payload.get("id")).strip()
         return {
             "set": {
-                "code": self._as_str(set_payload.get("abbreviation") or set_payload.get("id") or "").lower(),
-                "name": set_payload.get("name") or (set_payload.get("id") or "").upper(),
+                "tcgdex_id": set_tcgdex_id,
+                "code": set_code,
+                "name": set_name,
                 "released_at": set_payload.get("releaseDate"),
-                "tcgdex_id": set_payload.get("id"),
             },
             "card": {
                 "id": payload.get("id"),
@@ -327,25 +337,34 @@ class TcgdexPokemonConnector(SourceConnector):
             stats.records_inserted += 1
 
         set_payload = payload.get("set") or {}
-        set_code = (set_payload.get("code") or "").lower()
-        set_tcgdex_id = set_payload.get("tcgdex_id")
+        set_code = self._as_str(set_payload.get("code")).strip().lower()
+        set_tcgdex_id = self._as_str(set_payload.get("tcgdex_id")).strip()
         if not set_code and not set_tcgdex_id:
             return {}
 
         release_date = date.fromisoformat(set_payload["released_at"]) if set_payload.get("released_at") else None
-        set_row = self._find_set(session, game.id, set_payload)
+        set_row = None
+        if set_tcgdex_id:
+            set_row = session.execute(
+                select(Set).where(Set.game_id == game.id, Set.tcgdex_id == set_tcgdex_id)
+            ).scalar_one_or_none()
+        if set_row is None and set_code:
+            set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
 
         if set_row is None:
-            set_row = Set(
-                game_id=game.id,
-                code=set_code,
-                tcgdex_id=set_tcgdex_id,
-                name=set_payload.get("name") or set_code.upper(),
-                release_date=release_date,
-            )
-            session.add(set_row)
-            session.flush()
-            stats.records_inserted += 1
+            if set_tcgdex_id:
+                set_row = Set(
+                    game_id=game.id,
+                    code=set_code,
+                    tcgdex_id=set_tcgdex_id,
+                    name=set_payload.get("name") or set_code.upper(),
+                    release_date=release_date,
+                )
+                session.add(set_row)
+                session.flush()
+                stats.records_inserted += 1
+            else:
+                return {}
         else:
             changed = False
             backfilled_set_id = False
