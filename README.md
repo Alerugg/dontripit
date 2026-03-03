@@ -222,6 +222,18 @@ cd backend
 python -m app.scripts.reindex_search
 ```
 
+### Daily refresh (Pokemon + MTG + reindex)
+
+```bash
+cd backend
+
+# Incremental refresh for one Pokemon set + Scryfall + reindex
+python -m app.scripts.daily_refresh --pokemon-set base1 --pokemon-limit 200 --mtg-limit 200 --incremental true
+
+# Incremental refresh with curated Pokemon set list (currently base1 + sv1)
+python -m app.scripts.daily_refresh --pokemon-all true --pokemon-limit 200 --mtg-limit 200 --incremental true
+```
+
 ## CI jobs (Neon)
 
 GitHub Actions se encarga de migraciones e ingest/reindex fuera de Vercel. La API en Vercel solo sirve tráfico.
@@ -245,8 +257,10 @@ Los workflows usan:
   - Ejecuta `alembic upgrade head` en `backend`
 
 - `Neon Ingest and Reindex` (`.github/workflows/ingest.yml`)
-  - Trigger: cron cada 6 horas y `workflow_dispatch`
-  - Ejecuta: `alembic upgrade head` → ingest `fixture_local` → `python -m app.scripts.reindex_search`
+  - Trigger: cron diario y `workflow_dispatch`
+  - Inputs manuales: `pokemon_set` (opcional), `pokemon_limit`, `mtg_limit`, `incremental`
+  - Ejecuta: `alembic upgrade head` → `python -m app.scripts.daily_refresh ...`
+  - Emite un resumen JSON final en logs con estado por conector y reindex
 
 ### Ejecución manual desde Actions
 

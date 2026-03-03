@@ -2,8 +2,28 @@ name: Neon Ingest and Reindex
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      pokemon_set:
+        description: 'Optional Pokemon set code (example: base1)'
+        required: false
+        type: string
+      pokemon_limit:
+        description: 'Pokemon ingest limit'
+        required: false
+        default: '200'
+        type: string
+      mtg_limit:
+        description: 'MTG ingest limit'
+        required: false
+        default: '200'
+        type: string
+      incremental:
+        description: 'Use incremental mode'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   ingest:
@@ -12,8 +32,8 @@ jobs:
       run:
         working-directory: backend
     env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,25 +49,17 @@ jobs:
       - name: Run Alembic migrations
         run: alembic upgrade head
 
-      - name: Run fixture ingest (optional)
+      - name: Run daily refresh pipeline
         run: |
-          if [ -d "data/fixtures" ]; then
-            INGEST_PATH="data/fixtures"
-          elif [ -d "backend/data/fixtures" ]; then
-            INGEST_PATH="backend/data/fixtures"
-          else
-            echo "No fixture directory found. Skipping fixture ingest."
-            exit 0
+          POKEMON_SET="${{ github.event.inputs.pokemon_set || '' }}"
+          POKEMON_LIMIT="${{ github.event.inputs.pokemon_limit || '200' }}"
+          MTG_LIMIT="${{ github.event.inputs.mtg_limit || '200' }}"
+          INCREMENTAL="${{ github.event.inputs.incremental != '' && github.event.inputs.incremental || 'true' }}"
+
+          CMD="python -m app.scripts.daily_refresh --pokemon-limit ${POKEMON_LIMIT} --mtg-limit ${MTG_LIMIT} --incremental ${INCREMENTAL}"
+          if [ -n "${POKEMON_SET}" ]; then
+            CMD="${CMD} --pokemon-set ${POKEMON_SET}"
           fi
 
-          echo "Using fixture path: ${INGEST_PATH}"
-          python -m app.ingest.run fixture_local --path "${INGEST_PATH}"
-
-      - name: Run Scryfall MTG incremental ingest
-        run: python -m app.ingest.run scryfall_mtg --incremental true --limit 500
-
-      - name: Run TCGdex Pokemon incremental ingest
-        run: python -m app.ingest.run tcgdex_pokemon --incremental true --limit 10 || true
-
-      - name: Reindex search
-        run: python -m app.scripts.reindex_search
+          echo "Running: ${CMD}"
+          eval "${CMD}"
