@@ -6,16 +6,33 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.provenance import upsert_field_provenance
-from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, SourceRecord
 
 
 class ScryfallMtgConnector(SourceConnector):
     name = "scryfall_mtg"
     base_url = "https://api.scryfall.com"
+
+
+    def should_bootstrap(self, session, source, **kwargs) -> bool:
+        incremental = bool(kwargs.get("incremental", True))
+        if not incremental:
+            return False
+
+        mtg_game_id = session.execute(select(Game.id).where(Game.slug == "mtg")).scalar_one_or_none()
+        if mtg_game_id is None:
+            return True
+
+        has_mtg_cards = session.execute(select(func.count(Card.id)).where(Card.game_id == mtg_game_id)).scalar_one() > 0
+        if not has_mtg_cards:
+            return True
+
+        has_source_records = session.execute(select(func.count()).select_from(SourceRecord).where(SourceRecord.source_id == source.id)).scalar_one() > 0
+        return not has_source_records
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
@@ -26,7 +43,12 @@ class ScryfallMtgConnector(SourceConnector):
             fixture_path = self._resolve_fixture_path(path)
             raw_items = self._load_fixture(fixture_path, set_code=set_code, limit=limit)
         else:
-            raw_items = self._load_remote(limit=limit)
+            incremental = bool(kwargs.get("incremental", True))
+            bootstrap = bool(kwargs.get("bootstrap", False))
+            if incremental and not bootstrap:
+                raw_items = self._load_incremental(limit=limit, last_run_at=kwargs.get("last_run_at"))
+            else:
+                raw_items = self._load_remote(limit=limit)
 
         payloads: list[tuple[Path, dict, str]] = []
         for idx, card in enumerate(raw_items):
@@ -76,6 +98,30 @@ class ScryfallMtgConnector(SourceConnector):
             cards.append(card)
             if limit and len(cards) >= limit:
                 break
+        return cards
+
+    def _load_incremental(self, limit: int | None = None, last_run_at=None) -> list[dict]:
+        cards: list[dict] = []
+        params: dict[str, str] = {"q": "game:paper", "order": "released", "dir": "desc"}
+        if limit:
+            params["unique"] = "prints"
+
+        if last_run_at is not None:
+            sync_date = last_run_at.date().isoformat()
+            params["q"] = f"game:paper date>={sync_date}"
+
+        url = f"{self.base_url}/cards/search"
+        while url:
+            payload = self._request_json(url, params=params)
+            params = None
+            for card in payload.get("data") or []:
+                cards.append(card)
+                if limit and len(cards) >= limit:
+                    return cards
+            if not payload.get("has_more"):
+                break
+            url = payload.get("next_page")
+
         return cards
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:

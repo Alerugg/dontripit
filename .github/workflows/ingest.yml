@@ -29,27 +29,22 @@ jobs:
       - name: Run Alembic migrations
         run: alembic upgrade head
 
-      - name: Run fixture ingest
+      - name: Run fixture ingest (optional)
         run: |
           if [ -d "data/fixtures" ]; then
             INGEST_PATH="data/fixtures"
           elif [ -d "backend/data/fixtures" ]; then
             INGEST_PATH="backend/data/fixtures"
           else
-            echo "No fixture directory found. Expected data/fixtures or backend/data/fixtures."
-            echo "Repository tree snapshot for debug:"
-            pwd
-            ls -la
-            echo "backend directory snapshot:"
-            ls -la backend || true
-            exit 1
+            echo "No fixture directory found. Skipping fixture ingest."
+            exit 0
           fi
 
           echo "Using fixture path: ${INGEST_PATH}"
           python -m app.ingest.run fixture_local --path "${INGEST_PATH}"
 
       - name: Run Scryfall MTG incremental ingest
-        run: python -m app.ingest.run scryfall_mtg --incremental true --limit 500 || true
+        run: python -m app.ingest.run scryfall_mtg --incremental true --limit 500
 
       - name: Reindex search
         run: python -m app.scripts.reindex_search

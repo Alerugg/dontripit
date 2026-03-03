@@ -63,6 +63,9 @@ class SourceConnector:
     def default_cursor(self, **kwargs) -> dict:
         return {}
 
+    def should_bootstrap(self, session, source: Source, **kwargs) -> bool:
+        return False
+
     def run(self, session, path: str | Path | None = None, **kwargs) -> IngestStats:
         stats = IngestStats()
         source = self.ensure_source(session)
@@ -80,7 +83,8 @@ class SourceConnector:
         last_run_at = sync_state.last_run_at
 
         try:
-            payloads = self.load(path, last_run_at=last_run_at, **kwargs)
+            bootstrap = self.should_bootstrap(session, source, **kwargs)
+            payloads = self.load(path, session=session, last_run_at=last_run_at, bootstrap=bootstrap, **kwargs)
             for file_path, payload, checksum in payloads:
                 stats.files_seen += 1
                 existing_record = session.execute(
@@ -97,7 +101,7 @@ class SourceConnector:
             rebuild_search_documents(session)
 
             sync_state.last_run_at = datetime.now(timezone.utc)
-            sync_state.cursor_json = self.default_cursor(last_run_at=sync_state.last_run_at, **kwargs)
+            sync_state.cursor_json = self.default_cursor(last_run_at=sync_state.last_run_at, bootstrap=bootstrap, **kwargs)
             sync_state.updated_at = datetime.now(timezone.utc)
 
             ingest_run.status = "success"
