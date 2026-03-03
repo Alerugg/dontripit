@@ -51,15 +51,25 @@ jobs:
 
       - name: Run daily refresh pipeline
         run: |
+          set -euo pipefail
+
           POKEMON_SET="${{ github.event.inputs.pokemon_set || '' }}"
           POKEMON_LIMIT="${{ github.event.inputs.pokemon_limit || '200' }}"
           MTG_LIMIT="${{ github.event.inputs.mtg_limit || '200' }}"
           INCREMENTAL="${{ github.event.inputs.incremental != '' && github.event.inputs.incremental || 'true' }}"
 
-          CMD="python -m app.scripts.daily_refresh --pokemon-limit ${POKEMON_LIMIT} --mtg-limit ${MTG_LIMIT} --incremental ${INCREMENTAL}"
+          ARGS="--pokemon-limit ${POKEMON_LIMIT} --mtg-limit ${MTG_LIMIT} --incremental ${INCREMENTAL}"
           if [ -n "${POKEMON_SET}" ]; then
-            CMD="${CMD} --pokemon-set ${POKEMON_SET}"
+            ARGS="${ARGS} --pokemon-set ${POKEMON_SET}"
           fi
 
-          echo "Running: ${CMD}"
-          eval "${CMD}"
+          echo "Running: python -m app.scripts.daily_refresh ${ARGS}"
+          SUMMARY_FILE="$(mktemp)"
+          python -m app.scripts.daily_refresh ${ARGS} > "${SUMMARY_FILE}"
+          SUMMARY_JSON="$(cat "${SUMMARY_FILE}")"
+
+          echo "Daily refresh summary (raw JSON):"
+          cat "${SUMMARY_FILE}"
+
+          echo "Daily refresh summary (pretty):"
+          python -m json.tool < "${SUMMARY_FILE}"

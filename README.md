@@ -132,8 +132,8 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/games
 # admin metrics with admin scope => 200
 curl -H "X-API-Key: <admin_key>" http://localhost:3000/api/v1/admin/metrics
 
-# ingest status by source/game with admin scope => 200
-curl -H "X-API-Key: <admin_key>" http://localhost:3000/api/v1/admin/ingest-status
+# ingest status by source/game/connectors with admin scope => 200
+curl -H "X-API-Key: <admin_key>" "http://localhost:3000/api/v1/admin/ingest-status?limit=20"
 
 # sealed products list (paginated + filters)
 curl -H "X-API-Key: <key>" "http://localhost:3000/api/v1/products?game=pokemon&set_code=SV1&type=booster_box&limit=20&offset=0"
@@ -175,7 +175,7 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/products/1
 - `GET /api/v1/index?game=<slug>&set_code=<code>&source=<name>&currency=<code>&metric=median|mean`
 - `GET /api/v1/admin/prices/last?source=<name>` (requires `read:admin`)
 - `GET /api/v1/admin/metrics` (requires `read:admin`)
-- `GET /api/v1/admin/ingest-status` (requires `read:admin`)
+- `GET /api/v1/admin/ingest-status?limit=<N>` (requires `read:admin`)
 - `GET /api/v1/docs`
 - `GET /api/v1/openapi.json`
 
@@ -234,21 +234,37 @@ python -m app.scripts.daily_refresh --pokemon-set base1 --pokemon-limit 200 --mt
 python -m app.scripts.daily_refresh --pokemon-all true --pokemon-limit 200 --mtg-limit 200 --incremental true
 ```
 
+
+### Admin ingest status endpoint
+
+`GET /api/v1/admin/ingest-status?limit=20` returns:
+
+- `runs`: últimas `N` ejecuciones de ingest (`id`, `source`, `status`, `started_at`, `finished_at`, `counts`, `error_summary`).
+- `connectors`: totales por conector usando `sources` + `source_records`, incluyendo timestamps más nuevos detectados.
+- `newest_timestamps`: máximos globales para `source_records.ingested_at` e `ingest_runs.started_at/finished_at`.
+- `sources`, `games`, `now`: compatibilidad con payload anterior.
+
+Ejemplo:
+
+```bash
+curl -H "X-API-Key: <admin_key>" "http://localhost:3000/api/v1/admin/ingest-status?limit=10"
+```
+
 ## CI jobs (Neon)
 
 GitHub Actions se encarga de migraciones e ingest/reindex fuera de Vercel. La API en Vercel solo sirve tráfico.
 
-### Secret requerido
+### Secrets requeridos
 
 En GitHub: **Settings → Secrets and variables → Actions → New repository secret**
 
-- Name: `DATABASE_URL_UNPOOLED`
-- Value: cadena de conexión directa (unpooled) de Neon con `sslmode=require`
+- `DATABASE_URL`: cadena pooled de Neon con `sslmode=require` (runtime).
+- `DATABASE_URL_UNPOOLED`: cadena directa (unpooled) de Neon con `sslmode=require` (migraciones).
 
 Los workflows usan:
 
+- `DATABASE_URL=${{ secrets.DATABASE_URL }}`
 - `DATABASE_URL_UNPOOLED=${{ secrets.DATABASE_URL_UNPOOLED }}`
-- `DATABASE_URL=${{ secrets.DATABASE_URL_UNPOOLED }}` (fallback para comandos que lean `DATABASE_URL`)
 
 ### Jobs disponibles
 
@@ -267,7 +283,23 @@ Los workflows usan:
 1. Ir a la pestaña **Actions** del repositorio.
 2. Seleccionar `Neon Migrations` o `Neon Ingest and Reindex`.
 3. Clic en **Run workflow**.
-4. Elegir branch (normalmente `main`) y confirmar.
+4. Elegir branch (normalmente `main`) y completar inputs opcionales:
+   - `pokemon_set`
+   - `pokemon_limit`
+   - `mtg_limit`
+   - `incremental`
+5. Confirmar con **Run workflow**.
+
+También puedes dispararlo por GitHub CLI:
+
+```bash
+gh workflow run ingest.yml \
+  -f pokemon_set=base1 \
+  -f pokemon_limit=200 \
+  -f mtg_limit=200 \
+  -f incremental=true
+```
+
 
 ### Scryfall MTG
 

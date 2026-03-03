@@ -256,15 +256,34 @@ def test_admin_ingest_status_allows_admin_scope(client):
     assert response.status_code == 200
 
     payload = response.get_json()
-    assert set(payload.keys()) == {"sources", "games", "now"}
+    assert set(payload.keys()) == {"sources", "games", "connectors", "runs", "newest_timestamps", "now"}
     assert isinstance(payload["sources"], list)
     assert isinstance(payload["games"], list)
+    assert isinstance(payload["connectors"], list)
+    assert isinstance(payload["runs"], list)
+    assert isinstance(payload["newest_timestamps"], dict)
 
     if payload["sources"]:
         assert set(payload["sources"][0].keys()) == {"name", "last_run_at", "records"}
     if payload["games"]:
         assert set(payload["games"][0].keys()) == {"slug", "cards", "sets", "prints"}
+    if payload["connectors"]:
+        assert set(payload["connectors"][0].keys()) == {
+            "name",
+            "source_records_total",
+            "newest_source_record_at",
+            "newest_ingest_started_at",
+            "newest_ingest_finished_at",
+        }
 
+
+
+
+def test_admin_ingest_status_forbids_without_admin_scope(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    response = client.get("/api/v1/admin/ingest-status", headers=_auth_headers("catalog-only", ["read:catalog"]))
+    assert response.status_code == 403
+    assert response.get_json() == {"error": "insufficient_scope"}
 
 def test_admin_ingest_status_requires_key(client):
     os.environ["PUBLIC_API_ENABLED"] = "false"
