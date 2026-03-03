@@ -46,6 +46,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Debug env (no secrets)
+        run: |
+          if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
+          if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
+
       - name: Run Alembic migrations
         run: alembic upgrade head
 
@@ -53,10 +58,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          POKEMON_SET="${{ github.event.inputs.pokemon_set || '' }}"
-          POKEMON_LIMIT="${{ github.event.inputs.pokemon_limit || '200' }}"
-          MTG_LIMIT="${{ github.event.inputs.mtg_limit || '200' }}"
-          INCREMENTAL="${{ github.event.inputs.incremental != '' && github.event.inputs.incremental || 'true' }}"
+          POKEMON_SET="${{ github.event.inputs.pokemon_set }}"
+          POKEMON_LIMIT="${{ github.event.inputs.pokemon_limit }}"
+          MTG_LIMIT="${{ github.event.inputs.mtg_limit }}"
+          INCREMENTAL="${{ github.event.inputs.incremental }}"
+
+          : "${POKEMON_LIMIT:=200}"
+          : "${MTG_LIMIT:=200}"
+          : "${INCREMENTAL:=true}"
 
           ARGS="--pokemon-limit ${POKEMON_LIMIT} --mtg-limit ${MTG_LIMIT} --incremental ${INCREMENTAL}"
           if [ -n "${POKEMON_SET}" ]; then
