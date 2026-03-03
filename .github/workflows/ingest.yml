@@ -58,27 +58,61 @@ jobs:
         run: |
           set -euo pipefail
 
-          POKEMON_SET="${{ github.event.inputs.pokemon_set }}"
-          POKEMON_LIMIT="${{ github.event.inputs.pokemon_limit }}"
-          MTG_LIMIT="${{ github.event.inputs.mtg_limit }}"
-          INCREMENTAL="${{ github.event.inputs.incremental }}"
+          EVENT_NAME="${{ github.event_name }}"
+          POKEMON_SET_INPUT="${{ github.event.inputs.pokemon_set || '' }}"
+          POKEMON_LIMIT_INPUT="${{ github.event.inputs.pokemon_limit || '' }}"
+          MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
+          INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
-          : "${POKEMON_LIMIT:=200}"
-          : "${MTG_LIMIT:=200}"
-          : "${INCREMENTAL:=true}"
+          POKEMON_LIMIT="${POKEMON_LIMIT_INPUT:-200}"
+          MTG_LIMIT="${MTG_LIMIT_INPUT:-200}"
+          INCREMENTAL="${INCREMENTAL_INPUT:-true}"
 
-          ARGS="--pokemon-limit ${POKEMON_LIMIT} --mtg-limit ${MTG_LIMIT} --incremental ${INCREMENTAL}"
-          if [ -n "${POKEMON_SET}" ]; then
-            ARGS="${ARGS} --pokemon-set ${POKEMON_SET}"
+          if [ -n "${POKEMON_SET_INPUT}" ]; then
+            POKEMON_SET="${POKEMON_SET_INPUT}"
+          elif [ "${EVENT_NAME}" = "schedule" ]; then
+            POKEMON_SET="base1"
+          else
+            POKEMON_SET=""
           fi
 
-          echo "Running: python -m app.scripts.daily_refresh ${ARGS}"
-          SUMMARY_FILE="$(mktemp)"
-          python -m app.scripts.daily_refresh ${ARGS} > "${SUMMARY_FILE}"
-          SUMMARY_JSON="$(cat "${SUMMARY_FILE}")"
+          ARGS=(
+            --pokemon-limit "${POKEMON_LIMIT}"
+            --mtg-limit "${MTG_LIMIT}"
+            --incremental "${INCREMENTAL}"
+          )
+          if [ -n "${POKEMON_SET}" ]; then
+            ARGS+=(--pokemon-set "${POKEMON_SET}")
+          fi
 
-          echo "Daily refresh summary (raw JSON):"
-          cat "${SUMMARY_FILE}"
+          echo "Resolved ARGS:"
+          printf '  %q' "${ARGS[@]}"
+          echo
 
-          echo "Daily refresh summary (pretty):"
-          python -m json.tool < "${SUMMARY_FILE}"
+          STDOUT_FILE="$(mktemp)"
+          STDERR_FILE="$(mktemp)"
+
+          set +e
+          python -m app.scripts.daily_refresh "${ARGS[@]}" > "${STDOUT_FILE}" 2> "${STDERR_FILE}"
+          CMD_STATUS=$?
+          set -e
+
+          echo "daily_refresh stdout:"
+          cat "${STDOUT_FILE}"
+
+          echo "daily_refresh stderr:"
+          cat "${STDERR_FILE}"
+
+          if [ -s "${STDOUT_FILE}" ]; then
+            echo "Daily refresh summary (pretty):"
+            if ! python -m json.tool < "${STDOUT_FILE}"; then
+              echo "stdout did not contain valid JSON summary"
+            fi
+          else
+            echo "No stdout summary captured"
+          fi
+
+          if [ "${CMD_STATUS}" -ne 0 ]; then
+            echo "daily_refresh failed with exit code ${CMD_STATUS}"
+            exit "${CMD_STATUS}"
+          fi
