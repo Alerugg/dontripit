@@ -4,43 +4,59 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.models import PrintFieldProvenance
-
-TRACKED_FIELDS = ("rarity", "language", "collector_number")
+from app.models import FieldProvenance
 
 
-def upsert_print_provenance(session, print_id: int, source: str, values: dict[str, str]) -> int:
+TRACKED_FIELDS = ("rarity", "language", "collector_number", "oracle_id")
+
+
+def upsert_field_provenance(
+    session,
+    entity_type: str,
+    entity_id: int,
+    source: str,
+    values: dict[str, str | dict | None],
+) -> int:
     conflicts = 0
     now = datetime.now(timezone.utc)
-    for field in TRACKED_FIELDS:
-        value = str(values.get(field, ""))
+
+    for field, value in values.items():
+        value_text = value if isinstance(value, str) else None
+        value_json = value if isinstance(value, dict) else None
+
         existing = session.execute(
-            select(PrintFieldProvenance).where(
-                PrintFieldProvenance.print_id == print_id,
-                PrintFieldProvenance.field_name == field,
-                PrintFieldProvenance.source == source,
+            select(FieldProvenance).where(
+                FieldProvenance.entity_type == entity_type,
+                FieldProvenance.entity_id == entity_id,
+                FieldProvenance.field_name == field,
+                FieldProvenance.source == source,
             )
         ).scalar_one_or_none()
+
         if existing is None:
             session.add(
-                PrintFieldProvenance(
-                    print_id=print_id,
+                FieldProvenance(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
                     field_name=field,
                     source=source,
-                    value_text=value,
+                    value_text=value_text,
+                    value_json=value_json,
                     updated_at=now,
                 )
             )
         else:
-            existing.value_text = value
+            existing.value_text = value_text
+            existing.value_json = value_json
             existing.updated_at = now
 
         other = session.execute(
-            select(PrintFieldProvenance).where(
-                PrintFieldProvenance.print_id == print_id,
-                PrintFieldProvenance.field_name == field,
-                PrintFieldProvenance.source != source,
-                PrintFieldProvenance.value_text != value,
+            select(FieldProvenance).where(
+                FieldProvenance.entity_type == entity_type,
+                FieldProvenance.entity_id == entity_id,
+                FieldProvenance.field_name == field,
+                FieldProvenance.source != source,
+                FieldProvenance.value_text != value_text,
             )
         ).first()
         if other:

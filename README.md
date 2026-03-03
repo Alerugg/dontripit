@@ -165,3 +165,49 @@ Import steps:
 cd backend
 pytest -q
 ```
+
+## Data ingestion pipeline
+
+### Fixture local
+
+```bash
+cd backend
+python -m app.ingest.run fixture_local --path data/fixtures/pokemon_demo.json
+```
+
+### Reindex search documents
+
+```bash
+cd backend
+python -m app.scripts.reindex_search
+```
+
+### Scryfall MTG
+
+Fixture/offline mode:
+
+```bash
+cd backend
+python -m app.ingest.run scryfall_mtg --path data/fixtures/scryfall --fixture true --incremental false
+```
+
+Real API mode:
+
+```bash
+cd backend
+python -m app.ingest.run scryfall_mtg --set woe --limit 50 --fixture false --incremental true
+```
+
+### Inspect ingest state
+
+Requires API key with `read:admin`.
+
+- `GET /api/v1/admin/ingest/runs?source=fixture_local`
+- `GET /api/v1/admin/ingest/state?source=scryfall_mtg`
+- `GET /api/v1/admin/quality/summary`
+
+### Troubleshooting
+
+- Scryfall 429/5xx: connector retries with exponential backoff + request throttling.
+- Fixture path errors: verify path is relative to `backend/` or use absolute path.
+- Empty search results: run `python -m app.scripts.reindex_search` and retry `/api/search?q=pika`.
