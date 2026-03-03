@@ -93,3 +93,60 @@ def test_ingest_fixture_local_idempotent(client):
 
     assert print_count_first == print_count_second
     assert source_records_first == source_records_second
+
+
+def test_sets_list_200(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    response = client.get("/api/sets?game=pokemon")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+    assert any(item["code"] == "SV1" for item in payload)
+
+
+def test_print_detail_200(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_id = session.execute(select(Print.id).order_by(Print.id)).scalars().first()
+
+    response = client.get(f"/api/prints/{print_id}")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["print"]["id"] == print_id
+    assert payload["card"]["name"]
+    assert payload["set"]["code"]
+    assert isinstance(payload["images"], list)
+
+
+def test_search_returns_pikachu(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    response = client.get("/api/search?q=pika&game=pokemon&type=card")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any(item["type"] == "card" for item in payload)
+
+
+def test_search_returns_print_by_collector_number(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    response = client.get("/api/search?q=001&game=pokemon&type=print")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any(item["type"] == "print" and item.get("collector_number") == "001" for item in payload)
