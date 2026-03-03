@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, IngestRun, Print, SearchDocument, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, IngestRun, SearchDocument, Source, SourceRecord
 
 
 def _auth_headers(key: str = "admin-key", scopes: list[str] | None = None) -> dict[str, str]:
@@ -60,39 +60,50 @@ def test_reindex_search_populates_and_search_finds_pikachu(client):
     assert any("Pikachu" in item["title"] for item in payload)
 
 
-def test_scryfall_fixture_ingest_idempotent(client):
+def test_scryfall_bootstrap_when_incremental_true_on_empty_db(client):
+    connector = get_connector("scryfall_mtg")
+    with db.SessionLocal() as session:
+        stats = connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True, limit=5)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        source = session.execute(select(Source).where(Source.name == "scryfall_mtg")).scalar_one()
+        mtg_cards = session.execute(select(func.count(Card.id))).scalar_one()
+        source_records = session.execute(select(func.count(SourceRecord.id)).where(SourceRecord.source_id == source.id)).scalar_one()
+
+    assert stats.records_inserted > 0
+    assert mtg_cards > 0
+    assert source_records > 0
+
+
+def test_scryfall_fixture_incremental_idempotent_has_zero_second_run_changes(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
         connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
         session.commit()
 
     with db.SessionLocal() as session:
-        print_first = session.execute(select(func.count(Print.id))).scalar_one()
-        records_first = session.execute(select(func.count(SourceRecord.id))).scalar_one()
-
-    with db.SessionLocal() as session:
         connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
         session.commit()
 
     with db.SessionLocal() as session:
-        print_second = session.execute(select(func.count(Print.id))).scalar_one()
-        records_second = session.execute(select(func.count(SourceRecord.id))).scalar_one()
+        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
 
-    assert print_first == print_second
-    assert records_first == records_second
+    assert run.counts_json["inserted"] == 0
+    assert run.counts_json["updated"] == 0
 
 
-def test_scryfall_search_finds_fixture_card(client):
+def test_scryfall_search_finds_forest_after_ingest(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
         connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=False)
         session.commit()
 
-    response = client.get("/api/v1/search?q=lightning&game=mtg", headers=_auth_headers("mtg-search", ["read:catalog"]))
+    response = client.get("/api/v1/search?q=Forest&game=mtg", headers=_auth_headers("mtg-search", ["read:catalog"]))
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
-    assert any("Lightning Bolt" in item["title"] for item in payload)
+    assert any("Forest" in item["title"] for item in payload)
 
 
 def test_admin_requires_scope(client):
