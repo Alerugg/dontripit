@@ -17,6 +17,9 @@ export default function Home() {
         </Link>
       </p>
       <p className="text-sm opacity-70">Backend source: backend/app.py</p>
+      <Link href="/console" className="underline">
+        API Console
+      </Link>
     </main>
   )
 }

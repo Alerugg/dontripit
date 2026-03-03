@@ -5,11 +5,14 @@ import json
 import time
 from datetime import datetime, timezone
 
+import requests
+
 from app import db
 from app.ingest.registry import get_connector
 from app.scripts.reindex_search import rebuild_search_documents
 
 DEFAULT_POKEMON_SETS = ["base1", "sv1"]
+TCGDEX_SETS_ENDPOINT = "https://api.tcgdex.net/v2/en/sets"
 
 
 def _to_bool(value: str | bool) -> bool:
@@ -26,6 +29,42 @@ def _accumulate(target: dict[str, int], source: dict[str, int]) -> dict[str, int
     for key in target:
         target[key] += int(source.get(key, 0))
     return target
+
+
+def _parse_set_list(raw_sets: str | None) -> list[str]:
+    if not raw_sets:
+        return []
+    return [item.strip().lower() for item in raw_sets.split(",") if item.strip()]
+
+
+def _fetch_all_pokemon_sets() -> list[str]:
+    response = requests.get(TCGDEX_SETS_ENDPOINT, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    return [str(item.get("id", "")).lower() for item in payload if item.get("id")]
+
+
+def _resolve_pokemon_sets(args: argparse.Namespace, summary: dict) -> list[str | None]:
+    if args.pokemon_set:
+        return [args.pokemon_set.lower()]
+
+    if args.pokemon_sets:
+        return _parse_set_list(args.pokemon_sets)
+
+    if args.pokemon_all_sets:
+        try:
+            sets = _fetch_all_pokemon_sets()
+            summary["pokemon"]["set_source"] = "tcgdex"
+            return sets
+        except Exception as exc:  # noqa: BLE001
+            summary["pokemon"]["set_source"] = "default_fallback"
+            summary["pokemon"]["set_fetch_error"] = str(exc)
+            return DEFAULT_POKEMON_SETS
+
+    if args.pokemon_all:
+        return DEFAULT_POKEMON_SETS
+
+    return [None]
 
 
 def _run_connector(connector_name: str, path: str | None = None, **kwargs) -> dict:
@@ -60,27 +99,21 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     summary: dict = {
         "started_at": started_at.isoformat(),
         "incremental": bool(args.incremental),
+        "batch_size": args.batch_size,
         "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon), "runs": [], "totals": _empty_stats()},
         "mtg": {"ok": False, "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
     if not args.skip_pokemon:
-        pokemon_sets: list[str]
-        if args.pokemon_set:
-            pokemon_sets = [args.pokemon_set]
-        elif args.pokemon_all:
-            # TODO: fetch complete set list dynamically from TCGdex sets endpoint.
-            pokemon_sets = DEFAULT_POKEMON_SETS
-        else:
-            pokemon_sets = [None]
+        pokemon_sets = _resolve_pokemon_sets(args, summary)
 
         for pokemon_set in pokemon_sets:
             pokemon_run = _run_connector(
                 "tcgdex_pokemon",
                 args.path,
                 set=pokemon_set,
-                limit=args.pokemon_limit,
+                limit=args.batch_size,
                 incremental=args.incremental,
                 fixture=args.fixture,
             )
@@ -94,7 +127,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     mtg_run = _run_connector(
         "scryfall_mtg",
         args.path,
-        limit=args.mtg_limit,
+        limit=args.batch_size,
         incremental=args.incremental,
         fixture=args.fixture,
     )
@@ -123,8 +156,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily incremental refresh (Pokemon + MTG + reindex)")
     parser.add_argument("--path", default=None, help="Optional fixture path")
     parser.add_argument("--pokemon-set", default=None, help="Single Pokemon set code (ex: base1)")
+    parser.add_argument("--pokemon-sets", default=None, help="Comma-separated Pokemon set codes")
     parser.add_argument("--skip-pokemon", type=_to_bool, default=False, help="Skip Pokemon connector execution")
     parser.add_argument("--pokemon-all", type=_to_bool, default=False, help="Run a small curated list of Pokemon sets")
+    parser.add_argument("--pokemon-all-sets", type=_to_bool, default=False, help="Iterate all Pokemon sets from TCGdex")
+    parser.add_argument("--batch-size", type=int, default=200, help="Max records per connector call")
     parser.add_argument("--pokemon-limit", type=int, default=200)
     parser.add_argument("--mtg-limit", type=int, default=200)
     parser.add_argument("--incremental", type=_to_bool, default=True)
@@ -132,10 +168,18 @@ def main() -> int:
     parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Sleep between remote connector calls")
     args = parser.parse_args()
 
+    if args.batch_size <= 0:
+        args.batch_size = 200
+
     db.init_engine()
-    summary = run_daily_refresh(args)
+    summary = {"exit_code": 1, "error": "daily_refresh_failed"}
+    try:
+        summary = run_daily_refresh(args)
+    except Exception as exc:  # noqa: BLE001
+        summary["detail"] = str(exc)
+
     print(json.dumps(summary, ensure_ascii=False))
-    return int(summary["exit_code"])
+    return int(summary.get("exit_code", 1))
 
 
 if __name__ == "__main__":

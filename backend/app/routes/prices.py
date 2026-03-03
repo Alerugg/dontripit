@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy import func, select
 
 from app import db
-from app.models import Game, PriceDailyOHLC, PriceSnapshot, PriceSource, Print, ProductVariant, Set
+from app.models import Card, Game, Price, PriceDailyOHLC, PriceSnapshot, PriceSource, Print, ProductVariant, Set
 
 prices_bp = Blueprint("prices", __name__)
 
@@ -34,6 +34,56 @@ def _resolve_entity(entity_type: str, entity_id: int):
 @prices_bp.get("/api/v1/prices")
 def get_prices():
     entity_type = (request.args.get("entity_type") or "").strip()
+    if not entity_type:
+        game = (request.args.get("game") or "").strip()
+        q = (request.args.get("q") or "").strip()
+        source_name = (request.args.get("source") or "").strip()
+        limit = request.args.get("limit", default=20, type=int)
+        limit = max(1, min(limit, 200))
+
+        with db.SessionLocal() as session:
+            stmt = (
+                select(
+                    Price.id,
+                    Game.slug.label("game"),
+                    Price.card_id,
+                    Card.name.label("card_name"),
+                    Price.print_id,
+                    Price.price,
+                    Price.currency,
+                    Price.captured_at,
+                    PriceSource.name.label("source"),
+                )
+                .join(Game, Game.id == Price.game_id)
+                .join(PriceSource, PriceSource.id == Price.source_id)
+                .outerjoin(Card, Card.id == Price.card_id)
+                .order_by(Price.captured_at.desc())
+                .limit(limit)
+            )
+            if game:
+                stmt = stmt.where(Game.slug == game)
+            if source_name:
+                stmt = stmt.where(PriceSource.name == source_name)
+            if q:
+                stmt = stmt.where(Card.name.ilike(f"%{q}%"))
+
+            rows = session.execute(stmt).mappings().all()
+
+        return jsonify([
+            {
+                "id": row["id"],
+                "game": row["game"],
+                "card_id": row["card_id"],
+                "card_name": row["card_name"],
+                "print_id": row["print_id"],
+                "price": float(row["price"]),
+                "currency": row["currency"],
+                "captured_at": row["captured_at"].isoformat(),
+                "source": row["source"],
+            }
+            for row in rows
+        ])
+
     entity_id = request.args.get("entity_id", type=int)
     if entity_type not in {"print", "product_variant"}:
         return _json_error("invalid_params", "entity_type must be print|product_variant", 400)

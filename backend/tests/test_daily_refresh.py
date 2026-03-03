@@ -49,8 +49,12 @@ def _args(**overrides):
         "path": "backend/data/fixtures",
         "pokemon_set": None,
         "pokemon_all": False,
+        "pokemon_all_sets": False,
+        "pokemon_sets": None,
+        "batch_size": 5,
         "pokemon_limit": 5,
         "mtg_limit": 5,
+        "skip_pokemon": False,
         "incremental": True,
         "fixture": True,
         "sleep_seconds": 0,
@@ -91,3 +95,21 @@ def test_daily_refresh_exits_non_zero_when_both_connectors_fail(monkeypatch):
     assert summary["pokemon"]["ok"] is False
     assert summary["mtg"]["ok"] is False
     assert summary["exit_code"] == 1
+
+
+def test_daily_refresh_supports_explicit_pokemon_sets(monkeypatch):
+    calls = []
+
+    def fake_get_connector(name):
+        return _FakeConnector(name=name, calls=calls)
+
+    monkeypatch.setattr(daily_refresh.db, "SessionLocal", _FakeSessionFactory())
+    monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
+    monkeypatch.setattr(daily_refresh, "rebuild_search_documents", lambda session: {"cards": 0, "sets": 0, "prints": 0})
+
+    summary = daily_refresh.run_daily_refresh(_args(pokemon_sets="base1,sv1", batch_size=7))
+
+    pokemon_calls = [call for call in calls if call["name"] == "tcgdex_pokemon"]
+    assert [call["kwargs"]["set"] for call in pokemon_calls] == ["base1", "sv1"]
+    assert all(call["kwargs"]["limit"] == 7 for call in pokemon_calls)
+    assert summary["batch_size"] == 7

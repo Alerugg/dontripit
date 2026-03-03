@@ -171,7 +171,8 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/products/1
 - `GET /api/v1/products`
 - `GET /api/v1/products/<id>`
 - `GET /api/v1/product-variants?product_id=<id>`
-- `GET /api/v1/prices?entity_type=print|product_variant&entity_id=<id>&source=<name>&currency=<code>`
+- `GET /api/v1/prices?game=<slug>&q=<name>&source=<name>&limit=<N>` (placeholder skeleton)
+- `GET /api/v1/prices?entity_type=print|product_variant&entity_id=<id>&source=<name>&currency=<code>` (legacy enriched series)
 - `GET /api/v1/index?game=<slug>&set_code=<code>&source=<name>&currency=<code>&metric=median|mean`
 - `GET /api/v1/admin/prices/last?source=<name>` (requires `read:admin`)
 - `GET /api/v1/admin/metrics` (requires `read:admin`)
@@ -228,10 +229,13 @@ python -m app.scripts.reindex_search
 cd backend
 
 # Incremental refresh for one Pokemon set + Scryfall + reindex
-python -m app.scripts.daily_refresh --pokemon-set base1 --pokemon-limit 200 --mtg-limit 200 --incremental true
+python -m app.scripts.daily_refresh --pokemon-set base1 --batch-size 200 --incremental true
 
-# Incremental refresh with curated Pokemon set list (currently base1 + sv1)
-python -m app.scripts.daily_refresh --pokemon-all true --pokemon-limit 200 --mtg-limit 200 --incremental true
+# Incremental refresh with lista explícita de sets Pokemon
+python -m app.scripts.daily_refresh --pokemon-sets "base1,sv1" --batch-size 200 --incremental true
+
+# Backfill de todos los sets Pokemon en batches controlados
+python -m app.scripts.daily_refresh --pokemon-all-sets true --batch-size 200 --incremental false
 ```
 
 
@@ -448,3 +452,14 @@ curl -i http://localhost:5000/api/v1/health
 # smoke: games (requiere API key)
 curl -i -H "X-API-Key: <key>" http://localhost:5000/api/v1/games
 ```
+
+
+## Frontend API Console (/console)
+
+La ruta `http://localhost:3000/console` permite probar endpoints sin Postman:
+
+- Guarda la API key en `localStorage` (solo navegador local).
+- Acciones rápidas: **Health**, **Games**, **Search**, **Cards**, **Prints**.
+- Muestra URL llamada, status code, latencia (ms), JSON pretty y errores claros.
+- Usa el mismo proxy `/api/*` de Next, respetando `BACKEND_URL` / `BACKEND_INTERNAL_URL` vía `next.config.js`.
+
