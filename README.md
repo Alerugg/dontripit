@@ -132,6 +132,9 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/games
 # admin metrics with admin scope => 200
 curl -H "X-API-Key: <admin_key>" http://localhost:3000/api/v1/admin/metrics
 
+# ingest status by source/game with admin scope => 200
+curl -H "X-API-Key: <admin_key>" http://localhost:3000/api/v1/admin/ingest-status
+
 # sealed products list (paginated + filters)
 curl -H "X-API-Key: <key>" "http://localhost:3000/api/v1/products?game=pokemon&set_code=SV1&type=booster_box&limit=20&offset=0"
 
@@ -172,6 +175,7 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/products/1
 - `GET /api/v1/index?game=<slug>&set_code=<code>&source=<name>&currency=<code>&metric=median|mean`
 - `GET /api/v1/admin/prices/last?source=<name>` (requires `read:admin`)
 - `GET /api/v1/admin/metrics` (requires `read:admin`)
+- `GET /api/v1/admin/ingest-status` (requires `read:admin`)
 - `GET /api/v1/docs`
 - `GET /api/v1/openapi.json`
 

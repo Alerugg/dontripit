@@ -245,6 +245,34 @@ def test_metrics_allows_admin_scope(client):
     assert "top_api_keys_month" in payload
 
 
+def test_admin_ingest_status_allows_admin_scope(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    response = client.get("/api/v1/admin/ingest-status", headers=_auth_headers("admin-ing", ["read:catalog", "read:admin"]))
+    assert response.status_code == 200
+
+    payload = response.get_json()
+    assert set(payload.keys()) == {"sources", "games", "now"}
+    assert isinstance(payload["sources"], list)
+    assert isinstance(payload["games"], list)
+
+    if payload["sources"]:
+        assert set(payload["sources"][0].keys()) == {"name", "last_run_at", "records"}
+    if payload["games"]:
+        assert set(payload["games"][0].keys()) == {"slug", "cards", "sets", "prints"}
+
+
+def test_admin_ingest_status_requires_key(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    response = client.get("/api/v1/admin/ingest-status")
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "missing_api_key"}
+
+
 def test_create_key_cli_creates_record(client, monkeypatch, capsys):
     with db.SessionLocal() as session:
         session.add(ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60))
