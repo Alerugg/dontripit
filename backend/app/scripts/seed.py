@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
 from app import db
+from app.auth.service import ensure_default_plans
 from app.models import Game, Source
 
 SEED_GAMES = [
@@ -14,6 +15,8 @@ def run_seed() -> int:
     inserted = 0
 
     with db.SessionLocal() as session:
+        inserted += ensure_default_plans(session)
+
         for item in SEED_GAMES:
             exists = session.execute(select(Game).where(Game.slug == item["slug"])).scalar_one_or_none()
             if exists:

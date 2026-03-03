@@ -104,3 +104,37 @@ class SourceRecord(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     raw_json: Mapped[dict] = mapped_column(json_type, nullable=False)
     ingested_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApiPlan(Base):
+    __tablename__ = "api_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    monthly_quota_requests: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    burst_rpm: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    prefix: Mapped[str] = mapped_column(String(8), index=True, nullable=False)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("api_plans.id"), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", default=True)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_used_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApiUsage(Base):
+    __tablename__ = "api_usage"
+    __table_args__ = (UniqueConstraint("api_key_id", "period_ym", name="uq_api_usage_key_period"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    api_key_id: Mapped[int] = mapped_column(ForeignKey("api_keys.id"), nullable=False, index=True)
+    period_ym: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_request_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

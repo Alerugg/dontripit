@@ -1,8 +1,10 @@
 from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
 
+from app.auth import register_api_product_middleware
 from app.db import init_engine
 from app.routes.catalog import catalog_bp
+from app.routes.docs import docs_bp
 from app.routes.games import games_bp
 from app.routes.health import health_bp
 from app.routes.search import search_bp
@@ -15,6 +17,8 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(games_bp)
     flask_app.register_blueprint(catalog_bp)
     flask_app.register_blueprint(search_bp)
+    flask_app.register_blueprint(docs_bp)
+    register_api_product_middleware(flask_app)
 
     @flask_app.errorhandler(HTTPException)
     def handle_http_error(error: HTTPException):
