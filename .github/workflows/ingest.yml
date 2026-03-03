@@ -48,5 +48,8 @@ jobs:
           echo "Using fixture path: ${INGEST_PATH}"
           python -m app.ingest.run fixture_local --path "${INGEST_PATH}"
 
+      - name: Run Scryfall MTG incremental ingest
+        run: python -m app.ingest.run scryfall_mtg --incremental true --limit 500 || true
+
       - name: Reindex search
         run: python -m app.scripts.reindex_search

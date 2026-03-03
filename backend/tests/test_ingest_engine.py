@@ -63,7 +63,7 @@ def test_reindex_search_populates_and_search_finds_pikachu(client):
 def test_scryfall_fixture_ingest_idempotent(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/scryfall", fixture=True, incremental=False)
+        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
         session.commit()
 
     with db.SessionLocal() as session:
@@ -71,7 +71,7 @@ def test_scryfall_fixture_ingest_idempotent(client):
         records_first = session.execute(select(func.count(SourceRecord.id))).scalar_one()
 
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/scryfall", fixture=True, incremental=False)
+        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
         session.commit()
 
     with db.SessionLocal() as session:
@@ -80,6 +80,19 @@ def test_scryfall_fixture_ingest_idempotent(client):
 
     assert print_first == print_second
     assert records_first == records_second
+
+
+def test_scryfall_search_finds_fixture_card(client):
+    connector = get_connector("scryfall_mtg")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=lightning&game=mtg", headers=_auth_headers("mtg-search", ["read:catalog"]))
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any("Lightning Bolt" in item["title"] for item in payload)
 
 
 def test_admin_requires_scope(client):

@@ -44,17 +44,24 @@ class Set(Base):
 
 class Card(Base):
     __tablename__ = "cards"
-    __table_args__ = (UniqueConstraint("game_id", "name", name="uq_cards_game_name"),)
+    __table_args__ = (
+        UniqueConstraint("game_id", "name", name="uq_cards_game_name"),
+        UniqueConstraint("game_id", "oracle_id", name="uq_cards_game_oracle"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    oracle_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Print(Base):
     __tablename__ = "prints"
-    __table_args__ = (UniqueConstraint("set_id", "card_id", "collector_number", name="uq_print_identity"),)
+    __table_args__ = (
+        UniqueConstraint("set_id", "card_id", "collector_number", name="uq_print_identity"),
+        UniqueConstraint("scryfall_id", name="uq_prints_scryfall_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     set_id: Mapped[int] = mapped_column(ForeignKey("sets.id"), nullable=False, index=True)
@@ -63,6 +70,7 @@ class Print(Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     rarity: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_foil: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    scryfall_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
