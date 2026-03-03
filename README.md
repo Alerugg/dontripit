@@ -277,7 +277,7 @@ Fixture/offline mode:
 
 ```bash
 cd backend
-python -m app.ingest.run tcgdex_pokemon --fixture true --path data/tcgdex_pokemon_sample.json --incremental false
+python -m app.ingest.run tcgdex_pokemon --fixture true --path data/fixtures --incremental false
 ```
 
 Real API mode:

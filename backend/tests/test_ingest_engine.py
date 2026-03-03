@@ -194,6 +194,40 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
     assert card_backfills >= 1 or print_backfills >= 1
 
 
+def test_tcgdex_fixture_path_resolution_prefers_data_fixtures_layout(client, monkeypatch, tmp_path):
+    connector = get_connector("tcgdex_pokemon")
+
+    backend_root = tmp_path / "backend"
+    connectors_dir = backend_root / "app" / "ingest" / "connectors"
+    connectors_dir.mkdir(parents=True)
+
+    payload = '{"cards": [{"id": "pikachu"}]}'
+    (backend_root / "data" / "fixtures").mkdir(parents=True)
+    (backend_root / "data" / "fixtures" / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+
+    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+
+    default_payloads = connector.load(None, fixture=True, limit=1)
+    assert default_payloads
+
+
+def test_tcgdex_fixture_path_resolution_supports_repo_backend_data_fixtures_layout(client, monkeypatch, tmp_path):
+    connector = get_connector("tcgdex_pokemon")
+
+    backend_root = tmp_path / "backend"
+    connectors_dir = backend_root / "app" / "ingest" / "connectors"
+    connectors_dir.mkdir(parents=True)
+
+    payload = '{"cards": [{"id": "charizard"}]}'
+    (tmp_path / "backend" / "data" / "fixtures").mkdir(parents=True)
+    (tmp_path / "backend" / "data" / "fixtures" / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+
+    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+
+    default_payloads = connector.load(None, fixture=True, limit=1)
+    assert default_payloads
+
+
 def test_tcgdex_fixture_path_resolution_default_none(client):
     connector = get_connector("tcgdex_pokemon")
 

@@ -170,11 +170,20 @@ class TcgdexPokemonConnector(SourceConnector):
         fixture_name = "tcgdex_pokemon_sample.json"
         backend_root = Path(__file__).resolve().parents[3]
         repo_root = backend_root.parent
+        data_fixtures_relative = Path("data") / "fixtures" / fixture_name
+        data_relative = Path("data") / fixture_name
+        backend_data_fixtures_relative = Path("backend") / "data" / "fixtures" / fixture_name
+        backend_data_relative = Path("backend") / "data" / fixture_name
+
         default_candidates = [
-            backend_root / "data" / fixture_name,
-            backend_root / "data" / "fixtures" / fixture_name,
-            repo_root / "data" / fixture_name,
-            repo_root / "data" / "fixtures" / fixture_name,
+            backend_root / data_fixtures_relative,
+            backend_root / backend_data_fixtures_relative,
+            backend_root / data_relative,
+            backend_root / backend_data_relative,
+            repo_root / data_fixtures_relative,
+            repo_root / backend_data_fixtures_relative,
+            repo_root / data_relative,
+            repo_root / backend_data_relative,
         ]
 
         attempted_paths: list[Path] = []
@@ -223,7 +232,11 @@ class TcgdexPokemonConnector(SourceConnector):
             )
 
         raw_path = Path(path)
-        candidate_paths: list[Path] = [raw_path] if raw_path.is_absolute() else [raw_path, repo_root / raw_path, backend_root / raw_path]
+        candidate_paths: list[Path] = (
+            [raw_path]
+            if raw_path.is_absolute()
+            else [raw_path, backend_root / raw_path, repo_root / raw_path]
+        )
 
         for candidate in candidate_paths:
             resolved = _resolve_candidate(candidate)
