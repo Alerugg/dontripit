@@ -167,16 +167,47 @@ class TcgdexPokemonConnector(SourceConnector):
         return payloads
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
+        fixture_name = "tcgdex_pokemon_sample.json"
+        backend_root = Path(__file__).resolve().parents[3]
+        repo_root = backend_root.parent
+        default_fixture = backend_root / "data" / "fixtures" / fixture_name
+
         if path is None:
-            return Path(__file__).resolve().parents[3] / "data" / "fixtures" / "tcgdex_pokemon_sample.json"
-        candidate = Path(path)
-        if candidate.exists():
-            return candidate
-        repo_root = Path(__file__).resolve().parents[3]
-        for option in (repo_root / str(path), repo_root / "backend" / str(path)):
-            if option.exists():
-                return option
-        return candidate
+            if default_fixture.is_file():
+                return default_fixture
+            raise ValueError(
+                "tcgdex_pokemon fixture file not found. Attempted paths: "
+                f"{default_fixture}"
+            )
+
+        raw_path = Path(path)
+        candidate_paths: list[Path] = [raw_path] if raw_path.is_absolute() else [raw_path, repo_root / raw_path, backend_root / raw_path]
+
+        attempted_paths: list[Path] = []
+        seen: set[Path] = set()
+
+        def _record(candidate: Path) -> None:
+            if candidate in seen:
+                return
+            seen.add(candidate)
+            attempted_paths.append(candidate)
+
+        for candidate in candidate_paths:
+            _record(candidate)
+            if candidate.is_file():
+                return candidate
+            if candidate.is_dir():
+                fixture_candidate = candidate / fixture_name
+                _record(fixture_candidate)
+                if fixture_candidate.is_file():
+                    return fixture_candidate
+
+        attempted_display = ", ".join(str(item) for item in attempted_paths)
+        raise ValueError(
+            "Unable to resolve tcgdex_pokemon fixture path. "
+            "Provide a valid fixture file or directory containing tcgdex_pokemon_sample.json. "
+            f"Attempted paths: {attempted_display}"
+        )
 
     def _load_fixture(self, fixture_path: Path, limit: int | None) -> list[dict]:
         payload = json.loads(fixture_path.read_text(encoding="utf-8"))

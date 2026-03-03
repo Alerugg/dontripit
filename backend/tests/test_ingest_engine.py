@@ -192,3 +192,20 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
     assert stats.records_updated > 0
     assert set_backfills >= 1
     assert card_backfills >= 1 or print_backfills >= 1
+
+
+def test_tcgdex_fixture_path_resolution_variants(client):
+    connector = get_connector("tcgdex_pokemon")
+
+    default_payloads = connector.load(None, fixture=True, limit=1)
+    assert default_payloads
+
+    from_directory_payloads = connector.load("backend/data/fixtures", fixture=True, limit=1)
+    assert from_directory_payloads
+
+    from_file_payloads = connector.load(
+        "backend/data/fixtures/tcgdex_pokemon_sample.json",
+        fixture=True,
+        limit=1,
+    )
+    assert from_file_payloads

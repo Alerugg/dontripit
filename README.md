@@ -271,6 +271,22 @@ cd backend
 python -m app.ingest.run scryfall_mtg --set woe --limit 50 --fixture false --incremental true
 ```
 
+### TCGdex Pokémon
+
+Fixture/offline mode:
+
+```bash
+cd backend
+python -m app.ingest.run tcgdex_pokemon --fixture true --path data/fixtures/tcgdex_pokemon_sample.json --incremental false
+```
+
+Real API mode:
+
+```bash
+cd backend
+python -m app.ingest.run tcgdex_pokemon --fixture false --limit 50 --incremental true
+```
+
 
 ### Price snapshots ingestion (fixtures)
 
