@@ -60,35 +60,36 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     summary: dict = {
         "started_at": started_at.isoformat(),
         "incremental": bool(args.incremental),
-        "pokemon": {"ok": False, "runs": [], "totals": _empty_stats()},
+        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon), "runs": [], "totals": _empty_stats()},
         "mtg": {"ok": False, "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
-    pokemon_sets: list[str]
-    if args.pokemon_set:
-        pokemon_sets = [args.pokemon_set]
-    elif args.pokemon_all:
-        # TODO: fetch complete set list dynamically from TCGdex sets endpoint.
-        pokemon_sets = DEFAULT_POKEMON_SETS
-    else:
-        pokemon_sets = [None]
+    if not args.skip_pokemon:
+        pokemon_sets: list[str]
+        if args.pokemon_set:
+            pokemon_sets = [args.pokemon_set]
+        elif args.pokemon_all:
+            # TODO: fetch complete set list dynamically from TCGdex sets endpoint.
+            pokemon_sets = DEFAULT_POKEMON_SETS
+        else:
+            pokemon_sets = [None]
 
-    for pokemon_set in pokemon_sets:
-        pokemon_run = _run_connector(
-            "tcgdex_pokemon",
-            args.path,
-            set=pokemon_set,
-            limit=args.pokemon_limit,
-            incremental=args.incremental,
-            fixture=args.fixture,
-        )
-        pokemon_run["set"] = pokemon_set
-        summary["pokemon"]["runs"].append(pokemon_run)
-        _accumulate(summary["pokemon"]["totals"], pokemon_run["stats"])
-        if pokemon_run["ok"]:
-            summary["pokemon"]["ok"] = True
-        time.sleep(max(args.sleep_seconds, 0))
+        for pokemon_set in pokemon_sets:
+            pokemon_run = _run_connector(
+                "tcgdex_pokemon",
+                args.path,
+                set=pokemon_set,
+                limit=args.pokemon_limit,
+                incremental=args.incremental,
+                fixture=args.fixture,
+            )
+            pokemon_run["set"] = pokemon_set
+            summary["pokemon"]["runs"].append(pokemon_run)
+            _accumulate(summary["pokemon"]["totals"], pokemon_run["stats"])
+            if pokemon_run["ok"]:
+                summary["pokemon"]["ok"] = True
+            time.sleep(max(args.sleep_seconds, 0))
 
     mtg_run = _run_connector(
         "scryfall_mtg",
@@ -122,6 +123,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily incremental refresh (Pokemon + MTG + reindex)")
     parser.add_argument("--path", default=None, help="Optional fixture path")
     parser.add_argument("--pokemon-set", default=None, help="Single Pokemon set code (ex: base1)")
+    parser.add_argument("--skip-pokemon", type=_to_bool, default=False, help="Skip Pokemon connector execution")
     parser.add_argument("--pokemon-all", type=_to_bool, default=False, help="Run a small curated list of Pokemon sets")
     parser.add_argument("--pokemon-limit", type=int, default=200)
     parser.add_argument("--mtg-limit", type=int, default=200)

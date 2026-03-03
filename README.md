@@ -301,6 +301,31 @@ gh workflow run ingest.yml \
 ```
 
 
+Ejemplos manuales (safe by default):
+
+```bash
+# Solo MTG + reindex (sin ingest de Pokemon)
+gh workflow run ingest.yml \
+  -f pokemon_set= \
+  -f pokemon_limit=200 \
+  -f mtg_limit=200 \
+  -f incremental=true
+
+# Pokemon set específico + MTG + reindex
+gh workflow run ingest.yml \
+  -f pokemon_set=base1 \
+  -f pokemon_limit=200 \
+  -f mtg_limit=200 \
+  -f incremental=true
+```
+
+Interpretación de `set: null` en el summary JSON:
+
+- `set: null` significa que el conector de Pokémon corrió sin filtrar por set explícito (modo por defecto del conector cuando no se pasa `--pokemon-set`).
+- En `workflow_dispatch` con `pokemon_set` vacío, ahora el workflow no ejecuta Pokémon y verás `pokemon.skipped: true` y `runs: []`.
+- En `schedule`, se mantiene el default `pokemon_set=base1`, por lo que el summary debería mostrar `set: "base1"`.
+
+
 ### Scryfall MTG
 
 Fixture/offline mode:

@@ -28,6 +28,7 @@ on:
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -79,12 +80,14 @@ jobs:
           MTG_LIMIT="${MTG_LIMIT_INPUT:-200}"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
 
+          SKIP_POKEMON="false"
           if [ -n "${POKEMON_SET_INPUT}" ]; then
             POKEMON_SET="${POKEMON_SET_INPUT}"
           elif [ "${EVENT_NAME}" = "schedule" ]; then
             POKEMON_SET="base1"
           else
             POKEMON_SET=""
+            SKIP_POKEMON="true"
           fi
 
           ARGS=(
@@ -95,24 +98,22 @@ jobs:
           if [ -n "${POKEMON_SET}" ]; then
             ARGS+=(--pokemon-set "${POKEMON_SET}")
           fi
+          if [ "${SKIP_POKEMON}" = "true" ]; then
+            ARGS+=(--skip-pokemon true)
+          fi
 
           echo "Resolved ARGS:"
           printf '  %q' "${ARGS[@]}"
           echo
 
           STDOUT_FILE="$(mktemp)"
-          STDERR_FILE="$(mktemp)"
 
           set +e
-          python -m app.scripts.daily_refresh "${ARGS[@]}" > "${STDOUT_FILE}" 2> "${STDERR_FILE}"
+          python -u -m app.scripts.daily_refresh "${ARGS[@]}" \
+            > >(tee "${STDOUT_FILE}") \
+            2> >(tee /dev/stderr)
           CMD_STATUS=$?
           set -e
-
-          echo "daily_refresh stdout:"
-          cat "${STDOUT_FILE}"
-
-          echo "daily_refresh stderr:"
-          cat "${STDERR_FILE}"
 
           if [ -s "${STDOUT_FILE}" ]; then
             echo "Daily refresh summary (pretty):"
