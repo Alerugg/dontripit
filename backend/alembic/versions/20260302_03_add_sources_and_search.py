@@ -14,11 +14,11 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "20260302_03"
-down_revision: Union[str, None] = "20260302_02docker compose exec backend alembic upgrade head"
+down_revision: Union[str, None] = "20260302_02"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
+down_revision: Union[str, None] = "20260302_02"
 def upgrade() -> None:
     op.create_table(
         "sources",
