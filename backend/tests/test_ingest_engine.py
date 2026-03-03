@@ -109,3 +109,49 @@ def test_scryfall_search_finds_forest_after_ingest(client):
 def test_admin_requires_scope(client):
     response = client.get("/api/v1/admin/ingest/runs", headers=_auth_headers("catalog-only", ["read:catalog"]))
     assert response.status_code == 403
+
+
+def test_tcgdex_bootstrap_incremental_inserts_pokemon(client):
+    connector = get_connector("tcgdex_pokemon")
+    with db.SessionLocal() as session:
+        stats = connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True, limit=5)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        source = session.execute(select(Source).where(Source.name == "tcgdex_pokemon")).scalar_one()
+        pokemon_cards = session.execute(select(func.count(Card.id))).scalar_one()
+        source_records = session.execute(select(func.count(SourceRecord.id)).where(SourceRecord.source_id == source.id)).scalar_one()
+
+    assert stats.records_inserted > 0
+    assert pokemon_cards > 0
+    assert source_records > 0
+
+
+def test_tcgdex_fixture_incremental_idempotent_has_zero_second_run_changes(client):
+    connector = get_connector("tcgdex_pokemon")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
+
+    assert run.counts_json["inserted"] == 0
+    assert run.counts_json["updated"] == 0
+
+
+def test_tcgdex_search_finds_pikachu_after_ingest(client):
+    connector = get_connector("tcgdex_pokemon")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=Pikachu&game=pokemon", headers=_auth_headers("pokemon-search", ["read:catalog"]))
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any("Pikachu" in item["title"] for item in payload)
