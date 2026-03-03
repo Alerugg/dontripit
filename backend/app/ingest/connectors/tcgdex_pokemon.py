@@ -14,6 +14,78 @@ from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, Sour
 
 
 class TcgdexPokemonConnector(SourceConnector):
+    def _find_pokemon_game(self, session) -> Game | None:
+        return session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+
+    def _find_set(self, session, game_id: int, set_payload: dict) -> Set | None:
+        set_code = (set_payload.get("code") or "").lower()
+        set_tcgdex_id = (set_payload.get("tcgdex_id") or "").strip()
+
+        if set_tcgdex_id:
+            row = session.execute(select(Set).where(Set.game_id == game_id, Set.tcgdex_id == set_tcgdex_id)).scalar_one_or_none()
+            if row is not None:
+                return row
+        if set_code:
+            row = session.execute(select(Set).where(Set.game_id == game_id, Set.code == set_code)).scalar_one_or_none()
+            if row is not None:
+                return row
+
+        set_name = (set_payload.get("name") or "").strip()
+        if set_name:
+            return session.execute(select(Set).where(Set.game_id == game_id, Set.name == set_name)).scalar_one_or_none()
+        return None
+
+    def _find_card(self, session, game_id: int, card_payload: dict) -> Card | None:
+        card_name = (card_payload.get("name") or "").strip()
+        tcgdex_card_id = (card_payload.get("id") or "").strip()
+        if tcgdex_card_id:
+            row = session.execute(select(Card).where(Card.game_id == game_id, Card.tcgdex_id == tcgdex_card_id)).scalar_one_or_none()
+            if row is not None:
+                return row
+        if card_name:
+            return session.execute(select(Card).where(Card.game_id == game_id, Card.name == card_name)).scalar_one_or_none()
+        return None
+
+    def _find_print(self, session, set_id: int, card_id: int, collector_number: str, tcgdex_print_id: str | None) -> Print | None:
+        if tcgdex_print_id:
+            row = session.execute(select(Print).where(Print.tcgdex_id == tcgdex_print_id)).scalar_one_or_none()
+            if row is not None:
+                return row
+        return session.execute(
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.card_id == card_id,
+                Print.collector_number == collector_number,
+            )
+        ).scalar_one_or_none()
+
+    def _can_backfill_tcgdex_ids(self, session, normalized_payload: dict) -> bool:
+        game = self._find_pokemon_game(session)
+        if game is None:
+            return False
+
+        set_payload = normalized_payload.get("set") or {}
+        card_payload = normalized_payload.get("card") or {}
+        set_row = self._find_set(session, game.id, set_payload)
+        set_tcgdex_id = (set_payload.get("tcgdex_id") or "").strip()
+        if set_row is not None and set_tcgdex_id and not (set_row.tcgdex_id or "").strip():
+            return True
+
+        card_row = self._find_card(session, game.id, card_payload)
+        tcgdex_card_id = (card_payload.get("id") or "").strip()
+        if card_row is not None and tcgdex_card_id and not (card_row.tcgdex_id or "").strip():
+            return True
+
+        collector_number = (card_payload.get("collector_number") or "").strip()
+        if set_row is None or card_row is None or not collector_number:
+            return False
+
+        print_row = self._find_print(session, set_row.id, card_row.id, collector_number, tcgdex_card_id or None)
+        if print_row is not None and tcgdex_card_id and not (print_row.tcgdex_id or "").strip():
+            return True
+
+        return False
+
     def _as_str(self, v):
         """Coerce API values to string safely."""
         if v is None:
@@ -52,15 +124,21 @@ class TcgdexPokemonConnector(SourceConnector):
     def should_skip_existing_record(self, existing_record: SourceRecord, **kwargs) -> bool:
         payload = existing_record.raw_json or {}
         card_id = (payload.get("id") or "").strip()
-        if not card_id:
-            self.logger.info("ingest tcgdex checksum hit without card id; reason=existing_by_checksum")
-            return True
 
         session = kwargs.get("session")
         if session is None:
             return True
 
-        game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+        normalized = self.normalize(payload, **kwargs)
+        if self._can_backfill_tcgdex_ids(session, normalized):
+            self.logger.info("ingest tcgdex checksum hit; reason=backfill_possible card_id=%s", card_id or "<missing>")
+            return False
+
+        if not card_id:
+            self.logger.info("ingest tcgdex skip reason=existing_by_checksum_no_card_id")
+            return True
+
+        game = self._find_pokemon_game(session)
         if game is None:
             return False
 
@@ -70,6 +148,7 @@ class TcgdexPokemonConnector(SourceConnector):
         if already_linked:
             self.logger.info("ingest skip connector=%s reason=existing_by_id tcgdex_card_id=%s", self.name, card_id)
             return True
+        self.logger.info("ingest tcgdex checksum hit; reason=existing_by_checksum_but_not_linked card_id=%s", card_id)
         return False
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
@@ -168,7 +247,7 @@ class TcgdexPokemonConnector(SourceConnector):
         }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
-        game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+        game = self._find_pokemon_game(session)
         if game is None:
             game = Game(slug="pokemon", name="Pokémon")
             session.add(game)
@@ -182,16 +261,7 @@ class TcgdexPokemonConnector(SourceConnector):
             return {}
 
         release_date = date.fromisoformat(set_payload["released_at"]) if set_payload.get("released_at") else None
-        set_row = None
-        if set_tcgdex_id:
-            set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.tcgdex_id == set_tcgdex_id)).scalar_one_or_none()
-        if set_row is None and set_code:
-            set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
-
-        if set_row is None and set_payload.get("name"):
-            set_row = session.execute(
-                select(Set).where(Set.game_id == game.id, Set.name == set_payload.get("name"))
-            ).scalar_one_or_none()
+        set_row = self._find_set(session, game.id, set_payload)
 
         if set_row is None:
             set_row = Set(
@@ -206,6 +276,10 @@ class TcgdexPokemonConnector(SourceConnector):
             stats.records_inserted += 1
         else:
             changed = False
+            backfilled_set_id = False
+            if set_code and set_row.code != set_code:
+                set_row.code = set_code
+                changed = True
             new_name = set_payload.get("name")
             if new_name and set_row.name != new_name:
                 set_row.name = new_name
@@ -214,10 +288,17 @@ class TcgdexPokemonConnector(SourceConnector):
                 set_row.release_date = release_date
                 changed = True
             if set_tcgdex_id and set_row.tcgdex_id != set_tcgdex_id:
+                backfilled_set_id = not (set_row.tcgdex_id or "").strip()
                 set_row.tcgdex_id = set_tcgdex_id
                 changed = True
             if changed:
                 stats.records_updated += 1
+                if backfilled_set_id:
+                    self.logger.info("ingest backfill set tcgdex_id set_code=%s tcgdex_id=%s", set_row.code, set_tcgdex_id)
+                else:
+                    self.logger.info("ingest update set set_code=%s tcgdex_id=%s", set_row.code, set_row.tcgdex_id)
+            else:
+                self.logger.info("ingest skip set already has tcgdex_id set_code=%s tcgdex_id=%s", set_row.code, set_row.tcgdex_id)
 
         card_payload = payload.get("card") or {}
         card_name = (card_payload.get("name") or "").strip()
@@ -225,11 +306,7 @@ class TcgdexPokemonConnector(SourceConnector):
         if not card_name:
             return {}
 
-        card_row = None
-        if tcgdex_card_id:
-            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.tcgdex_id == tcgdex_card_id)).scalar_one_or_none()
-        if card_row is None:
-            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.name == card_name)).scalar_one_or_none()
+        card_row = self._find_card(session, game.id, card_payload)
 
         if card_row is None:
             card_row = Card(game_id=game.id, name=card_name, tcgdex_id=tcgdex_card_id)
@@ -238,30 +315,26 @@ class TcgdexPokemonConnector(SourceConnector):
             stats.records_inserted += 1
         else:
             changed = False
+            backfilled_card_id = False
             if card_row.name != card_name:
                 card_row.name = card_name
                 changed = True
             if tcgdex_card_id and card_row.tcgdex_id != tcgdex_card_id:
+                backfilled_card_id = not (card_row.tcgdex_id or "").strip()
                 card_row.tcgdex_id = tcgdex_card_id
                 changed = True
             if changed:
                 stats.records_updated += 1
+                if backfilled_card_id:
+                    self.logger.info("ingest backfill card tcgdex_id card_name=%s tcgdex_id=%s", card_row.name, tcgdex_card_id)
+                else:
+                    self.logger.info("ingest update card card_name=%s tcgdex_id=%s", card_row.name, card_row.tcgdex_id)
+            else:
+                self.logger.info("ingest skip card already has tcgdex_id card_name=%s tcgdex_id=%s", card_row.name, card_row.tcgdex_id)
 
         tcgdex_print_id = tcgdex_card_id
-        if tcgdex_print_id:
-            print_row = session.execute(select(Print).where(Print.tcgdex_id == tcgdex_print_id)).scalar_one_or_none()
-        else:
-            print_row = None
-
         collector_number = card_payload.get("collector_number") or ""
-        if print_row is None:
-            print_row = session.execute(
-                select(Print).where(
-                    Print.set_id == set_row.id,
-                    Print.card_id == card_row.id,
-                    Print.collector_number == collector_number,
-                )
-            ).scalar_one_or_none()
+        print_row = self._find_print(session, set_row.id, card_row.id, collector_number, tcgdex_print_id)
 
         if print_row is None:
             print_row = Print(
@@ -278,11 +351,37 @@ class TcgdexPokemonConnector(SourceConnector):
             stats.records_inserted += 1
         else:
             changed = False
+            backfilled_print_id = False
             if tcgdex_print_id and print_row.tcgdex_id != tcgdex_print_id:
+                backfilled_print_id = not (print_row.tcgdex_id or "").strip()
                 print_row.tcgdex_id = tcgdex_print_id
+                changed = True
+            if print_row.collector_number != collector_number:
+                print_row.collector_number = collector_number
                 changed = True
             if changed:
                 stats.records_updated += 1
+                if backfilled_print_id:
+                    self.logger.info(
+                        "ingest backfill print tcgdex_id print_id=%s collector_number=%s tcgdex_id=%s",
+                        print_row.id,
+                        collector_number,
+                        tcgdex_print_id,
+                    )
+                else:
+                    self.logger.info(
+                        "ingest update print print_id=%s collector_number=%s tcgdex_id=%s",
+                        print_row.id,
+                        print_row.collector_number,
+                        print_row.tcgdex_id,
+                    )
+            else:
+                self.logger.info(
+                    "ingest skip print already has tcgdex_id print_id=%s collector_number=%s tcgdex_id=%s",
+                    print_row.id,
+                    print_row.collector_number,
+                    print_row.tcgdex_id,
+                )
 
         if tcgdex_print_id:
             identifier = session.execute(
@@ -298,12 +397,16 @@ class TcgdexPokemonConnector(SourceConnector):
         image_base = card_payload.get("image")
         image_url = f"{image_base}/high.webp" if image_base else None
         if image_url:
-            existing_image = session.execute(
-                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.url == image_url)
+            primary_image = session.execute(
+                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
             ).scalar_one_or_none()
-            if existing_image is None:
+            if primary_image is None:
                 session.add(PrintImage(print_id=print_row.id, url=image_url, is_primary=True, source="tcgdex"))
                 stats.records_inserted += 1
+            elif primary_image.url != image_url:
+                primary_image.url = image_url
+                primary_image.source = "tcgdex"
+                stats.records_updated += 1
 
         upsert_field_provenance(
             session,

@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, IngestRun, Print, SearchDocument, Set, Source, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, Game, IngestRun, Print, SearchDocument, Set, Source, SourceRecord
 
 
 def _auth_headers(key: str = "admin-key", scopes: list[str] | None = None) -> dict[str, str]:
@@ -157,7 +157,7 @@ def test_tcgdex_search_finds_pikachu_after_ingest(client):
     assert any("Pikachu" in item["title"] for item in payload)
 
 
-def test_tcgdex_fixture_bootstrap_after_demo_data_inserts_real_tcgdex_ids(client):
+def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
     fixture_connector = get_connector("fixture_local")
     tcgdex_connector = get_connector("tcgdex_pokemon")
 
@@ -166,19 +166,29 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_inserts_real_tcgdex_ids(client
         session.commit()
 
     with db.SessionLocal() as session:
+        legacy_set = session.execute(select(Set).where(Set.name == "Scarlet & Violet")).scalar_one()
+        assert legacy_set.tcgdex_id is None
+
+    with db.SessionLocal() as session:
         stats = tcgdex_connector.run(
             session,
             "data/fixtures/tcgdex_pokemon_sample.json",
             fixture=True,
-            incremental=True,
-            limit=1,
+            incremental=False,
+            limit=2,
         )
         session.commit()
 
     with db.SessionLocal() as session:
-        tcgdex_sets = session.execute(select(Set).where(Set.tcgdex_id.is_not(None))).scalars().all()
-        tcgdex_prints = session.execute(select(Print).where(Print.tcgdex_id.is_not(None))).scalars().all()
+        set_backfills = session.execute(
+            select(func.count(Set.id)).where(Set.name == "Scarlet & Violet", Set.tcgdex_id.is_not(None))
+        ).scalar_one()
+        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        card_backfills = session.execute(
+            select(func.count(Card.id)).where(Card.game_id == pokemon_game_id, Card.tcgdex_id.is_not(None))
+        ).scalar_one()
+        print_backfills = session.execute(select(func.count(Print.id)).where(Print.tcgdex_id.is_not(None))).scalar_one()
 
-    assert stats.records_inserted > 0
-    assert len(tcgdex_sets) >= 1
-    assert len(tcgdex_prints) >= 1
+    assert stats.records_updated > 0
+    assert set_backfills >= 1
+    assert card_backfills >= 1 or print_backfills >= 1
