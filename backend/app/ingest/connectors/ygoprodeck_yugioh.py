@@ -16,7 +16,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
     name = "ygoprodeck_yugioh"
     base_url = "https://db.ygoprodeck.com/api/v7"
 
-    def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
+    def load(
+        self, path: str | Path | None = None, **kwargs
+    ) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
         limit = kwargs.get("limit")
 
@@ -24,11 +26,19 @@ class YgoProDeckYugiohConnector(SourceConnector):
             fixture_path = self._resolve_fixture_path(path)
             cards = self._load_fixture(fixture_path, limit=limit)
         else:
-            cards = self._load_remote(limit=limit, base_url=kwargs.get("base_url") or self.base_url)
+            cards = self._load_remote(
+                limit=limit, base_url=kwargs.get("base_url") or self.base_url
+            )
 
         payloads: list[tuple[Path, dict, str]] = []
         for idx, card in enumerate(cards):
-            payloads.append((Path(f"yugioh_card_{card.get('id', idx)}.json"), card, self.checksum(card)))
+            payloads.append(
+                (
+                    Path(f"yugioh_card_{card.get('id', idx)}.json"),
+                    card,
+                    self.checksum(card),
+                )
+            )
         return payloads
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
@@ -37,7 +47,11 @@ class YgoProDeckYugiohConnector(SourceConnector):
         candidate = Path(path) if path else root / "data" / "fixtures" / fixture_name
         if candidate.is_file():
             return candidate
-        for option in (root / str(candidate), root.parent / str(candidate), root / "data" / "fixtures" / fixture_name):
+        for option in (
+            root / str(candidate),
+            root.parent / str(candidate),
+            root / "data" / "fixtures" / fixture_name,
+        ):
             if option.is_file():
                 return option
             if option.is_dir() and (option / fixture_name).is_file():
@@ -51,7 +65,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
             return cards[:limit]
         return cards
 
-    def _load_remote(self, limit: int | None = None, base_url: str | None = None) -> list[dict]:
+    def _load_remote(
+        self, limit: int | None = None, base_url: str | None = None
+    ) -> list[dict]:
         endpoint = f"{base_url or self.base_url}/cardinfo.php"
         payload = self._request_json(endpoint)
         cards = payload.get("data") or []
@@ -77,9 +93,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
         return language or "en"
 
     @staticmethod
-    def _normalize_rarity(value: object) -> str | None:
+    def _normalize_rarity(value: object) -> str:
         rarity = str(value or "").strip()
-        return rarity or None
+        return rarity or "unknown"
 
     @staticmethod
     def _variant_from_rarity(value: object) -> str:
@@ -99,27 +115,41 @@ class YgoProDeckYugiohConnector(SourceConnector):
             set_code = (set_payload.get("set_code") or "").strip().lower()
             set_name = (set_payload.get("set_name") or set_code or "unknown").strip()
             set_external_id = (set_payload.get("set_code") or "").strip() or None
-            collector_number = (set_payload.get("set_code") or f"{payload.get('id', '')}-{idx+1}").strip()
-            print_external_id = f"{payload.get('id')}::{set_payload.get('set_code')}::{idx+1}"
-            normalized_sets.append({"code": set_code or f"set-{idx+1}", "name": set_name, "yugioh_id": set_external_id})
+            collector_number = (
+                set_payload.get("set_code") or f"{payload.get('id', '')}-{idx+1}"
+            ).strip()
+            print_external_id = (
+                f"{payload.get('id')}::{set_payload.get('set_code')}::{idx+1}"
+            )
+            normalized_sets.append(
+                {
+                    "code": set_code or f"set-{idx+1}",
+                    "name": set_name,
+                    "yugioh_id": set_external_id,
+                }
+            )
             normalized_prints.append(
                 {
                     "set_code": set_code or f"set-{idx+1}",
                     "collector_number": collector_number,
                     "rarity": self._normalize_rarity(set_payload.get("set_rarity")),
-                    "language": self._normalize_language(set_payload.get("set_language") or payload.get("language")),
+                    "language": self._normalize_language(
+                        set_payload.get("set_language") or payload.get("language")
+                    ),
                     "yugioh_id": print_external_id,
                 }
             )
 
         if not normalized_sets:
             fallback_code = f"misc-{payload.get('id')}"
-            normalized_sets = [{"code": fallback_code, "name": "Misc", "yugioh_id": None}]
+            normalized_sets = [
+                {"code": fallback_code, "name": "Misc", "yugioh_id": None}
+            ]
             normalized_prints = [
                 {
                     "set_code": fallback_code,
                     "collector_number": str(payload.get("id") or fallback_code),
-                    "rarity": None,
+                    "rarity": "unknown",
                     "language": "en",
                     "yugioh_id": str(payload.get("id") or fallback_code),
                 }
@@ -128,14 +158,18 @@ class YgoProDeckYugiohConnector(SourceConnector):
         return {
             "card": {
                 "name": (payload.get("name") or "").strip(),
-                "yugoprodeck_id": str(payload.get("id")) if payload.get("id") is not None else None,
+                "yugoprodeck_id": (
+                    str(payload.get("id")) if payload.get("id") is not None else None
+                ),
             },
             "sets": normalized_sets,
             "prints": normalized_prints,
         }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
-        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one_or_none()
+        game = session.execute(
+            select(Game).where(Game.slug == "yugioh")
+        ).scalar_one_or_none()
         if game is None:
             game = Game(slug="yugioh", name="Yu-Gi-Oh!")
             session.add(game)
@@ -151,10 +185,14 @@ class YgoProDeckYugiohConnector(SourceConnector):
         card_row = None
         if ygo_card_id:
             card_row = session.execute(
-                select(Card).where(Card.game_id == game.id, Card.yugoprodeck_id == ygo_card_id)
+                select(Card).where(
+                    Card.game_id == game.id, Card.yugoprodeck_id == ygo_card_id
+                )
             ).scalar_one_or_none()
         if card_row is None:
-            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.name == card_name)).scalar_one_or_none()
+            card_row = session.execute(
+                select(Card).where(Card.game_id == game.id, Card.name == card_name)
+            ).scalar_one_or_none()
 
         if card_row is None:
             card_row = Card(game_id=game.id, name=card_name, yugoprodeck_id=ygo_card_id)
@@ -180,12 +218,23 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ygo_set_id = item.get("yugioh_id")
             set_row = None
             if ygo_set_id:
-                set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.yugioh_id == ygo_set_id)).scalar_one_or_none()
+                set_row = session.execute(
+                    select(Set).where(
+                        Set.game_id == game.id, Set.yugioh_id == ygo_set_id
+                    )
+                ).scalar_one_or_none()
             if set_row is None:
-                set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == code)).scalar_one_or_none()
+                set_row = session.execute(
+                    select(Set).where(Set.game_id == game.id, Set.code == code)
+                ).scalar_one_or_none()
 
             if set_row is None:
-                set_row = Set(game_id=game.id, code=code, name=item.get("name") or code.upper(), yugioh_id=ygo_set_id)
+                set_row = Set(
+                    game_id=game.id,
+                    code=code,
+                    name=item.get("name") or code.upper(),
+                    yugioh_id=ygo_set_id,
+                )
                 session.add(set_row)
                 session.flush()
                 stats.records_inserted += 1
@@ -206,7 +255,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
             set_row = sets_by_code.get(set_code)
             if not set_row:
                 continue
-            collector_number = str(item.get("collector_number") or "").strip() or "unknown"
+            collector_number = (
+                str(item.get("collector_number") or "").strip() or "unknown"
+            )
             ygo_print_id = item.get("yugioh_id")
             normalized_language = self._normalize_language(item.get("language"))
             normalized_rarity = self._normalize_rarity(item.get("rarity"))
@@ -214,7 +265,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
             print_row = None
             if ygo_print_id:
-                print_row = session.execute(select(Print).where(Print.yugioh_id == ygo_print_id)).scalar_one_or_none()
+                print_row = session.execute(
+                    select(Print).where(Print.yugioh_id == ygo_print_id)
+                ).scalar_one_or_none()
             if print_row is None:
                 print_row = session.execute(
                     select(Print).where(

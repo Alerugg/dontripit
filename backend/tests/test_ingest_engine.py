@@ -4,18 +4,35 @@ from sqlalchemy import func, select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, Game, IngestRun, Print, SearchDocument, Set, Source, SourceRecord
+from app.models import (
+    ApiKey,
+    ApiPlan,
+    Card,
+    Game,
+    IngestRun,
+    Print,
+    SearchDocument,
+    Set,
+    Source,
+    SourceRecord,
+)
 
 
-def _auth_headers(key: str = "admin-key", scopes: list[str] | None = None) -> dict[str, str]:
+def _auth_headers(
+    key: str = "admin-key", scopes: list[str] | None = None
+) -> dict[str, str]:
     with db.SessionLocal() as session:
-        plan = session.execute(select(ApiPlan).where(ApiPlan.name == "free")).scalar_one_or_none()
+        plan = session.execute(
+            select(ApiPlan).where(ApiPlan.name == "free")
+        ).scalar_one_or_none()
         if plan is None:
             plan = ApiPlan(name="free", monthly_quota_requests=5000, burst_rpm=60)
             session.add(plan)
             session.flush()
 
-        api_key = session.execute(select(ApiKey).where(ApiKey.prefix == key[:8])).scalar_one_or_none()
+        api_key = session.execute(
+            select(ApiKey).where(ApiKey.prefix == key[:8])
+        ).scalar_one_or_none()
         if api_key is None:
             session.add(
                 ApiKey(
@@ -37,7 +54,11 @@ def test_ingest_run_created(client):
         session.commit()
 
     with db.SessionLocal() as session:
-        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
+        run = (
+            session.execute(select(IngestRun).order_by(IngestRun.id.desc()))
+            .scalars()
+            .first()
+        )
 
     assert run is not None
     assert run.status == "success"
@@ -54,7 +75,10 @@ def test_reindex_search_populates_and_search_finds_pikachu(client):
         total_docs = session.execute(select(func.count(SearchDocument.id))).scalar_one()
     assert total_docs > 0
 
-    response = client.get("/api/search?q=pika&game=pokemon", headers=_auth_headers("catalog-key", ["read:catalog"]))
+    response = client.get(
+        "/api/search?q=pika&game=pokemon",
+        headers=_auth_headers("catalog-key", ["read:catalog"]),
+    )
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
@@ -64,13 +88,25 @@ def test_reindex_search_populates_and_search_finds_pikachu(client):
 def test_scryfall_bootstrap_when_incremental_true_on_empty_db(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
-        stats = connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True, limit=5)
+        stats = connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=True,
+            limit=5,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        source = session.execute(select(Source).where(Source.name == "scryfall_mtg")).scalar_one()
+        source = session.execute(
+            select(Source).where(Source.name == "scryfall_mtg")
+        ).scalar_one()
         mtg_cards = session.execute(select(func.count(Card.id))).scalar_one()
-        source_records = session.execute(select(func.count(SourceRecord.id)).where(SourceRecord.source_id == source.id)).scalar_one()
+        source_records = session.execute(
+            select(func.count(SourceRecord.id)).where(
+                SourceRecord.source_id == source.id
+            )
+        ).scalar_one()
 
     assert stats.records_inserted > 0
     assert mtg_cards > 0
@@ -80,15 +116,29 @@ def test_scryfall_bootstrap_when_incremental_true_on_empty_db(client):
 def test_scryfall_fixture_incremental_idempotent_has_zero_second_run_changes(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
+        connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=True,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=True)
+        connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=True,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
+        run = (
+            session.execute(select(IngestRun).order_by(IngestRun.id.desc()))
+            .scalars()
+            .first()
+        )
 
     assert run.counts_json["inserted"] == 0
     assert run.counts_json["updated"] == 0
@@ -97,10 +147,18 @@ def test_scryfall_fixture_incremental_idempotent_has_zero_second_run_changes(cli
 def test_scryfall_search_finds_forest_after_ingest(client):
     connector = get_connector("scryfall_mtg")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/scryfall_mtg_sample.json", fixture=True, incremental=False)
+        connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=False,
+        )
         session.commit()
 
-    response = client.get("/api/v1/search?q=Forest&game=mtg", headers=_auth_headers("mtg-search", ["read:catalog"]))
+    response = client.get(
+        "/api/v1/search?q=Forest&game=mtg",
+        headers=_auth_headers("mtg-search", ["read:catalog"]),
+    )
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
@@ -108,20 +166,35 @@ def test_scryfall_search_finds_forest_after_ingest(client):
 
 
 def test_admin_requires_scope(client):
-    response = client.get("/api/v1/admin/ingest/runs", headers=_auth_headers("catalog-only", ["read:catalog"]))
+    response = client.get(
+        "/api/v1/admin/ingest/runs",
+        headers=_auth_headers("catalog-only", ["read:catalog"]),
+    )
     assert response.status_code == 403
 
 
 def test_tcgdex_bootstrap_incremental_inserts_pokemon(client):
     connector = get_connector("tcgdex_pokemon")
     with db.SessionLocal() as session:
-        stats = connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True, limit=5)
+        stats = connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=True,
+            limit=5,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        source = session.execute(select(Source).where(Source.name == "tcgdex_pokemon")).scalar_one()
+        source = session.execute(
+            select(Source).where(Source.name == "tcgdex_pokemon")
+        ).scalar_one()
         pokemon_cards = session.execute(select(func.count(Card.id))).scalar_one()
-        source_records = session.execute(select(func.count(SourceRecord.id)).where(SourceRecord.source_id == source.id)).scalar_one()
+        source_records = session.execute(
+            select(func.count(SourceRecord.id)).where(
+                SourceRecord.source_id == source.id
+            )
+        ).scalar_one()
 
     assert stats.records_inserted > 0
     assert pokemon_cards > 0
@@ -131,15 +204,29 @@ def test_tcgdex_bootstrap_incremental_inserts_pokemon(client):
 def test_tcgdex_fixture_incremental_idempotent_has_zero_second_run_changes(client):
     connector = get_connector("tcgdex_pokemon")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True)
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=True,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=True)
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=True,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
+        run = (
+            session.execute(select(IngestRun).order_by(IngestRun.id.desc()))
+            .scalars()
+            .first()
+        )
 
     assert run.counts_json["inserted"] == 0
     assert run.counts_json["updated"] == 0
@@ -148,10 +235,18 @@ def test_tcgdex_fixture_incremental_idempotent_has_zero_second_run_changes(clien
 def test_tcgdex_search_finds_pikachu_after_ingest(client):
     connector = get_connector("tcgdex_pokemon")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False)
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=False,
+        )
         session.commit()
 
-    response = client.get("/api/v1/search?q=Pikachu&game=pokemon", headers=_auth_headers("pokemon-search", ["read:catalog"]))
+    response = client.get(
+        "/api/v1/search?q=Pikachu&game=pokemon",
+        headers=_auth_headers("pokemon-search", ["read:catalog"]),
+    )
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
@@ -167,7 +262,9 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
         session.commit()
 
     with db.SessionLocal() as session:
-        legacy_set = session.execute(select(Set).where(Set.name == "Scarlet & Violet")).scalar_one()
+        legacy_set = session.execute(
+            select(Set).where(Set.name == "Scarlet & Violet")
+        ).scalar_one()
         assert legacy_set.tcgdex_id is None
 
     with db.SessionLocal() as session:
@@ -182,13 +279,21 @@ def test_tcgdex_fixture_bootstrap_after_demo_data_backfills_tcgdex_ids(client):
 
     with db.SessionLocal() as session:
         set_backfills = session.execute(
-            select(func.count(Set.id)).where(Set.name == "Scarlet & Violet", Set.tcgdex_id.is_not(None))
+            select(func.count(Set.id)).where(
+                Set.name == "Scarlet & Violet", Set.tcgdex_id.is_not(None)
+            )
         ).scalar_one()
-        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        pokemon_game_id = session.execute(
+            select(Game.id).where(Game.slug == "pokemon")
+        ).scalar_one()
         card_backfills = session.execute(
-            select(func.count(Card.id)).where(Card.game_id == pokemon_game_id, Card.tcgdex_id.is_not(None))
+            select(func.count(Card.id)).where(
+                Card.game_id == pokemon_game_id, Card.tcgdex_id.is_not(None)
+            )
         ).scalar_one()
-        print_backfills = session.execute(select(func.count(Print.id)).where(Print.tcgdex_id.is_not(None))).scalar_one()
+        print_backfills = session.execute(
+            select(func.count(Print.id)).where(Print.tcgdex_id.is_not(None))
+        ).scalar_one()
 
     assert stats.records_updated > 0
     assert set_backfills >= 1
@@ -199,13 +304,23 @@ def test_tcgdex_fixture_ingest_populates_set_tcgdex_ids(client):
     connector = get_connector("tcgdex_pokemon")
 
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False, limit=2)
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=False,
+            limit=2,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        pokemon_game_id = session.execute(
+            select(Game.id).where(Game.slug == "pokemon")
+        ).scalar_one()
         pokemon_set_ids = session.execute(
-            select(func.count(Set.id)).where(Set.game_id == pokemon_game_id, Set.tcgdex_id.is_not(None))
+            select(func.count(Set.id)).where(
+                Set.game_id == pokemon_game_id, Set.tcgdex_id.is_not(None)
+            )
         ).scalar_one()
 
     assert pokemon_set_ids > 0
@@ -222,7 +337,12 @@ def test_tcgdex_fixture_ingest_contains_base1_set_when_present(client, tmp_path)
                 "localId": "1",
                 "name": "Alakazam",
                 "image": "https://example.invalid/base1-1",
-                "set": {"id": "base1", "abbreviation": {"official": "BS"}, "name": "Base", "releaseDate": "1999-01-09"},
+                "set": {
+                    "id": "base1",
+                    "abbreviation": {"official": "BS"},
+                    "name": "Base",
+                    "releaseDate": "1999-01-09",
+                },
             }
         ],
     }
@@ -230,11 +350,15 @@ def test_tcgdex_fixture_ingest_contains_base1_set_when_present(client, tmp_path)
     fixture_path.write_text(json.dumps(fixture_payload), encoding="utf-8")
 
     with db.SessionLocal() as session:
-        connector.run(session, str(fixture_path), fixture=True, incremental=False, limit=5)
+        connector.run(
+            session, str(fixture_path), fixture=True, incremental=False, limit=5
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        pokemon_game_id = session.execute(
+            select(Game.id).where(Game.slug == "pokemon")
+        ).scalar_one()
         base_set = session.execute(
             select(Set).where(Set.game_id == pokemon_game_id, Set.tcgdex_id == "base1")
         ).scalar_one_or_none()
@@ -243,7 +367,10 @@ def test_tcgdex_fixture_ingest_contains_base1_set_when_present(client, tmp_path)
     assert base_set.code == "bs"
     assert base_set.name == "Base"
 
-def test_tcgdex_fixture_path_resolution_prefers_data_fixtures_layout(client, monkeypatch, tmp_path):
+
+def test_tcgdex_fixture_path_resolution_prefers_data_fixtures_layout(
+    client, monkeypatch, tmp_path
+):
     connector = get_connector("tcgdex_pokemon")
 
     backend_root = tmp_path / "backend"
@@ -252,15 +379,22 @@ def test_tcgdex_fixture_path_resolution_prefers_data_fixtures_layout(client, mon
 
     payload = '{"cards": [{"id": "pikachu"}]}'
     (backend_root / "data" / "fixtures").mkdir(parents=True)
-    (backend_root / "data" / "fixtures" / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+    (backend_root / "data" / "fixtures" / "tcgdex_pokemon_sample.json").write_text(
+        payload, encoding="utf-8"
+    )
 
-    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+    monkeypatch.setattr(
+        "app.ingest.connectors.tcgdex_pokemon.__file__",
+        str(connectors_dir / "tcgdex_pokemon.py"),
+    )
 
     default_payloads = connector.load(None, fixture=True, limit=1)
     assert default_payloads
 
 
-def test_tcgdex_fixture_path_resolution_supports_repo_backend_data_fixtures_layout(client, monkeypatch, tmp_path):
+def test_tcgdex_fixture_path_resolution_supports_repo_backend_data_fixtures_layout(
+    client, monkeypatch, tmp_path
+):
     connector = get_connector("tcgdex_pokemon")
 
     backend_root = tmp_path / "backend"
@@ -269,9 +403,14 @@ def test_tcgdex_fixture_path_resolution_supports_repo_backend_data_fixtures_layo
 
     payload = '{"cards": [{"id": "charizard"}]}'
     (tmp_path / "backend" / "data" / "fixtures").mkdir(parents=True)
-    (tmp_path / "backend" / "data" / "fixtures" / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+    (
+        tmp_path / "backend" / "data" / "fixtures" / "tcgdex_pokemon_sample.json"
+    ).write_text(payload, encoding="utf-8")
 
-    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+    monkeypatch.setattr(
+        "app.ingest.connectors.tcgdex_pokemon.__file__",
+        str(connectors_dir / "tcgdex_pokemon.py"),
+    )
 
     default_payloads = connector.load(None, fixture=True, limit=1)
     assert default_payloads
@@ -315,7 +454,9 @@ class _FakeResponse:
             raise RuntimeError(f"http error: {self.status_code}")
 
 
-def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(client, monkeypatch):
+def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(
+    client, monkeypatch
+):
     connector = get_connector("tcgdex_pokemon")
     requested_urls: list[str] = []
 
@@ -393,7 +534,9 @@ def test_tcgdex_remote_without_set_preserves_general_list_behavior(client, monke
     ]
 
 
-def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(client, monkeypatch, tmp_path):
+def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(
+    client, monkeypatch, tmp_path
+):
     connector = get_connector("tcgdex_pokemon")
 
     backend_root = tmp_path / "backend"
@@ -403,29 +546,51 @@ def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(client,
     payload = '{"cards": [{"id": "mew"}]}'
     app_fixtures_dir = tmp_path / "app" / "data" / "fixtures"
     app_fixtures_dir.mkdir(parents=True)
-    (app_fixtures_dir / "tcgdex_pokemon_sample.json").write_text(payload, encoding="utf-8")
+    (app_fixtures_dir / "tcgdex_pokemon_sample.json").write_text(
+        payload, encoding="utf-8"
+    )
 
-    monkeypatch.setattr("app.ingest.connectors.tcgdex_pokemon.__file__", str(connectors_dir / "tcgdex_pokemon.py"))
+    monkeypatch.setattr(
+        "app.ingest.connectors.tcgdex_pokemon.__file__",
+        str(connectors_dir / "tcgdex_pokemon.py"),
+    )
 
-    from_directory_payloads = connector.load(str(app_fixtures_dir), fixture=True, limit=1)
+    from_directory_payloads = connector.load(
+        str(app_fixtures_dir), fixture=True, limit=1
+    )
     assert from_directory_payloads
 
 
 def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
     connector = get_connector("ygoprodeck_yugioh")
     with db.SessionLocal() as session:
-        stats = connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        stats = connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=False,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one_or_none()
-        set_count = session.execute(select(func.count(Set.id)).where(Set.game_id == game.id)).scalar_one()
-        card_count = session.execute(select(func.count(Card.id)).where(Card.game_id == game.id)).scalar_one()
+        game = session.execute(
+            select(Game).where(Game.slug == "yugioh")
+        ).scalar_one_or_none()
+        set_count = session.execute(
+            select(func.count(Set.id)).where(Set.game_id == game.id)
+        ).scalar_one()
+        card_count = session.execute(
+            select(func.count(Card.id)).where(Card.game_id == game.id)
+        ).scalar_one()
         print_count = session.execute(
-            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+            select(func.count(Print.id))
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
         ).scalar_one()
         null_language_count = session.execute(
-            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id, Print.language.is_(None))
+            select(func.count(Print.id))
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id, Print.language.is_(None))
         ).scalar_one()
 
     assert stats.records_inserted > 0
@@ -435,9 +600,62 @@ def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
     assert null_language_count == 0
 
 
+def test_yugioh_missing_rarity_defaults_to_unknown_without_integrity_error(
+    client, tmp_path
+):
+    connector = get_connector("ygoprodeck_yugioh")
+    fixture = {
+        "data": [
+            {
+                "id": 999001,
+                "name": "Missing Rarity Card",
+                "card_sets": [
+                    {
+                        "set_name": "Null Rarity Set",
+                        "set_code": "NRS-001",
+                        "set_rarity": None,
+                    },
+                    {
+                        "set_name": "Empty Rarity Set",
+                        "set_code": "ERS-002",
+                        "set_rarity": "   ",
+                    },
+                ],
+            }
+        ]
+    }
+    fixture_path = tmp_path / "ygo_missing_rarity.json"
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session, str(fixture_path), fixture=True, incremental=False
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one()
+        rarities = (
+            session.execute(
+                select(Print.rarity)
+                .join(Set, Set.id == Print.set_id)
+                .where(
+                    Set.game_id == game.id,
+                    Print.collector_number.in_(["NRS-001", "ERS-002"]),
+                )
+                .order_by(Print.collector_number.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    assert stats.records_inserted > 0
+    assert rarities == ["unknown", "unknown"]
 
 
-def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(client, tmp_path):
+def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(
+    client, tmp_path
+):
     connector = get_connector("ygoprodeck_yugioh")
     fixture = {
         "data": [
@@ -445,8 +663,16 @@ def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(cli
                 "id": 12345,
                 "name": "Variant Test Card",
                 "card_sets": [
-                    {"set_name": "Variant Set", "set_code": "VAR-001", "set_rarity": "Ultra Rare"},
-                    {"set_name": "Variant Set", "set_code": "VAR-001", "set_rarity": "Secret Rare"},
+                    {
+                        "set_name": "Variant Set",
+                        "set_code": "VAR-001",
+                        "set_rarity": "Ultra Rare",
+                    },
+                    {
+                        "set_name": "Variant Set",
+                        "set_code": "VAR-001",
+                        "set_rarity": "Secret Rare",
+                    },
                 ],
             }
         ]
@@ -455,17 +681,23 @@ def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(cli
     fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
 
     with db.SessionLocal() as session:
-        stats = connector.run(session, str(fixture_path), fixture=True, incremental=False)
+        stats = connector.run(
+            session, str(fixture_path), fixture=True, incremental=False
+        )
         session.commit()
 
     with db.SessionLocal() as session:
         game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one()
-        variants = session.execute(
-            select(Print.variant)
-            .join(Set, Set.id == Print.set_id)
-            .where(Set.game_id == game.id, Print.collector_number == "VAR-001")
-            .order_by(Print.variant.asc())
-        ).scalars().all()
+        variants = (
+            session.execute(
+                select(Print.variant)
+                .join(Set, Set.id == Print.set_id)
+                .where(Set.game_id == game.id, Print.collector_number == "VAR-001")
+                .order_by(Print.variant.asc())
+            )
+            .scalars()
+            .all()
+        )
 
     assert stats.records_inserted > 0
     assert variants == ["secret-rare", "ultra-rare"]
@@ -474,14 +706,26 @@ def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(cli
 def test_pokemon_prints_default_variant(client):
     connector = get_connector("tcgdex_pokemon")
     with db.SessionLocal() as session:
-        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False)
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=False,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
         game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one()
-        variants = session.execute(
-            select(Print.variant).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id).distinct()
-        ).scalars().all()
+        variants = (
+            session.execute(
+                select(Print.variant)
+                .join(Set, Set.id == Print.set_id)
+                .where(Set.game_id == game.id)
+                .distinct()
+            )
+            .scalars()
+            .all()
+        )
 
     assert variants == ["default"]
 
@@ -489,21 +733,38 @@ def test_pokemon_prints_default_variant(client):
 def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
     connector = get_connector("riftbound")
     with db.SessionLocal() as session:
-        stats = connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        stats = connector.run(
+            session,
+            "data/fixtures/riftbound_sample.json",
+            fixture=True,
+            incremental=False,
+        )
         session.commit()
 
     with db.SessionLocal() as session:
-        game = session.execute(select(Game).where(Game.slug == "riftbound")).scalar_one_or_none()
-        set_count = session.execute(select(func.count(Set.id)).where(Set.game_id == game.id)).scalar_one()
-        card_count = session.execute(select(func.count(Card.id)).where(Card.game_id == game.id)).scalar_one()
+        game = session.execute(
+            select(Game).where(Game.slug == "riftbound")
+        ).scalar_one_or_none()
+        set_count = session.execute(
+            select(func.count(Set.id)).where(Set.game_id == game.id)
+        ).scalar_one()
+        card_count = session.execute(
+            select(func.count(Card.id)).where(Card.game_id == game.id)
+        ).scalar_one()
         print_count = session.execute(
-            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+            select(func.count(Print.id))
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
         ).scalar_one()
         null_language_count = session.execute(
-            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id, Print.language.is_(None))
+            select(func.count(Print.id))
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id, Print.language.is_(None))
         ).scalar_one()
         null_rarity_count = session.execute(
-            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id, Print.rarity.is_(None))
+            select(func.count(Print.id))
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id, Print.rarity.is_(None))
         ).scalar_one()
 
     assert stats.records_inserted > 0
