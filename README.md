@@ -183,15 +183,23 @@ curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/products/1
 Legacy aliases without `/v1` are currently still available.
 
 
-## Frontend API Explorer
+## API Explorer
 
-Use `http://localhost:3000/explorer` for quick manual API checks from the UI.
+1. Levanta el stack con Docker Compose:
+   ```bash
+   docker compose up --build
+   ```
+2. Abre `http://localhost:3000/explorer`.
+3. Pega tu API key en **API Key** y haz click en **Save** (se guarda en `localStorage`).
+4. Elige endpoint (`Health`, `Search`, `Cards`, `Prints`), completa parámetros (`q`, `game`, `limit`, `offset`) y usa **Send request**.
+5. La UI muestra URL final, status code, headers relevantes (`x-plan`, `x-ratelimit-remaining`, `x-quota-used`) y el JSON pretty con botón **Copy**.
 
-1. Paste your API key into the **API Key** field (stored only in browser `localStorage`).
-2. Choose a game from the dropdown (loaded from `GET /api/v1/games`).
-3. Enter a query in `q` and click **Search** (calls `GET /api/v1/search`).
-4. Results are shown as pretty JSON with key fields (`type`, `title`, `subtitle`, `set_code`, `collector_number`, `primary_image_url`).
-5. Non-200 responses display an error banner.
+### Casos manuales recomendados
+
+- `GET /api/v1/games` con key válida.
+- `GET /api/v1/search?q=Alakazam&game=pokemon` con key válida.
+- `GET /api/v1/search?q=Blue-Eyes&game=yugioh` con key válida.
+- `GET /api/v1/search?q=Shardbreaker&game=riftbound` con key válida.
 
 ## Postman Collection
 
