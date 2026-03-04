@@ -218,6 +218,8 @@ class ScryfallMtgConnector(SourceConnector):
                     Print.set_id == set_row.id,
                     Print.card_id == card_row.id,
                     Print.collector_number == (card_payload.get("collector_number") or ""),
+                    Print.language == self._normalize_language(card_payload.get("lang")),
+                    Print.is_foil.is_(bool(card_payload.get("foil", False))),
                     Print.variant == "default",
                 )
             ).scalar_one_or_none()
@@ -227,8 +229,8 @@ class ScryfallMtgConnector(SourceConnector):
                 card_id=card_row.id,
                 set_id=set_row.id,
                 collector_number=card_payload.get("collector_number") or "",
-                language=card_payload.get("lang") or "en",
-                rarity=card_payload.get("rarity") or "unknown",
+                language=self._normalize_language(card_payload.get("lang")),
+                rarity=self._normalize_rarity(card_payload.get("rarity")),
                 is_foil=bool(card_payload.get("foil", False)),
                 scryfall_id=scryfall_id,
                 variant="default",
@@ -238,13 +240,16 @@ class ScryfallMtgConnector(SourceConnector):
             stats.records_inserted += 1
         else:
             changed = False
-            rarity = card_payload.get("rarity")
-            language = card_payload.get("lang")
-            if rarity and print_row.rarity != rarity:
+            rarity = self._normalize_rarity(card_payload.get("rarity"))
+            language = self._normalize_language(card_payload.get("lang"))
+            if print_row.rarity != rarity:
                 print_row.rarity = rarity
                 changed = True
-            if language and print_row.language != language:
+            if print_row.language != language:
                 print_row.language = language
+                changed = True
+            if print_row.variant != "default":
+                print_row.variant = "default"
                 changed = True
             if scryfall_id and print_row.scryfall_id != scryfall_id:
                 print_row.scryfall_id = scryfall_id
@@ -295,3 +300,13 @@ class ScryfallMtgConnector(SourceConnector):
             "last_synced_at": datetime.now(timezone.utc).isoformat(),
             "strategy": "upsert_checksum",
         }
+
+    @staticmethod
+    def _normalize_language(value: object) -> str:
+        language = str(value or "").strip().lower()
+        return language or "en"
+
+    @staticmethod
+    def _normalize_rarity(value: object) -> str:
+        rarity = str(value or "").strip()
+        return rarity or "unknown"

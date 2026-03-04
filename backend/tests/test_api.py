@@ -192,7 +192,12 @@ def test_search_returns_print_by_collector_number(client):
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
-    assert any(item["type"] == "print" and item.get("collector_number") == "001" for item in payload)
+    assert any(
+        item["type"] == "print"
+        and item.get("collector_number") == "001"
+        and item.get("variant") == "default"
+        for item in payload
+    )
 
 
 def test_public_enabled_allows_no_key_with_ip_rate_limit(client):

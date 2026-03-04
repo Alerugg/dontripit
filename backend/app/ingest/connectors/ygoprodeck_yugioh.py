@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from pathlib import Path
 
@@ -96,16 +95,6 @@ class YgoProDeckYugiohConnector(SourceConnector):
     def _normalize_rarity(value: object) -> str:
         rarity = str(value or "").strip()
         return rarity or "unknown"
-
-    @staticmethod
-    def _variant_from_rarity(value: object) -> str:
-        rarity = str(value or "").strip().lower()
-        if not rarity:
-            return "default"
-        rarity = rarity.replace(" ", "-")
-        rarity = re.sub(r"[^a-z0-9-]", "", rarity)
-        rarity = re.sub(r"-+", "-", rarity).strip("-")
-        return rarity or "default"
 
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_sets = payload.get("card_sets") or []
@@ -261,7 +250,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ygo_print_id = item.get("yugioh_id")
             normalized_language = self._normalize_language(item.get("language"))
             normalized_rarity = self._normalize_rarity(item.get("rarity"))
-            variant = self._variant_from_rarity(item.get("rarity"))
+            variant = "default"
 
             print_row = None
             if ygo_print_id:

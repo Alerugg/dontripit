@@ -27,7 +27,7 @@ def search():
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, sd.subtitle,
                            ts_rank(to_tsvector('simple', coalesce(sd.tsv, '')), query.term) AS score,
-                           s.code AS set_code, p.collector_number,
+                           s.code AS set_code, p.collector_number, p.variant,
                            (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = true ORDER BY pi.id LIMIT 1) AS primary_image_url
                     FROM search_documents sd
                     CROSS JOIN query
@@ -47,7 +47,7 @@ def search():
                 sql = text(
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle, 1.0 AS score,
-                           s.code AS set_code, p.collector_number,
+                           s.code AS set_code, p.collector_number, p.variant,
                            (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = 1 ORDER BY pi.id LIMIT 1) AS primary_image_url
                     FROM search_documents sd
                     JOIN games g ON g.id = sd.game_id
@@ -68,15 +68,15 @@ def search():
                 """
                 SELECT * FROM (
                   SELECT 'card' AS type, c.id, c.name AS title, '' AS subtitle, g.slug AS game,
-                         NULL AS set_code, NULL AS collector_number, NULL AS primary_image_url
+                         NULL AS set_code, NULL AS collector_number, NULL AS variant, NULL AS primary_image_url
                   FROM cards c JOIN games g ON g.id = c.game_id WHERE lower(c.name) LIKE :like
                   UNION ALL
                   SELECT 'set', s.id, s.name, s.code, g.slug,
-                         NULL, NULL, NULL
+                         NULL, NULL, NULL, NULL
                   FROM sets s JOIN games g ON g.id = s.game_id WHERE lower(s.name) LIKE :like OR lower(s.code) LIKE :like
                   UNION ALL
                   SELECT 'print', p.id, c.name, (s.code || ' #' || p.collector_number), g.slug,
-                         s.code, p.collector_number,
+                         s.code, p.collector_number, p.variant,
                          (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = 1 ORDER BY pi.id LIMIT 1)
                   FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=s.game_id
                   WHERE lower(c.name) LIKE :like OR lower(p.collector_number) LIKE :like OR lower(s.code) LIKE :like

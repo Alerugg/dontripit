@@ -20,7 +20,7 @@ class RiftboundConnector(SourceConnector):
     @staticmethod
     def _normalize_rarity(value: object) -> str:
         rarity = str(value or "").strip()
-        return rarity or "common"
+        return rarity or "unknown"
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         if not bool(kwargs.get("fixture", True)):
@@ -124,6 +124,7 @@ class RiftboundConnector(SourceConnector):
         rift_print_id = print_payload.get("riftbound_id")
         language = self._normalize_language(print_payload.get("language"))
         rarity = self._normalize_rarity(print_payload.get("rarity"))
+        variant = "default"
         print_row = None
         if rift_print_id:
             print_row = session.execute(select(Print).where(Print.riftbound_id == rift_print_id)).scalar_one_or_none()
@@ -133,7 +134,9 @@ class RiftboundConnector(SourceConnector):
                     Print.set_id == set_row.id,
                     Print.card_id == card_row.id,
                     Print.collector_number == collector_number,
-                    Print.variant == "default",
+                    Print.language == language,
+                    Print.is_foil.is_(False),
+                    Print.variant == variant,
                 )
             ).scalar_one_or_none()
         if print_row is None:
@@ -144,7 +147,7 @@ class RiftboundConnector(SourceConnector):
                 language=language,
                 rarity=rarity,
                 riftbound_id=rift_print_id,
-                variant="default",
+                variant=variant,
             )
             session.add(print_row)
             stats.records_inserted += 1
@@ -155,6 +158,9 @@ class RiftboundConnector(SourceConnector):
                 changed = True
             if print_row.rarity != rarity:
                 print_row.rarity = rarity
+                changed = True
+            if print_row.variant != variant:
+                print_row.variant = variant
                 changed = True
             if changed:
                 stats.records_updated += 1

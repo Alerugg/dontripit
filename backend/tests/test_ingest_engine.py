@@ -653,54 +653,84 @@ def test_yugioh_missing_rarity_defaults_to_unknown_without_integrity_error(
     assert rarities == ["unknown", "unknown"]
 
 
-def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(
-    client, tmp_path
-):
+def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_path):
     connector = get_connector("ygoprodeck_yugioh")
     fixture = {
         "data": [
             {
-                "id": 12345,
-                "name": "Variant Test Card",
+                "id": 999002,
+                "name": "Missing Fields Card",
                 "card_sets": [
                     {
-                        "set_name": "Variant Set",
-                        "set_code": "VAR-001",
-                        "set_rarity": "Ultra Rare",
-                    },
-                    {
-                        "set_name": "Variant Set",
-                        "set_code": "VAR-001",
-                        "set_rarity": "Secret Rare",
-                    },
+                        "set_name": "Missing Fields Set",
+                        "set_code": "MFS-001",
+                        "set_rarity": None,
+                        "set_language": None,
+                    }
                 ],
             }
         ]
     }
-    fixture_path = tmp_path / "ygo_variants.json"
+    fixture_path = tmp_path / "ygo_missing_fields.json"
     fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
 
     with db.SessionLocal() as session:
-        stats = connector.run(
-            session, str(fixture_path), fixture=True, incremental=False
-        )
+        connector.run(session, str(fixture_path), fixture=True, incremental=False)
         session.commit()
 
     with db.SessionLocal() as session:
-        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one()
+        row = session.execute(
+            select(Print.language, Print.rarity, Print.variant).where(Print.collector_number == "MFS-001")
+        ).first()
+
+    assert row is not None
+    assert row.language == "en"
+    assert row.rarity == "unknown"
+    assert row.variant == "default"
+
+
+def test_prints_unique_constraint_allows_same_identity_with_different_variant(client):
+    with db.SessionLocal() as session:
+        game = Game(slug="variant-game", name="Variant Game")
+        session.add(game)
+        session.flush()
+
+        set_row = Set(game_id=game.id, code="v1", name="Variant Set")
+        card_row = Card(game_id=game.id, name="Variant Card")
+        session.add_all([set_row, card_row])
+        session.flush()
+
+        first = Print(
+            set_id=set_row.id,
+            card_id=card_row.id,
+            collector_number="001",
+            language="en",
+            rarity="unknown",
+            is_foil=False,
+            variant="default",
+        )
+        second = Print(
+            set_id=set_row.id,
+            card_id=card_row.id,
+            collector_number="001",
+            language="en",
+            rarity="unknown",
+            is_foil=False,
+            variant="alt-art",
+        )
+        session.add_all([first, second])
+        session.commit()
+
+    with db.SessionLocal() as session:
         variants = (
             session.execute(
-                select(Print.variant)
-                .join(Set, Set.id == Print.set_id)
-                .where(Set.game_id == game.id, Print.collector_number == "VAR-001")
-                .order_by(Print.variant.asc())
+                select(Print.variant).where(Print.collector_number == "001").order_by(Print.variant.asc())
             )
             .scalars()
             .all()
         )
 
-    assert stats.records_inserted > 0
-    assert variants == ["secret-rare", "ultra-rare"]
+    assert variants == ["alt-art", "default"]
 
 
 def test_pokemon_prints_default_variant(client):
