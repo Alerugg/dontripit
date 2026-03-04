@@ -424,11 +424,15 @@ def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
         print_count = session.execute(
             select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
         ).scalar_one()
+        null_language_count = session.execute(
+            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id, Print.language.is_(None))
+        ).scalar_one()
 
     assert stats.records_inserted > 0
     assert set_count > 0
     assert card_count > 0
     assert print_count > 0
+    assert null_language_count == 0
 
 
 def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
@@ -444,8 +448,12 @@ def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
         print_count = session.execute(
             select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
         ).scalar_one()
+        null_language_count = session.execute(
+            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id, Print.language.is_(None))
+        ).scalar_one()
 
     assert stats.records_inserted > 0
     assert set_count > 0
     assert card_count > 0
     assert print_count > 0
+    assert null_language_count == 0
