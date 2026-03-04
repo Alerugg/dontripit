@@ -17,17 +17,41 @@ def _int_param(name: str, default: int, maximum: int) -> int:
     return min(max(value, 0), maximum)
 
 
+def _pagination(default_limit: int = 20, max_limit: int = 200) -> tuple[int, int]:
+    return _int_param("limit", default_limit, max_limit), _int_param("offset", 0, 1_000_000)
+
+
 def _json_error(error: str, detail: str, status: int):
     return jsonify({"error": error, "detail": detail}), status
+
+
+def _request_requires_game() -> bool:
+    return request.path.startswith("/api/v1/")
+
+
+def _get_game_slug(required: bool) -> tuple[str | None, tuple | None]:
+    game = request.args.get("game", "").strip()
+    if not game:
+        if required:
+            return None, _json_error("invalid_params", "game is required", 400)
+        return None, None
+
+    sql = text("SELECT slug FROM games WHERE slug = :slug")
+    with db.SessionLocal() as session:
+        row = session.execute(sql, {"slug": game}).mappings().first()
+    if row is None:
+        return None, _json_error("not_found", f"game '{game}' not found", 404)
+    return game, None
 
 
 @catalog_bp.get("/api/cards")
 @catalog_bp.get("/api/v1/cards")
 def list_cards():
     q = request.args.get("q", "").strip()
-    game = request.args.get("game", "").strip()
-    limit = _int_param("limit", 20, 100)
-    offset = _int_param("offset", 0, 100000)
+    limit, offset = _pagination()
+    game, error = _get_game_slug(required=_request_requires_game())
+    if error:
+        return error
 
     where = []
     params = {"limit": limit, "offset": offset}
@@ -41,39 +65,114 @@ def list_cards():
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = text(
         f"""
-        SELECT c.id, c.name, g.slug AS game
+        SELECT c.id,
+               c.name,
+               g.slug AS game_slug,
+               c.tcgdex_id,
+               NULL AS scryfall_id,
+               c.yugoprodeck_id AS yugioh_id,
+               c.riftbound_id
         FROM cards c
         JOIN games g ON g.id = c.game_id
         {where_sql}
-        ORDER BY c.name, c.id
+        ORDER BY c.name ASC, c.id ASC
         LIMIT :limit OFFSET :offset
         """
     )
 
     with db.SessionLocal() as session:
         rows = session.execute(sql, params).mappings().all()
-    result = [dict(row) for row in rows]
-    return jsonify(result)
+    return jsonify([dict(row) for row in rows])
+
+
+@catalog_bp.get("/api/cards/<int:card_id>")
+@catalog_bp.get("/api/v1/cards/<int:card_id>")
+def get_card_detail(card_id: int):
+    card_sql = text(
+        """
+        SELECT c.id,
+               c.name,
+               g.slug AS game_slug,
+               c.tcgdex_id,
+               NULL AS scryfall_id,
+               c.yugoprodeck_id AS yugioh_id,
+               c.riftbound_id
+        FROM cards c
+        JOIN games g ON g.id = c.game_id
+        WHERE c.id = :card_id
+        """
+    )
+    prints_sql = text(
+        """
+        SELECT p.id,
+               s.code AS set_code,
+               p.card_id,
+               p.collector_number,
+               p.language,
+               p.rarity,
+               p.is_foil,
+               COALESCE(
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+                 ),
+                 NULL
+               ) AS image_url
+        FROM prints p
+        JOIN sets s ON s.id = p.set_id
+        WHERE p.card_id = :card_id
+        ORDER BY s.code ASC, p.collector_number ASC, p.id ASC
+        LIMIT 50
+        """
+    )
+    sets_sql = text(
+        """
+        SELECT DISTINCT s.id, s.code, s.name
+        FROM sets s
+        JOIN prints p ON p.set_id = s.id
+        WHERE p.card_id = :card_id
+        ORDER BY s.name ASC, s.id ASC
+        """
+    )
+
+    try:
+        with db.SessionLocal() as session:
+            card = session.execute(card_sql, {"card_id": card_id}).mappings().first()
+            if card is None:
+                return _json_error("not_found", f"card {card_id} not found", 404)
+            prints = session.execute(prints_sql, {"card_id": card_id}).mappings().all()
+            sets = session.execute(sets_sql, {"card_id": card_id}).mappings().all()
+    except SQLAlchemyError as error:
+        return _json_error("card_detail_failed", str(error), 500)
+
+    return jsonify(
+        {
+            "id": card["id"],
+            "name": card["name"],
+            "game_slug": card["game_slug"],
+            "external_ids": {
+                "tcgdex_id": card["tcgdex_id"],
+                "scryfall_id": card["scryfall_id"],
+                "yugioh_id": card["yugioh_id"],
+                "riftbound_id": card["riftbound_id"],
+            },
+            "prints": [dict(row) for row in prints],
+            "sets": [dict(row) for row in sets],
+        }
+    )
 
 
 @catalog_bp.get("/api/sets")
 @catalog_bp.get("/api/v1/sets")
 def list_sets():
-    game = request.args.get("game", "").strip()
     q = request.args.get("q", "").strip()
-    order = (request.args.get("order") or "release_date_desc").strip().lower()
-    limit = _int_param("limit", 50, 200)
-    offset = _int_param("offset", 0, 100000)
-
-    if q and len(q) < 2:
-        return _json_error("invalid_params", "q must have at least 2 characters", 400)
-
-    order_clause = {
-        "release_date_desc": "s.release_date DESC NULLS LAST, s.name ASC",
-        "release_date_asc": "s.release_date ASC NULLS LAST, s.name ASC",
-        "name_asc": "s.name ASC, s.id ASC",
-        "name_desc": "s.name DESC, s.id DESC",
-    }.get(order, "s.release_date DESC NULLS LAST, s.name ASC")
+    limit, offset = _pagination()
+    game, error = _get_game_slug(required=_request_requires_game())
+    if error:
+        return error
 
     where = []
     params = {"limit": limit, "offset": offset}
@@ -89,14 +188,17 @@ def list_sets():
     sql = text(
         f"""
         SELECT s.id,
-               g.slug AS game,
                s.code,
                s.name,
-               s.release_date
+               g.slug AS game_slug,
+               s.tcgdex_id,
+               NULL AS scryfall_id,
+               s.yugioh_id,
+               s.riftbound_id
         FROM sets s
         JOIN games g ON g.id = s.game_id
         {where_sql}
-        ORDER BY {order_clause}
+        ORDER BY s.name ASC, s.id ASC
         LIMIT :limit OFFSET :offset
         """
     )
@@ -113,38 +215,57 @@ def list_sets():
 @catalog_bp.get("/api/prints")
 @catalog_bp.get("/api/v1/prints")
 def list_prints():
-    q = request.args.get("q", "").strip()
-    game = request.args.get("game", "").strip()
-    limit = _int_param("limit", 20, 100)
-    offset = _int_param("offset", 0, 100000)
+    set_code = request.args.get("set_code", "").strip()
+    card_id = request.args.get("card_id", type=int)
+    limit, offset = _pagination()
+    game, error = _get_game_slug(required=_request_requires_game())
+    if error:
+        return error
 
     where = []
     params = {"limit": limit, "offset": offset}
     if game:
         where.append("g.slug = :game")
         params["game"] = game
-    if q:
-        where.append("(LOWER(c.name) LIKE :q OR LOWER(p.collector_number) LIKE :q)")
-        params["q"] = f"%{q.lower()}%"
+    if set_code:
+        where.append("LOWER(s.code) = :set_code")
+        params["set_code"] = set_code.lower()
+    if card_id is not None:
+        where.append("p.card_id = :card_id")
+        params["card_id"] = card_id
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = text(
         f"""
-        SELECT p.id, c.name AS card_name, s.code AS set_code, p.collector_number
+        SELECT p.id,
+               s.code AS set_code,
+               p.card_id,
+               p.collector_number,
+               p.language,
+               p.rarity,
+               p.is_foil,
+               COALESCE(
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+                 ),
+                 NULL
+               ) AS image_url
         FROM prints p
-        JOIN cards c ON c.id = p.card_id
         JOIN sets s ON s.id = p.set_id
         JOIN games g ON g.id = s.game_id
         {where_sql}
-        ORDER BY s.code, p.collector_number, p.id
+        ORDER BY s.code ASC, p.collector_number ASC, p.id ASC
         LIMIT :limit OFFSET :offset
         """
     )
 
     with db.SessionLocal() as session:
         rows = session.execute(sql, params).mappings().all()
-    result = [dict(row) for row in rows]
-    return jsonify(result)
+    return jsonify([dict(row) for row in rows])
 
 
 @catalog_bp.get("/api/products")
@@ -176,11 +297,11 @@ def list_products():
     sql = text(
         f"""
         SELECT p.id,
-               g.slug AS game,
-               s.code AS set_code,
                p.product_type,
                p.name,
                p.release_date,
+               g.slug AS game,
+               s.code AS set_code,
                COALESCE(v.variant_count, 0) AS variant_count,
                i.primary_image_url
         FROM products p
@@ -331,18 +452,32 @@ def get_print_detail(print_id: int):
                p.language,
                p.rarity,
                p.is_foil,
+               p.scryfall_id,
+               p.tcgdex_id,
+               p.yugioh_id,
+               p.riftbound_id,
                c.id AS card_id,
                c.name AS card_name,
                s.id AS set_id,
                s.code AS set_code,
                s.name AS set_name,
-               s.release_date
+               COALESCE(
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+                 ),
+                 NULL
+               ) AS image_url
         FROM prints p
         JOIN cards c ON c.id = p.card_id
         JOIN sets s ON s.id = p.set_id
         WHERE p.id = :print_id
         """
     )
+
     images_sql = text(
         """
         SELECT url, is_primary, source
@@ -370,23 +505,30 @@ def get_print_detail(print_id: int):
     except SQLAlchemyError as error:
         return _json_error("print_detail_failed", str(error), 500)
 
-    return jsonify(
-        {
-            "print": {
-                "id": row["id"],
-                "collector_number": row["collector_number"],
-                "language": row["language"],
-                "rarity": row["rarity"],
-                "is_foil": row["is_foil"],
-            },
-            "card": {"id": row["card_id"], "name": row["card_name"]},
-            "set": {
-                "id": row["set_id"],
-                "code": row["set_code"],
-                "name": row["set_name"],
-                "release_date": row["release_date"].isoformat() if hasattr(row["release_date"], "isoformat") else row["release_date"],
-            },
-            "images": [dict(image) for image in images],
-            "identifiers": [dict(identifier) for identifier in identifiers],
-        }
-    )
+    payload = {
+        "id": row["id"],
+        "collector_number": row["collector_number"],
+        "language": row["language"],
+        "rarity": row["rarity"],
+        "is_foil": row["is_foil"],
+        "set": {"id": row["set_id"], "code": row["set_code"], "name": row["set_name"]},
+        "card": {"id": row["card_id"], "name": row["card_name"]},
+        "image_url": row["image_url"],
+        "external_ids": {
+            "tcgdex_id": row["tcgdex_id"],
+            "scryfall_id": row["scryfall_id"],
+            "yugioh_id": row["yugioh_id"],
+            "riftbound_id": row["riftbound_id"],
+        },
+    }
+
+    payload["print"] = {
+        "id": payload["id"],
+        "collector_number": payload["collector_number"],
+        "language": payload["language"],
+        "rarity": payload["rarity"],
+        "is_foil": payload["is_foil"],
+    }
+    payload["images"] = [dict(image) for image in images]
+    payload["identifiers"] = [dict(identifier) for identifier in identifiers]
+    return jsonify(payload)
