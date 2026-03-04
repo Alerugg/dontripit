@@ -82,6 +82,7 @@ def test_daily_refresh_calls_both_connectors_and_reindex(monkeypatch):
     assert summary["pokemon"]["ok"] is True
     assert summary["mtg"]["ok"] is True
     assert summary["reindex"]["ok"] is True
+    assert set(summary.keys()) >= {"pokemon", "mtg", "yugioh", "riftbound", "reindex", "exit_code"}
     assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg", "ygoprodeck_yugioh", "riftbound"]
 
 

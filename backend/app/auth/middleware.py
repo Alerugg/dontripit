@@ -40,6 +40,15 @@ def _extract_api_key() -> str | None:
     return None
 
 
+
+
+def _extract_admin_header_key() -> str | None:
+    direct = request.headers.get("X-API-Key")
+    if not direct:
+        return None
+    token = direct.strip()
+    return token or None
+
 def _required_scope(path: str) -> str | None:
     if not path.startswith("/api/"):
         return None
@@ -94,7 +103,23 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             return None
 
         public_enabled = _as_bool(os.getenv("PUBLIC_API_ENABLED"), default=False)
-        provided_key = _extract_api_key()
+        is_admin_route = path.startswith("/api/admin/") or path.startswith("/api/v1/admin/")
+
+        env_admin_key = os.getenv("ADMIN_API_KEY", "").strip()
+        if is_admin_route and env_admin_key:
+            provided_admin_header = _extract_admin_header_key()
+            if provided_admin_header == env_admin_key:
+                g.api_meta = {
+                    "plan": "admin-env",
+                    "rate_limit": None,
+                    "rate_remaining": None,
+                    "quota_limit": None,
+                    "quota_used": None,
+                }
+                g.api_key_prefix = "adminenv"
+                return None
+
+        provided_key = _extract_admin_header_key() if is_admin_route else _extract_api_key()
 
         if provided_key is None and not public_enabled:
             return jsonify({"error": "missing_api_key"}), 401
@@ -106,7 +131,10 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                     return jsonify({"error": "invalid_api_key"}), 401
 
                 scopes = set(api_key.scopes or ["read:catalog"])
-                if required_scope not in scopes:
+                if required_scope == "read:admin":
+                    if "read:admin" not in scopes and "admin" not in scopes:
+                        return jsonify({"error": "insufficient_scope"}), 403
+                elif required_scope not in scopes:
                     return jsonify({"error": "insufficient_scope"}), 403
 
                 plan = session.execute(select(ApiPlan).where(ApiPlan.id == api_key.plan_id)).scalar_one_or_none()

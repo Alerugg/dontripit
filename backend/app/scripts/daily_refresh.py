@@ -176,6 +176,43 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
     return summary
 
 
+def build_refresh_args(
+    *,
+    path: str | None = None,
+    pokemon_set: str | None = None,
+    pokemon_limit: int = 200,
+    mtg_limit: int = 200,
+    yugioh_limit: int = 200,
+    riftbound_limit: int = 200,
+    incremental: bool = True,
+    batch_size: int = 200,
+    fixture: bool = False,
+    riftbound_fixture: bool = True,
+    skip_pokemon: bool = False,
+    pokemon_all: bool = False,
+    pokemon_all_sets: bool = False,
+    pokemon_sets: str | None = None,
+    sleep_seconds: float = 1.0,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        path=path,
+        pokemon_set=pokemon_set,
+        pokemon_limit=pokemon_limit,
+        mtg_limit=mtg_limit,
+        yugioh_limit=yugioh_limit,
+        riftbound_limit=riftbound_limit,
+        incremental=incremental,
+        batch_size=batch_size,
+        fixture=fixture,
+        riftbound_fixture=riftbound_fixture,
+        skip_pokemon=skip_pokemon,
+        pokemon_all=pokemon_all,
+        pokemon_all_sets=pokemon_all_sets,
+        pokemon_sets=pokemon_sets,
+        sleep_seconds=sleep_seconds,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily incremental refresh (Pokemon + MTG + reindex)")
     parser.add_argument("--path", default=None, help="Optional fixture path")
