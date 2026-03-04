@@ -28,7 +28,7 @@ export default function ExplorerPage() {
   const [apiKey, setApiKey] = useState('')
   const [endpoint, setEndpoint] = useState('search')
   const [games, setGames] = useState([])
-  const [game, setGame] = useState('')
+  const [gameSlug, setGameSlug] = useState('pokemon')
   const [q, setQ] = useState('')
   const [limit, setLimit] = useState('10')
   const [offset, setOffset] = useState('0')
@@ -53,7 +53,7 @@ export default function ExplorerPage() {
     async function loadGames() {
       if (!hasKey) {
         setGames([])
-        setGame('')
+        setGameSlug('pokemon')
         return
       }
 
@@ -69,17 +69,22 @@ export default function ExplorerPage() {
 
         if (!response.ok) {
           setGames([])
-          setGame('')
+          setGameSlug('pokemon')
           setError(`Games: ${extractErrorMessage(response.status, payload)}`)
           return
         }
 
         const gameList = Array.isArray(payload) ? payload : payload?.items || []
         setGames(gameList)
-        setGame((current) => (current && gameList.includes(current) ? current : gameList[0] || ''))
+        setGameSlug((current) => {
+          if (current && gameList.some((gameOption) => gameOption?.slug === current)) {
+            return current
+          }
+          return gameList[0]?.slug || 'pokemon'
+        })
       } catch (loadError) {
         setGames([])
-        setGame('')
+        setGameSlug('pokemon')
         setError(loadError instanceof Error ? loadError.message : String(loadError))
       } finally {
         setLoadingGames(false)
@@ -100,7 +105,7 @@ export default function ExplorerPage() {
     const params = new URLSearchParams()
 
     if (endpoint !== 'health') {
-      if (game) params.set('game', game)
+      if (gameSlug) params.set('game', gameSlug)
       if (q.trim()) params.set('q', q.trim())
       if (limit.trim()) params.set('limit', limit.trim())
       if (offset.trim()) params.set('offset', offset.trim())
@@ -199,14 +204,14 @@ export default function ExplorerPage() {
           Game
           <select
             className="rounded border px-3 py-2"
-            value={game}
-            onChange={(event) => setGame(event.target.value)}
+            value={games.length ? gameSlug : ''}
+            onChange={(event) => setGameSlug(event.target.value)}
             disabled={loadingGames || !games.length}
           >
             {!games.length && <option value="">{hasKey ? 'No games found' : 'Save API key first'}</option>}
             {games.map((gameOption) => (
-              <option key={gameOption} value={gameOption}>
-                {gameOption}
+              <option key={gameOption.slug} value={gameOption.slug}>
+                {gameOption.name}
               </option>
             ))}
           </select>

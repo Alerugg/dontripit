@@ -13,6 +13,11 @@ test('explorer page exposes endpoint controls', async () => {
   assert.match(page, /\/api\/v1\/cards/)
   assert.match(page, /\/api\/v1\/prints/)
   assert.match(page, /\/api\/health/)
+
+  assert.match(page, /gameSlug/)
+  assert.match(page, /value=\{gameOption\.slug\}/)
+  assert.match(page, /\{gameOption\.name\}/)
+  assert.match(page, /params\.set\('game', gameSlug\)/)
 })
 
 test('explorer has json viewer and timeout helper', async () => {
