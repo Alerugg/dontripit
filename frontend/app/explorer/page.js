@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import JsonViewer from './JsonViewer'
 import { fetchWithTimeout } from './fetchWithTimeout'
 
-const STORAGE_KEY = 'api_key'
+const API_KEY_STORAGE_KEY = 'apiKey'
+const ADMIN_TOKEN_STORAGE_KEY = 'adminToken'
 
 const ENDPOINTS = {
   health: { label: 'Health', path: '/api/health', requiresKey: false },
@@ -15,18 +16,18 @@ const ENDPOINTS = {
 }
 
 function extractErrorMessage(status, payload) {
-  if (status !== 401) {
-    return payload?.error || `request_failed_${status}`
-  }
-
-  if (payload?.error === 'missing_api_key') return 'missing_api_key'
-  if (payload?.error === 'invalid_api_key') return 'invalid_api_key'
-  return 'unauthorized'
+  if (status === 401 && payload?.error === 'missing_admin_token') return 'Missing admin token'
+  if (status === 403 && payload?.error === 'invalid_admin_token') return 'Invalid admin token'
+  if (status === 401 && payload?.error === 'missing_api_key') return 'missing_api_key'
+  if (status === 401 && payload?.error === 'invalid_api_key') return 'invalid_api_key'
+  return payload?.error || `request_failed_${status}`
 }
 
 export default function ExplorerPage() {
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [adminTokenInput, setAdminTokenInput] = useState('')
+  const [adminToken, setAdminToken] = useState('')
   const [endpoint, setEndpoint] = useState('search')
   const [games, setGames] = useState([])
   const [gameSlug, setGameSlug] = useState('pokemon')
@@ -38,6 +39,7 @@ export default function ExplorerPage() {
   const [generatingKey, setGeneratingKey] = useState(false)
   const [error, setError] = useState('')
   const [warning, setWarning] = useState('')
+  const [success, setSuccess] = useState('')
   const [statusCode, setStatusCode] = useState(null)
   const [responseData, setResponseData] = useState(null)
   const [requestUrl, setRequestUrl] = useState('')
@@ -47,9 +49,12 @@ export default function ExplorerPage() {
   const hasKey = useMemo(() => Boolean(apiKey.trim()), [apiKey])
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY) || ''
-    setApiKeyInput(saved)
-    setApiKey(saved)
+    const savedApiKey = window.localStorage.getItem(API_KEY_STORAGE_KEY) || ''
+    const savedAdminToken = window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''
+    setApiKeyInput(savedApiKey)
+    setApiKey(savedApiKey)
+    setAdminTokenInput(savedAdminToken)
+    setAdminToken(savedAdminToken)
   }, [])
 
   useEffect(() => {
@@ -99,35 +104,48 @@ export default function ExplorerPage() {
 
   function saveApiKey() {
     const value = apiKeyInput.trim()
-    window.localStorage.setItem(STORAGE_KEY, value)
+    window.localStorage.setItem(API_KEY_STORAGE_KEY, value)
     setApiKey(value)
     setError('')
     setWarning('')
+    setSuccess('')
+  }
+
+  function saveAdminToken() {
+    const value = adminTokenInput.trim()
+    window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, value)
+    setAdminToken(value)
+    setError('')
+    setWarning('')
+    setSuccess('')
   }
 
   async function generateApiKey() {
     setGeneratingKey(true)
     setError('')
     setWarning('')
+    setSuccess('')
 
     try {
-      const response = await fetchWithTimeout('/api/admin/api-keys', {
+      const response = await fetchWithTimeout('/api/admin/dev/api-keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(adminToken.trim() ? { 'X-Admin-Token': adminToken.trim() } : {}),
         },
       })
       const payload = await response.json().catch(() => ({}))
 
       if (!response.ok || !payload?.api_key) {
-        setError(payload?.error || `request_failed_${response.status}`)
+        setError(extractErrorMessage(response.status, payload))
         return
       }
 
       const nextApiKey = String(payload.api_key)
-      window.localStorage.setItem(STORAGE_KEY, nextApiKey)
+      window.localStorage.setItem(API_KEY_STORAGE_KEY, nextApiKey)
       setApiKeyInput(nextApiKey)
       setApiKey(nextApiKey)
+      setSuccess('API key generated')
     } catch (generateError) {
       setError(generateError instanceof Error ? generateError.message : String(generateError))
     } finally {
@@ -153,6 +171,7 @@ export default function ExplorerPage() {
     setSending(true)
     setError('')
     setWarning('')
+    setSuccess('')
     setStatusCode(null)
     setResponseData(null)
     setResponseHeaders([])
@@ -202,7 +221,7 @@ export default function ExplorerPage() {
     <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-4 bg-white p-6 text-gray-900">
       <h1 className="text-3xl font-bold text-gray-900">API Explorer</h1>
 
-      <section className="grid grid-cols-1 gap-3 rounded border border-gray-300 bg-gray-50 p-4 md:grid-cols-[1fr_auto_auto]">
+      <section className="grid grid-cols-1 gap-3 rounded border border-gray-300 bg-gray-50 p-4 md:grid-cols-[1fr_auto]">
         <label className="flex flex-col gap-1 text-sm text-gray-800">
           API Key
           <input
@@ -216,15 +235,33 @@ export default function ExplorerPage() {
         <button className="rounded bg-black px-4 py-2 text-white" onClick={saveApiKey} type="button">
           Save
         </button>
-        <button
-          className="rounded bg-blue-700 px-4 py-2 text-white disabled:opacity-60"
-          onClick={generateApiKey}
-          type="button"
-          disabled={generatingKey}
-        >
-          {generatingKey ? 'Generating...' : 'Generate API Key'}
-        </button>
+
+        <label className="flex flex-col gap-1 text-sm text-gray-800">
+          Admin token (dev)
+          <input
+            type="password"
+            className="rounded border border-gray-400 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-500"
+            placeholder="dev_admin_123"
+            value={adminTokenInput}
+            onChange={(event) => setAdminTokenInput(event.target.value)}
+          />
+        </label>
+        <div className="flex flex-wrap items-end gap-2">
+          <button className="rounded bg-gray-800 px-4 py-2 text-white" onClick={saveAdminToken} type="button">
+            Save token
+          </button>
+          <button
+            className="rounded bg-blue-700 px-4 py-2 text-white disabled:opacity-60"
+            onClick={generateApiKey}
+            type="button"
+            disabled={generatingKey}
+          >
+            {generatingKey ? 'Generating...' : 'Generate API Key'}
+          </button>
+        </div>
       </section>
+
+      {success && <div className="rounded border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div>}
 
       {warning && (
         <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">{warning}</div>
@@ -304,9 +341,9 @@ export default function ExplorerPage() {
         </div>
       </section>
 
-      <section className="rounded border border-gray-700 bg-[#111111] p-4 text-sm text-gray-100">
+      <section className="rounded border border-gray-300 bg-gray-50 p-4 text-sm text-gray-900">
         <p>
-          <strong>URL:</strong> <code className="text-gray-200">{requestUrl || '-'}</code>
+          <strong>URL:</strong> <code className="text-gray-900">{requestUrl || '-'}</code>
         </p>
         <p>
           <strong>Status:</strong> {statusCode ?? '-'}
@@ -324,10 +361,10 @@ export default function ExplorerPage() {
         </div>
       </section>
 
-      <section className="rounded border border-gray-700 bg-[#111111] p-4 text-gray-100">
+      <section className="rounded border border-gray-300 bg-gray-50 p-4 text-gray-900">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Body</h2>
-          <button type="button" className="rounded border border-gray-500 px-3 py-1 text-sm text-gray-100" onClick={copyJson}>
+          <button type="button" className="rounded border border-gray-400 px-3 py-1 text-sm text-gray-900" onClick={copyJson}>
             Copy
           </button>
         </div>

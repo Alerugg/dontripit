@@ -50,6 +50,9 @@ docker compose --profile local-db up --build
 
 ### Environment variables
 
+- `ADMIN_TOKEN=<token>`
+  - Token required by `POST /api/admin/dev/api-keys` via header `X-Admin-Token`.
+  - If `ADMIN_TOKEN` is missing and `FLASK_ENV=development`, backend uses fallback `dev_admin_123` for local dev only.
 - `PUBLIC_API_ENABLED=true|false` (default: `false`)
   - `false`: API key required for all `/api/*` and `/api/v1/*` except health.
   - `true`: API can be accessed without API key, but no-key traffic is still rate-limited by IP.
@@ -122,6 +125,10 @@ Use either option:
 ```bash
 # default mode (PUBLIC_API_ENABLED=false): missing key => 401
 curl http://localhost:3000/api/v1/games
+
+# generate dev API key (admin token required)
+export ADMIN_TOKEN=dev_admin_123
+curl -i -X POST http://localhost:3000/api/admin/dev/api-keys -H "X-Admin-Token: $ADMIN_TOKEN"
 
 # with key => 200
 curl -H "X-API-Key: <key>" http://localhost:3000/api/v1/games
@@ -497,3 +504,21 @@ La ruta `http://localhost:3000/console` permite probar endpoints sin Postman:
 - Muestra URL llamada, status code, latencia (ms), JSON pretty y errores claros.
 - Usa el mismo proxy `/api/*` de Next, respetando `BACKEND_URL` / `BACKEND_INTERNAL_URL` vía `next.config.js`.
 
+
+
+### Verificación rápida (Explorer + admin key)
+
+1) Levantar stack:
+
+```bash
+docker compose up --build -d
+```
+
+2) Probar endpoint admin:
+
+```bash
+export ADMIN_TOKEN=dev_admin_123
+curl -i -X POST http://localhost:3000/api/admin/dev/api-keys -H "X-Admin-Token: $ADMIN_TOKEN"
+```
+
+3) Abrir UI en `http://localhost:3000/explorer`, guardar **Admin token**, hacer click en **Generate API Key** y luego ejecutar búsquedas con la nueva key.

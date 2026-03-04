@@ -226,6 +226,33 @@ def test_allows_with_valid_key(client):
     assert response.status_code == 200
 
 
+
+
+def test_admin_dev_api_keys_requires_header(client, monkeypatch):
+    monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+    monkeypatch.setenv("FLASK_ENV", "development")
+
+    response = client.post("/api/admin/dev/api-keys")
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "missing_admin_token"}
+
+
+def test_admin_dev_api_keys_rejects_invalid_token(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "super-secret")
+
+    response = client.post("/api/admin/dev/api-keys", headers={"X-Admin-Token": "wrong-token"})
+    assert response.status_code == 403
+    assert response.get_json() == {"error": "invalid_admin_token"}
+
+
+def test_admin_dev_api_keys_accepts_valid_token(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "super-secret")
+
+    response = client.post("/api/admin/dev/api-keys", headers={"X-Admin-Token": "super-secret"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["api_key"].startswith("ak_")
+
 def test_metrics_requires_admin_scope(client):
     os.environ["PUBLIC_API_ENABLED"] = "false"
     response = client.get("/api/v1/admin/metrics", headers=_auth_headers("catalog-key", ["read:catalog"]))

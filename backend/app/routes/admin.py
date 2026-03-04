@@ -13,20 +13,39 @@ from app.models import ApiKey, ApiPlan
 admin_bp = Blueprint("admin", __name__)
 
 
-def _is_local_request() -> bool:
-    host = (request.host or "").split(":")[0]
-    return host in {"127.0.0.1", "localhost"}
+def _resolve_admin_token() -> str:
+    configured_token = os.getenv("ADMIN_TOKEN", "").strip()
+    if configured_token:
+        return configured_token
+
+    flask_env = os.getenv("FLASK_ENV", "").strip().lower()
+    if flask_env == "development":
+        return "dev_admin_123"
+
+    return ""
+
+
+def _validate_admin_token():
+    expected_token = _resolve_admin_token()
+    if not expected_token:
+        return jsonify({"error": "admin_token_not_configured"}), 500
+
+    provided_token = request.headers.get("X-Admin-Token", "").strip()
+    if not provided_token:
+        return jsonify({"error": "missing_admin_token"}), 401
+
+    if provided_token != expected_token:
+        return jsonify({"error": "invalid_admin_token"}), 403
+
+    return None
 
 
 @admin_bp.post("/api/admin/api-keys")
+@admin_bp.post("/api/admin/dev/api-keys")
 def create_api_key():
-    admin_token = os.getenv("ADMIN_TOKEN", "").strip()
-    if admin_token:
-        provided_token = request.headers.get("X-Admin-Token", "").strip()
-        if provided_token != admin_token:
-            return jsonify({"error": "forbidden"}), 403
-    elif not _is_local_request():
-        return jsonify({"error": "forbidden"}), 403
+    auth_error = _validate_admin_token()
+    if auth_error is not None:
+        return auth_error
 
     with db.SessionLocal() as session:
         plan = session.execute(select(ApiPlan).where(ApiPlan.name == "free")).scalar_one_or_none()
@@ -59,5 +78,5 @@ def create_api_key():
                 "expires_at": expires_at.isoformat(),
             }
         ),
-        201,
+        200,
     )
