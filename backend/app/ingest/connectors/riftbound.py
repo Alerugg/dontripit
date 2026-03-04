@@ -12,6 +12,16 @@ from app.models import Card, Game, Print, Set
 class RiftboundConnector(SourceConnector):
     name = "riftbound"
 
+    @staticmethod
+    def _normalize_language(value: object) -> str:
+        language = str(value or "").strip().lower()
+        return language or "en"
+
+    @staticmethod
+    def _normalize_rarity(value: object) -> str | None:
+        rarity = str(value or "").strip()
+        return rarity or None
+
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         if not bool(kwargs.get("fixture", True)):
             raise NotImplementedError("riftbound remote ingest is not implemented yet; use --fixture true")
@@ -63,6 +73,8 @@ class RiftboundConnector(SourceConnector):
                 "collector_number": str(print_payload.get("collector_number") or "").strip(),
                 "set_code": (print_payload.get("set_code") or "").strip().lower(),
                 "riftbound_id": str(print_payload.get("id")) if print_payload.get("id") is not None else None,
+                "language": self._normalize_language(print_payload.get("language") or card_payload.get("language")),
+                "rarity": self._normalize_rarity(print_payload.get("rarity")),
                 "raw_json": print_payload,
             },
         }
@@ -110,6 +122,8 @@ class RiftboundConnector(SourceConnector):
         print_payload = payload.get("print") or {}
         collector_number = print_payload.get("collector_number") or "unknown"
         rift_print_id = print_payload.get("riftbound_id")
+        language = self._normalize_language(print_payload.get("language"))
+        rarity = self._normalize_rarity(print_payload.get("rarity"))
         print_row = None
         if rift_print_id:
             print_row = session.execute(select(Print).where(Print.riftbound_id == rift_print_id)).scalar_one_or_none()
@@ -126,8 +140,20 @@ class RiftboundConnector(SourceConnector):
                 set_id=set_row.id,
                 card_id=card_row.id,
                 collector_number=collector_number,
+                language=language,
+                rarity=rarity,
                 riftbound_id=rift_print_id,
             )
             session.add(print_row)
             stats.records_inserted += 1
+        else:
+            changed = False
+            if print_row.language != language:
+                print_row.language = language
+                changed = True
+            if print_row.rarity != rarity:
+                print_row.rarity = rarity
+                changed = True
+            if changed:
+                stats.records_updated += 1
         return {"print_id": print_row.id}

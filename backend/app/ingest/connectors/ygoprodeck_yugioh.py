@@ -70,6 +70,16 @@ class YgoProDeckYugiohConnector(SourceConnector):
             return response.json()
         raise RuntimeError(f"YGOProDeck request failed after retries: {url}")
 
+    @staticmethod
+    def _normalize_language(value: object) -> str:
+        language = str(value or "").strip().lower()
+        return language or "en"
+
+    @staticmethod
+    def _normalize_rarity(value: object) -> str | None:
+        rarity = str(value or "").strip()
+        return rarity or None
+
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_sets = payload.get("card_sets") or []
         normalized_sets = []
@@ -85,8 +95,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 {
                     "set_code": set_code or f"set-{idx+1}",
                     "collector_number": collector_number,
-                    "rarity": set_payload.get("set_rarity"),
-                    "language": None,
+                    "rarity": self._normalize_rarity(set_payload.get("set_rarity")),
+                    "language": self._normalize_language(set_payload.get("set_language") or payload.get("language")),
                     "yugioh_id": print_external_id,
                 }
             )
@@ -99,7 +109,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     "set_code": fallback_code,
                     "collector_number": str(payload.get("id") or fallback_code),
                     "rarity": None,
-                    "language": None,
+                    "language": "en",
                     "yugioh_id": str(payload.get("id") or fallback_code),
                 }
             ]
@@ -187,6 +197,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 continue
             collector_number = str(item.get("collector_number") or "").strip() or "unknown"
             ygo_print_id = item.get("yugioh_id")
+            normalized_language = self._normalize_language(item.get("language"))
+            normalized_rarity = self._normalize_rarity(item.get("rarity"))
 
             print_row = None
             if ygo_print_id:
@@ -205,8 +217,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     set_id=set_row.id,
                     card_id=card_row.id,
                     collector_number=collector_number,
-                    rarity=item.get("rarity"),
-                    language=item.get("language"),
+                    rarity=normalized_rarity,
+                    language=normalized_language,
                     yugioh_id=ygo_print_id,
                 )
                 session.add(print_row)
@@ -216,11 +228,11 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 if ygo_print_id and print_row.yugioh_id != ygo_print_id:
                     print_row.yugioh_id = ygo_print_id
                     changed = True
-                if item.get("rarity") and print_row.rarity != item.get("rarity"):
-                    print_row.rarity = item.get("rarity")
+                if print_row.rarity != normalized_rarity:
+                    print_row.rarity = normalized_rarity
                     changed = True
-                if item.get("language") and print_row.language != item.get("language"):
-                    print_row.language = item.get("language")
+                if print_row.language != normalized_language:
+                    print_row.language = normalized_language
                     changed = True
                 if changed:
                     stats.records_updated += 1
