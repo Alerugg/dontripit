@@ -4,6 +4,7 @@ from werkzeug.exceptions import HTTPException
 from app.auth import register_api_product_middleware
 from app.db import init_engine
 from app.routes.catalog import catalog_bp
+from app.routes.admin import admin_bp
 from app.routes.admin_ingest import admin_ingest_bp
 from app.routes.admin_ingest_status import admin_ingest_status_bp
 from app.routes.admin_metrics import admin_metrics_bp
@@ -23,6 +24,7 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(search_bp)
     flask_app.register_blueprint(docs_bp)
     flask_app.register_blueprint(admin_metrics_bp)
+    flask_app.register_blueprint(admin_bp)
     flask_app.register_blueprint(admin_ingest_bp)
     flask_app.register_blueprint(admin_ingest_status_bp)
     flask_app.register_blueprint(prices_bp)

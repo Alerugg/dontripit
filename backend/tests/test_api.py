@@ -531,3 +531,25 @@ def test_search_returns_results_for_yugioh_after_fixture_ingest(client):
     payload = response.get_json()
     assert payload
     assert any("Dark Magician" in item["title"] for item in payload)
+
+
+def test_admin_create_api_key_localhost(client):
+    response = client.post('/api/admin/api-keys', headers={'Host': 'localhost'})
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload['api_key'].startswith('ak_')
+    assert 'created_at' in payload
+    assert 'expires_at' in payload
+
+
+def test_admin_create_api_key_with_token_required(client, monkeypatch):
+    monkeypatch.setenv('ADMIN_TOKEN', 'secret-token')
+
+    forbidden_response = client.post('/api/admin/api-keys', headers={'Host': 'localhost'})
+    assert forbidden_response.status_code == 403
+
+    ok_response = client.post(
+        '/api/admin/api-keys',
+        headers={'Host': 'example.com', 'X-Admin-Token': 'secret-token'},
+    )
+    assert ok_response.status_code == 201

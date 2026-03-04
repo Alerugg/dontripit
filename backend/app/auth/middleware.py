@@ -45,6 +45,8 @@ def _required_scope(path: str) -> str | None:
         return None
     if path in {"/api/health", "/api/v1/health"}:
         return None
+    if path == "/api/admin/api-keys":
+        return None
     if path.startswith("/api/admin/") or path.startswith("/api/v1/admin/"):
         return "read:admin"
     return "read:catalog"
