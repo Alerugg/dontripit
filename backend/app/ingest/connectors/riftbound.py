@@ -18,9 +18,9 @@ class RiftboundConnector(SourceConnector):
         return language or "en"
 
     @staticmethod
-    def _normalize_rarity(value: object) -> str | None:
+    def _normalize_rarity(value: object) -> str:
         rarity = str(value or "").strip()
-        return rarity or None
+        return rarity or "common"
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         if not bool(kwargs.get("fixture", True)):
