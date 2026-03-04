@@ -1,7 +1,7 @@
 Flask==3.0.3
 SQLAlchemy==2.0.36
 alembic==1.13.3
-psycopg[binary]==3.2.1
+psycopg2-binary==2.9.9
 pytest==8.3.3
 requests==2.32.3
 APScheduler==3.10.4
