@@ -580,3 +580,36 @@ def test_admin_create_api_key_with_token_required(client, monkeypatch):
         headers={'Host': 'example.com', 'X-Admin-Token': 'secret-token'},
     )
     assert ok_response.status_code == 201
+
+
+def test_admin_refresh_requires_auth(client):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+    response = client.post("/api/admin/refresh", json={})
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "missing_api_key"}
+
+
+def test_admin_refresh_allows_admin_key(client, monkeypatch):
+    os.environ["PUBLIC_API_ENABLED"] = "false"
+
+    def fake_run_daily_refresh(args):
+        return {
+            "exit_code": 0,
+            "pokemon": {"ok": True, "totals": {}},
+            "mtg": {"ok": True, "totals": {}},
+            "yugioh": {"ok": True, "totals": {}},
+            "riftbound": {"ok": True, "totals": {}},
+            "reindex": {"ok": True},
+        }
+
+    monkeypatch.setattr("app.routes.admin_refresh.run_daily_refresh", fake_run_daily_refresh)
+
+    headers = _auth_headers("admin-rf", ["read:catalog", "read:admin"])
+    response = client.post(
+        "/api/admin/refresh",
+        headers=headers,
+        json={"pokemon_set": "base1", "pokemon_limit": 10, "incremental": True},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert set(payload.keys()) >= {"pokemon", "mtg", "yugioh", "riftbound", "reindex", "exit_code"}

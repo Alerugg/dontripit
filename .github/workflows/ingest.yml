@@ -19,6 +19,16 @@ on:
         required: false
         default: '200'
         type: string
+      yugioh_limit:
+        description: 'Yu-Gi-Oh ingest limit'
+        required: false
+        default: '200'
+        type: string
+      riftbound_limit:
+        description: 'Riftbound ingest limit'
+        required: false
+        default: '200'
+        type: string
       incremental:
         description: 'Use incremental mode'
         required: false
@@ -74,10 +84,14 @@ jobs:
           POKEMON_SET_INPUT="${{ github.event.inputs.pokemon_set || '' }}"
           POKEMON_LIMIT_INPUT="${{ github.event.inputs.pokemon_limit || '' }}"
           MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
+          YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
+          RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
           POKEMON_LIMIT="${POKEMON_LIMIT_INPUT:-200}"
           MTG_LIMIT="${MTG_LIMIT_INPUT:-200}"
+          YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-200}"
+          RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
 
           SKIP_POKEMON="false"
@@ -93,6 +107,8 @@ jobs:
           ARGS=(
             --pokemon-limit "${POKEMON_LIMIT}"
             --mtg-limit "${MTG_LIMIT}"
+            --yugioh-limit "${YUGIOH_LIMIT}"
+            --riftbound-limit "${RIFTBOUND_LIMIT}"
             --incremental "${INCREMENTAL}"
           )
           if [ -n "${POKEMON_SET}" ]; then
