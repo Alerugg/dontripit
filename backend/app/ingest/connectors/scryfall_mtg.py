@@ -218,6 +218,7 @@ class ScryfallMtgConnector(SourceConnector):
                     Print.set_id == set_row.id,
                     Print.card_id == card_row.id,
                     Print.collector_number == (card_payload.get("collector_number") or ""),
+                    Print.variant == "default",
                 )
             ).scalar_one_or_none()
 
@@ -230,6 +231,7 @@ class ScryfallMtgConnector(SourceConnector):
                 rarity=card_payload.get("rarity") or "unknown",
                 is_foil=bool(card_payload.get("foil", False)),
                 scryfall_id=scryfall_id,
+                variant="default",
             )
             session.add(print_row)
             session.flush()

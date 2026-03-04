@@ -111,6 +111,7 @@ def get_card_detail(card_id: int):
                p.language,
                p.rarity,
                p.is_foil,
+               p.variant,
                COALESCE(
                  (
                    SELECT pi.url
@@ -244,6 +245,7 @@ def list_prints():
                p.language,
                p.rarity,
                p.is_foil,
+               p.variant,
                COALESCE(
                  (
                    SELECT pi.url
@@ -452,6 +454,7 @@ def get_print_detail(print_id: int):
                p.language,
                p.rarity,
                p.is_foil,
+               p.variant,
                p.scryfall_id,
                p.tcgdex_id,
                p.yugioh_id,
@@ -511,6 +514,7 @@ def get_print_detail(print_id: int):
         "language": row["language"],
         "rarity": row["rarity"],
         "is_foil": row["is_foil"],
+        "variant": row["variant"],
         "set": {"id": row["set_id"], "code": row["set_code"], "name": row["set_name"]},
         "card": {"id": row["card_id"], "name": row["card_name"]},
         "image_url": row["image_url"],
@@ -528,6 +532,7 @@ def get_print_detail(print_id: int):
         "language": payload["language"],
         "rarity": payload["rarity"],
         "is_foil": payload["is_foil"],
+        "variant": payload["variant"],
     }
     payload["images"] = [dict(image) for image in images]
     payload["identifiers"] = [dict(identifier) for identifier in identifiers]

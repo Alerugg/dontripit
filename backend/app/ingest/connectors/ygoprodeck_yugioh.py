@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -79,6 +80,16 @@ class YgoProDeckYugiohConnector(SourceConnector):
     def _normalize_rarity(value: object) -> str | None:
         rarity = str(value or "").strip()
         return rarity or None
+
+    @staticmethod
+    def _variant_from_rarity(value: object) -> str:
+        rarity = str(value or "").strip().lower()
+        if not rarity:
+            return "default"
+        rarity = rarity.replace(" ", "-")
+        rarity = re.sub(r"[^a-z0-9-]", "", rarity)
+        rarity = re.sub(r"-+", "-", rarity).strip("-")
+        return rarity or "default"
 
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_sets = payload.get("card_sets") or []
@@ -199,6 +210,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ygo_print_id = item.get("yugioh_id")
             normalized_language = self._normalize_language(item.get("language"))
             normalized_rarity = self._normalize_rarity(item.get("rarity"))
+            variant = self._variant_from_rarity(item.get("rarity"))
 
             print_row = None
             if ygo_print_id:
@@ -209,6 +221,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                         Print.set_id == set_row.id,
                         Print.card_id == card_row.id,
                         Print.collector_number == collector_number,
+                        Print.language == normalized_language,
+                        Print.is_foil.is_(False),
+                        Print.variant == variant,
                     )
                 ).scalar_one_or_none()
 
@@ -219,6 +234,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     collector_number=collector_number,
                     rarity=normalized_rarity,
                     language=normalized_language,
+                    variant=variant,
                     yugioh_id=ygo_print_id,
                 )
                 session.add(print_row)
@@ -233,6 +249,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     changed = True
                 if print_row.language != normalized_language:
                     print_row.language = normalized_language
+                    changed = True
+                if print_row.variant != variant:
+                    print_row.variant = variant
                     changed = True
                 if changed:
                     stats.records_updated += 1

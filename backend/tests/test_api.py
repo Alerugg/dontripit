@@ -111,6 +111,8 @@ def test_prints_returns_200_and_json_list(client):
     assert response.status_code == 200
     payload = response.get_json()
     assert isinstance(payload, list)
+    if payload:
+        assert payload[0]["variant"] == "default"
 
 
 def test_ingest_fixture_local_idempotent(client):
@@ -164,6 +166,7 @@ def test_print_detail_200(client):
     assert payload["card"]["name"]
     assert payload["set"]["code"]
     assert isinstance(payload["images"], list)
+    assert payload["print"].get("variant") == "default"
 
 
 def test_search_returns_pikachu(client):

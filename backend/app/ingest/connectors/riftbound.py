@@ -133,6 +133,7 @@ class RiftboundConnector(SourceConnector):
                     Print.set_id == set_row.id,
                     Print.card_id == card_row.id,
                     Print.collector_number == collector_number,
+                    Print.variant == "default",
                 )
             ).scalar_one_or_none()
         if print_row is None:
@@ -143,6 +144,7 @@ class RiftboundConnector(SourceConnector):
                 language=language,
                 rarity=rarity,
                 riftbound_id=rift_print_id,
+                variant="default",
             )
             session.add(print_row)
             stats.records_inserted += 1

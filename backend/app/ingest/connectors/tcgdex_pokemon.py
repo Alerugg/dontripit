@@ -56,6 +56,7 @@ class TcgdexPokemonConnector(SourceConnector):
                 Print.set_id == set_id,
                 Print.card_id == card_id,
                 Print.collector_number == collector_number,
+                Print.variant == "default",
             )
         ).scalar_one_or_none()
 
@@ -454,6 +455,7 @@ class TcgdexPokemonConnector(SourceConnector):
                 rarity="unknown",
                 is_foil=False,
                 tcgdex_id=tcgdex_print_id,
+                variant="default",
             )
             session.add(print_row)
             session.flush()

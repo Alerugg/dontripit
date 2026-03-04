@@ -435,6 +435,57 @@ def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
     assert null_language_count == 0
 
 
+
+
+def test_yugioh_fixture_allows_same_collector_with_different_rarity_variants(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+    fixture = {
+        "data": [
+            {
+                "id": 12345,
+                "name": "Variant Test Card",
+                "card_sets": [
+                    {"set_name": "Variant Set", "set_code": "VAR-001", "set_rarity": "Ultra Rare"},
+                    {"set_name": "Variant Set", "set_code": "VAR-001", "set_rarity": "Secret Rare"},
+                ],
+            }
+        ]
+    }
+    fixture_path = tmp_path / "ygo_variants.json"
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, str(fixture_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "yugioh")).scalar_one()
+        variants = session.execute(
+            select(Print.variant)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id, Print.collector_number == "VAR-001")
+            .order_by(Print.variant.asc())
+        ).scalars().all()
+
+    assert stats.records_inserted > 0
+    assert variants == ["secret-rare", "ultra-rare"]
+
+
+def test_pokemon_prints_default_variant(client):
+    connector = get_connector("tcgdex_pokemon")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/tcgdex_pokemon_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one()
+        variants = session.execute(
+            select(Print.variant).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id).distinct()
+        ).scalars().all()
+
+    assert variants == ["default"]
+
+
 def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
     connector = get_connector("riftbound")
     with db.SessionLocal() as session:

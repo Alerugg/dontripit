@@ -52,7 +52,13 @@ class FixtureLocalConnector(SourceConnector):
             select(Print.id)
             .join(Set, Set.id == Print.set_id)
             .join(Game, Game.id == Set.game_id)
-            .where(Game.slug == game, Set.code == set_code, Print.collector_number == collector_number, Print.is_foil == is_foil)
+            .where(
+                Game.slug == game,
+                Set.code == set_code,
+                Print.collector_number == collector_number,
+                Print.is_foil == is_foil,
+                Print.variant == (entity_ref.get("variant") or "default"),
+            )
         )
         if language is None:
             stmt = stmt.where(Print.language.is_(None))
@@ -192,6 +198,7 @@ class FixtureLocalConnector(SourceConnector):
                     Print.set_id == set_row.id,
                     Print.card_id == card_row.id,
                     Print.collector_number == collector_number,
+                    Print.variant == "default",
                 )
             ).scalar_one_or_none()
             if print_row is None:
@@ -202,6 +209,7 @@ class FixtureLocalConnector(SourceConnector):
                     language=item.get("language"),
                     rarity=item.get("rarity"),
                     is_foil=bool(item.get("is_foil", False)),
+                    variant="default",
                 )
                 session.add(print_row)
                 session.flush()

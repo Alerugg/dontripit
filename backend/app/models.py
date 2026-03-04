@@ -74,7 +74,14 @@ class Card(Base):
 class Print(Base):
     __tablename__ = "prints"
     __table_args__ = (
-        UniqueConstraint("set_id", "card_id", "collector_number", name="uq_print_identity"),
+        UniqueConstraint(
+            "set_id",
+            "collector_number",
+            "language",
+            "is_foil",
+            "variant",
+            name="uq_prints_set_number_language_is_foil_variant",
+        ),
         UniqueConstraint("scryfall_id", name="uq_prints_scryfall_id"),
         UniqueConstraint("tcgdex_id", name="uq_prints_tcgdex_id"),
         UniqueConstraint("yugioh_id", name="uq_prints_yugioh_id"),
@@ -88,6 +95,7 @@ class Print(Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     rarity: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_foil: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    variant: Mapped[str] = mapped_column(String(100), nullable=False, default="default", server_default="default")
     scryfall_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yugioh_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
