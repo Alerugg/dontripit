@@ -22,7 +22,7 @@ Notas:
 1. Crea `.env` con `DATABASE_URL` (y opcional `DATABASE_URL_UNPOOLED`).
 2. Levanta API y frontend: `docker compose up --build`
 3. Ejecuta migraciones: `docker compose exec backend alembic upgrade head`
-4. Seed opcional: `docker compose exec backend python -m app.scripts.seed`
+4. Seed de catálogo (idempotente): `docker compose exec backend python -m app.scripts.seed_catalog`
 5. Ingest opcional: `docker compose exec backend python -m app.ingest.run fixture_local --path backend/data/fixtures`
 
 ### Base local opcional (Postgres en Docker)
@@ -450,6 +450,28 @@ Requires API key with `read:admin`.
 - Fixture path errors: verify path is relative to `backend/` or use absolute path.
 - Empty search results: run `python -m app.scripts.reindex_search` and retry `/api/search?q=pika`.
 
+
+## Railway deployment
+
+Para Railway (Railpack, sin Dockerfile), configura el servicio de backend con:
+
+- **Start Command**: `bash scripts/start.sh`
+
+El script `backend/scripts/start.sh` ejecuta automáticamente, en orden:
+
+1. `alembic upgrade head`
+2. `python -m app.scripts.seed_catalog`
+3. `gunicorn -b 0.0.0.0:$PORT app.main:app`
+
+Esto deja migrations + seed en cada deploy de forma idempotente (sin duplicar) y asegura que existan los juegos base (`pokemon`, `mtg`, `yugioh`, `riftbound`).
+
+Variables requeridas en Railway:
+
+- `DATABASE_URL` (runtime)
+- `DATABASE_URL_UNPOOLED` (migraciones; si no está, Alembic usa fallback a `DATABASE_URL`)
+- `ADMIN_TOKEN` (para `POST /api/admin/dev/api-keys` con `X-Admin-Token`)
+
+No se requiere **Pre-Deploy Command** si usas el `Start Command` indicado arriba.
 
 ## Deploy env vars
 

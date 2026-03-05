@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app import db
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+from app.scripts.seed import run_seed
 
 SET_FIXTURE = {"code": "SV1", "name": "Scarlet & Violet", "release_date": date(2023, 3, 31)}
 CARDS_FIXTURE = ["Pikachu", "Charizard"]
@@ -118,8 +119,9 @@ def _ensure_identifiers(session, print_row: Print, identifiers: list[dict]) -> i
 
 
 def run_seed_catalog() -> dict:
+    base_inserted = run_seed()
     db.init_engine()
-    stats = {"sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0}
+    stats = {"base": base_inserted, "sets": 0, "cards": 0, "prints": 0, "images": 0, "identifiers": 0}
 
     with db.SessionLocal() as session:
         game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
