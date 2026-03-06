@@ -100,14 +100,14 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         "started_at": started_at.isoformat(),
         "incremental": bool(args.incremental),
         "batch_size": args.batch_size,
-        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon), "runs": [], "totals": _empty_stats()},
-        "mtg": {"ok": False, "run": None, "totals": _empty_stats()},
-        "yugioh": {"ok": False, "run": None, "totals": _empty_stats()},
-        "riftbound": {"ok": False, "run": None, "totals": _empty_stats()},
+        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon or args.pokemon_limit <= 0), "runs": [], "totals": _empty_stats()},
+        "mtg": {"ok": False, "skipped": bool(args.mtg_limit <= 0), "run": None, "totals": _empty_stats()},
+        "yugioh": {"ok": False, "skipped": bool(args.yugioh_limit <= 0), "run": None, "totals": _empty_stats()},
+        "riftbound": {"ok": False, "skipped": bool(args.riftbound_limit <= 0), "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
-    if not args.skip_pokemon:
+    if not args.skip_pokemon and args.pokemon_limit > 0:
         pokemon_sets = _resolve_pokemon_sets(args, summary)
 
         for pokemon_set in pokemon_sets:
@@ -115,7 +115,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
                 "tcgdex_pokemon",
                 args.path,
                 set=pokemon_set,
-                limit=args.pokemon_limit or args.batch_size,
+                limit=args.pokemon_limit,
                 incremental=args.incremental,
                 fixture=args.fixture,
             )
@@ -126,38 +126,41 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
                 summary["pokemon"]["ok"] = True
             time.sleep(max(args.sleep_seconds, 0))
 
-    mtg_run = _run_connector(
-        "scryfall_mtg",
-        args.path,
-        limit=args.mtg_limit or args.batch_size,
-        incremental=args.incremental,
-        fixture=args.fixture,
-    )
-    summary["mtg"]["run"] = mtg_run
-    summary["mtg"]["ok"] = mtg_run["ok"]
-    _accumulate(summary["mtg"]["totals"], mtg_run["stats"])
+    if args.mtg_limit > 0:
+        mtg_run = _run_connector(
+            "scryfall_mtg",
+            args.path,
+            limit=args.mtg_limit,
+            incremental=args.incremental,
+            fixture=args.fixture,
+        )
+        summary["mtg"]["run"] = mtg_run
+        summary["mtg"]["ok"] = mtg_run["ok"]
+        _accumulate(summary["mtg"]["totals"], mtg_run["stats"])
 
-    yugioh_run = _run_connector(
-        "ygoprodeck_yugioh",
-        args.path,
-        limit=args.yugioh_limit or args.batch_size,
-        incremental=args.incremental,
-        fixture=args.fixture,
-    )
-    summary["yugioh"]["run"] = yugioh_run
-    summary["yugioh"]["ok"] = yugioh_run["ok"]
-    _accumulate(summary["yugioh"]["totals"], yugioh_run["stats"])
+    if args.yugioh_limit > 0:
+        yugioh_run = _run_connector(
+            "ygoprodeck_yugioh",
+            args.path,
+            limit=args.yugioh_limit,
+            incremental=args.incremental,
+            fixture=args.fixture,
+        )
+        summary["yugioh"]["run"] = yugioh_run
+        summary["yugioh"]["ok"] = yugioh_run["ok"]
+        _accumulate(summary["yugioh"]["totals"], yugioh_run["stats"])
 
-    riftbound_run = _run_connector(
-        "riftbound",
-        args.path,
-        limit=args.riftbound_limit or args.batch_size,
-        incremental=args.incremental,
-        fixture=args.riftbound_fixture,
-    )
-    summary["riftbound"]["run"] = riftbound_run
-    summary["riftbound"]["ok"] = riftbound_run["ok"]
-    _accumulate(summary["riftbound"]["totals"], riftbound_run["stats"])
+    if args.riftbound_limit > 0:
+        riftbound_run = _run_connector(
+            "riftbound",
+            args.path,
+            limit=args.riftbound_limit,
+            incremental=args.incremental,
+            fixture=args.riftbound_fixture,
+        )
+        summary["riftbound"]["run"] = riftbound_run
+        summary["riftbound"]["ok"] = riftbound_run["ok"]
+        _accumulate(summary["riftbound"]["totals"], riftbound_run["stats"])
 
     try:
         with db.SessionLocal() as session:

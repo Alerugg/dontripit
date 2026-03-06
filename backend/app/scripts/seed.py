@@ -12,6 +12,14 @@ SEED_GAMES = [
     {"slug": "riftbound", "name": "Riftbound"},
 ]
 
+SEED_SOURCES = [
+    {"name": "fixture_local", "description": "Local JSON fixture connector"},
+    {"name": "tcgdex_pokemon", "description": "TCGdex Pokémon connector"},
+    {"name": "scryfall_mtg", "description": "Scryfall MTG connector"},
+    {"name": "ygoprodeck_yugioh", "description": "YGOProDeck Yu-Gi-Oh! connector"},
+    {"name": "riftbound", "description": "Riftbound connector"},
+]
+
 
 def run_seed() -> int:
     db.init_engine()
@@ -28,9 +36,11 @@ def run_seed() -> int:
             session.add(Game(slug=item["slug"], name=item["name"]))
             inserted += 1
 
-        fixture_source = session.execute(select(Source).where(Source.name == "fixture_local")).scalar_one_or_none()
-        if not fixture_source:
-            session.add(Source(name="fixture_local", description="Local JSON fixture connector"))
+        for source in SEED_SOURCES:
+            existing_source = session.execute(select(Source).where(Source.name == source["name"])).scalar_one_or_none()
+            if existing_source:
+                continue
+            session.add(Source(name=source["name"], description=source["description"]))
             inserted += 1
 
         rebuild_search_documents(session)

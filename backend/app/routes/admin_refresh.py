@@ -13,14 +13,17 @@ admin_refresh_bp = Blueprint("admin_refresh", __name__)
 _REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="admin-refresh")
 
 
-def _as_int(value, default: int = 200) -> int:
+def _as_int(value, default: int) -> int:
+    if value is None:
+        return default
     try:
-        parsed = int(value)
-        if parsed <= 0:
-            return default
-        return parsed
+        return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _has_body(payload: dict) -> bool:
+    return bool(payload)
 
 
 def _as_bool(value, default: bool = True) -> bool:
@@ -34,12 +37,13 @@ def _as_bool(value, default: bool = True) -> bool:
 @admin_refresh_bp.post("/api/admin/refresh")
 def admin_refresh():
     payload = request.get_json(silent=True) or {}
+    has_body = _has_body(payload)
     args = build_refresh_args(
         pokemon_set=payload.get("pokemon_set"),
-        pokemon_limit=_as_int(payload.get("pokemon_limit"), 200),
-        mtg_limit=_as_int(payload.get("mtg_limit"), 200),
-        yugioh_limit=_as_int(payload.get("yugioh_limit"), 200),
-        riftbound_limit=_as_int(payload.get("riftbound_limit"), 200),
+        pokemon_limit=_as_int(payload.get("pokemon_limit"), 0 if has_body else 200),
+        mtg_limit=_as_int(payload.get("mtg_limit"), 0 if has_body else 200),
+        yugioh_limit=_as_int(payload.get("yugioh_limit"), 0 if has_body else 200),
+        riftbound_limit=_as_int(payload.get("riftbound_limit"), 0 if has_body else 200),
         incremental=_as_bool(payload.get("incremental"), True),
         sleep_seconds=0,
     )
