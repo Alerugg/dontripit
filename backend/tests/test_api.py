@@ -1,7 +1,7 @@
 import os
 import time
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app import db
 from app.auth import middleware
@@ -9,6 +9,7 @@ from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.registry import get_connector
 from app.models import ApiKey, ApiPlan, PriceSnapshot, Print, Product, SourceRecord
+from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
 
 
@@ -577,6 +578,25 @@ def test_search_returns_results_for_yugioh_after_fixture_ingest(client):
     payload = response.get_json()
     assert payload
     assert any("Dark Magician" in item["title"] for item in payload)
+
+
+def test_search_dark_magician_yugioh_after_reindex_returns_card_and_print(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        session.execute(text("DELETE FROM search_documents"))
+        rebuild_search_documents(session)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any(item["type"] == "card" and item["title"] == "Dark Magician" for item in payload)
+    assert any(item["type"] == "print" and "LOB-005" in (item.get("subtitle") or "") for item in payload)
 
 
 def test_admin_create_api_key_localhost(client):
