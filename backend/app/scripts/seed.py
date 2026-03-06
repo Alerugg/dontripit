@@ -38,10 +38,14 @@ def run_seed() -> int:
 
         for source in SEED_SOURCES:
             existing_source = session.execute(select(Source).where(Source.name == source["name"])).scalar_one_or_none()
-            if existing_source:
+            if existing_source is None:
+                session.add(Source(name=source["name"], description=source["description"]))
+                inserted += 1
                 continue
-            session.add(Source(name=source["name"], description=source["description"]))
-            inserted += 1
+
+            description = source["description"]
+            if existing_source.description != description:
+                existing_source.description = description
 
         rebuild_search_documents(session)
         session.commit()

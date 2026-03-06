@@ -22,8 +22,15 @@ def _as_int(value, default: int) -> int:
         return default
 
 
-def _has_body(payload: dict) -> bool:
-    return bool(payload)
+def _parse_limit(payload: dict, field: str, default: int) -> int:
+    if field not in payload or payload.get(field) is None:
+        return default
+
+    parsed = _as_int(payload.get(field), default)
+    if parsed <= 0:
+        return 0
+    return parsed
+
 
 
 def _as_bool(value, default: bool = True) -> bool:
@@ -37,13 +44,13 @@ def _as_bool(value, default: bool = True) -> bool:
 @admin_refresh_bp.post("/api/admin/refresh")
 def admin_refresh():
     payload = request.get_json(silent=True) or {}
-    has_body = _has_body(payload)
+    default_limit = 200
     args = build_refresh_args(
         pokemon_set=payload.get("pokemon_set"),
-        pokemon_limit=_as_int(payload.get("pokemon_limit"), 0 if has_body else 200),
-        mtg_limit=_as_int(payload.get("mtg_limit"), 0 if has_body else 200),
-        yugioh_limit=_as_int(payload.get("yugioh_limit"), 0 if has_body else 200),
-        riftbound_limit=_as_int(payload.get("riftbound_limit"), 0 if has_body else 200),
+        pokemon_limit=_parse_limit(payload, "pokemon_limit", default_limit),
+        mtg_limit=_parse_limit(payload, "mtg_limit", default_limit),
+        yugioh_limit=_parse_limit(payload, "yugioh_limit", default_limit),
+        riftbound_limit=_parse_limit(payload, "riftbound_limit", default_limit),
         incremental=_as_bool(payload.get("incremental"), True),
         sleep_seconds=0,
     )

@@ -119,3 +119,22 @@ def test_daily_refresh_supports_explicit_pokemon_sets(monkeypatch):
     assert [call["kwargs"]["set"] for call in pokemon_calls] == ["base1", "sv1"]
     assert all(call["kwargs"]["limit"] == 7 for call in pokemon_calls)
     assert summary["batch_size"] == 7
+
+
+def test_daily_refresh_respects_zero_limits_as_skip(monkeypatch):
+    calls = []
+
+    def fake_get_connector(name):
+        return _FakeConnector(name=name, calls=calls)
+
+    monkeypatch.setattr(daily_refresh.db, "SessionLocal", _FakeSessionFactory())
+    monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
+    monkeypatch.setattr(daily_refresh, "rebuild_search_documents", lambda session: {"cards": 0, "sets": 0, "prints": 0})
+
+    summary = daily_refresh.run_daily_refresh(_args(pokemon_limit=0, mtg_limit=0, yugioh_limit=5, riftbound_limit=0))
+
+    assert [call["name"] for call in calls] == ["ygoprodeck_yugioh"]
+    assert summary["pokemon"]["skipped"] is True
+    assert summary["mtg"]["skipped"] is True
+    assert summary["yugioh"]["skipped"] is False
+    assert summary["riftbound"]["skipped"] is True

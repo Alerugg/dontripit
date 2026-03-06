@@ -635,6 +635,72 @@ def test_admin_refresh_requires_auth(client, monkeypatch):
     assert response.get_json() == {"error": "missing_api_key"}
 
 
+
+
+def test_admin_refresh_limit_parsing_zero_skips_and_missing_uses_default(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
+
+    captured = {}
+
+    def fake_build_refresh_args(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    class ImmediateFuture:
+        def result(self):
+            return None
+
+    def fake_submit(fn, *args, **kwargs):
+        return ImmediateFuture()
+
+    monkeypatch.setattr("app.routes.admin_refresh.build_refresh_args", fake_build_refresh_args)
+    monkeypatch.setattr("app.routes.admin_refresh._REFRESH_EXECUTOR.submit", fake_submit)
+
+    headers = _auth_headers("admin-rf-limits", ["read:catalog", "read:admin"])
+    response = client.post(
+        "/api/admin/refresh",
+        headers=headers,
+        json={"pokemon_limit": 0, "yugioh_limit": 50, "incremental": True},
+    )
+
+    assert response.status_code == 202
+    assert captured["pokemon_limit"] == 0
+    assert captured["mtg_limit"] == 200
+    assert captured["yugioh_limit"] == 50
+    assert captured["riftbound_limit"] == 200
+
+
+def test_admin_refresh_limit_parsing_null_uses_default(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
+
+    captured = {}
+
+    def fake_build_refresh_args(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    class ImmediateFuture:
+        def result(self):
+            return None
+
+    def fake_submit(fn, *args, **kwargs):
+        return ImmediateFuture()
+
+    monkeypatch.setattr("app.routes.admin_refresh.build_refresh_args", fake_build_refresh_args)
+    monkeypatch.setattr("app.routes.admin_refresh._REFRESH_EXECUTOR.submit", fake_submit)
+
+    headers = _auth_headers("admin-rf-null", ["read:catalog", "read:admin"])
+    response = client.post(
+        "/api/admin/refresh",
+        headers=headers,
+        json={"pokemon_limit": None, "mtg_limit": None, "yugioh_limit": None, "riftbound_limit": None},
+    )
+
+    assert response.status_code == 202
+    assert captured["pokemon_limit"] == 200
+    assert captured["mtg_limit"] == 200
+    assert captured["yugioh_limit"] == 200
+    assert captured["riftbound_limit"] == 200
 def test_admin_refresh_allows_admin_key(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 

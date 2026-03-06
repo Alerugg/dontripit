@@ -295,6 +295,25 @@ Ejemplo:
 curl -H "X-API-Key: <admin_key>" "http://localhost:3000/api/v1/admin/ingest-status?limit=10"
 ```
 
+### Admin refresh (límites por conector)
+
+`POST /api/admin/refresh` interpreta los límites por conector así:
+
+- Campo ausente o `null`: usa el default del backend (`200`).
+- Valor `0` (o negativo): **skip** de ese conector.
+- Valor `> 0`: ejecuta ese conector con ese límite.
+
+Aplica a `pokemon_limit`, `mtg_limit`, `yugioh_limit` y `riftbound_limit`.
+
+Ejemplo (solo Yu-Gi-Oh!):
+
+```bash
+curl -i -X POST http://localhost:5000/api/admin/refresh \
+  -H "X-API-Key: <admin_key>" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"pokemon_limit":0,"mtg_limit":0,"yugioh_limit":50,"riftbound_limit":0,"incremental":true}'
+```
+
 ## CI jobs (Neon)
 
 GitHub Actions se encarga de migraciones e ingest/reindex fuera de Vercel. La API en Vercel solo sirve tráfico.
