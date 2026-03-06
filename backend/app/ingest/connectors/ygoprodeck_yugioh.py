@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -126,6 +127,25 @@ class YgoProDeckYugiohConnector(SourceConnector):
         rarity = str(value or "").strip()
         return rarity or "unknown"
 
+    @staticmethod
+    def _normalize_variant(value: object) -> str:
+        text = str(value or "").strip().lower()
+        text = re.sub(r"[\s_\/]+", "-", text)
+        text = re.sub(r"[^a-z0-9-]", "", text)
+        text = re.sub(r"-+", "-", text).strip("-")
+        return text or "default"
+
+    @classmethod
+    def _derive_variant(cls, set_payload: dict) -> str:
+        raw_variant = (
+            set_payload.get("set_rarity")
+            or set_payload.get("rarity")
+            or set_payload.get("set_rarity_code")
+            or set_payload.get("set_rarity_short")
+            or ""
+        )
+        return cls._normalize_variant(raw_variant)
+
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_sets = payload.get("card_sets") or []
         normalized_sets = []
@@ -152,6 +172,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     "set_code": set_code or f"set-{idx+1}",
                     "collector_number": collector_number,
                     "rarity": self._normalize_rarity(set_payload.get("set_rarity")),
+                    "variant": self._derive_variant(set_payload),
                     "language": self._normalize_language(
                         set_payload.get("set_language") or payload.get("language")
                     ),
@@ -169,6 +190,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     "set_code": fallback_code,
                     "collector_number": str(payload.get("id") or fallback_code),
                     "rarity": "unknown",
+                    "variant": "default",
                     "language": "en",
                     "yugioh_id": str(payload.get("id") or fallback_code),
                 }
@@ -280,7 +302,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ygo_print_id = item.get("yugioh_id")
             normalized_language = self._normalize_language(item.get("language"))
             normalized_rarity = self._normalize_rarity(item.get("rarity"))
-            variant = "default"
+            variant = self._normalize_variant(item.get("variant"))
 
             print_row = None
             if ygo_print_id:
@@ -322,7 +344,10 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 if print_row.language != normalized_language:
                     print_row.language = normalized_language
                     changed = True
-                if print_row.variant != variant:
+                if (
+                    not (print_row.variant or "").strip()
+                    and print_row.variant != variant
+                ):
                     print_row.variant = variant
                     changed = True
                 if changed:
