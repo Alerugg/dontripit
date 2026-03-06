@@ -653,6 +653,107 @@ def test_yugioh_missing_rarity_defaults_to_unknown_without_integrity_error(
     assert rarities == ["unknown", "unknown"]
 
 
+def test_yugioh_variant_is_derived_from_rarity_and_slugged(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+    fixture = {
+        "data": [
+            {
+                "id": 999003,
+                "name": "Variant Source Card",
+                "card_sets": [
+                    {
+                        "set_name": "Variant Set",
+                        "set_code": "VRS-001",
+                        "set_rarity": "Ultra Rare",
+                    },
+                    {
+                        "set_name": "Variant Set",
+                        "set_code": "VRS-001",
+                        "set_rarity": "Collector/Rare",
+                    },
+                ],
+            }
+        ]
+    }
+    fixture_path = tmp_path / "ygo_variant_slug.json"
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(fixture_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        variants = (
+            session.execute(
+                select(Print.variant)
+                .where(Print.collector_number == "VRS-001")
+                .order_by(Print.variant.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    assert variants == ["collector-rare", "ultra-rare"]
+
+
+def test_yugioh_incremental_does_not_overwrite_existing_variant(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    initial_fixture = {
+        "data": [
+            {
+                "id": 999004,
+                "name": "Existing Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Existing Variant Set",
+                        "set_code": "EVS-001",
+                        "set_rarity": "Starlight Rare",
+                    }
+                ],
+            }
+        ]
+    }
+    incremental_fixture = {
+        "data": [
+            {
+                "id": 999004,
+                "name": "Existing Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Existing Variant Set",
+                        "set_code": "EVS-001",
+                        "set_rarity": None,
+                        "rarity": None,
+                        "set_rarity_code": None,
+                        "set_rarity_short": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    initial_path = tmp_path / "ygo_variant_initial.json"
+    initial_path.write_text(json.dumps(initial_fixture), encoding="utf-8")
+    incremental_path = tmp_path / "ygo_variant_incremental.json"
+    incremental_path.write_text(json.dumps(incremental_fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(initial_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(incremental_path), fixture=True, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        variant = session.execute(
+            select(Print.variant).where(Print.collector_number == "EVS-001")
+        ).scalar_one()
+
+    assert variant == "starlight-rare"
+
+
 def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_path):
     connector = get_connector("ygoprodeck_yugioh")
     fixture = {
@@ -680,7 +781,9 @@ def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_pat
 
     with db.SessionLocal() as session:
         row = session.execute(
-            select(Print.language, Print.rarity, Print.variant).where(Print.collector_number == "MFS-001")
+            select(Print.language, Print.rarity, Print.variant).where(
+                Print.collector_number == "MFS-001"
+            )
         ).first()
 
     assert row is not None
@@ -724,7 +827,9 @@ def test_prints_unique_constraint_allows_same_identity_with_different_variant(cl
     with db.SessionLocal() as session:
         variants = (
             session.execute(
-                select(Print.variant).where(Print.collector_number == "001").order_by(Print.variant.asc())
+                select(Print.variant)
+                .where(Print.collector_number == "001")
+                .order_by(Print.variant.asc())
             )
             .scalars()
             .all()
