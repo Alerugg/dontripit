@@ -7,6 +7,7 @@ from app import db
 from app.auth import middleware
 from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
+from app.ingest.base import IngestStats
 from app.ingest.registry import get_connector
 from app.models import ApiKey, ApiPlan, Card, PriceSnapshot, Print, Product, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
@@ -998,3 +999,81 @@ def test_admin_reindex_search_runs_and_returns_stats(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json() == {"ok": True, "reindex": {"cards": 1, "sets": 2, "prints": 3}}
+
+
+def _seed_yugioh_search_fixture():
+    run_seed()
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        payloads = connector.load(path="data/fixtures", fixture=True, limit=120)
+        for _, payload, checksum in payloads:
+            normalized = connector.normalize(payload)
+            connector.upsert(session, normalized, stats=IngestStats())
+        rebuild_search_documents(session)
+        session.commit()
+
+
+def test_search_suggest_da_prioritizes_dark_magician(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search/suggest?q=Da&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+    assert payload
+    top_titles = [item.get("title", "") for item in payload[:3]]
+    assert any("Dark Magician" in title for title in top_titles)
+
+
+def test_search_suggest_lob_returns_relevant_prints(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search/suggest?q=LOB-&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any((item.get("collector_number") or "").lower().startswith("lob-") for item in payload)
+
+
+def test_search_suggest_blue_returns_blue_eyes(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search/suggest?q=Blue&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any(item.get("title") == "Blue-Eyes White Dragon" for item in payload)
+
+
+def test_v1_card_detail_has_primary_image_and_game(client):
+    _seed_yugioh_search_fixture()
+    with db.SessionLocal() as session:
+        card_id = session.execute(
+            select(Card.id).where(Card.name == "Dark Magician").order_by(Card.id.asc())
+        ).scalars().first()
+
+    response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["game"] == "yugioh"
+    assert "primary_image_url" in payload
+    assert isinstance(payload["prints"], list)
+
+
+def test_v1_print_detail_has_catalog_shape(client):
+    _seed_yugioh_search_fixture()
+    with db.SessionLocal() as session:
+        print_id = session.execute(
+            select(Print.id)
+            .join(Card, Card.id == Print.card_id)
+            .where(Card.name == "Dark Magician")
+            .order_by(Print.id.asc())
+        ).scalars().first()
+
+    response = client.get(f"/api/v1/prints/{print_id}", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["game"] == "yugioh"
+    assert payload["title"] == "Dark Magician"
+    assert payload["card"]["name"] == "Dark Magician"
+    assert "primary_image_url" in payload

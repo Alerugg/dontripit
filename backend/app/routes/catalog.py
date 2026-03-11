@@ -93,10 +93,19 @@ def get_card_detail(card_id: int):
         SELECT c.id,
                c.name,
                g.slug AS game_slug,
+               g.slug AS game,
                c.tcgdex_id,
                NULL AS scryfall_id,
                c.yugoprodeck_id AS yugioh_id,
-               c.riftbound_id
+               c.riftbound_id,
+               (
+                 SELECT pi.url
+                 FROM print_images pi
+                 JOIN prints p ON p.id = pi.print_id
+                 WHERE p.card_id = c.id
+                 ORDER BY pi.is_primary DESC, pi.id ASC
+                 LIMIT 1
+               ) AS primary_image_url
         FROM cards c
         JOIN games g ON g.id = c.game_id
         WHERE c.id = :card_id
@@ -106,6 +115,7 @@ def get_card_detail(card_id: int):
         """
         SELECT p.id,
                s.code AS set_code,
+               s.name AS set_name,
                p.card_id,
                p.collector_number,
                p.language,
@@ -121,7 +131,24 @@ def get_card_detail(card_id: int):
                    LIMIT 1
                  ),
                  NULL
-               ) AS image_url
+               ) AS image_url,
+               COALESCE(
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+                 ),
+                 (
+                   SELECT pi2.url
+                   FROM print_images pi2
+                   JOIN prints p2 ON p2.id = pi2.print_id
+                   WHERE p2.card_id = p.card_id
+                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                   LIMIT 1
+                 )
+               ) AS primary_image_url
         FROM prints p
         JOIN sets s ON s.id = p.set_id
         WHERE p.card_id = :card_id
@@ -154,13 +181,21 @@ def get_card_detail(card_id: int):
             "id": card["id"],
             "name": card["name"],
             "game_slug": card["game_slug"],
+            "game": card["game"],
+            "primary_image_url": card["primary_image_url"],
             "external_ids": {
                 "tcgdex_id": card["tcgdex_id"],
                 "scryfall_id": card["scryfall_id"],
                 "yugioh_id": card["yugioh_id"],
                 "riftbound_id": card["riftbound_id"],
             },
-            "prints": [dict(row) for row in prints],
+            "prints": [
+                {
+                    **dict(row),
+                    "primary_image_url": row["primary_image_url"],
+                }
+                for row in prints
+            ],
             "sets": [dict(row) for row in sets],
         }
     )
@@ -450,6 +485,8 @@ def get_print_detail(print_id: int):
     sql = text(
         """
         SELECT p.id,
+               g.slug AS game,
+               c.name AS title,
                p.collector_number,
                p.language,
                p.rarity,
@@ -477,6 +514,7 @@ def get_print_detail(print_id: int):
         FROM prints p
         JOIN cards c ON c.id = p.card_id
         JOIN sets s ON s.id = p.set_id
+        JOIN games g ON g.id = s.game_id
         WHERE p.id = :print_id
         """
     )
@@ -510,11 +548,16 @@ def get_print_detail(print_id: int):
 
     payload = {
         "id": row["id"],
+        "game": row["game"],
+        "title": row["title"],
+        "set_code": row["set_code"],
+        "set_name": row["set_name"],
         "collector_number": row["collector_number"],
         "language": row["language"],
         "rarity": row["rarity"],
         "is_foil": row["is_foil"],
         "variant": row["variant"],
+        "primary_image_url": row["image_url"],
         "set": {"id": row["set_id"], "code": row["set_code"], "name": row["set_name"]},
         "card": {"id": row["card_id"], "name": row["card_name"]},
         "image_url": row["image_url"],

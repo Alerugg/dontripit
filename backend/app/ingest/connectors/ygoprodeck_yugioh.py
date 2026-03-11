@@ -10,7 +10,7 @@ import requests
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
-from app.models import Card, Game, Print, Set
+from app.models import Card, Game, Print, PrintImage, Set
 
 
 class YgoProDeckYugiohConnector(SourceConnector):
@@ -266,6 +266,13 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 }
             ]
 
+        card_image_url = None
+        for image in payload.get("card_images") or []:
+            image_url = (image.get("image_url") or "").strip()
+            if image_url:
+                card_image_url = image_url
+                break
+
         return {
             "card": {
                 "name": (payload.get("name") or "").strip(),
@@ -275,6 +282,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
             },
             "sets": normalized_sets,
             "prints": normalized_prints,
+            "card_image_url": card_image_url,
         }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
@@ -320,6 +328,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 changed = True
             if changed:
                 stats.records_updated += 1
+
+        card_image_url = (payload.get("card_image_url") or "").strip()
 
         sets_by_code: dict[str, Set] = {}
         for item in payload.get("sets") or []:
@@ -421,6 +431,29 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     print_row.variant = variant
                     changed = True
                 if changed:
+                    stats.records_updated += 1
+
+            if card_image_url:
+                primary_image = session.execute(
+                    select(PrintImage).where(
+                        PrintImage.print_id == print_row.id,
+                        PrintImage.is_primary.is_(True),
+                    )
+                ).scalar_one_or_none()
+                if primary_image is None:
+                    session.add(
+                        PrintImage(
+                            print_id=print_row.id,
+                            url=card_image_url,
+                            is_primary=True,
+                            source="ygoprodeck",
+                        )
+                    )
+                    stats.records_inserted += 1
+                elif primary_image.url != card_image_url:
+                    primary_image.url = card_image_url
+                    if primary_image.source != "ygoprodeck":
+                        primary_image.source = "ygoprodeck"
                     stats.records_updated += 1
 
         return {"card_id": card_row.id}
