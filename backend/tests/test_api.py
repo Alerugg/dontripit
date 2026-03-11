@@ -1067,6 +1067,16 @@ def test_search_suggest_lob_005_prioritizes_exact_print_first(client):
     assert top["collector_number"] == "LOB-005"
 
 
+def test_search_suggest_dark_mag_prioritizes_dark_magician(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search/suggest?q=Dark%20Mag&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert payload[0]["title"] == "Dark Magician"
+
+
 def test_search_suggest_lob_keeps_lob_005_near_top_and_consistent_code_order(client):
     _seed_yugioh_search_fixture()
 
@@ -1074,6 +1084,10 @@ def test_search_suggest_lob_keeps_lob_005_near_top_and_consistent_code_order(cli
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
+
+    top = payload[0]
+    assert top["type"] == "print"
+    assert ((top.get("set_code") or "").lower().startswith("lob") or (top.get("collector_number") or "").lower().startswith("lob"))
 
     collector_numbers = [item.get("collector_number") for item in payload if item.get("type") == "print" and item.get("collector_number")]
     assert "LOB-005" in collector_numbers[:5]

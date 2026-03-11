@@ -8,6 +8,25 @@ from app import db
 search_bp = Blueprint("search", __name__)
 
 
+def _looks_like_code_query(raw_query: str) -> bool:
+    normalized = "".join(raw_query.strip().split())
+    if len(normalized) < 2 or len(normalized) > 12:
+        return False
+
+    if "-" in normalized or "_" in normalized:
+        return True
+
+    has_alpha = any(char.isalpha() for char in normalized)
+    has_digit = any(char.isdigit() for char in normalized)
+    if has_alpha and has_digit:
+        return True
+
+    if has_alpha and normalized.isalnum() and normalized.upper() == normalized and len(normalized) <= 5:
+        return True
+
+    return bool(re.fullmatch(r"[a-zA-Z]{2,4}[0-9]{0,3}", normalized))
+
+
 def _fallback_search_rows(session, *, like: str, game: str, result_type: str | None, limit: int, offset: int):
     fallback = text(
         """
@@ -38,7 +57,7 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
 
 def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
     term = " ".join(q.lower().split())
-    looks_like_code = 1 if re.search(r"[0-9_-]", term) else 0
+    looks_like_code = 1 if _looks_like_code_query(q) else 0
     params = {
         "q": term,
         "prefix": f"{term}%",
@@ -74,13 +93,27 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
               CASE WHEN lower(sd.title) LIKE :prefix THEN 1600.0 ELSE 0.0 END +
               CASE WHEN (' ' || lower(sd.title)) LIKE :token_prefix THEN 950.0 ELSE 0.0 END +
               CASE WHEN lower(sd.title) LIKE :contains THEN 320.0 ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN 1900.0 ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) = :q THEN 1700.0 ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN 1100.0 ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) LIKE :prefix THEN 900.0 ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3400.0 ELSE 1900.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3600.0 ELSE 1700.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2100.0 ELSE 1100.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2400.0 ELSE 900.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 450.0 ELSE 160.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 650.0 ELSE 200.0 END) ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN (120.0 / (1 + abs(length(lower(COALESCE(s.code, ''))) - length(:q)))) ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (80.0 / (1 + abs(length(lower(COALESCE(p.collector_number, ''))) - length(:q)))) ELSE 0.0 END +
               CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' THEN 220.0 ELSE 0.0 END +
               CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' THEN -90.0 ELSE 0.0 END +
               CASE WHEN :looks_like_code = 1 AND sd.doc_type = 'print' THEN 140.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 1 THEN -35.0 * (
+                ROW_NUMBER() OVER (
+                  PARTITION BY lower(COALESCE(s.code, ''))
+                  ORDER BY
+                    CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN 0 ELSE 1 END,
+                    length(COALESCE(p.collector_number, '')) ASC,
+                    lower(COALESCE(p.collector_number, '')) ASC,
+                    sd.object_id ASC
+                ) - 1
+              ) ELSE 0.0 END +
               (CASE WHEN COALESCE(cpc.print_count, 0) > 50 THEN 50 ELSE COALESCE(cpc.print_count, 0) END) * 5.0 +
               CASE WHEN sd.doc_type = 'card' THEN (220.0 / (sd.object_id + 20.0)) ELSE 0.0 END
             ) AS score,
