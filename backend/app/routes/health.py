@@ -1,3 +1,5 @@
+import os
+
 from flask import Blueprint, jsonify
 
 health_bp = Blueprint("health", __name__)
@@ -6,4 +8,9 @@ health_bp = Blueprint("health", __name__)
 @health_bp.get("/api/health")
 @health_bp.get("/api/v1/health")
 def health():
-    return jsonify({"ok": True})
+    return jsonify(
+        {
+            "ok": True,
+            "revision": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION") or "unknown",
+        }
+    )

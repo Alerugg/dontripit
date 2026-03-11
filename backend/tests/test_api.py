@@ -40,7 +40,9 @@ def _auth_headers(key: str = "test-key", scopes: list[str] | None = None) -> dic
 def test_allows_health_without_key(client):
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.get_json() == {"ok": True}
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert "revision" in payload
 
 
 def test_db_check(client):
