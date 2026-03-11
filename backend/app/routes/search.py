@@ -54,12 +54,20 @@ def search():
                     """
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, sd.subtitle,
-                           ts_rank(
-                               to_tsvector(
-                                   'simple',
-                                   coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
-                               ),
-                               query.term
+                           (
+                               CASE WHEN sd.doc_type = 'card' AND lower(sd.title) = lower(:q) THEN 600.0 ELSE 0.0 END +
+                               CASE WHEN sd.doc_type = 'print' AND lower(sd.title) = lower(:q) THEN 500.0 ELSE 0.0 END +
+                               CASE WHEN lower(coalesce(p.collector_number, '')) = lower(:q) THEN 400.0 ELSE 0.0 END +
+                               CASE WHEN lower(coalesce(s.code, '')) = lower(:q) THEN 300.0 ELSE 0.0 END +
+                               CASE WHEN lower(sd.title) LIKE lower(:q) || '%' THEN 200.0 ELSE 0.0 END +
+                               CASE WHEN lower(sd.title) LIKE '%' || lower(:q) || '%' THEN 100.0 ELSE 0.0 END +
+                               ts_rank(
+                                   to_tsvector(
+                                       'simple',
+                                       coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
+                                   ),
+                                   query.term
+                               )
                            ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
                            (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = true ORDER BY pi.id LIMIT 1) AS primary_image_url
@@ -83,7 +91,16 @@ def search():
                 like = f"%{q.lower()}%"
                 sql = text(
                     """
-                    SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle, 1.0 AS score,
+                    SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
+                           (
+                               CASE WHEN sd.doc_type = 'card' AND lower(sd.title) = lower(:q) THEN 600.0 ELSE 0.0 END +
+                               CASE WHEN sd.doc_type = 'print' AND lower(sd.title) = lower(:q) THEN 500.0 ELSE 0.0 END +
+                               CASE WHEN lower(coalesce(p.collector_number, '')) = lower(:q) THEN 400.0 ELSE 0.0 END +
+                               CASE WHEN lower(coalesce(s.code, '')) = lower(:q) THEN 300.0 ELSE 0.0 END +
+                               CASE WHEN lower(sd.title) LIKE lower(:q) || '%' THEN 200.0 ELSE 0.0 END +
+                               CASE WHEN lower(sd.title) LIKE '%' || lower(:q) || '%' THEN 100.0 ELSE 0.0 END +
+                               1.0
+                           ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
                            (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1) AS primary_image_url
                     FROM search_documents sd
@@ -93,11 +110,11 @@ def search():
                     WHERE lower(coalesce(sd.tsv, sd.title || ' ' || coalesce(sd.subtitle, ''))) LIKE :like
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
-                    ORDER BY sd.title ASC
+                    ORDER BY score DESC, sd.title ASC
                     LIMIT :limit OFFSET :offset
                     """
                 )
-                rows = session.execute(sql, {"like": like, "game": game, "type": result_type, "limit": limit, "offset": offset}).mappings().all()
+                rows = session.execute(sql, {"q": q, "like": like, "game": game, "type": result_type, "limit": limit, "offset": offset}).mappings().all()
         except ProgrammingError:
             session.rollback()
             like = f"%{q.lower()}%"

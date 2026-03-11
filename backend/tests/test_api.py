@@ -8,7 +8,7 @@ from app.auth import middleware
 from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, PriceSnapshot, Print, Product, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, PriceSnapshot, Print, Product, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
 
@@ -600,6 +600,89 @@ def test_search_dark_magician_yugioh_after_reindex_returns_card_and_print(client
     assert any(item["type"] == "card" and item["title"] == "Dark Magician" for item in payload)
     assert any(item["type"] == "print" and "LOB-005" in (item.get("subtitle") or "") for item in payload)
 
+
+def test_search_dark_magician_exact_title_ranks_ahead_of_related_titles(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+
+        yugioh_game_id = session.execute(text("SELECT id FROM games WHERE slug = 'yugioh' LIMIT 1")).scalar_one()
+        set_id = session.execute(text("SELECT id FROM sets WHERE game_id = :game_id ORDER BY id LIMIT 1"), {"game_id": yugioh_game_id}).scalar_one()
+
+        related_card_1 = Card(game_id=yugioh_game_id, name="Dark Magician Girl")
+        related_card_2 = Card(game_id=yugioh_game_id, name="Dark Magician the Magician of Black Magic")
+        session.add_all([related_card_1, related_card_2])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(set_id=set_id, card_id=related_card_1.id, collector_number="LOB-006", rarity="Ultra Rare", variant="default"),
+                Print(set_id=set_id, card_id=related_card_2.id, collector_number="LOB-007", rarity="Ultra Rare", variant="default"),
+            ]
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        session.execute(text("DELETE FROM search_documents"))
+        rebuild_search_documents(session)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    def _index_of(title: str) -> int:
+        return next(i for i, item in enumerate(payload) if item["title"] == title)
+
+    exact_idx = _index_of("Dark Magician")
+    girl_idx = _index_of("Dark Magician Girl")
+    long_idx = _index_of("Dark Magician the Magician of Black Magic")
+
+    assert exact_idx < girl_idx
+    assert exact_idx < long_idx
+
+
+def test_search_lob_005_prioritizes_exact_dark_magician_print(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        session.execute(text("DELETE FROM search_documents"))
+        rebuild_search_documents(session)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=LOB-005&game=yugioh&type=print", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    top = payload[0]
+    assert top["type"] == "print"
+    assert top["title"] == "Dark Magician"
+    assert top["collector_number"] == "LOB-005"
+
+
+def test_search_blue_eyes_white_dragon_exact_title_remains_top(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        session.execute(text("DELETE FROM search_documents"))
+        rebuild_search_documents(session)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=Blue-Eyes%20White%20Dragon&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    assert payload[0]["title"] == "Blue-Eyes White Dragon"
+    assert payload[0]["type"] == "card"
 
 def test_reindex_populates_yugioh_search_documents_with_searchable_text(client):
     connector = get_connector("ygoprodeck_yugioh")
