@@ -1048,6 +1048,9 @@ def test_search_suggest_dark_prioritizes_dark_magician_over_other_dark_cards(cli
         return next(i for i, item in enumerate(payload) if item.get("title") == title)
 
     dark_magician_idx = _index_for("Dark Magician")
+    first_print_idx = next((i for i, item in enumerate(payload) if item.get("type") == "print"), None)
+    assert first_print_idx is None or dark_magician_idx < first_print_idx
+
     assert dark_magician_idx < _index_for("Dark Angel")
     assert dark_magician_idx < _index_for("Dark Alligator")
     assert dark_magician_idx < _index_for("Dark Advance")
@@ -1075,6 +1078,19 @@ def test_search_suggest_dark_mag_prioritizes_dark_magician(client):
     payload = response.get_json()
     assert payload
     assert payload[0]["title"] == "Dark Magician"
+    assert payload[0]["type"] == "card"
+
+
+def test_search_v1_alias_matches_legacy_search_payload(client):
+    _seed_yugioh_search_fixture()
+
+    headers = _auth_headers()
+    legacy = client.get("/api/search?q=Dark%20Magician&game=yugioh", headers=headers)
+    v1 = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=headers)
+
+    assert legacy.status_code == 200
+    assert v1.status_code == 200
+    assert legacy.get_json() == v1.get_json()
 
 
 def test_search_suggest_lob_keeps_lob_005_near_top_and_consistent_code_order(client):

@@ -9,11 +9,12 @@ search_bp = Blueprint("search", __name__)
 
 
 def _looks_like_code_query(raw_query: str) -> bool:
-    normalized = "".join(raw_query.strip().split())
-    if len(normalized) < 2 or len(normalized) > 12:
+    stripped = raw_query.strip()
+    normalized = "".join(stripped.split())
+    if len(normalized) < 2 or len(normalized) > 16:
         return False
 
-    if "-" in normalized or "_" in normalized:
+    if re.fullmatch(r"[a-zA-Z0-9]{2,8}[-_][a-zA-Z0-9]{1,8}", normalized):
         return True
 
     has_alpha = any(char.isalpha() for char in normalized)
@@ -21,10 +22,21 @@ def _looks_like_code_query(raw_query: str) -> bool:
     if has_alpha and has_digit:
         return True
 
-    if has_alpha and normalized.isalnum() and normalized.upper() == normalized and len(normalized) <= 5:
+    if normalized.isalpha() and normalized.upper() == normalized and 2 <= len(normalized) <= 5:
         return True
 
-    return bool(re.fullmatch(r"[a-zA-Z]{2,4}[0-9]{0,3}", normalized))
+    tokens = [token for token in re.split(r"[\s/]+", stripped) if token]
+    if len(tokens) >= 2:
+        structured_tokens = sum(
+            1
+            for token in tokens
+            if re.fullmatch(r"[A-Za-z]{1,5}[0-9]{1,4}", token)
+            or re.fullmatch(r"[A-Za-z0-9]{2,8}[-_][A-Za-z0-9]{1,8}", token)
+        )
+        if structured_tokens >= (len(tokens) / 2):
+            return True
+
+    return False
 
 
 def _fallback_search_rows(session, *, like: str, game: str, result_type: str | None, limit: int, offset: int):
@@ -90,19 +102,22 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             ) AS primary_image_url,
             (
               CASE WHEN lower(sd.title) = :q THEN 2400.0 ELSE 0.0 END +
-              CASE WHEN lower(sd.title) LIKE :prefix THEN 1600.0 ELSE 0.0 END +
+              CASE WHEN lower(sd.title) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 900.0 ELSE 1900.0 END) ELSE 0.0 END +
               CASE WHEN (' ' || lower(sd.title)) LIKE :token_prefix THEN 950.0 ELSE 0.0 END +
-              CASE WHEN lower(sd.title) LIKE :contains THEN 320.0 ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3400.0 ELSE 1900.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3600.0 ELSE 1700.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2100.0 ELSE 1100.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2400.0 ELSE 900.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 450.0 ELSE 160.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 650.0 ELSE 200.0 END) ELSE 0.0 END +
+              CASE WHEN lower(sd.title) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 180.0 ELSE 460.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 4200.0 ELSE 260.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3800.0 ELSE 220.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2800.0 ELSE 90.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2600.0 ELSE 70.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 650.0 ELSE 20.0 END) ELSE 0.0 END +
+              CASE WHEN lower(COALESCE(s.code, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 720.0 ELSE 25.0 END) ELSE 0.0 END +
               CASE WHEN :looks_like_code = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN (120.0 / (1 + abs(length(lower(COALESCE(s.code, ''))) - length(:q)))) ELSE 0.0 END +
               CASE WHEN :looks_like_code = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (80.0 / (1 + abs(length(lower(COALESCE(p.collector_number, ''))) - length(:q)))) ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' THEN 220.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' THEN -90.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' THEN 260.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' THEN -120.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'set' THEN -80.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :prefix THEN 240.0 ELSE 0.0 END +
+              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' AND lower(sd.title) LIKE :prefix THEN 80.0 ELSE 0.0 END +
               CASE WHEN :looks_like_code = 1 AND sd.doc_type = 'print' THEN 140.0 ELSE 0.0 END +
               CASE WHEN :looks_like_code = 1 THEN -35.0 * (
                 ROW_NUMBER() OVER (
