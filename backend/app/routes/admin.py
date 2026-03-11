@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app import db
 from app.auth.service import generate_api_key
@@ -50,6 +50,98 @@ def _validate_admin_token():
 
     return None
 
+
+
+
+@admin_bp.get("/api/v1/admin/search-debug")
+def search_debug():
+    auth_error = _validate_admin_token()
+    if auth_error is not None:
+        return auth_error
+
+    q = request.args.get("q", "").strip()
+    game = request.args.get("game", "").strip().lower()
+    sample_limit = min(max(request.args.get("sample_limit", default=5, type=int) or 5, 1), 25)
+
+    with db.SessionLocal() as session:
+        counts = session.execute(
+            text(
+                """
+                SELECT g.slug AS game, sd.doc_type AS doc_type, COUNT(*) AS count
+                FROM search_documents sd
+                JOIN games g ON g.id = sd.game_id
+                GROUP BY g.slug, sd.doc_type
+                ORDER BY g.slug ASC, sd.doc_type ASC
+                """
+            )
+        ).mappings().all()
+
+        summary: dict[str, dict[str, int]] = {}
+        for row in counts:
+            bucket = summary.setdefault(row["game"], {"card": 0, "set": 0, "print": 0, "total": 0})
+            bucket[row["doc_type"]] = int(row["count"])
+            bucket["total"] += int(row["count"])
+
+        params = {"limit": sample_limit, "game": game}
+        sample_docs = session.execute(
+            text(
+                """
+                SELECT g.slug AS game, sd.doc_type, sd.object_id, sd.title, sd.subtitle,
+                       left(coalesce(sd.tsv, ''), 200) AS tsv_preview
+                FROM search_documents sd
+                JOIN games g ON g.id = sd.game_id
+                WHERE (:game = '' OR g.slug = :game)
+                ORDER BY sd.id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+
+        match_rows = []
+        if q:
+            match_rows = session.execute(
+                text(
+                    """
+                    SELECT g.slug AS game, sd.doc_type, sd.object_id, sd.title, sd.subtitle
+                    FROM search_documents sd
+                    JOIN games g ON g.id = sd.game_id
+                    WHERE (:game = '' OR g.slug = :game)
+                      AND (
+                            to_tsvector('simple', coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, ''))
+                            @@ plainto_tsquery('simple', :q)
+                          )
+                    ORDER BY sd.title ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"q": q, "game": game, "limit": sample_limit},
+            ).mappings().all()
+
+    return jsonify(
+        {
+            "game_filter": game or None,
+            "query": q or None,
+            "search_documents": summary,
+            "sample_documents": [dict(row) for row in sample_docs],
+            "sample_matches": [dict(row) for row in match_rows],
+        }
+    )
+
+
+@admin_bp.post("/api/v1/admin/reindex-search")
+def admin_reindex_search():
+    auth_error = _validate_admin_token()
+    if auth_error is not None:
+        return auth_error
+
+    from app.scripts.reindex_search import rebuild_search_documents
+
+    with db.SessionLocal() as session:
+        stats = rebuild_search_documents(session)
+        session.commit()
+
+    return jsonify({"ok": True, "reindex": stats})
 
 @admin_bp.post("/api/admin/api-keys")
 @admin_bp.post("/api/admin/dev/api-keys")

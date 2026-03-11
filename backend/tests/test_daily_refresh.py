@@ -157,3 +157,20 @@ def test_daily_refresh_yugioh_run_is_present_when_connector_fails(monkeypatch):
     assert summary["yugioh"]["run"]["connector"] == "ygoprodeck_yugioh"
     assert summary["yugioh"]["run"]["ok"] is False
     assert "failed" in summary["yugioh"]["run"]["error"]
+
+
+def test_daily_refresh_none_limits_execute_connectors(monkeypatch):
+    calls = []
+
+    def fake_get_connector(name):
+        return _FakeConnector(name=name, calls=calls)
+
+    monkeypatch.setattr(daily_refresh.db, "SessionLocal", _FakeSessionFactory())
+    monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
+    monkeypatch.setattr(daily_refresh, "rebuild_search_documents", lambda session: {"cards": 0, "sets": 0, "prints": 0})
+
+    summary = daily_refresh.run_daily_refresh(_args(pokemon_limit=None, mtg_limit=None, yugioh_limit=None, riftbound_limit=None))
+
+    assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg", "ygoprodeck_yugioh", "riftbound"]
+    assert summary["pokemon"]["skipped"] is False
+    assert summary["yugioh"]["skipped"] is False

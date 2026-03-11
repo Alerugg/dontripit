@@ -705,7 +705,7 @@ def test_admin_refresh_requires_auth(client, monkeypatch):
 
 
 
-def test_admin_refresh_limit_parsing_zero_skips_and_missing_uses_default(client, monkeypatch):
+def test_admin_refresh_limit_parsing_zero_skips_and_missing_remains_unset(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 
     captured = {}
@@ -733,14 +733,14 @@ def test_admin_refresh_limit_parsing_zero_skips_and_missing_uses_default(client,
 
     assert response.status_code == 202
     assert captured["pokemon_limit"] == 0
-    assert captured["mtg_limit"] == 0
+    assert captured["mtg_limit"] is None
     assert captured["yugioh_limit"] == 50
-    assert captured["riftbound_limit"] == 0
+    assert captured["riftbound_limit"] is None
 
 
 
 
-def test_admin_refresh_limit_parsing_yugioh_only_does_not_default_other_games(client, monkeypatch):
+def test_admin_refresh_limit_parsing_yugioh_only_keeps_other_games_unset(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 
     captured = {}
@@ -767,10 +767,10 @@ def test_admin_refresh_limit_parsing_yugioh_only_does_not_default_other_games(cl
     )
 
     assert response.status_code == 202
-    assert captured["pokemon_limit"] == 0
-    assert captured["mtg_limit"] == 0
+    assert captured["pokemon_limit"] is None
+    assert captured["mtg_limit"] is None
     assert captured["yugioh_limit"] == 200
-    assert captured["riftbound_limit"] == 0
+    assert captured["riftbound_limit"] is None
 def test_admin_refresh_limit_parsing_null_uses_default(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 
@@ -798,10 +798,10 @@ def test_admin_refresh_limit_parsing_null_uses_default(client, monkeypatch):
     )
 
     assert response.status_code == 202
-    assert captured["pokemon_limit"] == 200
-    assert captured["mtg_limit"] == 200
-    assert captured["yugioh_limit"] == 200
-    assert captured["riftbound_limit"] == 200
+    assert captured["pokemon_limit"] is None
+    assert captured["mtg_limit"] is None
+    assert captured["yugioh_limit"] is None
+    assert captured["riftbound_limit"] is None
 def test_admin_refresh_allows_admin_key(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 
@@ -837,3 +837,25 @@ def test_admin_refresh_allows_admin_key(client, monkeypatch):
     assert payload["queued"] is True
     assert isinstance(payload["job_id"], str) and payload["job_id"]
     assert payload["status_url"] == "/api/v1/admin/ingest-status"
+
+
+def test_admin_search_debug_requires_token_when_configured(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "secret-token")
+
+    response = client.get("/api/v1/admin/search-debug", headers={"Host": "example.com", **_auth_headers("admin-search-debug", ["read:catalog", "read:admin"])})
+
+    assert response.status_code == 403
+
+
+def test_admin_reindex_search_runs_and_returns_stats(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "secret-token")
+
+    monkeypatch.setattr("app.scripts.reindex_search.rebuild_search_documents", lambda session: {"cards": 1, "sets": 2, "prints": 3})
+
+    response = client.post(
+        "/api/v1/admin/reindex-search",
+        headers={"Host": "example.com", "X-Admin-Token": "secret-token", **_auth_headers("admin-reindex-search", ["read:catalog", "read:admin"])},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"ok": True, "reindex": {"cards": 1, "sets": 2, "prints": 3}}

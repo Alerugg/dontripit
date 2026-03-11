@@ -24,23 +24,14 @@ def _as_int(value, default: int) -> int:
         return default
 
 
-def _parse_limit(payload: dict, field: str, default: int) -> int:
+def _parse_limit(payload: dict, field: str, default: int | None = None) -> int | None:
     if field not in payload or payload.get(field) is None:
         return default
 
-    parsed = _as_int(payload.get(field), default)
+    parsed = _as_int(payload.get(field), default or 0)
     if parsed <= 0:
         return 0
     return parsed
-
-
-def _default_limit_for_field(payload: dict, field: str, fallback_default: int) -> int:
-    limit_fields = ("pokemon_limit", "mtg_limit", "yugioh_limit", "riftbound_limit")
-    has_explicit_limits = any(limit_field in payload for limit_field in limit_fields)
-    if has_explicit_limits and field not in payload:
-        return 0
-    return fallback_default
-
 
 
 def _as_bool(value, default: bool = True) -> bool:
@@ -54,13 +45,12 @@ def _as_bool(value, default: bool = True) -> bool:
 @admin_refresh_bp.post("/api/admin/refresh")
 def admin_refresh():
     payload = request.get_json(silent=True) or {}
-    default_limit = 200
     args = build_refresh_args(
         pokemon_set=payload.get("pokemon_set"),
-        pokemon_limit=_parse_limit(payload, "pokemon_limit", _default_limit_for_field(payload, "pokemon_limit", default_limit)),
-        mtg_limit=_parse_limit(payload, "mtg_limit", _default_limit_for_field(payload, "mtg_limit", default_limit)),
-        yugioh_limit=_parse_limit(payload, "yugioh_limit", _default_limit_for_field(payload, "yugioh_limit", default_limit)),
-        riftbound_limit=_parse_limit(payload, "riftbound_limit", _default_limit_for_field(payload, "riftbound_limit", default_limit)),
+        pokemon_limit=_parse_limit(payload, "pokemon_limit"),
+        mtg_limit=_parse_limit(payload, "mtg_limit"),
+        yugioh_limit=_parse_limit(payload, "yugioh_limit"),
+        riftbound_limit=_parse_limit(payload, "riftbound_limit"),
         incremental=_as_bool(payload.get("incremental"), True),
         sleep_seconds=0,
     )

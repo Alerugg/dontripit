@@ -134,14 +134,14 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         "started_at": started_at.isoformat(),
         "incremental": bool(args.incremental),
         "batch_size": args.batch_size,
-        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon or args.pokemon_limit <= 0), "runs": [], "totals": _empty_stats()},
-        "mtg": {"ok": False, "skipped": bool(args.mtg_limit <= 0), "run": None, "totals": _empty_stats()},
-        "yugioh": {"ok": False, "skipped": bool(args.yugioh_limit <= 0), "run": None, "totals": _empty_stats()},
-        "riftbound": {"ok": False, "skipped": bool(args.riftbound_limit <= 0), "run": None, "totals": _empty_stats()},
+        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon or args.pokemon_limit == 0), "runs": [], "totals": _empty_stats()},
+        "mtg": {"ok": False, "skipped": bool(args.mtg_limit == 0), "run": None, "totals": _empty_stats()},
+        "yugioh": {"ok": False, "skipped": bool(args.yugioh_limit == 0), "run": None, "totals": _empty_stats()},
+        "riftbound": {"ok": False, "skipped": bool(args.riftbound_limit == 0), "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
-    if not args.skip_pokemon and args.pokemon_limit > 0:
+    if not args.skip_pokemon and args.pokemon_limit != 0:
         pokemon_sets = _resolve_pokemon_sets(args, summary)
 
         for pokemon_set in pokemon_sets:
@@ -164,7 +164,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
             )
             time.sleep(max(args.sleep_seconds, 0))
 
-    if args.mtg_limit > 0:
+    if args.mtg_limit != 0:
         mtg_run = _run_connector(
             "scryfall_mtg",
             args.path,
@@ -177,7 +177,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["mtg"]["totals"], mtg_run["stats"])
         print("[daily_refresh] mtg_run=" + json.dumps(mtg_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    if args.yugioh_limit > 0:
+    if args.yugioh_limit != 0:
         yugioh_run = _run_connector(
             "ygoprodeck_yugioh",
             args.path,
@@ -190,7 +190,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["yugioh"]["totals"], yugioh_run["stats"])
         print("[daily_refresh] yugioh_run=" + json.dumps(yugioh_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    if args.riftbound_limit > 0:
+    if args.riftbound_limit != 0:
         riftbound_run = _run_connector(
             "riftbound",
             args.path,
@@ -224,10 +224,10 @@ def build_refresh_args(
     *,
     path: str | None = None,
     pokemon_set: str | None = None,
-    pokemon_limit: int = 200,
-    mtg_limit: int = 200,
-    yugioh_limit: int = 200,
-    riftbound_limit: int = 200,
+    pokemon_limit: int | None = None,
+    mtg_limit: int | None = None,
+    yugioh_limit: int | None = None,
+    riftbound_limit: int | None = None,
     incremental: bool = True,
     batch_size: int = 200,
     fixture: bool = False,
@@ -266,10 +266,10 @@ def main() -> int:
     parser.add_argument("--pokemon-all", type=_to_bool, default=False, help="Run a small curated list of Pokemon sets")
     parser.add_argument("--pokemon-all-sets", type=_to_bool, default=False, help="Iterate all Pokemon sets from TCGdex")
     parser.add_argument("--batch-size", type=int, default=200, help="Max records per connector call")
-    parser.add_argument("--pokemon-limit", type=int, default=200)
-    parser.add_argument("--mtg-limit", type=int, default=200)
-    parser.add_argument("--yugioh-limit", type=int, default=200)
-    parser.add_argument("--riftbound-limit", type=int, default=200)
+    parser.add_argument("--pokemon-limit", type=int, default=None)
+    parser.add_argument("--mtg-limit", type=int, default=None)
+    parser.add_argument("--yugioh-limit", type=int, default=None)
+    parser.add_argument("--riftbound-limit", type=int, default=None)
     parser.add_argument("--riftbound-fixture", type=_to_bool, default=True)
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
