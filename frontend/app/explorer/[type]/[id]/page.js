@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { fetchCardDetail, fetchPrintDetail } from '../../../../lib/apiClient'
 
@@ -42,7 +41,7 @@ export default function DetailPage({ params }) {
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl p-6">
-      <Link href="/explorer" className="text-sm text-blue-700 underline">← Volver al explorer</Link>
+      <a href="/explorer" className="text-sm text-blue-700 underline">← Volver al explorer</a>
 
       {loading && <p className="mt-4 text-slate-600">Cargando detalle...</p>}
       {error && <p className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-red-700">{error}</p>}
@@ -56,14 +55,14 @@ export default function DetailPage({ params }) {
               <h2 className="mt-6 text-lg font-semibold">Prints relacionados</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {(detail.prints || []).map((print) => (
-                  <Link key={print.id} href={`/explorer/print/${print.id}`} className="rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
+                  <a key={print.id} href={`/explorer/print/${print.id}`} className="rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
                     <div className="mb-2 h-40 overflow-hidden rounded bg-slate-100">
                       {print.image_url ? <img src={print.image_url} alt={detail.name} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-xs text-slate-500">Sin imagen</div>}
                     </div>
                     <p className="text-sm font-semibold">Set {print.set_code}</p>
                     <p className="text-xs text-slate-600">Collector: {print.collector_number || '-'}</p>
                     <p className="text-xs text-slate-600">Variante: {print.variant || '-'}</p>
-                  </Link>
+                  </a>
                 ))}
               </div>
             </>

@@ -1,7 +1,5 @@
 'use client'
 
-import Link from 'next/link'
-
 function CardBody({ item }) {
   return (
     <>
@@ -32,8 +30,8 @@ export default function ResultCard({ item }) {
   }
 
   return (
-    <Link href={`/explorer/${item.type}/${item.id}`} className="group rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+    <a href={`/explorer/${item.type}/${item.id}`} className="group block rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
       <CardBody item={item} />
-    </Link>
+    </a>
   )
 }

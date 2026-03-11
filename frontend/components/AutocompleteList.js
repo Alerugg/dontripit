@@ -1,7 +1,5 @@
 'use client'
 
-import Link from 'next/link'
-
 function SuggestionContent({ item }) {
   return (
     <>
@@ -41,14 +39,14 @@ export default function AutocompleteList({ items, loading, query, onSelect }) {
         }
 
         return (
-          <Link
+          <a
             key={`${item.type}-${item.id}`}
             href={`/explorer/${item.type}/${item.id}`}
             onClick={() => onSelect?.()}
             className="flex items-center gap-3 border-b border-slate-100 px-4 py-2 transition hover:bg-slate-50"
           >
             <SuggestionContent item={item} />
-          </Link>
+          </a>
         )
       })}
     </div>
