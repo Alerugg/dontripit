@@ -60,14 +60,13 @@ Abrir: `http://localhost:3000/explorer`
    - `Forest`
    - `Charizard`
 4. Verifica que:
-   - hay carruseles de previsualización,
    - aparecen sugerencias en autocompletado,
-   - el grid carga resultados reales de `/api/v1/search`,
-   - al hacer click en card/print abre detalle (`/api/v1/cards/:id` o `/api/v1/prints/:id`).
+   - el grid carga resultados de `/api/v1/search`,
+   - al hacer click abre detalle (`/api/v1/cards/:id` o `/api/v1/prints/:id`).
 
 ## Notas de arquitectura
 
-- `lib/apiClient.js`: capa centralizada de API (base URL, headers, `X-API-Key`, `X-Admin-Token`).
-- `app/explorer/page.js`: catálogo principal, generación de key, carruseles, búsqueda, filtros y grid.
+- `lib/apiClient.js`: capa centralizada de API (base URL, headers, `X-API-Key`).
+- `app/explorer/page.js`: buscador, filtros, autocompletado, grid y paginación.
 - `app/explorer/[type]/[id]/page.js`: detalle de card/print.
 - `components/*`: componentes reutilizables.
