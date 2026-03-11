@@ -792,6 +792,110 @@ def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_pat
     assert row.variant == "default"
 
 
+
+
+def test_yugioh_full_refresh_reuses_print_identity_across_cards(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    first_fixture = {
+        "data": [
+            {
+                "id": 910001,
+                "name": "First Identity Card",
+                "card_sets": [
+                    {
+                        "set_name": "Battle Pack",
+                        "set_code": "BLCR-EN015",
+                        "set_rarity": "Secret Rare",
+                        "set_language": "en",
+                    }
+                ],
+            }
+        ]
+    }
+    second_fixture = {
+        "data": [
+            {
+                "id": 910002,
+                "name": "Second Identity Card",
+                "card_sets": [
+                    {
+                        "set_name": "Battle Pack",
+                        "set_code": "BLCR-EN015",
+                        "set_rarity": "Secret Rare",
+                        "set_language": "en",
+                    }
+                ],
+            }
+        ]
+    }
+
+    first_path = tmp_path / "ygo_identity_first.json"
+    first_path.write_text(json.dumps(first_fixture), encoding="utf-8")
+    second_path = tmp_path / "ygo_identity_second.json"
+    second_path.write_text(json.dumps(second_fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(first_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(second_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        rows = session.execute(
+            select(Print.card_id, Print.yugioh_id, Print.rarity, Print.language, Print.variant)
+            .where(
+                Print.collector_number == "BLCR-EN015",
+                Print.language == "en",
+                Print.variant == "secret-rare",
+                Print.is_foil.is_(False),
+            )
+        ).all()
+
+        second_card_id = session.execute(
+            select(Card.id).where(Card.yugoprodeck_id == "910002")
+        ).scalar_one()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.card_id == second_card_id
+    assert row.yugioh_id == "910002::BLCR-EN015::1"
+    assert row.rarity == "Secret Rare"
+    assert row.language == "en"
+    assert row.variant == "secret-rare"
+
+
+def test_yugioh_normalize_deduplicates_duplicate_prints_in_payload(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    payload = {
+        "id": 910003,
+        "name": "Duplicated Print Card",
+        "card_sets": [
+            {
+                "set_name": "Battle Pack",
+                "set_code": "BLCR-EN015",
+                "set_rarity": "Secret Rare",
+                "set_language": "en",
+            },
+            {
+                "set_name": "Battle Pack",
+                "set_code": "BLCR-EN015",
+                "set_rarity": "Secret Rare",
+                "set_language": "en",
+            },
+        ],
+    }
+
+    normalized = connector.normalize(payload)
+
+    assert len(normalized["prints"]) == 1
+    assert normalized["prints"][0]["set_code"] == "blcr-en015"
+    assert normalized["prints"][0]["collector_number"] == "BLCR-EN015"
+    assert normalized["prints"][0]["language"] == "en"
+    assert normalized["prints"][0]["variant"] == "secret-rare"
+
 def test_prints_unique_constraint_allows_same_identity_with_different_variant(client):
     with db.SessionLocal() as session:
         game = Game(slug="variant-game", name="Variant Game")

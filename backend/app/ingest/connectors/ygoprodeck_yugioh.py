@@ -150,6 +150,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
         card_sets = payload.get("card_sets") or []
         normalized_sets = []
         normalized_prints = []
+        seen_print_keys: set[tuple[str, str, str, str, bool]] = set()
         for idx, set_payload in enumerate(card_sets):
             set_code = (set_payload.get("set_code") or "").strip().lower()
             set_name = (set_payload.get("set_name") or set_code or "unknown").strip()
@@ -167,15 +168,29 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     "yugioh_id": set_external_id,
                 }
             )
+            normalized_set_code = set_code or f"set-{idx+1}"
+            normalized_language = self._normalize_language(
+                set_payload.get("set_language") or payload.get("language")
+            )
+            normalized_variant = self._derive_variant(set_payload)
+            dedupe_key = (
+                normalized_set_code,
+                collector_number,
+                normalized_language,
+                normalized_variant,
+                False,
+            )
+            if dedupe_key in seen_print_keys:
+                continue
+            seen_print_keys.add(dedupe_key)
+
             normalized_prints.append(
                 {
-                    "set_code": set_code or f"set-{idx+1}",
+                    "set_code": normalized_set_code,
                     "collector_number": collector_number,
                     "rarity": self._normalize_rarity(set_payload.get("set_rarity")),
-                    "variant": self._derive_variant(set_payload),
-                    "language": self._normalize_language(
-                        set_payload.get("set_language") or payload.get("language")
-                    ),
+                    "variant": normalized_variant,
+                    "language": normalized_language,
                     "yugioh_id": print_external_id,
                 }
             )
@@ -304,21 +319,18 @@ class YgoProDeckYugiohConnector(SourceConnector):
             normalized_rarity = self._normalize_rarity(item.get("rarity"))
             variant = self._normalize_variant(item.get("variant"))
 
-            print_row = None
-            if ygo_print_id:
+            print_row = session.execute(
+                select(Print).where(
+                    Print.set_id == set_row.id,
+                    Print.collector_number == collector_number,
+                    Print.language == normalized_language,
+                    Print.is_foil.is_(False),
+                    Print.variant == variant,
+                )
+            ).scalar_one_or_none()
+            if print_row is None and ygo_print_id:
                 print_row = session.execute(
                     select(Print).where(Print.yugioh_id == ygo_print_id)
-                ).scalar_one_or_none()
-            if print_row is None:
-                print_row = session.execute(
-                    select(Print).where(
-                        Print.set_id == set_row.id,
-                        Print.card_id == card_row.id,
-                        Print.collector_number == collector_number,
-                        Print.language == normalized_language,
-                        Print.is_foil.is_(False),
-                        Print.variant == variant,
-                    )
                 ).scalar_one_or_none()
 
             if print_row is None:
@@ -335,6 +347,12 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 stats.records_inserted += 1
             else:
                 changed = False
+                if print_row.card_id != card_row.id:
+                    print_row.card_id = card_row.id
+                    changed = True
+                if print_row.set_id != set_row.id:
+                    print_row.set_id = set_row.id
+                    changed = True
                 if ygo_print_id and print_row.yugioh_id != ygo_print_id:
                     print_row.yugioh_id = ygo_print_id
                     changed = True
@@ -344,10 +362,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 if print_row.language != normalized_language:
                     print_row.language = normalized_language
                     changed = True
-                if (
-                    not (print_row.variant or "").strip()
-                    and print_row.variant != variant
-                ):
+                if variant != "default" and print_row.variant != variant:
                     print_row.variant = variant
                     changed = True
                 if changed:
