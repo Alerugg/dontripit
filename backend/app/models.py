@@ -64,6 +64,7 @@ class Card(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    card_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     oracle_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yugoprodeck_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
@@ -86,6 +87,7 @@ class Print(Base):
         UniqueConstraint("tcgdex_id", name="uq_prints_tcgdex_id"),
         UniqueConstraint("yugioh_id", name="uq_prints_yugioh_id"),
         UniqueConstraint("riftbound_id", name="uq_prints_riftbound_id"),
+        UniqueConstraint("print_key", name="uq_prints_print_key"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -96,6 +98,7 @@ class Print(Base):
     rarity: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_foil: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     variant: Mapped[str] = mapped_column(String(100), nullable=False, default="default", server_default="default")
+    print_key: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
     scryfall_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yugioh_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

@@ -427,3 +427,10 @@ Reglas:
 4. El contrato de `normalize()` debe ser único para todos los conectores.
 5. Trazabilidad de origen debe ser first-class (`source_raw_object` vinculado a run y entidad).
 6. Catálogo y comercial/precios deben desacoplarse operativamente.
+
+## Implementation notes (P0)
+
+- Se introdujo un contrato runtime para `normalized payload` en `backend/app/ingest/normalized_schema.py` y validación central en `SourceConnector.validate_payload_contract`.
+- Se añadieron utilidades compartidas de canonicalización en `backend/app/ingest/normalization.py`, incluyendo generación determinística de `card_key` y `print_key`.
+- Se agregaron columnas `cards.card_key` y `prints.print_key` con índices; `prints.print_key` quedó con `UNIQUE` nullable para transición segura.
+- El conector piloto `ygoprodeck_yugioh` ahora emite contrato normalizado y mantiene llaves legacy (`card/sets/prints`) temporalmente para compatibilidad de transición.

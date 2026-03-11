@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.ingest.normalized_schema import NormalizedPayloadError, parse_normalized_payload
 from app.models import IngestRun, Source, SourceRecord, SourceSyncState
 from app.scripts.reindex_search import rebuild_search_documents
 
@@ -25,6 +26,7 @@ class IngestStats:
 
 class SourceConnector:
     name = "base"
+    uses_normalized_payload = False
     logger = logging.getLogger("app.ingest")
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
@@ -58,6 +60,15 @@ class SourceConnector:
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
         raise NotImplementedError
+
+    def validate_payload_contract(self, payload: dict) -> dict:
+        if not self.uses_normalized_payload:
+            return payload
+        try:
+            parsed = parse_normalized_payload(payload)
+        except NormalizedPayloadError as exc:
+            raise ValueError(f"connector={self.name} emitted invalid normalized payload: {exc}") from exc
+        return payload | {"_normalized_contract": parsed}
 
     def touched_entity_ids(self) -> dict[str, set[int]]:
         return {}
@@ -109,6 +120,7 @@ class SourceConnector:
                 if existing_record is None:
                     session.add(SourceRecord(source_id=source.id, checksum=checksum, raw_json=payload))
                 normalized = self.normalize(payload, **kwargs)
+                normalized = self.validate_payload_contract(normalized)
                 self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
 
             rebuild_search_documents(session)
