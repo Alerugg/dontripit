@@ -21,7 +21,7 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
           UNION ALL
           SELECT 'print', p.id, c.name, (s.code || ' #' || p.collector_number), g.slug,
                  s.code, p.collector_number, p.variant,
-                 (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = 1 ORDER BY pi.id LIMIT 1)
+                 (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1)
           FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=s.game_id
           WHERE lower(c.name) LIKE :like OR lower(p.collector_number) LIKE :like OR lower(s.code) LIKE :like
         ) t WHERE (:game = '' OR t.game = :game)
@@ -85,7 +85,7 @@ def search():
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle, 1.0 AS score,
                            s.code AS set_code, p.collector_number, p.variant,
-                           (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = 1 ORDER BY pi.id LIMIT 1) AS primary_image_url
+                           (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1) AS primary_image_url
                     FROM search_documents sd
                     JOIN games g ON g.id = sd.game_id
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
