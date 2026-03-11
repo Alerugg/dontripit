@@ -5,14 +5,13 @@ import fs from 'node:fs/promises'
 test('explorer page includes catalog + key generation flow', async () => {
   const page = await fs.readFile(new URL('../app/explorer/page.js', import.meta.url), 'utf8')
 
-  assert.match(page, /TCG Marketplace Catalog/)
-  assert.match(page, /Generar API Key/)
-  assert.match(page, /Admin token \(para generar key\)/)
-  assert.match(page, /generateDevApiKey/)
-  assert.match(page, /CarouselShelf/)
-  assert.match(page, /AutocompleteList/)
+  assert.match(page, /Catálogo visual moderno para cartas TCG/)
+  assert.match(page, /ApiKeyPanel/)
+  assert.match(page, /fetchSuggest\(/)
   assert.match(page, /fetchSearch\(/)
-  assert.match(page, /window\.localStorage\.setItem\(API_KEY_STORAGE, createdKey\)/)
+  assert.match(page, /saveApiKey\(/)
+  const apiKeyPanel = await fs.readFile(new URL('../components/ApiKeyPanel.js', import.meta.url), 'utf8')
+  assert.match(apiKeyPanel, /Generar API Key/)
 })
 
 test('api client supports admin key generation and X-API-Key', async () => {
@@ -22,5 +21,5 @@ test('api client supports admin key generation and X-API-Key', async () => {
   assert.match(apiClient, /X-API-Key/)
   assert.match(apiClient, /\/api\/admin\/dev\/api-keys/)
   assert.match(apiClient, /X-Admin-Token/)
-  assert.match(apiClient, /\/api\/v1\/search/)
+  assert.match(apiClient, /\/api\/v1\/search\/suggest/)
 })

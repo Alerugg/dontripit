@@ -1,37 +1,30 @@
 'use client'
 
-function CardBody({ item }) {
-  return (
-    <>
-      <div className="mb-3 h-56 overflow-hidden rounded-lg bg-slate-100">
-        {item.primary_image_url ? (
-          <img src={item.primary_image_url} alt={item.title} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">Sin imagen</div>
-        )}
-      </div>
-      <h3 className="truncate text-sm font-bold text-slate-900 group-hover:text-blue-700">{item.title}</h3>
-      <p className="mt-1 text-xs text-slate-600">Juego: {item.game_slug || item.game || '-'}</p>
-      <p className="text-xs text-slate-600">Set: {item.set_code || '-'}</p>
-      <p className="text-xs text-slate-600">Collector: {item.collector_number || '-'}</p>
-      <p className="text-xs text-slate-600">Variante: {item.variant || '-'}</p>
-      <p className="mt-2 text-xs uppercase tracking-wide text-slate-500">{item.type}</p>
-    </>
-  )
-}
+import Link from 'next/link'
 
 export default function ResultCard({ item }) {
-  if (item.type === 'set') {
-    return (
-      <article className="group rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-        <CardBody item={item} />
-      </article>
-    )
-  }
+  const wrapperClass = 'catalog-card'
 
-  return (
-    <a href={`/explorer/${item.type}/${item.id}`} className="group block rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <CardBody item={item} />
-    </a>
+  const content = (
+    <>
+      <div className="thumb-lg">
+        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} /> : <span>Sin imagen</span>}
+      </div>
+      <div className="card-copy">
+        <h3>{item.title}</h3>
+        <p>{item.game || item.game_slug || '-'}</p>
+        <small>
+          {item.type.toUpperCase()}
+          {item.set_code ? ` · ${item.set_code}` : ''}
+          {item.collector_number ? ` · #${item.collector_number}` : ''}
+          {item.variant ? ` · ${item.variant}` : ''}
+          {item.rarity ? ` · ${item.rarity}` : ''}
+        </small>
+      </div>
+    </>
   )
+
+  if (item.type === 'set') return <article className={wrapperClass}>{content}</article>
+
+  return <Link href={`/explorer/${item.type}/${item.id}`} className={wrapperClass}>{content}</Link>
 }

@@ -1,9 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { fetchCardDetail, fetchPrintDetail } from '../../../../lib/apiClient'
-
-const API_KEY_STORAGE = 'tcg_api_key'
+import { readStoredAuth } from '../../../../lib/apiKeyStorage'
 
 export default function DetailPage({ params }) {
   const { type, id } = params
@@ -13,81 +13,83 @@ export default function DetailPage({ params }) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(API_KEY_STORAGE) || ''
-    setApiKey(stored)
+    const auth = readStoredAuth()
+    setApiKey(auth.apiKey)
   }, [])
 
   useEffect(() => {
     if (!apiKey.trim()) {
+      setError('Falta API key. Vuelve al explorer y genera/guarda una clave válida.')
       setLoading(false)
-      setError('Falta API key. Vuelve al explorer y guarda una clave válida.')
       return
     }
 
     setLoading(true)
-    setError('')
-
-    const request = type === 'card'
-      ? fetchCardDetail(id, apiKey)
-      : type === 'print'
-        ? fetchPrintDetail(id, apiKey)
-        : Promise.reject(new Error('Tipo no soportado aún para detalle.'))
-
-    request
-      .then((payload) => setDetail(payload))
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false))
-  }, [apiKey, id, type])
+    const request = type === 'card' ? fetchCardDetail(id, apiKey) : fetchPrintDetail(id, apiKey)
+    request.then((payload) => setDetail(payload)).catch((requestError) => setError(requestError.message)).finally(() => setLoading(false))
+  }, [type, id, apiKey])
 
   return (
-    <main className="mx-auto min-h-screen max-w-5xl p-6">
-      <a href="/explorer" className="text-sm text-blue-700 underline">← Volver al explorer</a>
+    <main className="catalog-page">
+      <Link href="/explorer" className="ghost-btn">← Volver al catálogo</Link>
+      {loading && <p className="hint">Cargando detalle...</p>}
+      {error && <p className="banner error">{error}</p>}
 
-      {loading && <p className="mt-4 text-slate-600">Cargando detalle...</p>}
-      {error && <p className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-red-700">{error}</p>}
+      {!loading && detail && type === 'card' && (
+        <section className="detail-layout panel">
+          <div className="detail-media">
+            {detail.primary_image_url ? <img src={detail.primary_image_url} alt={detail.name} /> : <span>Sin imagen</span>}
+          </div>
+          <div>
+            <h1>{detail.name}</h1>
+            <p className="hint">Juego: {detail.game_slug}</p>
+            <p className="hint">External IDs: {Object.entries(detail.external_ids || {}).filter(([, value]) => value).map(([key, value]) => `${key}:${value}`).join(' · ') || 'No disponible'}</p>
+            <h2>Sets relacionados</h2>
+            <div className="meta-chips">
+              {(detail.sets || []).map((setRow) => <span key={setRow.id} className="chip">{setRow.code} · {setRow.name}</span>)}
+            </div>
+            <h2>Prints relacionados</h2>
+            <div className="related-grid">
+              {(detail.prints || []).map((print) => (
+                <Link key={print.id} href={`/explorer/print/${print.id}`} className="related-card">
+                  <div className="thumb-xs">{print.primary_image_url ? <img src={print.primary_image_url} alt={detail.name} /> : <span>TCG</span>}</div>
+                  <div>
+                    <strong>{print.set_code} #{print.collector_number || '-'}</strong>
+                    <small>{print.variant || 'Standard'} · {print.rarity || 'N/A'} · {print.language || 'N/A'}</small>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
-      {!loading && detail && (
-        <section className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          {type === 'card' && (
-            <>
-              <h1 className="text-2xl font-bold text-slate-900">{detail.name}</h1>
-              <p className="mt-1 text-sm text-slate-600">Juego: {detail.game_slug}</p>
-              <h2 className="mt-6 text-lg font-semibold">Prints relacionados</h2>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {(detail.prints || []).map((print) => (
-                  <a key={print.id} href={`/explorer/print/${print.id}`} className="rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
-                    <div className="mb-2 h-40 overflow-hidden rounded bg-slate-100">
-                      {print.image_url ? <img src={print.image_url} alt={detail.name} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-xs text-slate-500">Sin imagen</div>}
-                    </div>
-                    <p className="text-sm font-semibold">Set {print.set_code}</p>
-                    <p className="text-xs text-slate-600">Collector: {print.collector_number || '-'}</p>
-                    <p className="text-xs text-slate-600">Variante: {print.variant || '-'}</p>
-                  </a>
-                ))}
-              </div>
-            </>
-          )}
-
-          {type === 'print' && (
-            <>
-              <h1 className="text-2xl font-bold text-slate-900">{detail.card?.name}</h1>
-              <p className="mt-1 text-sm text-slate-600">Juego: {detail.game_slug || 'n/a'}</p>
-              <div className="mt-4 grid gap-4 md:grid-cols-[320px_1fr]">
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                  {detail.image_url ? <img src={detail.image_url} alt={detail.card?.name} className="h-full w-full object-cover" /> : <div className="flex h-80 items-center justify-center text-slate-500">Sin imagen</div>}
+      {!loading && detail && type === 'print' && (
+        <section className="detail-layout panel">
+          <div className="detail-media">
+            {detail.primary_image_url ? <img src={detail.primary_image_url} alt={detail.title} /> : <span>Sin imagen</span>}
+          </div>
+          <div>
+            <h1>{detail.card?.name || detail.title}</h1>
+            <p className="hint">Juego: {detail.game}</p>
+            <div className="detail-meta">
+              <p><strong>Set:</strong> {detail.set_name} ({detail.set_code})</p>
+              <p><strong>Collector number:</strong> {detail.collector_number || '-'}</p>
+              <p><strong>Variant:</strong> {detail.variant || '-'}</p>
+              <p><strong>Rarity:</strong> {detail.rarity || '-'}</p>
+              <p><strong>Language:</strong> {detail.language || '-'}</p>
+              <p><strong>Foil:</strong> {String(detail.is_foil)}</p>
+              <p><strong>External IDs:</strong> {Object.entries(detail.external_ids || {}).filter(([, value]) => value).map(([key, value]) => `${key}:${value}`).join(' · ') || 'No disponible'}</p>
+            </div>
+            <div className="related-grid">
+              <Link href={`/explorer/card/${detail.card?.id}`} className="related-card">
+                <div>
+                  <strong>Ver card base</strong>
+                  <small>{detail.card?.name}</small>
                 </div>
-                <div className="space-y-1 text-sm text-slate-700">
-                  <p><strong>Tipo:</strong> print</p>
-                  <p><strong>Set:</strong> {detail.set?.name} ({detail.set?.code})</p>
-                  <p><strong>Collector number:</strong> {detail.collector_number || '-'}</p>
-                  <p><strong>Variante:</strong> {detail.variant || '-'}</p>
-                  <p><strong>Idioma:</strong> {detail.language || '-'}</p>
-                  <p><strong>Rareza:</strong> {detail.rarity || '-'}</p>
-                  <p><strong>Foil:</strong> {String(detail.is_foil)}</p>
-                </div>
-              </div>
-            </>
-          )}
+              </Link>
+            </div>
+          </div>
         </section>
       )}
     </main>

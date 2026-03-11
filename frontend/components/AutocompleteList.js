@@ -1,52 +1,46 @@
 'use client'
 
-function SuggestionContent({ item }) {
+function Suggestion({ item }) {
   return (
     <>
-      <div className="h-12 w-10 flex-shrink-0 overflow-hidden rounded border border-slate-200 bg-slate-100">
-        {item.primary_image_url ? (
-          <img src={item.primary_image_url} alt={item.title} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">N/A</div>
-        )}
+      <div className="thumb-xs">
+        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} /> : <span>TCG</span>}
       </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-slate-900">{item.title}</p>
-        <p className="truncate text-xs text-slate-500">
+      <div className="suggestion-copy">
+        <strong>{item.title}</strong>
+        <small>
           {item.type}
-          {item.set_code ? ` · Set ${item.set_code}` : ''}
+          {item.set_code ? ` · ${item.set_code}` : ''}
           {item.collector_number ? ` · #${item.collector_number}` : ''}
-        </p>
+        </small>
       </div>
     </>
   )
 }
 
-export default function AutocompleteList({ items, loading, query, onSelect }) {
+export default function AutocompleteList({ items, loading, query, highlightedIndex, onHover, onSelect }) {
   if (!query) return null
 
   return (
-    <div className="absolute z-20 mt-1 max-h-96 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-      {loading && <p className="px-4 py-3 text-sm text-slate-500">Buscando sugerencias...</p>}
-      {!loading && items.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">Sin sugerencias.</p>}
-      {!loading && items.map((item) => {
+    <div className="autocomplete">
+      {loading && <p className="hint">Buscando sugerencias...</p>}
+      {!loading && items.length === 0 && <p className="hint">Sin sugerencias.</p>}
+      {!loading && items.map((item, index) => {
+        const isActive = index === highlightedIndex
+        const className = `suggestion-row ${isActive ? 'active' : ''}`
+
         if (item.type === 'set') {
           return (
-            <div key={`${item.type}-${item.id}`} className="flex items-center gap-3 border-b border-slate-100 px-4 py-2">
-              <SuggestionContent item={item} />
-            </div>
+            <button key={`${item.type}-${item.id}`} className={className} type="button" onMouseEnter={() => onHover(index)} onClick={() => onSelect(item)}>
+              <Suggestion item={item} />
+            </button>
           )
         }
 
         return (
-          <a
-            key={`${item.type}-${item.id}`}
-            href={`/explorer/${item.type}/${item.id}`}
-            onClick={() => onSelect?.()}
-            className="flex items-center gap-3 border-b border-slate-100 px-4 py-2 transition hover:bg-slate-50"
-          >
-            <SuggestionContent item={item} />
-          </a>
+          <button key={`${item.type}-${item.id}`} className={className} type="button" onMouseEnter={() => onHover(index)} onClick={() => onSelect(item)}>
+            <Suggestion item={item} />
+          </button>
         )
       })}
     </div>

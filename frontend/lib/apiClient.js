@@ -21,15 +21,17 @@ function buildUrl(path, params = {}) {
 }
 
 function buildHeaders(apiKey, extraHeaders = {}) {
-  const headers = { ...extraHeaders }
+  const headers = {
+    'Content-Type': 'application/json',
+    ...extraHeaders,
+  }
   const key = (apiKey || DEFAULT_API_KEY || '').trim()
   if (key) headers['X-API-Key'] = key
   return headers
 }
 
 export async function apiRequest(path, { params, apiKey, headers, ...options } = {}) {
-  const url = buildUrl(path, params)
-  const response = await fetch(url, {
+  const response = await fetch(buildUrl(path, params), {
     ...options,
     headers: buildHeaders(apiKey, headers),
     cache: 'no-store',
@@ -43,8 +45,8 @@ export async function apiRequest(path, { params, apiKey, headers, ...options } =
   }
 
   if (!response.ok) {
-    const detail = payload?.detail || payload?.error || `Request failed (${response.status})`
-    throw new Error(detail)
+    const message = payload?.detail || payload?.error || `Request failed (${response.status})`
+    throw new Error(message)
   }
 
   return payload
@@ -59,13 +61,6 @@ export async function generateDevApiKey(adminToken) {
   })
 }
 
-export function getApiRuntimeConfig() {
-  return {
-    baseUrl: API_BASE_URL || 'same-origin (/api/* via rewrite)',
-    hasDefaultApiKey: Boolean(DEFAULT_API_KEY),
-  }
-}
-
 export async function fetchGames(apiKey) {
   return apiRequest('/api/v1/games', { apiKey })
 }
@@ -74,10 +69,21 @@ export async function fetchSearch(params, apiKey) {
   return apiRequest('/api/v1/search', { params, apiKey })
 }
 
+export async function fetchSuggest(params, apiKey) {
+  return apiRequest('/api/v1/search/suggest', { params, apiKey })
+}
+
 export async function fetchCardDetail(cardId, apiKey) {
   return apiRequest(`/api/v1/cards/${cardId}`, { apiKey })
 }
 
 export async function fetchPrintDetail(printId, apiKey) {
   return apiRequest(`/api/v1/prints/${printId}`, { apiKey })
+}
+
+export function getApiRuntimeConfig() {
+  return {
+    baseUrl: API_BASE_URL || 'same-origin (/api/* via rewrite)',
+    hasDefaultApiKey: Boolean(DEFAULT_API_KEY),
+  }
 }
