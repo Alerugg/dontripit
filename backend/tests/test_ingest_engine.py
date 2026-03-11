@@ -561,6 +561,111 @@ def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(
     assert from_directory_payloads
 
 
+
+def test_yugioh_remote_load_paginates_until_limit(monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    calls: list[dict] = []
+
+    def _fake_get(url, params=None, headers=None, timeout=45):
+        calls.append({"url": url, "params": dict(params or {})})
+        offset = int((params or {}).get("offset", 0))
+        num = int((params or {}).get("num", 0))
+        cards = [{"id": offset + i + 1, "name": f"Card {offset + i + 1}"} for i in range(num)]
+        return _FakeResponse({"data": cards})
+
+    monkeypatch.setattr("app.ingest.connectors.ygoprodeck_yugioh.requests.get", _fake_get)
+
+    payloads = connector.load(None, fixture=False, limit=2000, page_size=500)
+
+    assert len(payloads) == 2000
+    assert len(calls) == 4
+    assert [call["params"]["offset"] for call in calls] == [0, 500, 1000, 1500]
+    assert all(call["params"]["num"] == 500 for call in calls)
+
+
+def test_yugioh_remote_load_small_limit_uses_single_request(monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    calls: list[dict] = []
+
+    def _fake_get(url, params=None, headers=None, timeout=45):
+        calls.append({"url": url, "params": dict(params or {})})
+        return _FakeResponse(
+            {
+                "data": [
+                    {"id": 101, "name": "Card 101"},
+                    {"id": 102, "name": "Card 102"},
+                    {"id": 103, "name": "Card 103"},
+                ]
+            }
+        )
+
+    monkeypatch.setattr("app.ingest.connectors.ygoprodeck_yugioh.requests.get", _fake_get)
+
+    payloads = connector.load(None, fixture=False, limit=3, page_size=500)
+
+    assert len(payloads) == 3
+    assert len(calls) == 1
+    assert calls[0]["params"] == {"num": 3, "offset": 0}
+
+
+def test_yugioh_remote_load_dedupes_overlapping_pages(monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    pages = {
+        0: [{"id": 1, "name": "Card 1"}, {"id": 2, "name": "Card 2"}],
+        2: [{"id": 2, "name": "Card 2"}, {"id": 3, "name": "Card 3"}],
+        4: [],
+    }
+
+    def _fake_get(url, params=None, headers=None, timeout=45):
+        offset = int((params or {}).get("offset", 0))
+        return _FakeResponse({"data": pages.get(offset, [])})
+
+    monkeypatch.setattr("app.ingest.connectors.ygoprodeck_yugioh.requests.get", _fake_get)
+
+    payloads = connector.load(None, fixture=False, limit=4, page_size=2)
+
+    ids = [payload[1]["id"] for payload in payloads]
+    assert ids == [1, 2, 3]
+
 def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
     connector = get_connector("ygoprodeck_yugioh")
     with db.SessionLocal() as session:

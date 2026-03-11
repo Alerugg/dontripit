@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from math import inf
 from pathlib import Path
 
 import requests
@@ -31,7 +32,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
             cards = self._load_fixture(fixture_path, limit=limit)
         else:
             cards = self._load_remote(
-                limit=limit, base_url=kwargs.get("base_url") or self.base_url
+                limit=limit,
+                base_url=kwargs.get("base_url") or self.base_url,
+                page_size=kwargs.get("page_size"),
             )
 
         payloads: list[tuple[Path, dict, str]] = []
@@ -70,13 +73,65 @@ class YgoProDeckYugiohConnector(SourceConnector):
         return cards
 
     def _load_remote(
-        self, limit: int | None = None, base_url: str | None = None
+        self,
+        limit: int | None = None,
+        base_url: str | None = None,
+        page_size: int | None = None,
     ) -> list[dict]:
         endpoint = f"{base_url or self.base_url}/cardinfo.php"
-        payload = self._request_json(endpoint)
-        cards = payload.get("data") or []
-        if limit:
-            return cards[:limit]
+        normalized_page_size = max(int(page_size or 500), 1)
+        requested_limit = None if limit is None else max(int(limit), 0)
+        target = inf if requested_limit is None else requested_limit
+
+        cards: list[dict] = []
+        seen_keys: set[str] = set()
+        pages_requested = 0
+        downloaded_cards = 0
+        duplicate_cards = 0
+        offset = 0
+
+        while len(cards) < target:
+            remaining = None if requested_limit is None else requested_limit - len(cards)
+            if remaining is not None and remaining <= 0:
+                break
+
+            batch_size = (
+                normalized_page_size
+                if remaining is None
+                else min(normalized_page_size, max(remaining, 1))
+            )
+            payload = self._request_json(
+                endpoint,
+                params={"num": batch_size, "offset": offset},
+            )
+            pages_requested += 1
+
+            page_cards = payload.get("data") or []
+            downloaded_cards += len(page_cards)
+            if not page_cards:
+                break
+
+            for card in page_cards:
+                dedupe_key = str(card.get("id") or self.checksum(card))
+                if dedupe_key in seen_keys:
+                    duplicate_cards += 1
+                    continue
+                seen_keys.add(dedupe_key)
+                cards.append(card)
+                if len(cards) >= target:
+                    break
+
+            if len(page_cards) < batch_size:
+                break
+            offset += batch_size
+
+        print(
+            "[ygoprodeck_yugioh] load_remote_done "
+            f"pages={pages_requested} downloaded={downloaded_cards} "
+            f"deduped={duplicate_cards} limit={requested_limit} "
+            f"page_size={normalized_page_size} returned={len(cards)}",
+            flush=True,
+        )
         return cards
 
     def _request_json(self, url: str, params: dict | None = None):
