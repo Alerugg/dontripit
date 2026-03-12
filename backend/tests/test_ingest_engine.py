@@ -1000,6 +1000,89 @@ def test_yugioh_incremental_does_not_overwrite_existing_variant(client, tmp_path
     assert variant == "starlight-rare"
 
 
+def test_yugioh_incremental_sparse_payload_prefers_specific_existing_variant_row(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    initial_fixture = {
+        "data": [
+            {
+                "id": 999024,
+                "name": "Competing Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Competing Variant Set",
+                        "set_code": "CVS-005",
+                        "set_rarity": "Starlight Rare",
+                    }
+                ],
+            }
+        ]
+    }
+    incremental_fixture = {
+        "data": [
+            {
+                "id": 999024,
+                "name": "Competing Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Competing Variant Set",
+                        "set_code": "CVS-005",
+                        "set_rarity": None,
+                        "rarity": None,
+                        "set_rarity_code": None,
+                        "set_rarity_short": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    initial_path = tmp_path / "ygo_variant_compete_initial.json"
+    initial_path.write_text(json.dumps(initial_fixture), encoding="utf-8")
+    incremental_path = tmp_path / "ygo_variant_compete_incremental.json"
+    incremental_path.write_text(json.dumps(incremental_fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(initial_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        specific_row = session.execute(
+            select(Print).where(Print.collector_number == "CVS-005", Print.variant == "starlight-rare")
+        ).scalar_one()
+        session.add(
+            Print(
+                set_id=specific_row.set_id,
+                card_id=specific_row.card_id,
+                collector_number="CVS-005",
+                language="en",
+                rarity="unknown",
+                variant="default",
+                is_foil=False,
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(incremental_path), fixture=True, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        rows = session.execute(
+            select(Print.variant, Print.yugioh_id)
+            .where(Print.collector_number == "CVS-005")
+            .order_by(Print.id.asc())
+        ).all()
+
+    assert rows
+    specific_rows = [row for row in rows if row.variant == "starlight-rare"]
+    default_rows = [row for row in rows if row.variant == "default"]
+    assert len(specific_rows) == 1
+    assert len(default_rows) == 1
+    assert specific_rows[0].yugioh_id == "999024::CVS-005::1"
+    assert default_rows[0].yugioh_id is None
+
+
 def test_yugioh_incremental_updates_variant_when_new_payload_is_more_specific(client, tmp_path):
     connector = get_connector("ygoprodeck_yugioh")
 
