@@ -268,17 +268,25 @@ class YgoProDeckYugiohConnector(SourceConnector):
         self,
         rows: list[Print],
         *,
+        set_id: int,
+        card_id: int,
         collector_number: str,
         collector_number_norm: str,
         incoming_variant: str,
+        ygo_print_id: str | None,
+        print_key: str | None,
     ) -> list[Print]:
         incoming_is_specific_variant = incoming_variant != "default"
 
-        def _rank(row: Print) -> tuple[int, int, int, int]:
+        def _rank(row: Print) -> tuple[int, int, int, int, int, int, int, int]:
             row_collector = row.collector_number or ""
             row_collector_norm = normalize_collector_number(row_collector)
             row_variant = normalize_variant(row.variant)
 
+            ygo_rank = 0 if ygo_print_id and row.yugioh_id == ygo_print_id else 1
+            print_key_rank = 0 if print_key and row.print_key == print_key else 1
+            set_rank = 0 if row.set_id == set_id else 1
+            card_rank = 0 if row.card_id == card_id else 1
             exact_collector_rank = 0 if row_collector == collector_number else 1
             normalized_collector_rank = 0 if row_collector_norm == collector_number_norm else 1
             if incoming_is_specific_variant:
@@ -286,7 +294,16 @@ class YgoProDeckYugiohConnector(SourceConnector):
             else:
                 variant_rank = 0 if row_variant != "default" else 1
 
-            return (exact_collector_rank, normalized_collector_rank, variant_rank, row.id or 0)
+            return (
+                ygo_rank,
+                print_key_rank,
+                set_rank,
+                card_rank,
+                exact_collector_rank,
+                normalized_collector_rank,
+                variant_rank,
+                row.id or 0,
+            )
 
         return sorted(rows, key=_rank)
 
@@ -339,9 +356,13 @@ class YgoProDeckYugiohConnector(SourceConnector):
         unique_prints = {row.id: row for row in print_candidates}
         ordered_prints = self._prioritize_print_candidates(
             [unique_prints[key] for key in sorted(unique_prints)],
+            set_id=set_id,
+            card_id=card_id,
             collector_number=collector_number,
             collector_number_norm=collector_number_norm,
             incoming_variant=variant,
+            ygo_print_id=ygo_print_id,
+            print_key=print_key,
         )
         print_row = self._choose_first(
             ordered_prints,
@@ -368,9 +389,13 @@ class YgoProDeckYugiohConnector(SourceConnector):
             return self._choose_first(
                 self._prioritize_print_candidates(
                     normalized_matches,
+                    set_id=set_id,
+                    card_id=card_id,
                     collector_number=collector_number,
                     collector_number_norm=collector_number_norm,
                     incoming_variant=variant,
+                    ygo_print_id=ygo_print_id,
+                    print_key=print_key,
                 ),
                 label="prints_fallback",
                 context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
@@ -391,111 +416,14 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 return self._choose_first(
                     self._prioritize_print_candidates(
                         tail_matches,
+                        set_id=set_id,
+                        card_id=card_id,
                         collector_number=collector_number,
                         collector_number_norm=collector_number_norm,
                         incoming_variant=variant,
+                        ygo_print_id=ygo_print_id,
+                        print_key=print_key,
                     ),
-                    label="prints_tail_fallback",
-                    context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
-                )
-
-        if len(fallback_candidates) == 1:
-            return fallback_candidates[0]
-
-        return None
-
-    @staticmethod
-    def _has_primary_image(session, print_id: int) -> bool:
-        return (
-            session.execute(
-                select(PrintImage.id)
-                .where(PrintImage.print_id == print_id, PrintImage.is_primary.is_(True))
-                .limit(1)
-            ).scalar_one_or_none()
-            is not None
-        )
-
-    def _find_existing_print(
-        self,
-        session,
-        *,
-        set_id: int,
-        card_id: int,
-        collector_number: str,
-        collector_number_norm: str,
-        normalized_language: str,
-        normalized_rarity: str,
-        variant: str,
-        ygo_print_id: str | None,
-        print_key: str | None,
-    ) -> Print | None:
-        print_candidates = session.execute(
-            select(Print).where(
-                Print.set_id == set_id,
-                Print.collector_number == collector_number,
-                Print.language == normalized_language,
-                Print.is_foil.is_(False),
-                Print.variant == variant,
-            ).order_by(Print.id.asc())
-        ).scalars().all()
-        if ygo_print_id:
-            print_candidates.extend(
-                session.execute(
-                    select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
-                ).scalars().all()
-            )
-        if print_key:
-            print_candidates.extend(
-                session.execute(
-                    select(Print).where(Print.print_key == print_key).order_by(Print.id.asc())
-                ).scalars().all()
-            )
-
-        unique_prints = {row.id: row for row in print_candidates}
-        ordered_prints = [unique_prints[key] for key in sorted(unique_prints)]
-        print_row = self._choose_first(
-            ordered_prints,
-            label="prints",
-            context=f"set_id={set_id}, collector_number={collector_number}, yugioh_id={ygo_print_id}, print_key={print_key}",
-        )
-        if print_row is not None:
-            return print_row
-
-        fallback_candidates = session.execute(
-            select(Print).where(
-                Print.set_id == set_id,
-                Print.card_id == card_id,
-                Print.language == normalized_language,
-                Print.is_foil.is_(False),
-                Print.rarity == normalized_rarity,
-            ).order_by(Print.id.asc())
-        ).scalars().all()
-        normalized_matches = [
-            row
-            for row in fallback_candidates
-            if normalize_collector_number(row.collector_number) == collector_number_norm
-        ]
-        if normalized_matches:
-            return self._choose_first(
-                normalized_matches,
-                label="prints_fallback",
-                context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
-            )
-
-        def _digits_tail(value: str) -> str:
-            digits = "".join(ch for ch in value if ch.isdigit())
-            return str(int(digits)) if digits else ""
-
-        incoming_tail = _digits_tail(collector_number_norm)
-        if incoming_tail:
-            tail_matches = [
-                row
-                for row in fallback_candidates
-                if _digits_tail(normalize_collector_number(row.collector_number)) == incoming_tail
-            ]
-            if tail_matches:
-                return self._choose_first(
-                    tail_matches,
                     label="prints_tail_fallback",
                     context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
                 )
@@ -892,9 +820,6 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     if print_row.variant != variant:
                         print_row.variant = variant
                         changed = True
-                if print_row.variant != variant:
-                    print_row.variant = variant
-                    changed = True
                 if print_key and print_row.print_key != print_key:
                     print_row.print_key = print_key
                     changed = True
