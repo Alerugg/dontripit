@@ -248,6 +248,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 return False
             if print_row.card_id != card_row.id:
                 return False
+            incoming_print_key = trim_or_none(item.get("print_key"))
+            if incoming_print_key and print_row.print_key != incoming_print_key:
+                return False
             if not self._has_primary_image(session, print_row.id):
                 return False
 
@@ -761,7 +764,14 @@ class YgoProDeckYugiohConnector(SourceConnector):
             normalized_language = normalize_language(item.language)
             normalized_rarity = normalize_rarity(item.rarity)
             variant = normalize_variant(item.variant_key)
-            print_key = item.print_key
+            print_key = trim_or_none(item.print_key) or build_print_key(
+                game_slug="yugioh",
+                set_code=set_row.code,
+                collector_number=collector_number,
+                language=normalized_language,
+                finish="nonfoil",
+                variant=variant,
+            )
 
             print_row = self._find_existing_print(
                 session,

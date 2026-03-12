@@ -1322,7 +1322,7 @@ def test_v1_card_and_print_detail_expose_yugioh_images(client):
     assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
 
-def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_card_response(client):
+def test_yugioh_incremental_rebuilds_print_key_and_image_for_legacy_matched_print(client):
     connector = get_connector("ygoprodeck_yugioh")
     with db.SessionLocal() as session:
         connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
@@ -1335,9 +1335,7 @@ def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_car
         ).scalar_one()
         legacy_print_id = print_row.id
 
-        # Simulate historical mismatch: print can exist with legacy collector format and no external ids/images.
-        print_row.collector_number = "005"
-        print_row.yugioh_id = None
+        # Simulate legacy row already reconciled by yugioh_id, but still missing derived/media fields.
         print_row.print_key = None
         print_row.variant = "default"
         print_row.rarity = None
@@ -1358,17 +1356,30 @@ def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_car
 
     assert refreshed is not None
     assert refreshed.yugioh_id == "46986414::LOB-005::1"
+    assert refreshed.collector_number == "LOB-005"
     assert refreshed.variant == "ultra-rare"
     assert refreshed.rarity == "Ultra Rare"
+    assert refreshed.print_key is not None
     assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+
+    search_response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=_auth_headers())
+    assert search_response.status_code == 200
+    search_payload = search_response.get_json()
+    print_hits = [item for item in search_payload if item.get("type") == "print"]
+    assert print_hits
+    assert print_hits[0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
     print_response = client.get(f"/api/v1/prints/{legacy_print_id}", headers=_auth_headers())
     assert print_response.status_code == 200
-    assert print_response.get_json()["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    print_payload = print_response.get_json()
+    assert print_payload["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
     card_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
     assert card_response.status_code == 200
-    assert card_response.get_json()["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    card_payload = card_response.get_json()
+    assert card_payload["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    assert card_payload["prints"][0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
 
 def test_connectors_keep_primary_images_for_mtg_pokemon_and_riftbound(client):
