@@ -405,6 +405,107 @@ class YgoProDeckYugiohConnector(SourceConnector):
         return None
 
     @staticmethod
+    def _has_primary_image(session, print_id: int) -> bool:
+        return (
+            session.execute(
+                select(PrintImage.id)
+                .where(PrintImage.print_id == print_id, PrintImage.is_primary.is_(True))
+                .limit(1)
+            ).scalar_one_or_none()
+            is not None
+        )
+
+    def _find_existing_print(
+        self,
+        session,
+        *,
+        set_id: int,
+        card_id: int,
+        collector_number: str,
+        collector_number_norm: str,
+        normalized_language: str,
+        normalized_rarity: str,
+        variant: str,
+        ygo_print_id: str | None,
+        print_key: str | None,
+    ) -> Print | None:
+        print_candidates = session.execute(
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.collector_number == collector_number,
+                Print.language == normalized_language,
+                Print.is_foil.is_(False),
+                Print.variant == variant,
+            ).order_by(Print.id.asc())
+        ).scalars().all()
+        if ygo_print_id:
+            print_candidates.extend(
+                session.execute(
+                    select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
+                ).scalars().all()
+            )
+        if print_key:
+            print_candidates.extend(
+                session.execute(
+                    select(Print).where(Print.print_key == print_key).order_by(Print.id.asc())
+                ).scalars().all()
+            )
+
+        unique_prints = {row.id: row for row in print_candidates}
+        ordered_prints = [unique_prints[key] for key in sorted(unique_prints)]
+        print_row = self._choose_first(
+            ordered_prints,
+            label="prints",
+            context=f"set_id={set_id}, collector_number={collector_number}, yugioh_id={ygo_print_id}, print_key={print_key}",
+        )
+        if print_row is not None:
+            return print_row
+
+        fallback_candidates = session.execute(
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.card_id == card_id,
+                Print.language == normalized_language,
+                Print.is_foil.is_(False),
+                Print.rarity == normalized_rarity,
+            ).order_by(Print.id.asc())
+        ).scalars().all()
+        normalized_matches = [
+            row
+            for row in fallback_candidates
+            if normalize_collector_number(row.collector_number) == collector_number_norm
+        ]
+        if normalized_matches:
+            return self._choose_first(
+                normalized_matches,
+                label="prints_fallback",
+                context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
+            )
+
+        def _digits_tail(value: str) -> str:
+            digits = "".join(ch for ch in value if ch.isdigit())
+            return str(int(digits)) if digits else ""
+
+        incoming_tail = _digits_tail(collector_number_norm)
+        if incoming_tail:
+            tail_matches = [
+                row
+                for row in fallback_candidates
+                if _digits_tail(normalize_collector_number(row.collector_number)) == incoming_tail
+            ]
+            if tail_matches:
+                return self._choose_first(
+                    tail_matches,
+                    label="prints_tail_fallback",
+                    context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
+                )
+
+        if len(fallback_candidates) == 1:
+            return fallback_candidates[0]
+
+        return None
+
+    @staticmethod
     def _pick_best_image_url(payload: dict) -> str | None:
         """Select the best available image URL from YGOProDeck payload variants."""
         candidates: list[str] = []
@@ -791,6 +892,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     if print_row.variant != variant:
                         print_row.variant = variant
                         changed = True
+                if print_row.variant != variant:
+                    print_row.variant = variant
+                    changed = True
                 if print_key and print_row.print_key != print_key:
                     print_row.print_key = print_key
                     changed = True
