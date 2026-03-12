@@ -752,6 +752,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     if print_row.variant != variant:
                         print_row.variant = variant
                         changed = True
+                if print_row.variant != variant:
+                    print_row.variant = variant
+                    changed = True
                 if print_key and print_row.print_key != print_key:
                     print_row.print_key = print_key
                     changed = True
