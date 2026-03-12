@@ -1322,6 +1322,55 @@ def test_v1_card_and_print_detail_expose_yugioh_images(client):
     assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
 
+def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_card_response(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        card_id = session.execute(select(Card.id).where(Card.yugoprodeck_id == "46986414")).scalar_one()
+        print_row = session.execute(
+            select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        legacy_print_id = print_row.id
+
+        # Simulate historical mismatch: print can exist with legacy collector format and no external ids/images.
+        print_row.collector_number = "005"
+        print_row.yugioh_id = None
+        print_row.print_key = None
+        print_row.variant = "default"
+        print_row.rarity = None
+        session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=True)
+        session.commit()
+
+    assert stats.files_skipped < stats.files_seen
+
+    with db.SessionLocal() as session:
+        refreshed = session.get(Print, legacy_print_id)
+        image_urls = session.execute(
+            select(PrintImage.url).where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
+        ).scalars().all()
+
+    assert refreshed is not None
+    assert refreshed.yugioh_id == "46986414::LOB-005::1"
+    assert refreshed.variant == "ultra-rare"
+    assert refreshed.rarity == "Ultra Rare"
+    assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+
+    print_response = client.get(f"/api/v1/prints/{legacy_print_id}", headers=_auth_headers())
+    assert print_response.status_code == 200
+    assert print_response.get_json()["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+    card_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert card_response.status_code == 200
+    assert card_response.get_json()["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+
 def test_connectors_keep_primary_images_for_mtg_pokemon_and_riftbound(client):
     connectors = [
         ("scryfall_mtg", "data/fixtures/scryfall_mtg_sample.json", "mtg"),

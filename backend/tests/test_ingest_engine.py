@@ -1000,6 +1000,62 @@ def test_yugioh_incremental_does_not_overwrite_existing_variant(client, tmp_path
     assert variant == "starlight-rare"
 
 
+def test_yugioh_incremental_updates_variant_when_new_payload_is_more_specific(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    initial_fixture = {
+        "data": [
+            {
+                "id": 999014,
+                "name": "Upgrade Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Upgrade Variant Set",
+                        "set_code": "UVS-001",
+                        "set_rarity": None,
+                    }
+                ],
+            }
+        ]
+    }
+    incremental_fixture = {
+        "data": [
+            {
+                "id": 999014,
+                "name": "Upgrade Variant Card",
+                "card_sets": [
+                    {
+                        "set_name": "Upgrade Variant Set",
+                        "set_code": "UVS-001",
+                        "set_rarity": "Secret Rare",
+                    }
+                ],
+            }
+        ]
+    }
+
+    initial_path = tmp_path / "ygo_variant_upgrade_initial.json"
+    initial_path.write_text(json.dumps(initial_fixture), encoding="utf-8")
+    incremental_path = tmp_path / "ygo_variant_upgrade_incremental.json"
+    incremental_path.write_text(json.dumps(incremental_fixture), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(initial_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(incremental_path), fixture=True, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        row = session.execute(
+            select(Print.variant, Print.rarity).where(Print.collector_number == "UVS-001")
+        ).one()
+
+    assert row.variant == "secret-rare"
+    assert row.rarity == "Secret Rare"
+
+
 def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_path):
     connector = get_connector("ygoprodeck_yugioh")
     fixture = {
