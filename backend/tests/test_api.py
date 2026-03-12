@@ -598,6 +598,8 @@ def test_search_dark_magician_yugioh_after_reindex_returns_card_and_print(client
     assert response.status_code == 200
     payload = response.get_json()
     assert payload
+    assert payload[0]["type"] == "card"
+    assert payload[0]["title"] == "Dark Magician"
     assert any(item["type"] == "card" and item["title"] == "Dark Magician" for item in payload)
     assert any(item["type"] == "print" and "LOB-005" in (item.get("subtitle") or "") for item in payload)
 
@@ -655,7 +657,7 @@ def test_search_lob_005_prioritizes_exact_dark_magician_print(client):
         rebuild_search_documents(session)
         session.commit()
 
-    response = client.get("/api/v1/search?q=LOB-005&game=yugioh&type=print", headers=_auth_headers())
+    response = client.get("/api/v1/search?q=LOB-005&game=yugioh", headers=_auth_headers())
     assert response.status_code == 200
     payload = response.get_json()
     assert payload

@@ -8,11 +8,29 @@ from app import db
 search_bp = Blueprint("search", __name__)
 
 
+def _normalize_query(raw_query: str) -> str:
+    return " ".join(raw_query.lower().split())
+
+
+def _is_exact_code_query(raw_query: str) -> bool:
+    normalized = "".join(raw_query.strip().split())
+    if len(normalized) < 3 or len(normalized) > 16:
+        return False
+
+    if re.fullmatch(r"[A-Za-z0-9]{2,8}[-_][A-Za-z0-9]{1,8}", normalized) is None:
+        return False
+
+    return any(char.isalpha() for char in normalized) and any(char.isdigit() for char in normalized)
+
+
 def _looks_like_code_query(raw_query: str) -> bool:
     stripped = raw_query.strip()
     normalized = "".join(stripped.split())
     if len(normalized) < 2 or len(normalized) > 16:
         return False
+
+    if _is_exact_code_query(raw_query):
+        return True
 
     if re.fullmatch(r"[a-zA-Z0-9]{2,8}[-_][a-zA-Z0-9]{1,8}", normalized):
         return True
@@ -68,14 +86,20 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
 
 
 def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
-    term = " ".join(q.lower().split())
-    looks_like_code = 1 if _looks_like_code_query(q) else 0
+    term = _normalize_query(q)
+    is_code_like_query = 1 if _looks_like_code_query(q) else 0
+    is_exact_code_query = 1 if _is_exact_code_query(q) else 0
+    is_text_query = 1 if is_code_like_query == 0 else 0
+    code_prefix = term.split("-", 1)[0].split("_", 1)[0]
     params = {
         "q": term,
+        "code_prefix": code_prefix,
         "prefix": f"{term}%",
         "contains": f"%{term}%",
         "token_prefix": f"% {term}%",
-        "looks_like_code": looks_like_code,
+        "is_code_like_query": is_code_like_query,
+        "is_exact_code_query": is_exact_code_query,
+        "is_text_query": is_text_query,
         "game": game,
         "limit": limit,
     }
@@ -101,25 +125,28 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
               (SELECT pi2.url FROM print_images pi2 JOIN prints p2 ON p2.id = pi2.print_id WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE ORDER BY pi2.id LIMIT 1)
             ) AS primary_image_url,
             (
-              CASE WHEN lower(sd.title) = :q THEN 2400.0 ELSE 0.0 END +
-              CASE WHEN lower(sd.title) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 900.0 ELSE 1900.0 END) ELSE 0.0 END +
-              CASE WHEN (' ' || lower(sd.title)) LIKE :token_prefix THEN 950.0 ELSE 0.0 END +
-              CASE WHEN lower(sd.title) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 180.0 ELSE 460.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 4200.0 ELSE 260.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) = :q THEN (CASE WHEN :looks_like_code = 1 THEN 3800.0 ELSE 220.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2800.0 ELSE 90.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) LIKE :prefix THEN (CASE WHEN :looks_like_code = 1 THEN 2600.0 ELSE 70.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(p.collector_number, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 650.0 ELSE 20.0 END) ELSE 0.0 END +
-              CASE WHEN lower(COALESCE(s.code, '')) LIKE :contains THEN (CASE WHEN :looks_like_code = 1 THEN 720.0 ELSE 25.0 END) ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN (120.0 / (1 + abs(length(lower(COALESCE(s.code, ''))) - length(:q)))) ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (80.0 / (1 + abs(length(lower(COALESCE(p.collector_number, ''))) - length(:q)))) ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' THEN 260.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' THEN -120.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'set' THEN -80.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :prefix THEN 240.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 0 AND sd.doc_type = 'print' AND lower(sd.title) LIKE :prefix THEN 80.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 1 AND sd.doc_type = 'print' THEN 140.0 ELSE 0.0 END +
-              CASE WHEN :looks_like_code = 1 THEN -35.0 * (
+              CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q THEN 2500.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q THEN 1700.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :prefix THEN 1700.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE :token_prefix THEN 820.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :contains THEN 420.0 ELSE 0.0 END +
+              CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.collector_number, '')) = :q THEN 4200.0 ELSE 0.0 END +
+              CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(COALESCE(s.code, '')) = :q THEN 3200.0 ELSE 0.0 END +
+              CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(s.code, '')) = :code_prefix THEN 700.0 ELSE 0.0 END +
+              CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'card' THEN -220.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN 1600.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN 1450.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :contains THEN 360.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(s.code, '')) LIKE :contains THEN 300.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN (120.0 / (1 + abs(length(lower(COALESCE(s.code, ''))) - length(:q)))) ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (90.0 / (1 + abs(length(lower(COALESCE(p.collector_number, ''))) - length(:q)))) ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' THEN 260.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' THEN -140.0 ELSE 0.0 END +
+              CASE WHEN :is_text_query = 1 AND sd.doc_type = 'set' THEN -180.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'print' THEN 180.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'set' THEN 120.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -90.0 ELSE 0.0 END +
+              CASE WHEN :is_code_like_query = 1 THEN -35.0 * (
                 ROW_NUMBER() OVER (
                   PARTITION BY lower(COALESCE(s.code, ''))
                   ORDER BY
@@ -183,6 +210,12 @@ def search():
     limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), 100)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
 
+    q_normalized = _normalize_query(q)
+    is_exact_code_query = 1 if _is_exact_code_query(q) else 0
+    is_code_like_query = 1 if _looks_like_code_query(q) else 0
+    is_text_query = 1 if is_code_like_query == 0 else 0
+    code_prefix = q_normalized.split("-", 1)[0].split("_", 1)[0]
+
     with db.SessionLocal() as session:
         try:
             if session.bind.dialect.name == "postgresql":
@@ -191,12 +224,16 @@ def search():
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, sd.subtitle,
                            (
-                               CASE WHEN sd.doc_type = 'card' AND lower(sd.title) = lower(:q) THEN 600.0 ELSE 0.0 END +
-                               CASE WHEN sd.doc_type = 'print' AND lower(sd.title) = lower(:q) THEN 500.0 ELSE 0.0 END +
-                               CASE WHEN lower(coalesce(p.collector_number, '')) = lower(:q) THEN 400.0 ELSE 0.0 END +
-                               CASE WHEN lower(coalesce(s.code, '')) = lower(:q) THEN 300.0 ELSE 0.0 END +
-                               CASE WHEN lower(sd.title) LIKE lower(:q) || '%' THEN 200.0 ELSE 0.0 END +
-                               CASE WHEN lower(sd.title) LIKE '%' || lower(:q) || '%' THEN 100.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
                                ts_rank(
                                    to_tsvector(
                                        'simple',
@@ -222,19 +259,37 @@ def search():
                     LIMIT :limit OFFSET :offset
                     """
                 )
-                rows = session.execute(sql, {"q": q, "game": game, "type": result_type, "limit": limit, "offset": offset}).mappings().all()
+                rows = session.execute(
+                    sql,
+                    {
+                        "q": q,
+                        "q_norm": q_normalized,
+                        "is_code_like_query": is_code_like_query,
+                        "is_exact_code_query": is_exact_code_query,
+                        "is_text_query": is_text_query,
+                        "code_prefix": code_prefix,
+                        "game": game,
+                        "type": result_type,
+                        "limit": limit,
+                        "offset": offset,
+                    },
+                ).mappings().all()
             else:
                 like = f"%{q.lower()}%"
                 sql = text(
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
                            (
-                               CASE WHEN sd.doc_type = 'card' AND lower(sd.title) = lower(:q) THEN 600.0 ELSE 0.0 END +
-                               CASE WHEN sd.doc_type = 'print' AND lower(sd.title) = lower(:q) THEN 500.0 ELSE 0.0 END +
-                               CASE WHEN lower(coalesce(p.collector_number, '')) = lower(:q) THEN 400.0 ELSE 0.0 END +
-                               CASE WHEN lower(coalesce(s.code, '')) = lower(:q) THEN 300.0 ELSE 0.0 END +
-                               CASE WHEN lower(sd.title) LIKE lower(:q) || '%' THEN 200.0 ELSE 0.0 END +
-                               CASE WHEN lower(sd.title) LIKE '%' || lower(:q) || '%' THEN 100.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
+                               CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
+                               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
                                1.0
                            ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
@@ -250,7 +305,22 @@ def search():
                     LIMIT :limit OFFSET :offset
                     """
                 )
-                rows = session.execute(sql, {"q": q, "like": like, "game": game, "type": result_type, "limit": limit, "offset": offset}).mappings().all()
+                rows = session.execute(
+                    sql,
+                    {
+                        "q": q,
+                        "q_norm": q_normalized,
+                        "is_code_like_query": is_code_like_query,
+                        "is_exact_code_query": is_exact_code_query,
+                        "is_text_query": is_text_query,
+                        "code_prefix": code_prefix,
+                        "like": like,
+                        "game": game,
+                        "type": result_type,
+                        "limit": limit,
+                        "offset": offset,
+                    },
+                ).mappings().all()
         except ProgrammingError:
             session.rollback()
             like = f"%{q.lower()}%"
