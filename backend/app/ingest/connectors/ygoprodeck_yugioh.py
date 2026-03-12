@@ -466,6 +466,10 @@ class YgoProDeckYugiohConnector(SourceConnector):
         }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
+        touched_set_ids: set[int] = set()
+        touched_print_ids: set[int] = set()
+        touched_print_rows: list[Print] = []
+
         game = session.execute(
             select(Game).where(Game.slug == "yugioh")
         ).scalar_one_or_none()
@@ -576,6 +580,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 if changed:
                     stats.records_updated += 1
             sets_by_code[code] = set_row
+            if set_row.id is not None:
+                touched_set_ids.add(set_row.id)
 
         images_by_print_source_key = {img.print_source_key: img for img in normalized.normalized_images if img.is_primary}
 
@@ -634,6 +640,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 )
                 session.add(print_row)
                 stats.records_inserted += 1
+                touched_print_rows.append(print_row)
             else:
                 changed = False
                 if print_row.card_id != card_row.id:
@@ -659,6 +666,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     changed = True
                 if changed:
                     stats.records_updated += 1
+                touched_print_rows.append(print_row)
 
             image = images_by_print_source_key.get(item.source_key)
             if image and image.url:
@@ -696,4 +704,18 @@ class YgoProDeckYugiohConnector(SourceConnector):
                         extra_primary.is_primary = False
                         stats.records_updated += 1
 
-        return {"card_id": card_row.id}
+            if print_row.id is not None:
+                touched_print_ids.add(print_row.id)
+
+        session.flush()
+        if card_row.id is None:
+            raise ValueError("card row id missing after upsert flush")
+
+        touched_set_ids.update(row.id for row in sets_by_code.values() if row.id is not None)
+        touched_print_ids.update(row.id for row in touched_print_rows if row.id is not None)
+
+        return {
+            "card_id": card_row.id,
+            "set_ids": touched_set_ids,
+            "print_ids": touched_print_ids,
+        }

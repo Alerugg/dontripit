@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select
 
 from app import db
-from app.models import Card, SearchDocument, Set
+from app.models import Card, Print, SearchDocument, Set
 
 
 def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids: set[int] | None = None, print_ids: set[int] | None = None) -> dict[str, int]:
@@ -32,19 +32,21 @@ def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids:
         _upsert_doc(session, "set", set_id, game_id, name, code)
         stats["sets"] += 1
 
-    print_sql = """
-    SELECT p.id, c.game_id, c.name, (s.code || ' #' || p.collector_number) AS subtitle,
-           (coalesce(c.name,'') || ' ' || coalesce(s.name,'') || ' ' || coalesce(s.code,'') || ' ' || coalesce(p.collector_number,'')) AS doc_text
-    FROM prints p
-    JOIN cards c ON c.id = p.card_id
-    JOIN sets s ON s.id = p.set_id
-    """
-    params = {}
+    print_query = (
+        select(
+            Print.id,
+            Card.game_id,
+            Card.name,
+            (Set.code + " #" + Print.collector_number).label("subtitle"),
+            (Card.name + " " + Set.name + " " + Set.code + " " + Print.collector_number).label("doc_text"),
+        )
+        .join(Card, Card.id == Print.card_id)
+        .join(Set, Set.id == Print.set_id)
+    )
     if print_ids is not None:
-        print_sql += " WHERE p.id = ANY(:print_ids)"
-        params["print_ids"] = list(print_ids)
+        print_query = print_query.where(Print.id.in_(print_ids))
 
-    for print_id, game_id, title, subtitle, doc_text in session.execute(text(print_sql), params).all():
+    for print_id, game_id, title, subtitle, doc_text in session.execute(print_query).all():
         _upsert_doc(session, "print", print_id, game_id, title, subtitle, doc_text)
         stats["prints"] += 1
 

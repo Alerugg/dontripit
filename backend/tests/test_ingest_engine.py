@@ -1335,3 +1335,68 @@ def test_riftbound_ingest_persists_primary_image_from_fixture(client):
     assert image is not None
     assert image.url == "https://example.com/riftbound/rb1/001.png"
     assert image.source == "riftbound"
+
+
+def test_ygoprodeck_incremental_reindex_is_scoped_to_touched_entities(client, monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+    reindex_calls = []
+
+    def _fake_rebuild(session, card_ids=None, set_ids=None, print_ids=None):
+        reindex_calls.append(
+            {
+                "card_ids": set(card_ids or set()),
+                "set_ids": set(set_ids or set()),
+                "print_ids": set(print_ids or set()),
+            }
+        )
+        return {"cards": 0, "sets": 0, "prints": 0}
+
+    monkeypatch.setattr("app.ingest.base.rebuild_search_documents", _fake_rebuild)
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+            limit=2,
+        )
+        session.commit()
+
+    assert len(reindex_calls) == 1
+    assert reindex_calls[0]["card_ids"]
+    assert reindex_calls[0]["set_ids"]
+    assert reindex_calls[0]["print_ids"]
+
+
+def test_ygoprodeck_incremental_skips_reindex_when_no_payload_changes(client, monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+    reindex_calls = []
+
+    def _fake_rebuild(session, card_ids=None, set_ids=None, print_ids=None):
+        reindex_calls.append((card_ids, set_ids, print_ids))
+        return {"cards": 0, "sets": 0, "prints": 0}
+
+    monkeypatch.setattr("app.ingest.base.rebuild_search_documents", _fake_rebuild)
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+            limit=2,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+            limit=2,
+        )
+        session.commit()
+
+    assert len(reindex_calls) == 1

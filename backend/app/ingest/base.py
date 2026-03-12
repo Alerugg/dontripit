@@ -73,6 +73,38 @@ class SourceConnector:
     def touched_entity_ids(self) -> dict[str, set[int]]:
         return {}
 
+    @staticmethod
+    def collect_touched_entity_ids(result: dict | None) -> dict[str, set[int]]:
+        touched = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
+        if not isinstance(result, dict):
+            return touched
+
+        aliases = {
+            "card": "card_ids",
+            "cards": "card_ids",
+            "card_id": "card_ids",
+            "card_ids": "card_ids",
+            "set": "set_ids",
+            "sets": "set_ids",
+            "set_id": "set_ids",
+            "set_ids": "set_ids",
+            "print": "print_ids",
+            "prints": "print_ids",
+            "print_id": "print_ids",
+            "print_ids": "print_ids",
+        }
+
+        for key, value in result.items():
+            target = aliases.get(key)
+            if target is None or value is None:
+                continue
+            if isinstance(value, (set, list, tuple)):
+                touched[target].update(item for item in value if isinstance(item, int))
+            elif isinstance(value, int):
+                touched[target].add(value)
+
+        return touched
+
     def default_cursor(self, **kwargs) -> dict:
         return {}
 
@@ -115,6 +147,8 @@ class SourceConnector:
         try:
             bootstrap = self.should_bootstrap(session, source, **kwargs)
             payloads = self.load(path, session=session, last_run_at=last_run_at, bootstrap=bootstrap, **kwargs)
+            touched_ids = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
+            processed_payloads = 0
             for file_path, payload, checksum in payloads:
                 stats.files_seen += 1
                 existing_record = session.execute(
@@ -135,9 +169,25 @@ class SourceConnector:
                     session.add(SourceRecord(source_id=source.id, checksum=checksum, raw_json=payload))
                 normalized = self.normalize(payload, **kwargs)
                 normalized = self.validate_payload_contract(normalized)
-                self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
+                upsert_result = self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
+                processed_payloads += 1
+                touched_from_upsert = self.collect_touched_entity_ids(upsert_result)
+                for key in touched_ids:
+                    touched_ids[key].update(touched_from_upsert[key])
 
-            rebuild_search_documents(session)
+            incremental = bool(kwargs.get("incremental", True))
+            if incremental:
+                if any(touched_ids.values()):
+                    rebuild_search_documents(
+                        session,
+                        card_ids=touched_ids["card_ids"],
+                        set_ids=touched_ids["set_ids"],
+                        print_ids=touched_ids["print_ids"],
+                    )
+                elif processed_payloads > 0:
+                    rebuild_search_documents(session)
+            else:
+                rebuild_search_documents(session)
 
             sync_state.last_run_at = datetime.now(timezone.utc)
             sync_state.cursor_json = self.default_cursor(last_run_at=sync_state.last_run_at, bootstrap=bootstrap, **kwargs)
