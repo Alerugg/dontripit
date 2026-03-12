@@ -194,14 +194,22 @@ class YgoProDeckYugiohConnector(SourceConnector):
         return normalize_variant(raw_variant)
 
     @staticmethod
-    def _pick_best_image_url(images: list[dict] | None) -> str | None:
-        """Select the best available image URL from YGOProDeck image variants."""
+    def _pick_best_image_url(payload: dict) -> str | None:
+        """Select the best available image URL from YGOProDeck payload variants."""
         candidates: list[str] = []
-        for image in images or []:
+
+        for image in payload.get("card_images") or []:
             for field in ("image_url", "image_url_small", "image_url_cropped"):
                 value = (image.get(field) or "").strip()
                 if value:
                     candidates.append(value)
+
+        # Defensive fallback for payload variants that flatten image fields.
+        for field in ("image_url", "image_url_small", "image_url_cropped"):
+            value = (payload.get(field) or "").strip()
+            if value:
+                candidates.append(value)
+
         return candidates[0] if candidates else None
 
     def normalize(self, payload: dict, **kwargs) -> dict:
@@ -313,7 +321,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 }
             ]
 
-        card_image_url = self._pick_best_image_url(payload.get("card_images"))
+        card_image_url = self._pick_best_image_url(payload)
 
         normalized_images = []
         if card_image_url:
@@ -535,6 +543,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
             image = images_by_print_source_key.get(item.source_key)
             if image and image.url:
+                if print_row.id is None:
+                    session.flush()
                 primary_image = session.execute(
                     select(PrintImage).where(
                         PrintImage.print_id == print_row.id,

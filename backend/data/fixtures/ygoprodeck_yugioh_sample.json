@@ -4,6 +4,14 @@
       "id": 46986414,
       "name": "Dark Magician",
       "type": "Normal Monster",
+      "card_images": [
+        {
+          "id": 46986414,
+          "image_url": "https://images.ygoprodeck.com/images/cards/46986414.jpg",
+          "image_url_small": "https://images.ygoprodeck.com/images/cards_small/46986414.jpg",
+          "image_url_cropped": "https://images.ygoprodeck.com/images/cards_cropped/46986414.jpg"
+        }
+      ],
       "card_sets": [
         {
           "set_name": "Legend of Blue Eyes White Dragon",
@@ -16,6 +24,14 @@
       "id": 89631139,
       "name": "Blue-Eyes White Dragon",
       "type": "Normal Monster",
+      "card_images": [
+        {
+          "id": 89631139,
+          "image_url": "https://images.ygoprodeck.com/images/cards/89631139.jpg",
+          "image_url_small": "https://images.ygoprodeck.com/images/cards_small/89631139.jpg",
+          "image_url_cropped": "https://images.ygoprodeck.com/images/cards_cropped/89631139.jpg"
+        }
+      ],
       "card_sets": [
         {
           "set_name": "Legend of Blue Eyes White Dragon",

@@ -562,7 +562,6 @@ def test_tcgdex_fixture_path_resolution_from_app_data_fixtures_directory(
     assert from_directory_payloads
 
 
-
 def test_yugioh_remote_load_paginates_until_limit(monkeypatch):
     connector = get_connector("ygoprodeck_yugioh")
 
@@ -704,6 +703,29 @@ def test_yugioh_fixture_ingest_inserts_sets_cards_prints(client):
     assert card_count > 0
     assert print_count > 0
     assert null_language_count == 0
+
+
+def test_yugioh_fixture_ingest_persists_primary_images(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        image_rows = session.execute(
+            select(PrintImage.url, PrintImage.source)
+            .join(Print, Print.id == PrintImage.print_id)
+            .where(Print.yugioh_id == "46986414::LOB-005::1", PrintImage.is_primary.is_(True))
+        ).all()
+
+    assert image_rows
+    assert image_rows[0].url == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    assert image_rows[0].source == "ygoprodeck"
 
 
 def test_yugioh_missing_rarity_defaults_to_unknown_without_integrity_error(
@@ -896,8 +918,6 @@ def test_yugioh_missing_language_and_rarity_default_without_none(client, tmp_pat
     assert row.language == "en"
     assert row.rarity == "unknown"
     assert row.variant == "default"
-
-
 
 
 def test_yugioh_full_refresh_reuses_print_identity_across_cards(client, tmp_path):
