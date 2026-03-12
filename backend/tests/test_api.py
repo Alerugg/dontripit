@@ -9,7 +9,7 @@ from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.base import IngestStats
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, Product, Set, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, PrintImage, Product, Set, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
 
@@ -724,6 +724,136 @@ def test_search_falls_back_when_index_query_returns_empty_without_game_filter(cl
     payload = response.get_json()
     assert payload
     assert any(item["title"] == "Dark Magician" for item in payload)
+
+
+def test_yugioh_incremental_backfill_handles_duplicate_primary_images_without_crashing(client):
+    connector = get_connector("ygoprodeck_yugioh")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/ygoprodeck_yugioh_sample.json", fixture=True, incremental=False)
+        dark_magician_print = session.execute(
+            select(Print)
+            .join(Card, Card.id == Print.card_id)
+            .join(Game, Game.id == Card.game_id)
+            .where(
+                Game.slug == "yugioh",
+                Card.name == "Dark Magician",
+                Print.collector_number == "LOB-005",
+            )
+            .order_by(Print.id.asc())
+        ).scalars().first()
+        assert dark_magician_print is not None
+        session.add(
+            PrintImage(
+                print_id=dark_magician_print.id,
+                url="https://example.com/duplicate-primary-image.jpg",
+                is_primary=True,
+                source="manual-test",
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    assert stats.errors == 0
+
+    with db.SessionLocal() as session:
+        dark_magician_print_id = session.execute(
+            select(Print.id)
+            .join(Card, Card.id == Print.card_id)
+            .where(Card.name == "Dark Magician", Print.collector_number == "LOB-005")
+            .order_by(Print.id.asc())
+        ).scalars().first()
+        assert dark_magician_print_id is not None
+        primary_count = session.execute(
+            select(func.count(PrintImage.id)).where(
+                PrintImage.print_id == dark_magician_print_id,
+                PrintImage.is_primary.is_(True),
+            )
+        ).scalar_one()
+    assert primary_count == 1
+
+
+def test_yugioh_backfill_populates_primary_image_and_catalog_endpoints_expose_it(client):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    with db.SessionLocal() as session:
+        game = Game(slug="yugioh", name="Yu-Gi-Oh!")
+        session.add(game)
+        session.flush()
+
+        ygo_set = Set(game_id=game.id, code="lob", name="Legend of Blue Eyes White Dragon", yugioh_id="LOB")
+        session.add(ygo_set)
+        session.flush()
+
+        existing_card = Card(game_id=game.id, name="Dark Magician", yugoprodeck_id="46986414")
+        session.add(existing_card)
+        session.flush()
+
+        existing_print = Print(
+            set_id=ygo_set.id,
+            card_id=existing_card.id,
+            collector_number="LOB-005",
+            language="en",
+            rarity="Ultra Rare",
+            variant="default",
+            yugioh_id="46986414::LOB-005::1",
+        )
+        session.add(existing_print)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    assert stats.records_updated >= 1 or stats.records_inserted >= 1
+
+    search_response = client.get(
+        "/api/v1/search?q=Dark%20Magician&game=yugioh",
+        headers=_auth_headers(),
+    )
+    assert search_response.status_code == 200
+    search_payload = search_response.get_json()
+    dark_magician_print_rows = [
+        item for item in search_payload if item.get("type") == "print" and item.get("collector_number") == "LOB-005"
+    ]
+    assert dark_magician_print_rows
+    assert dark_magician_print_rows[0].get("primary_image_url")
+
+    with db.SessionLocal() as session:
+        card_id = session.execute(
+            select(Card.id).where(Card.name == "Dark Magician").order_by(Card.id.asc())
+        ).scalars().first()
+        print_id = session.execute(
+            select(Print.id).where(Print.collector_number == "LOB-005").order_by(Print.id.asc())
+        ).scalars().first()
+
+    assert card_id is not None
+    assert print_id is not None
+
+    card_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert card_response.status_code == 200
+    card_payload = card_response.get_json()
+    assert card_payload.get("primary_image_url")
+    card_lob_print = [p for p in card_payload.get("prints", []) if p.get("collector_number") == "LOB-005"]
+    assert card_lob_print
+    assert card_lob_print[0].get("primary_image_url")
+
+    print_response = client.get(f"/api/v1/prints/{print_id}", headers=_auth_headers())
+    assert print_response.status_code == 200
+    print_payload = print_response.get_json()
+    assert print_payload.get("primary_image_url")
 
 
 def test_admin_create_api_key_localhost(client):

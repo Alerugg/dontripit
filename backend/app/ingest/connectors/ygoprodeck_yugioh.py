@@ -286,6 +286,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
         return candidates[0] if candidates else None
 
+    @staticmethod
+    def _choose_first(rows: list, *, label: str, context: str) -> object | None:
+        if not rows:
+            return None
+        if len(rows) > 1:
+            print(
+                f"[ygoprodeck_yugioh] duplicate_{label} count={len(rows)} context={context}",
+                flush=True,
+            )
+        return rows[0]
+
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_name = trim_or_none(payload.get("name")) or ""
         card_external_id = trim_or_none(payload.get("id"))
@@ -476,15 +487,25 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
         card_row = None
         if ygo_card_id:
-            card_row = session.execute(
+            matching_cards = session.execute(
                 select(Card).where(
                     Card.game_id == game.id, Card.yugoprodeck_id == ygo_card_id
-                )
-            ).scalar_one_or_none()
+                ).order_by(Card.id.asc())
+            ).scalars().all()
+            card_row = self._choose_first(
+                matching_cards,
+                label="cards",
+                context=f"yugoprodeck_id={ygo_card_id}",
+            )
         if card_row is None:
-            card_row = session.execute(
-                select(Card).where(Card.game_id == game.id, Card.name == card_name)
-            ).scalar_one_or_none()
+            matching_cards = session.execute(
+                select(Card).where(Card.game_id == game.id, Card.name == card_name).order_by(Card.id.asc())
+            ).scalars().all()
+            card_row = self._choose_first(
+                matching_cards,
+                label="cards",
+                context=f"name={card_name}",
+            )
 
         if card_row is None:
             card_row = Card(game_id=game.id, name=card_name, yugoprodeck_id=ygo_card_id, card_key=card_key)
@@ -514,15 +535,25 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ygo_set_id = next((ext.value for ext in item.external_ids if ext.id_type == "set_code"), None)
             set_row = None
             if ygo_set_id:
-                set_row = session.execute(
+                matching_sets = session.execute(
                     select(Set).where(
                         Set.game_id == game.id, Set.yugioh_id == ygo_set_id
-                    )
-                ).scalar_one_or_none()
+                    ).order_by(Set.id.asc())
+                ).scalars().all()
+                set_row = self._choose_first(
+                    matching_sets,
+                    label="sets",
+                    context=f"set_code={code}, yugioh_id={ygo_set_id}",
+                )
             if set_row is None:
-                set_row = session.execute(
-                    select(Set).where(Set.game_id == game.id, Set.code == code)
-                ).scalar_one_or_none()
+                matching_sets = session.execute(
+                    select(Set).where(Set.game_id == game.id, Set.code == code).order_by(Set.id.asc())
+                ).scalars().all()
+                set_row = self._choose_first(
+                    matching_sets,
+                    label="sets",
+                    context=f"set_code={code}",
+                )
 
             if set_row is None:
                 set_row = Set(
@@ -560,21 +591,35 @@ class YgoProDeckYugiohConnector(SourceConnector):
             variant = normalize_variant(item.variant_key)
             print_key = item.print_key
 
-            print_row = session.execute(
+            print_candidates = session.execute(
                 select(Print).where(
                     Print.set_id == set_row.id,
                     Print.collector_number == collector_number,
                     Print.language == normalized_language,
                     Print.is_foil.is_(False),
                     Print.variant == variant,
+                ).order_by(Print.id.asc())
+            ).scalars().all()
+            if ygo_print_id:
+                print_candidates.extend(
+                    session.execute(
+                        select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
+                    ).scalars().all()
                 )
-            ).scalar_one_or_none()
-            if print_row is None and ygo_print_id:
-                print_row = session.execute(
-                    select(Print).where(Print.yugioh_id == ygo_print_id)
-                ).scalar_one_or_none()
-            if print_row is None and print_key:
-                print_row = session.execute(select(Print).where(Print.print_key == print_key)).scalar_one_or_none()
+            if print_key:
+                print_candidates.extend(
+                    session.execute(
+                        select(Print).where(Print.print_key == print_key).order_by(Print.id.asc())
+                    ).scalars().all()
+                )
+
+            unique_prints = {row.id: row for row in print_candidates}
+            ordered_prints = [unique_prints[key] for key in sorted(unique_prints)]
+            print_row = self._choose_first(
+                ordered_prints,
+                label="prints",
+                context=f"set_id={set_row.id}, collector_number={collector_number}, yugioh_id={ygo_print_id}, print_key={print_key}",
+            )
 
             if print_row is None:
                 print_row = Print(
@@ -619,12 +664,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
             if image and image.url:
                 if print_row.id is None:
                     session.flush()
-                primary_image = session.execute(
+                primary_images = session.execute(
                     select(PrintImage).where(
                         PrintImage.print_id == print_row.id,
                         PrintImage.is_primary.is_(True),
-                    )
-                ).scalar_one_or_none()
+                    ).order_by(PrintImage.id.asc())
+                ).scalars().all()
+                primary_image = self._choose_first(
+                    primary_images,
+                    label="print_images",
+                    context=f"print_id={print_row.id}",
+                )
                 if primary_image is None:
                     session.add(
                         PrintImage(
@@ -640,5 +690,10 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     if primary_image.source != "ygoprodeck":
                         primary_image.source = "ygoprodeck"
                     stats.records_updated += 1
+
+                for extra_primary in primary_images[1:]:
+                    if extra_primary.is_primary:
+                        extra_primary.is_primary = False
+                        stats.records_updated += 1
 
         return {"card_id": card_row.id}
