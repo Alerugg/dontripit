@@ -207,8 +207,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
         if card_row is None:
             return False
 
-        card_sets = raw_payload.get("card_sets") or []
-        if not card_sets:
+        normalized = self.normalize(raw_payload)
+        normalized_prints = normalized.get("normalized_prints") or []
+        if not normalized_prints:
             has_any_primary = session.execute(
                 select(PrintImage.id)
                 .join(Print, Print.id == PrintImage.print_id)
@@ -217,44 +218,40 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ).scalar_one_or_none()
             return has_any_primary is not None
 
-        expected_print_ids = [
-            f"{yugoprodeck_id}::{(set_payload.get('set_code') or '').strip()}::{idx+1}"
-            for idx, set_payload in enumerate(card_sets)
-            if (set_payload.get("set_code") or "").strip()
-        ]
-        if not expected_print_ids:
-            has_any_primary = session.execute(
-                select(PrintImage.id)
-                .join(Print, Print.id == PrintImage.print_id)
-                .where(Print.card_id == card_row.id, PrintImage.is_primary.is_(True))
-                .limit(1)
-            ).scalar_one_or_none()
-            return has_any_primary is not None
+        sets_by_code = {
+            row.code.lower().strip(): row
+            for row in session.execute(select(Set).where(Set.game_id == game_id)).scalars().all()
+        }
 
-        primary_count = session.execute(
-            select(Print.yugioh_id)
-            .join(PrintImage, PrintImage.print_id == Print.id)
-            .where(
-                Print.card_id == card_row.id,
-                Print.yugioh_id.in_(expected_print_ids),
-                PrintImage.is_primary.is_(True),
+        for item in normalized_prints:
+            set_code = (item.get("set_source_key") or "").lower().strip()
+            set_row = sets_by_code.get(set_code)
+            if set_row is None:
+                return False
+
+            print_row = self._find_existing_print(
+                session,
+                set_id=set_row.id,
+                card_id=card_row.id,
+                collector_number=item.get("collector_number") or item.get("collector_number_norm") or "unknown",
+                collector_number_norm=item.get("collector_number_norm") or normalize_collector_number(item.get("collector_number") or "unknown"),
+                normalized_language=normalize_language(item.get("language")),
+                normalized_rarity=normalize_rarity(item.get("rarity")),
+                variant=normalize_variant(item.get("variant_key")),
+                ygo_print_id=next(
+                    (ext.get("value") for ext in item.get("external_ids") or [] if ext.get("id_type") == "print_id"),
+                    None,
+                ),
+                print_key=item.get("print_key"),
             )
-        ).scalars().all()
+            if print_row is None:
+                return False
+            if print_row.card_id != card_row.id:
+                return False
+            if not self._has_primary_image(session, print_row.id):
+                return False
 
-        return len(set(primary_count)) == len(set(expected_print_ids))
-        card_id = session.execute(
-            select(Card.id).where(Card.game_id == game_id, Card.yugoprodeck_id == yugoprodeck_id)
-        ).scalar_one_or_none()
-        if card_id is None:
-            return False
-
-        has_primary_image = session.execute(
-            select(PrintImage.id)
-            .join(Print, Print.id == PrintImage.print_id)
-            .where(Print.card_id == card_id, PrintImage.is_primary.is_(True))
-            .limit(1)
-        ).scalar_one_or_none()
-        return has_primary_image is not None
+        return True
 
     @classmethod
     def _derive_variant(cls, set_payload: dict) -> str:
@@ -266,6 +263,107 @@ class YgoProDeckYugiohConnector(SourceConnector):
             or ""
         )
         return normalize_variant(raw_variant)
+
+    @staticmethod
+    def _has_primary_image(session, print_id: int) -> bool:
+        return (
+            session.execute(
+                select(PrintImage.id)
+                .where(PrintImage.print_id == print_id, PrintImage.is_primary.is_(True))
+                .limit(1)
+            ).scalar_one_or_none()
+            is not None
+        )
+
+    def _find_existing_print(
+        self,
+        session,
+        *,
+        set_id: int,
+        card_id: int,
+        collector_number: str,
+        collector_number_norm: str,
+        normalized_language: str,
+        normalized_rarity: str,
+        variant: str,
+        ygo_print_id: str | None,
+        print_key: str | None,
+    ) -> Print | None:
+        print_candidates = session.execute(
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.collector_number == collector_number,
+                Print.language == normalized_language,
+                Print.is_foil.is_(False),
+                Print.variant == variant,
+            ).order_by(Print.id.asc())
+        ).scalars().all()
+        if ygo_print_id:
+            print_candidates.extend(
+                session.execute(
+                    select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
+                ).scalars().all()
+            )
+        if print_key:
+            print_candidates.extend(
+                session.execute(
+                    select(Print).where(Print.print_key == print_key).order_by(Print.id.asc())
+                ).scalars().all()
+            )
+
+        unique_prints = {row.id: row for row in print_candidates}
+        ordered_prints = [unique_prints[key] for key in sorted(unique_prints)]
+        print_row = self._choose_first(
+            ordered_prints,
+            label="prints",
+            context=f"set_id={set_id}, collector_number={collector_number}, yugioh_id={ygo_print_id}, print_key={print_key}",
+        )
+        if print_row is not None:
+            return print_row
+
+        fallback_candidates = session.execute(
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.card_id == card_id,
+                Print.language == normalized_language,
+                Print.is_foil.is_(False),
+                Print.rarity == normalized_rarity,
+            ).order_by(Print.id.asc())
+        ).scalars().all()
+        normalized_matches = [
+            row
+            for row in fallback_candidates
+            if normalize_collector_number(row.collector_number) == collector_number_norm
+        ]
+        if normalized_matches:
+            return self._choose_first(
+                normalized_matches,
+                label="prints_fallback",
+                context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
+            )
+
+        def _digits_tail(value: str) -> str:
+            digits = "".join(ch for ch in value if ch.isdigit())
+            return str(int(digits)) if digits else ""
+
+        incoming_tail = _digits_tail(collector_number_norm)
+        if incoming_tail:
+            tail_matches = [
+                row
+                for row in fallback_candidates
+                if _digits_tail(normalize_collector_number(row.collector_number)) == incoming_tail
+            ]
+            if tail_matches:
+                return self._choose_first(
+                    tail_matches,
+                    label="prints_tail_fallback",
+                    context=f"set_id={set_id}, card_id={card_id}, collector_number_norm={collector_number_norm}",
+                )
+
+        if len(fallback_candidates) == 1:
+            return fallback_candidates[0]
+
+        return None
 
     @staticmethod
     def _pick_best_image_url(payload: dict) -> str | None:
@@ -597,34 +695,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
             variant = normalize_variant(item.variant_key)
             print_key = item.print_key
 
-            print_candidates = session.execute(
-                select(Print).where(
-                    Print.set_id == set_row.id,
-                    Print.collector_number == collector_number,
-                    Print.language == normalized_language,
-                    Print.is_foil.is_(False),
-                    Print.variant == variant,
-                ).order_by(Print.id.asc())
-            ).scalars().all()
-            if ygo_print_id:
-                print_candidates.extend(
-                    session.execute(
-                        select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
-                    ).scalars().all()
-                )
-            if print_key:
-                print_candidates.extend(
-                    session.execute(
-                        select(Print).where(Print.print_key == print_key).order_by(Print.id.asc())
-                    ).scalars().all()
-                )
-
-            unique_prints = {row.id: row for row in print_candidates}
-            ordered_prints = [unique_prints[key] for key in sorted(unique_prints)]
-            print_row = self._choose_first(
-                ordered_prints,
-                label="prints",
-                context=f"set_id={set_row.id}, collector_number={collector_number}, yugioh_id={ygo_print_id}, print_key={print_key}",
+            print_row = self._find_existing_print(
+                session,
+                set_id=set_row.id,
+                card_id=card_row.id,
+                collector_number=collector_number,
+                collector_number_norm=item.collector_number_norm,
+                normalized_language=normalized_language,
+                normalized_rarity=normalized_rarity,
+                variant=variant,
+                ygo_print_id=ygo_print_id,
+                print_key=print_key,
             )
 
             if print_row is None:
@@ -652,15 +733,25 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 if ygo_print_id and print_row.yugioh_id != ygo_print_id:
                     print_row.yugioh_id = ygo_print_id
                     changed = True
-                if print_row.rarity != normalized_rarity:
-                    print_row.rarity = normalized_rarity
-                    changed = True
+                existing_rarity = normalize_rarity(print_row.rarity)
+                incoming_rarity_is_specific = normalized_rarity != "unknown"
+                existing_rarity_is_specific = existing_rarity != "unknown"
+                if incoming_rarity_is_specific or not existing_rarity_is_specific:
+                    if print_row.rarity != normalized_rarity:
+                        print_row.rarity = normalized_rarity
+                        changed = True
+
                 if print_row.language != normalized_language:
                     print_row.language = normalized_language
                     changed = True
-                if variant != "default" and print_row.variant != variant:
-                    print_row.variant = variant
-                    changed = True
+
+                existing_variant = normalize_variant(print_row.variant)
+                incoming_variant_is_specific = variant != "default"
+                existing_variant_is_specific = existing_variant != "default"
+                if incoming_variant_is_specific or not existing_variant_is_specific:
+                    if print_row.variant != variant:
+                        print_row.variant = variant
+                        changed = True
                 if print_key and print_row.print_key != print_key:
                     print_row.print_key = print_key
                     changed = True
