@@ -95,8 +95,22 @@ class SourceConnector:
         ingest_run = IngestRun(source_id=source.id, status="running", counts_json={})
         session.add(ingest_run)
         session.flush()
+        ingest_run_id = ingest_run.id
+
+        # Persist the "running" state immediately so async refresh status can observe
+        # a newly started ingest run before connector work completes.
+        session.commit()
 
         last_run_at = sync_state.last_run_at
+
+        def _counts_payload() -> dict[str, int]:
+            return {
+                "inserted": stats.records_inserted,
+                "updated": stats.records_updated,
+                "skipped": stats.files_skipped,
+                "errors": stats.errors,
+                "files_seen": stats.files_seen,
+            }
 
         try:
             bootstrap = self.should_bootstrap(session, source, **kwargs)
@@ -131,25 +145,18 @@ class SourceConnector:
 
             ingest_run.status = "success"
             ingest_run.finished_at = datetime.now(timezone.utc)
-            ingest_run.counts_json = {
-                "inserted": stats.records_inserted,
-                "updated": stats.records_updated,
-                "skipped": stats.files_skipped,
-                "errors": stats.errors,
-                "files_seen": stats.files_seen,
-            }
+            ingest_run.counts_json = _counts_payload()
         except Exception as exc:
             stats.errors += 1
-            ingest_run.status = "fail"
-            ingest_run.finished_at = datetime.now(timezone.utc)
-            ingest_run.error_summary = "\n".join(traceback.format_exception_only(type(exc), exc)).strip()
-            ingest_run.counts_json = {
-                "inserted": stats.records_inserted,
-                "updated": stats.records_updated,
-                "skipped": stats.files_skipped,
-                "errors": stats.errors,
-                "files_seen": stats.files_seen,
-            }
+            session.rollback()
+
+            failed_run = session.get(IngestRun, ingest_run_id)
+            if failed_run is not None:
+                failed_run.status = "fail"
+                failed_run.finished_at = datetime.now(timezone.utc)
+                failed_run.error_summary = "\n".join(traceback.format_exception_only(type(exc), exc)).strip()
+                failed_run.counts_json = _counts_payload()
+                session.commit()
             raise
 
         return stats

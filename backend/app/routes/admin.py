@@ -33,11 +33,14 @@ def _resolve_admin_token() -> str:
 
 
 def _validate_admin_token():
-    expected_token = _resolve_admin_token()
+    configured_token = os.getenv("ADMIN_TOKEN", "").strip()
     is_dev_route = request.path.endswith("/dev/api-keys")
+
+    if not configured_token and _is_localhost_request() and not is_dev_route:
+        return None
+
+    expected_token = _resolve_admin_token()
     if not expected_token:
-        if _is_localhost_request() and not is_dev_route:
-            return None
         return jsonify({"error": "admin_token_not_configured"}), 500
 
     provided_token = request.headers.get("X-Admin-Token", "").strip()

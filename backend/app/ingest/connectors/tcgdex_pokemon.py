@@ -254,11 +254,20 @@ class TcgdexPokemonConnector(SourceConnector):
             )
 
         raw_path = Path(path)
-        candidate_paths: list[Path] = (
-            [raw_path]
-            if raw_path.is_absolute()
-            else [raw_path, backend_root / raw_path, repo_root / raw_path]
-        )
+        candidate_paths: list[Path]
+        if raw_path.is_absolute():
+            candidate_paths = [raw_path]
+        else:
+            candidate_paths = [raw_path, backend_root / raw_path, repo_root / raw_path]
+            if raw_path.parts and raw_path.parts[0] == "backend":
+                translated_path = Path(*raw_path.parts[1:])
+                candidate_paths.extend(
+                    [
+                        translated_path,
+                        backend_root / translated_path,
+                        repo_root / translated_path,
+                    ]
+                )
 
         for candidate in candidate_paths:
             resolved = _resolve_candidate(candidate)

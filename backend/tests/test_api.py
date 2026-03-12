@@ -732,6 +732,7 @@ def test_search_falls_back_when_index_query_returns_empty_without_game_filter(cl
 
 
 def test_admin_create_api_key_localhost(client):
+    os.environ.pop("ADMIN_TOKEN", None)
     response = client.post('/api/admin/api-keys', headers={'Host': 'localhost'})
     assert response.status_code == 201
     payload = response.get_json()
@@ -1008,7 +1009,8 @@ def _seed_yugioh_search_fixture():
         payloads = connector.load(path="data/fixtures", fixture=True, limit=120)
         for _, payload, checksum in payloads:
             normalized = connector.normalize(payload)
-            connector.upsert(session, normalized, stats=IngestStats())
+            validated = connector.validate_payload_contract(normalized)
+            connector.upsert(session, validated, stats=IngestStats())
         rebuild_search_documents(session)
         session.commit()
 
