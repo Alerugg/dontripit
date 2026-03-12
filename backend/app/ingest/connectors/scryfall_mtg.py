@@ -89,12 +89,18 @@ class ScryfallMtgConnector(SourceConnector):
             raise RuntimeError("Scryfall default_cards bulk endpoint unavailable")
 
         cards: list[dict] = []
+        seen_ids: set[str] = set()
         with requests.get(default_bulk["download_uri"], stream=True, timeout=120) as response:
             response.raise_for_status()
             response.raw.decode_content = True
             payload = json.load(response.raw)
 
         for card in payload or []:
+            dedupe_id = str(card.get("id") or "").strip()
+            if dedupe_id and dedupe_id in seen_ids:
+                continue
+            if dedupe_id:
+                seen_ids.add(dedupe_id)
             cards.append(card)
             if limit and len(cards) >= limit:
                 break
@@ -102,6 +108,7 @@ class ScryfallMtgConnector(SourceConnector):
 
     def _load_incremental(self, limit: int | None = None, last_run_at=None) -> list[dict]:
         cards: list[dict] = []
+        seen_ids: set[str] = set()
         params: dict[str, str] = {"q": "game:paper", "order": "released", "dir": "desc"}
         if limit:
             params["unique"] = "prints"
@@ -115,6 +122,11 @@ class ScryfallMtgConnector(SourceConnector):
             payload = self._request_json(url, params=params)
             params = None
             for card in payload.get("data") or []:
+                dedupe_id = str(card.get("id") or "").strip()
+                if dedupe_id and dedupe_id in seen_ids:
+                    continue
+                if dedupe_id:
+                    seen_ids.add(dedupe_id)
                 cards.append(card)
                 if limit and len(cards) >= limit:
                     return cards
@@ -136,6 +148,23 @@ class ScryfallMtgConnector(SourceConnector):
             time.sleep(0.12)
             return response.json()
         raise RuntimeError(f"Scryfall request failed after retries: {url}")
+
+    @staticmethod
+    def _pick_primary_image_url(card_payload: dict) -> str | None:
+        image_uris = card_payload.get("image_uris") or {}
+        for key in ("png", "large", "normal", "small"):
+            value = (image_uris.get(key) or "").strip()
+            if value:
+                return value
+
+        card_faces = card_payload.get("card_faces") or []
+        for face in card_faces:
+            face_uris = face.get("image_uris") or {}
+            for key in ("png", "large", "normal", "small"):
+                value = (face_uris.get(key) or "").strip()
+                if value:
+                    return value
+        return None
 
     def normalize(self, payload: dict, **kwargs) -> dict:
         return {
@@ -268,15 +297,19 @@ class ScryfallMtgConnector(SourceConnector):
                 identifier.external_id = scryfall_id
                 stats.records_updated += 1
 
-        image_uris = card_payload.get("image_uris") or {}
-        image_url = image_uris.get("normal") or image_uris.get("large")
+        image_url = self._pick_primary_image_url(card_payload)
         if image_url:
-            existing_image = session.execute(
-                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.url == image_url)
+            primary_image = session.execute(
+                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
             ).scalar_one_or_none()
-            if existing_image is None:
+            if primary_image is None:
                 session.add(PrintImage(print_id=print_row.id, url=image_url, is_primary=True, source="scryfall"))
                 stats.records_inserted += 1
+            elif primary_image.url != image_url:
+                primary_image.url = image_url
+                if primary_image.source != "scryfall":
+                    primary_image.source = "scryfall"
+                stats.records_updated += 1
 
         upsert_field_provenance(
             session,

@@ -11,6 +11,7 @@ from app.models import (
     Game,
     IngestRun,
     Print,
+    PrintImage,
     SearchDocument,
     Set,
     Source,
@@ -1117,3 +1118,82 @@ def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
     assert print_count > 0
     assert null_language_count == 0
     assert null_rarity_count == 0
+
+
+def test_scryfall_ingest_sets_single_primary_print_image(client):
+    connector = get_connector("scryfall_mtg")
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=False,
+            limit=1,
+        )
+        connector.run(
+            session,
+            "data/fixtures/scryfall_mtg_sample.json",
+            fixture=True,
+            incremental=False,
+            limit=1,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(select(Print).where(Print.scryfall_id.is_not(None))).scalars().first()
+        assert print_row is not None
+        images = session.execute(select(PrintImage).where(PrintImage.print_id == print_row.id)).scalars().all()
+
+    assert len(images) == 1
+    assert images[0].is_primary is True
+    assert images[0].source == "scryfall"
+
+
+def test_tcgdex_ingest_sets_primary_print_image(client):
+    connector = get_connector("tcgdex_pokemon")
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/tcgdex_pokemon_sample.json",
+            fixture=True,
+            incremental=False,
+            limit=1,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(select(Print).where(Print.tcgdex_id.is_not(None))).scalars().first()
+        assert print_row is not None
+        image = session.execute(
+            select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+        ).scalar_one_or_none()
+
+    assert image is not None
+    assert image.url.endswith('/high.webp')
+    assert image.source == "tcgdex"
+
+
+def test_riftbound_ingest_persists_primary_image_from_fixture(client):
+    connector = get_connector("riftbound")
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/riftbound_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(select(Print).where(Print.riftbound_id == "rb-print-1")).scalar_one_or_none()
+        assert print_row is not None
+        image = session.execute(
+            select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+        ).scalar_one_or_none()
+
+    assert image is not None
+    assert image.url == "https://example.com/riftbound/rb1/001.png"
+    assert image.source == "riftbound"

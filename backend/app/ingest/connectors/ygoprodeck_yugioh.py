@@ -193,6 +193,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
         )
         return normalize_variant(raw_variant)
 
+    @staticmethod
+    def _pick_best_image_url(images: list[dict] | None) -> str | None:
+        """Select the best available image URL from YGOProDeck image variants."""
+        candidates: list[str] = []
+        for image in images or []:
+            for field in ("image_url", "image_url_small", "image_url_cropped"):
+                value = (image.get(field) or "").strip()
+                if value:
+                    candidates.append(value)
+        return candidates[0] if candidates else None
+
     def normalize(self, payload: dict, **kwargs) -> dict:
         card_name = trim_or_none(payload.get("name")) or ""
         card_external_id = trim_or_none(payload.get("id"))
@@ -302,12 +313,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 }
             ]
 
-        card_image_url = None
-        for image in payload.get("card_images") or []:
-            image_url = (image.get("image_url") or "").strip()
-            if image_url:
-                card_image_url = image_url
-                break
+        card_image_url = self._pick_best_image_url(payload.get("card_images"))
 
         normalized_images = []
         if card_image_url:

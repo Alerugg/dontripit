@@ -97,3 +97,24 @@ def test_ygoprodeck_pipeline_avoids_obvious_duplicate_prints(client):
 
     assert len(before) == len(after)
     assert {row[0] for row in before} == {row[0] for row in after}
+
+
+def test_ygoprodeck_normalize_prefers_best_available_image_url():
+    connector = get_connector("ygoprodeck_yugioh")
+    payload = {
+        "id": 123,
+        "name": "Test Monster",
+        "card_sets": [
+            {"set_code": "TS-001", "set_name": "Test Set", "set_rarity": "Common"},
+        ],
+        "card_images": [
+            {"image_url_cropped": "https://img.example/crop.jpg"},
+            {"image_url": "https://img.example/full.jpg"},
+        ],
+    }
+
+    normalized = connector.normalize(payload)
+
+    assert normalized["card_image_url"] == "https://img.example/crop.jpg"
+    assert normalized["normalized_images"]
+    assert normalized["normalized_images"][0]["url"] == "https://img.example/crop.jpg"

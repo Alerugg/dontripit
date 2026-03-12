@@ -1165,3 +1165,36 @@ def test_v1_print_detail_has_catalog_shape(client):
     assert payload["title"] == "Dark Magician"
     assert payload["card"]["name"] == "Dark Magician"
     assert "primary_image_url" in payload
+
+
+def test_v1_card_detail_uses_primary_image_from_ingested_prints(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        card_id = session.execute(select(Card.id).where(Card.riftbound_id == "rb-card-1")).scalars().first()
+
+    response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["game"] == "riftbound"
+    assert payload["primary_image_url"] == "https://example.com/riftbound/rb1/001.png"
+
+
+def test_v1_print_detail_exposes_image_url_when_available(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_id = session.execute(select(Print.id).where(Print.riftbound_id == "rb-print-1")).scalars().first()
+
+    response = client.get(f"/api/v1/prints/{print_id}", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["game"] == "riftbound"
+    assert payload["primary_image_url"] == "https://example.com/riftbound/rb1/001.png"
+    assert payload["image_url"] == "https://example.com/riftbound/rb1/001.png"

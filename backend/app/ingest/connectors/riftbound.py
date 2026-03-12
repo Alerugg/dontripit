@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
-from app.models import Card, Game, Print, Set
+from app.models import Card, Game, Print, PrintImage, Set
 
 
 class RiftboundConnector(SourceConnector):
@@ -76,6 +76,7 @@ class RiftboundConnector(SourceConnector):
                 "language": self._normalize_language(print_payload.get("language") or card_payload.get("language")),
                 "rarity": self._normalize_rarity(print_payload.get("rarity")),
                 "raw_json": print_payload,
+                "primary_image_url": (print_payload.get("primary_image_url") or "").strip() or None,
             },
         }
 
@@ -150,6 +151,7 @@ class RiftboundConnector(SourceConnector):
                 variant=variant,
             )
             session.add(print_row)
+            session.flush()
             stats.records_inserted += 1
         else:
             changed = False
@@ -163,5 +165,19 @@ class RiftboundConnector(SourceConnector):
                 print_row.variant = variant
                 changed = True
             if changed:
+                stats.records_updated += 1
+
+        image_url = (print_payload.get("primary_image_url") or "").strip()
+        if image_url:
+            primary_image = session.execute(
+                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+            ).scalar_one_or_none()
+            if primary_image is None:
+                session.add(PrintImage(print_id=print_row.id, url=image_url, is_primary=True, source="riftbound"))
+                stats.records_inserted += 1
+            elif primary_image.url != image_url:
+                primary_image.url = image_url
+                if primary_image.source != "riftbound":
+                    primary_image.source = "riftbound"
                 stats.records_updated += 1
         return {"print_id": print_row.id}

@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.provenance import upsert_field_provenance
+from app.ingest.normalization import trim_or_none
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, SourceRecord
 
 
@@ -98,6 +99,14 @@ class TcgdexPokemonConnector(SourceConnector):
             return True
 
         return False
+
+
+    @staticmethod
+    def _primary_image_url_from_base(image_base: object) -> str | None:
+        base = trim_or_none(image_base)
+        if not base:
+            return None
+        return f"{base}/high.webp"
 
     def _as_str(self, v):
         """Coerce API values to string safely."""
@@ -308,6 +317,7 @@ class TcgdexPokemonConnector(SourceConnector):
     def _load_remote(self, limit: int | None = None, set_id: str | None = None, lang: str = "en") -> list[dict]:
         base_url = self.base_url_template.format(lang=lang)
         out: list[dict] = []
+        seen_card_ids: set[str] = set()
 
         if set_id:
             set_payload = self._request_json(f"{base_url}/sets/{set_id}")
@@ -317,6 +327,11 @@ class TcgdexPokemonConnector(SourceConnector):
                 if not card_id:
                     continue
                 card_payload = self._request_json(f"{base_url}/cards/{card_id}")
+                dedupe_id = str(card_payload.get("id") or card_id).strip()
+                if dedupe_id and dedupe_id in seen_card_ids:
+                    continue
+                if dedupe_id:
+                    seen_card_ids.add(dedupe_id)
                 out.append(self._build_card_payload(set_payload, card_payload))
                 if limit and len(out) >= limit:
                     return out
@@ -330,6 +345,11 @@ class TcgdexPokemonConnector(SourceConnector):
             set_payload = self._request_json(f"{base_url}/sets/{remote_set_id}")
             cards = set_payload.get("cards") or []
             for card in cards:
+                dedupe_id = str(card.get("id") or "").strip()
+                if dedupe_id and dedupe_id in seen_card_ids:
+                    continue
+                if dedupe_id:
+                    seen_card_ids.add(dedupe_id)
                 out.append(self._build_card_payload(set_payload, card))
                 if limit and len(out) >= limit:
                     return out
@@ -544,8 +564,7 @@ class TcgdexPokemonConnector(SourceConnector):
                 identifier.external_id = tcgdex_print_id
                 stats.records_updated += 1
 
-        image_base = card_payload.get("image")
-        image_url = f"{image_base}/high.webp" if image_base else None
+        image_url = self._primary_image_url_from_base(card_payload.get("image"))
         if image_url:
             primary_image = session.execute(
                 select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
