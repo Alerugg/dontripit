@@ -1339,6 +1339,8 @@ def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_car
         print_row.collector_number = "005"
         print_row.yugioh_id = None
         print_row.print_key = None
+        print_row.variant = "default"
+        print_row.rarity = None
         session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
         session.commit()
 
@@ -1356,6 +1358,8 @@ def test_yugioh_incremental_backfills_legacy_print_without_image_and_updates_car
 
     assert refreshed is not None
     assert refreshed.yugioh_id == "46986414::LOB-005::1"
+    assert refreshed.variant == "ultra-rare"
+    assert refreshed.rarity == "Ultra Rare"
     assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
 
     print_response = client.get(f"/api/v1/prints/{legacy_print_id}", headers=_auth_headers())
