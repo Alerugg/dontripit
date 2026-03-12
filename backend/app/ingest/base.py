@@ -121,7 +121,7 @@ class SourceConnector:
                     select(SourceRecord).where(SourceRecord.source_id == source.id, SourceRecord.checksum == checksum)
                 ).scalar_one_or_none()
                 incremental = bool(kwargs.get("incremental", True))
-                if incremental and existing_record and self.should_skip_existing_record(existing_record, **kwargs):
+                if incremental and existing_record and self.should_skip_existing_record(existing_record, session=session, **kwargs):
                     stats.files_skipped += 1
                     self.logger.info(
                         "ingest skip connector=%s file=%s reason=existing_by_checksum checksum=%s",

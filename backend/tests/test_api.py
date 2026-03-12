@@ -9,7 +9,7 @@ from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.base import IngestStats
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, PriceSnapshot, Print, Product, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, Product, Set, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
 
@@ -239,8 +239,6 @@ def test_allows_with_valid_key(client):
     assert response.status_code == 200
 
 
-
-
 def test_admin_dev_api_keys_requires_header(client, monkeypatch):
     monkeypatch.delenv("ADMIN_TOKEN", raising=False)
     monkeypatch.setenv("FLASK_ENV", "development")
@@ -265,7 +263,6 @@ def test_admin_dev_api_keys_accepts_valid_token(client, monkeypatch):
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["api_key"].startswith("ak_")
-
 
 
 def test_admin_seed_allows_admin_scope(client, monkeypatch):
@@ -327,8 +324,6 @@ def test_admin_ingest_status_allows_admin_scope(client):
         }
 
 
-
-
 def test_admin_ingest_status_forbids_without_admin_scope(client):
     os.environ["PUBLIC_API_ENABLED"] = "false"
     response = client.get("/api/v1/admin/ingest-status", headers=_auth_headers("catalog-only", ["read:catalog"]))
@@ -340,8 +335,6 @@ def test_admin_ingest_status_requires_key(client):
     response = client.get("/api/v1/admin/ingest-status")
     assert response.status_code == 401
     assert response.get_json() == {"error": "missing_api_key"}
-
-
 
 
 def test_prices_placeholder_returns_200_and_json(client):
@@ -756,8 +749,6 @@ def test_admin_create_api_key_with_token_required(client, monkeypatch):
     assert ok_response.status_code == 201
 
 
-
-
 def test_admin_refresh_returns_accepted_quickly(client, monkeypatch):
     monkeypatch.setenv("PUBLIC_API_ENABLED", "false")
 
@@ -788,8 +779,6 @@ def test_admin_refresh_requires_auth(client, monkeypatch):
     response = client.post("/api/admin/refresh", json={})
     assert response.status_code == 401
     assert response.get_json() == {"error": "missing_api_key"}
-
-
 
 
 def test_admin_refresh_limit_parsing_zero_skips_and_missing_remains_unset(client, monkeypatch):
@@ -823,8 +812,6 @@ def test_admin_refresh_limit_parsing_zero_skips_and_missing_remains_unset(client
     assert captured["mtg_limit"] is None
     assert captured["yugioh_limit"] == 50
     assert captured["riftbound_limit"] is None
-
-
 
 
 def test_admin_refresh_limit_parsing_yugioh_only_keeps_other_games_unset(client, monkeypatch):
@@ -924,7 +911,6 @@ def test_admin_refresh_allows_admin_key(client, monkeypatch):
     assert payload["queued"] is True
     assert isinstance(payload["job_id"], str) and payload["job_id"]
     assert payload["status_url"] == "/api/v1/admin/ingest-status"
-
 
 
 def test_admin_refresh_sync_calls_run_daily_refresh_and_returns_summary(client, monkeypatch):
@@ -1165,6 +1151,93 @@ def test_v1_print_detail_has_catalog_shape(client):
     assert payload["title"] == "Dark Magician"
     assert payload["card"]["name"] == "Dark Magician"
     assert "primary_image_url" in payload
+
+
+def test_search_returns_primary_image_url_for_yugioh_prints(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh&type=print", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    print_hits = [item for item in payload if item.get("type") == "print"]
+    assert print_hits
+    assert print_hits[0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+
+def test_v1_card_and_print_detail_expose_yugioh_images(client):
+    _seed_yugioh_search_fixture()
+
+    with db.SessionLocal() as session:
+        card_id = session.execute(
+            select(Card.id).where(Card.name == "Dark Magician").order_by(Card.id.asc())
+        ).scalars().first()
+        print_id = session.execute(
+            select(Print.id)
+            .join(Card, Card.id == Print.card_id)
+            .where(Card.name == "Dark Magician")
+            .order_by(Print.id.asc())
+        ).scalars().first()
+
+    card_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert card_response.status_code == 200
+    card_payload = card_response.get_json()
+    assert card_payload["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    assert card_payload["prints"][0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+    print_response = client.get(f"/api/v1/prints/{print_id}", headers=_auth_headers())
+    assert print_response.status_code == 200
+    print_payload = print_response.get_json()
+    assert print_payload["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+    assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+
+def test_connectors_keep_primary_images_for_mtg_pokemon_and_riftbound(client):
+    connectors = [
+        ("scryfall_mtg", "data/fixtures/scryfall_mtg_sample.json", "mtg"),
+        ("tcgdex_pokemon", "data/fixtures/tcgdex_pokemon_sample.json", "pokemon"),
+        ("riftbound", "data/fixtures/riftbound_sample.json", "riftbound"),
+    ]
+
+    with db.SessionLocal() as session:
+        for connector_name, fixture_path, _ in connectors:
+            connector = get_connector(connector_name)
+            connector.run(session, fixture_path, fixture=True, incremental=False)
+        session.commit()
+
+    for _, _, game in connectors:
+        prints_response = client.get(f"/api/v1/prints?game={game}", headers=_auth_headers())
+        assert prints_response.status_code == 200
+        prints_payload = prints_response.get_json()
+        assert prints_payload
+        assert any(item.get("image_url") for item in prints_payload)
+
+        with db.SessionLocal() as session:
+            card_id = session.execute(
+                select(Card.id)
+                .join(Print, Print.card_id == Card.id)
+                .join(Set, Set.id == Print.set_id)
+                .join(Game, Game.id == Set.game_id)
+                .where(Game.slug == game)
+                .order_by(Card.id.asc())
+            ).scalars().first()
+            print_id = session.execute(
+                select(Print.id)
+                .join(Set, Set.id == Print.set_id)
+                .join(Game, Game.id == Set.game_id)
+                .where(Game.slug == game)
+                .order_by(Print.id.asc())
+            ).scalars().first()
+
+        card_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+        assert card_response.status_code == 200
+        assert card_response.get_json()["primary_image_url"]
+
+        print_response = client.get(f"/api/v1/prints/{print_id}", headers=_auth_headers())
+        assert print_response.status_code == 200
+        print_payload = print_response.get_json()
+        assert print_payload["primary_image_url"]
+        assert print_payload["image_url"]
 
 
 def test_v1_card_detail_uses_primary_image_from_ingested_prints(client):
