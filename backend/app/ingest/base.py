@@ -171,6 +171,16 @@ class SourceConnector:
                 normalized = self.validate_payload_contract(normalized)
                 upsert_result = self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
                 processed_payloads += 1
+                if processed_payloads == 1 or processed_payloads % 10 == 0:
+                    self.logger.info(
+                        "ingest progress connector=%s processed=%s files_seen=%s inserted=%s updated=%s skipped=%s",
+                        self.name,
+                        processed_payloads,
+                        stats.files_seen,
+                        stats.records_inserted,
+                        stats.records_updated,
+                        stats.files_skipped,
+                    )
                 touched_from_upsert = self.collect_touched_entity_ids(upsert_result)
                 for key in touched_ids:
                     touched_ids[key].update(touched_from_upsert[key])
@@ -178,16 +188,28 @@ class SourceConnector:
             incremental = bool(kwargs.get("incremental", True))
             if incremental:
                 if any(touched_ids.values()):
+                    self.logger.info(
+                        "ingest reindex_start connector=%s mode=targeted card_ids=%s set_ids=%s print_ids=%s",
+                        self.name,
+                        len(touched_ids["card_ids"]),
+                        len(touched_ids["set_ids"]),
+                        len(touched_ids["print_ids"]),
+                    )
                     rebuild_search_documents(
                         session,
                         card_ids=touched_ids["card_ids"],
                         set_ids=touched_ids["set_ids"],
                         print_ids=touched_ids["print_ids"],
                     )
+                    self.logger.info("ingest reindex_done connector=%s mode=targeted", self.name)
                 elif processed_payloads > 0:
+                    self.logger.info("ingest reindex_start connector=%s mode=full_fallback", self.name)
                     rebuild_search_documents(session)
+                    self.logger.info("ingest reindex_done connector=%s mode=full_fallback", self.name)
             else:
+                self.logger.info("ingest reindex_start connector=%s mode=full_refresh", self.name)
                 rebuild_search_documents(session)
+                self.logger.info("ingest reindex_done connector=%s mode=full_refresh", self.name)
 
             sync_state.last_run_at = datetime.now(timezone.utc)
             sync_state.cursor_json = self.default_cursor(last_run_at=sync_state.last_run_at, bootstrap=bootstrap, **kwargs)

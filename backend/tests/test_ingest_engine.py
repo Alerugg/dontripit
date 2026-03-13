@@ -1,4 +1,6 @@
 import json
+from copy import deepcopy
+from pathlib import Path
 from sqlalchemy import func, select
 
 from app import db
@@ -1631,3 +1633,58 @@ def test_yugioh_incremental_rehydrates_legacy_prints_missing_print_key_and_prima
             )
         ).scalar_one()
     assert duplicates == 2
+
+
+def test_yugioh_incremental_remote_mode_limit_terminates_and_persists_rows(client, monkeypatch):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    fixture_path = (
+        Path(__file__).resolve().parents[1] / "data" / "fixtures" / "ygoprodeck_yugioh_sample.json"
+    )
+    fixture_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    seed_cards = fixture_payload.get("data") or []
+    fixture_cards = []
+    for idx in range(10):
+        template = deepcopy(seed_cards[idx % len(seed_cards)])
+        card_id = int(template["id"]) + (idx * 1000000)
+        template["id"] = card_id
+        template["name"] = f"{template['name']} Batch {idx+1}"
+        for set_idx, set_payload in enumerate(template.get("card_sets") or []):
+            original_code = set_payload.get("set_code") or "SET"
+            set_payload["set_code"] = f"{original_code}-{idx+1}-{set_idx+1}"
+        for image in template.get("card_images") or []:
+            image["id"] = card_id
+            if image.get("image_url"):
+                image["image_url"] = image["image_url"].replace(str(seed_cards[idx % len(seed_cards)]["id"]), str(card_id))
+            if image.get("image_url_small"):
+                image["image_url_small"] = image["image_url_small"].replace(str(seed_cards[idx % len(seed_cards)]["id"]), str(card_id))
+            if image.get("image_url_cropped"):
+                image["image_url_cropped"] = image["image_url_cropped"].replace(str(seed_cards[idx % len(seed_cards)]["id"]), str(card_id))
+        fixture_cards.append(template)
+
+    def _fake_load_remote(limit=None, base_url=None, page_size=None):
+        if limit is None:
+            return fixture_cards
+        return fixture_cards[:limit]
+
+    monkeypatch.setattr(connector, "_load_remote", _fake_load_remote)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, incremental=True, limit=10)
+        session.commit()
+
+    assert stats.errors == 0
+    assert stats.files_seen == 10
+
+    with db.SessionLocal() as session:
+        games = session.execute(select(func.count(Game.id))).scalar_one()
+        cards = session.execute(select(func.count(Card.id))).scalar_one()
+        prints = session.execute(select(func.count(Print.id))).scalar_one()
+        primary_images = session.execute(
+            select(func.count(PrintImage.id)).where(PrintImage.is_primary.is_(True))
+        ).scalar_one()
+
+    assert games >= 1
+    assert cards > 0
+    assert prints > 0
+    assert primary_images > 0
