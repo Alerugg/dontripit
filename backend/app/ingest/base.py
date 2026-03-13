@@ -114,6 +114,9 @@ class SourceConnector:
     def should_bootstrap(self, session, source: Source, **kwargs) -> bool:
         return False
 
+    def repair_legacy_records(self, session, source: Source, stats: IngestStats, **kwargs) -> dict:
+        return {}
+
     def run(self, session, path: str | Path | None = None, **kwargs) -> IngestStats:
         stats = IngestStats()
         source = self.ensure_source(session)
@@ -185,7 +188,16 @@ class SourceConnector:
                 for key in touched_ids:
                     touched_ids[key].update(touched_from_upsert[key])
 
-            incremental = bool(kwargs.get("incremental", True))
+            repair_result = self.repair_legacy_records(
+                session,
+                source,
+                stats,
+                **kwargs,
+            )
+            touched_from_repair = self.collect_touched_entity_ids(repair_result)
+            for key in touched_ids:
+                touched_ids[key].update(touched_from_repair[key])
+
             if incremental:
                 if any(touched_ids.values()):
                     self.logger.info(

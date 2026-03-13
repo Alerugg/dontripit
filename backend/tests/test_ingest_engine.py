@@ -21,6 +21,20 @@ from app.models import (
 )
 
 
+def _ygo_fixture_source_path() -> Path:
+    fixture_name = "ygoprodeck_yugioh_sample.json"
+    candidates = [
+        Path("data/fixtures") / fixture_name,
+        Path("backend/data/fixtures") / fixture_name,
+        Path(__file__).resolve().parents[1] / "data" / "fixtures" / fixture_name,
+        Path(__file__).resolve().parents[2] / "data" / "fixtures" / fixture_name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"Unable to resolve fixture path for {fixture_name}")
+
+
 def _auth_headers(
     key: str = "admin-key", scopes: list[str] | None = None
 ) -> dict[str, str]:
@@ -769,6 +783,103 @@ def test_yugioh_incremental_backfills_missing_images_for_existing_card(client):
             .where(Print.yugioh_id == "46986414::LOB-005::1", PrintImage.is_primary.is_(True))
         ).scalars().all()
 
+    assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+
+
+def test_yugioh_incremental_rehydrates_legacy_row_with_ygo_id_and_missing_key_and_image(client):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(
+            select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        legacy_print_id = print_row.id
+
+        print_row.print_key = None
+        session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        refreshed = session.get(Print, legacy_print_id)
+        ygo_count = session.execute(
+            select(func.count(Print.id)).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
+            .order_by(PrintImage.id.asc())
+        ).scalars().all()
+
+    assert refreshed is not None
+    assert refreshed.print_key is not None
+    assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+    assert ygo_count == 1
+
+
+def test_yugioh_incremental_limit_repairs_legacy_print_not_in_processed_subset(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+    fixture_source = _ygo_fixture_source_path()
+    sample_payload = json.loads(fixture_source.read_text(encoding="utf-8"))
+    blue_eyes = next(card for card in sample_payload["data"] if card.get("id") == 89631139)
+    dark_magician = next(card for card in sample_payload["data"] if card.get("id") == 46986414)
+    limited_payload = {"data": [deepcopy(blue_eyes), deepcopy(dark_magician)]}
+
+    fixture_path = tmp_path / "ygo_limited_payload.json"
+    fixture_path.write_text(json.dumps(limited_payload), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(fixture_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(
+            select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        legacy_print_id = print_row.id
+        print_row.print_key = None
+        session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            str(fixture_path),
+            fixture=True,
+            incremental=True,
+            limit=1,
+        )
+        session.commit()
+
+    assert stats.files_seen == 1
+
+    with db.SessionLocal() as session:
+        refreshed = session.get(Print, legacy_print_id)
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
+            .order_by(PrintImage.id.asc())
+        ).scalars().all()
+
+    assert refreshed is not None
+    assert refreshed.print_key is not None
     assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
 
 

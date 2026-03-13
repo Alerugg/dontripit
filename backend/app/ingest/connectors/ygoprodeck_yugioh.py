@@ -292,6 +292,103 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
         return True
 
+    def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
+        if not bool(kwargs.get("incremental", True)):
+            return {}
+
+        game_id = session.execute(
+            select(Game.id).where(Game.slug == "yugioh")
+        ).scalar_one_or_none()
+        if game_id is None:
+            return {}
+
+        broken_rows = session.execute(
+            select(Print, Card, Set)
+            .join(Card, Card.id == Print.card_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(
+                Card.game_id == game_id,
+                Print.yugioh_id.is_not(None),
+            )
+            .order_by(Print.id.asc())
+        ).all()
+
+        touched_print_ids: set[int] = set()
+        cached_card_image_urls: dict[int, str | None] = {}
+        for print_row, card_row, set_row in broken_rows:
+            needs_print_key = not trim_or_none(print_row.print_key)
+            needs_primary_image = not self._has_primary_image(session, print_row.id)
+            if not needs_print_key and not needs_primary_image:
+                continue
+
+            normalized_variant = normalize_variant(print_row.variant)
+            normalized_language = normalize_language(print_row.language)
+            collector_number_norm = normalize_collector_number(print_row.collector_number or "unknown")
+            expected_print_key = None
+            if trim_or_none(card_row.card_key):
+                expected_print_key = build_print_key(
+                    card_key=card_row.card_key,
+                    set_code=set_row.code,
+                    collector_number=collector_number_norm,
+                    language=normalized_language,
+                    finish=normalize_finish(
+                        is_foil=bool(print_row.is_foil),
+                        variant=normalized_variant,
+                    ),
+                    variant=normalized_variant,
+                )
+
+            if needs_print_key and expected_print_key:
+                key_owner = session.execute(
+                    select(Print.id)
+                    .where(Print.print_key == expected_print_key)
+                    .order_by(Print.id.asc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if key_owner in (None, print_row.id):
+                    print_row.print_key = expected_print_key
+                    stats.records_updated += 1
+
+            if needs_primary_image:
+                if card_row.id not in cached_card_image_urls:
+                    sibling_image_url = session.execute(
+                        select(PrintImage.url)
+                        .join(Print, Print.id == PrintImage.print_id)
+                        .where(
+                            Print.card_id == card_row.id,
+                            Print.id != print_row.id,
+                            PrintImage.is_primary.is_(True),
+                        )
+                        .order_by(PrintImage.id.asc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    if sibling_image_url:
+                        cached_card_image_urls[card_row.id] = sibling_image_url
+                    elif trim_or_none(card_row.yugoprodeck_id):
+                        cached_card_image_urls[card_row.id] = (
+                            f"https://images.ygoprodeck.com/images/cards/{card_row.yugoprodeck_id}.jpg"
+                        )
+                    else:
+                        cached_card_image_urls[card_row.id] = None
+
+                candidate_url = cached_card_image_urls[card_row.id]
+                if candidate_url and not self._has_primary_image(session, print_row.id):
+                    session.add(
+                        PrintImage(
+                            print_id=print_row.id,
+                            url=candidate_url,
+                            is_primary=True,
+                            source="ygoprodeck",
+                        )
+                    )
+                    stats.records_inserted += 1
+
+            touched_print_ids.add(print_row.id)
+
+        if touched_print_ids:
+            session.flush()
+        return {"print_ids": touched_print_ids}
+
     @classmethod
     def _derive_variant(cls, set_payload: dict) -> str:
         raw_variant = (
@@ -840,7 +937,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
             if set_row.id is not None:
                 touched_set_ids.add(set_row.id)
 
-        images_by_print_source_key = {img.print_source_key: img for img in normalized.normalized_images if img.is_primary}
+        images_by_print_source_key = {
+            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
+        }
+        normalized_prints_by_ygo_id: dict[str, object] = {}
+        for item in normalized.normalized_prints:
+            ygo_print_id = next(
+                (ext.value for ext in item.external_ids if ext.id_type == "print_id"),
+                None,
+            )
+            if ygo_print_id:
+                normalized_prints_by_ygo_id[ygo_print_id] = item
 
         for item in normalized.normalized_prints:
             set_code = item.set_source_key.lower().strip()
@@ -980,6 +1087,73 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
             if print_row.id is not None:
                 touched_print_ids.add(print_row.id)
+
+        session.flush()
+
+        default_image_url = self._pick_best_image_url(normalized.normalized_card.raw or {})
+        candidate_rows = session.execute(
+            select(Print, Set)
+            .join(Set, Set.id == Print.set_id)
+            .where(Print.card_id == card_row.id)
+            .order_by(Print.id.asc())
+        ).all()
+        for print_row, set_row in candidate_rows:
+            needs_print_key = not trim_or_none(print_row.print_key)
+            needs_primary_image = default_image_url and not self._has_primary_image(session, print_row.id)
+            if not needs_print_key and not needs_primary_image:
+                continue
+
+            if not print_row.yugioh_id:
+                continue
+            matching_item = normalized_prints_by_ygo_id.get(print_row.yugioh_id)
+            if matching_item is None:
+                continue
+
+            canonical_row = self._choose_first(
+                session.execute(
+                    select(Print)
+                    .where(Print.yugioh_id == print_row.yugioh_id)
+                    .order_by(Print.id.asc())
+                ).scalars().all(),
+                label="prints_by_yugioh_id",
+                context=f"yugioh_id={print_row.yugioh_id}",
+            )
+            if canonical_row is None or canonical_row.id != print_row.id:
+                continue
+
+            changed = False
+            repaired_print_key = trim_or_none(matching_item.print_key)
+            if needs_print_key and repaired_print_key:
+                print_row.print_key = repaired_print_key
+                changed = True
+
+            normalized_rarity = normalize_rarity(matching_item.rarity)
+            normalized_variant = normalize_variant(matching_item.variant_key)
+            existing_rarity = normalize_rarity(print_row.rarity)
+            if normalized_rarity != "unknown" and existing_rarity == "unknown":
+                print_row.rarity = normalized_rarity
+                changed = True
+
+            existing_variant = normalize_variant(print_row.variant)
+            if normalized_variant != "default" and existing_variant == "default":
+                print_row.variant = normalized_variant
+                changed = True
+
+            if changed:
+                stats.records_updated += 1
+
+            if needs_primary_image:
+                session.add(
+                    PrintImage(
+                        print_id=print_row.id,
+                        url=default_image_url,
+                        is_primary=True,
+                        source="ygoprodeck",
+                    )
+                )
+                stats.records_inserted += 1
+
+            touched_print_ids.add(print_row.id)
 
         session.flush()
         if card_row.id is None:
