@@ -772,6 +772,54 @@ def test_yugioh_incremental_backfills_missing_images_for_existing_card(client):
     assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
 
 
+def test_yugioh_incremental_rehydrates_legacy_row_with_ygo_id_and_missing_key_and_image(client):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(
+            select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        legacy_print_id = print_row.id
+
+        print_row.print_key = None
+        session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        refreshed = session.get(Print, legacy_print_id)
+        ygo_count = session.execute(
+            select(func.count(Print.id)).where(Print.yugioh_id == "46986414::LOB-005::1")
+        ).scalar_one()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
+            .order_by(PrintImage.id.asc())
+        ).scalars().all()
+
+    assert refreshed is not None
+    assert refreshed.print_key is not None
+    assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+    assert ygo_count == 1
+
+
 def test_yugioh_incremental_backfills_partial_missing_images_for_blue_eyes(client):
     connector = get_connector("ygoprodeck_yugioh")
 

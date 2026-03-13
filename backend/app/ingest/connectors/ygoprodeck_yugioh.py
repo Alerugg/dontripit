@@ -840,7 +840,17 @@ class YgoProDeckYugiohConnector(SourceConnector):
             if set_row.id is not None:
                 touched_set_ids.add(set_row.id)
 
-        images_by_print_source_key = {img.print_source_key: img for img in normalized.normalized_images if img.is_primary}
+        images_by_print_source_key = {
+            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
+        }
+        normalized_prints_by_ygo_id: dict[str, object] = {}
+        for item in normalized.normalized_prints:
+            ygo_print_id = next(
+                (ext.value for ext in item.external_ids if ext.id_type == "print_id"),
+                None,
+            )
+            if ygo_print_id:
+                normalized_prints_by_ygo_id[ygo_print_id] = item
 
         for item in normalized.normalized_prints:
             set_code = item.set_source_key.lower().strip()
@@ -980,6 +990,73 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
             if print_row.id is not None:
                 touched_print_ids.add(print_row.id)
+
+        session.flush()
+
+        default_image_url = self._pick_best_image_url(normalized.normalized_card.raw or {})
+        candidate_rows = session.execute(
+            select(Print, Set)
+            .join(Set, Set.id == Print.set_id)
+            .where(Print.card_id == card_row.id)
+            .order_by(Print.id.asc())
+        ).all()
+        for print_row, set_row in candidate_rows:
+            needs_print_key = not trim_or_none(print_row.print_key)
+            needs_primary_image = default_image_url and not self._has_primary_image(session, print_row.id)
+            if not needs_print_key and not needs_primary_image:
+                continue
+
+            if not print_row.yugioh_id:
+                continue
+            matching_item = normalized_prints_by_ygo_id.get(print_row.yugioh_id)
+            if matching_item is None:
+                continue
+
+            canonical_row = self._choose_first(
+                session.execute(
+                    select(Print)
+                    .where(Print.yugioh_id == print_row.yugioh_id)
+                    .order_by(Print.id.asc())
+                ).scalars().all(),
+                label="prints_by_yugioh_id",
+                context=f"yugioh_id={print_row.yugioh_id}",
+            )
+            if canonical_row is None or canonical_row.id != print_row.id:
+                continue
+
+            changed = False
+            repaired_print_key = trim_or_none(matching_item.print_key)
+            if needs_print_key and repaired_print_key:
+                print_row.print_key = repaired_print_key
+                changed = True
+
+            normalized_rarity = normalize_rarity(matching_item.rarity)
+            normalized_variant = normalize_variant(matching_item.variant_key)
+            existing_rarity = normalize_rarity(print_row.rarity)
+            if normalized_rarity != "unknown" and existing_rarity == "unknown":
+                print_row.rarity = normalized_rarity
+                changed = True
+
+            existing_variant = normalize_variant(print_row.variant)
+            if normalized_variant != "default" and existing_variant == "default":
+                print_row.variant = normalized_variant
+                changed = True
+
+            if changed:
+                stats.records_updated += 1
+
+            if needs_primary_image:
+                session.add(
+                    PrintImage(
+                        print_id=print_row.id,
+                        url=default_image_url,
+                        is_primary=True,
+                        source="ygoprodeck",
+                    )
+                )
+                stats.records_inserted += 1
+
+            touched_print_ids.add(print_row.id)
 
         session.flush()
         if card_row.id is None:
