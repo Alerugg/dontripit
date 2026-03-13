@@ -281,6 +281,13 @@ def list_prints():
                p.rarity,
                p.is_foil,
                p.variant,
+               (
+                 SELECT pi.url
+                 FROM print_images pi
+                 WHERE pi.print_id = p.id
+                 ORDER BY pi.is_primary DESC, pi.id ASC
+                 LIMIT 1
+               ) AS image_url,
                COALESCE(
                  (
                    SELECT pi.url
@@ -289,8 +296,15 @@ def list_prints():
                    ORDER BY pi.is_primary DESC, pi.id ASC
                    LIMIT 1
                  ),
-                 NULL
-               ) AS image_url
+                 (
+                   SELECT pi2.url
+                   FROM print_images pi2
+                   JOIN prints p2 ON p2.id = pi2.print_id
+                   WHERE p2.card_id = p.card_id
+                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                   LIMIT 1
+                 )
+               ) AS primary_image_url
         FROM prints p
         JOIN sets s ON s.id = p.set_id
         JOIN games g ON g.id = s.game_id
@@ -501,6 +515,13 @@ def get_print_detail(print_id: int):
                s.id AS set_id,
                s.code AS set_code,
                s.name AS set_name,
+               (
+                 SELECT pi.url
+                 FROM print_images pi
+                 WHERE pi.print_id = p.id
+                 ORDER BY pi.is_primary DESC, pi.id ASC
+                 LIMIT 1
+               ) AS image_url,
                COALESCE(
                  (
                    SELECT pi.url
@@ -509,8 +530,15 @@ def get_print_detail(print_id: int):
                    ORDER BY pi.is_primary DESC, pi.id ASC
                    LIMIT 1
                  ),
-                 NULL
-               ) AS image_url
+                 (
+                   SELECT pi2.url
+                   FROM print_images pi2
+                   JOIN prints p2 ON p2.id = pi2.print_id
+                   WHERE p2.card_id = p.card_id
+                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                   LIMIT 1
+                 )
+               ) AS primary_image_url
         FROM prints p
         JOIN cards c ON c.id = p.card_id
         JOIN sets s ON s.id = p.set_id
@@ -557,7 +585,7 @@ def get_print_detail(print_id: int):
         "rarity": row["rarity"],
         "is_foil": row["is_foil"],
         "variant": row["variant"],
-        "primary_image_url": row["image_url"],
+        "primary_image_url": row["primary_image_url"],
         "set": {"id": row["set_id"], "code": row["set_code"], "name": row["set_name"]},
         "card": {"id": row["card_id"], "name": row["card_name"]},
         "image_url": row["image_url"],

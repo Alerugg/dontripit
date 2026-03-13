@@ -248,6 +248,26 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 return False
             if print_row.card_id != card_row.id:
                 return False
+            incoming_print_key = trim_or_none(item.get("print_key"))
+            if incoming_print_key and print_row.print_key != incoming_print_key:
+                return False
+
+            incoming_ygo_print_id = next(
+                (ext.get("value") for ext in item.get("external_ids") or [] if ext.get("id_type") == "print_id"),
+                None,
+            )
+            if incoming_ygo_print_id:
+                duplicate_rows = session.execute(
+                    select(Print).where(Print.yugioh_id == incoming_ygo_print_id).order_by(Print.id.asc())
+                ).scalars().all()
+                for duplicate_row in duplicate_rows:
+                    if duplicate_row.card_id != card_row.id:
+                        return False
+                    if incoming_print_key and duplicate_row.print_key != incoming_print_key:
+                        return False
+                    if not self._has_primary_image(session, duplicate_row.id):
+                        return False
+
             if not self._has_primary_image(session, print_row.id):
                 return False
 
@@ -296,12 +316,12 @@ class YgoProDeckYugiohConnector(SourceConnector):
 
             return (
                 ygo_rank,
-                print_key_rank,
                 set_rank,
                 card_rank,
                 exact_collector_rank,
                 normalized_collector_rank,
                 variant_rank,
+                print_key_rank,
                 row.id or 0,
             )
 
@@ -317,6 +337,58 @@ class YgoProDeckYugiohConnector(SourceConnector):
             ).scalar_one_or_none()
             is not None
         )
+
+    def _collapse_duplicate_ygo_print_rows(
+        self,
+        session,
+        *,
+        print_row: Print,
+        set_id: int,
+        card_id: int,
+        collector_number: str,
+        collector_number_norm: str,
+        variant: str,
+        ygo_print_id: str,
+        print_key: str | None,
+        stats: IngestStats,
+    ) -> Print:
+        duplicate_rows = session.execute(
+            select(Print).where(Print.yugioh_id == ygo_print_id).order_by(Print.id.asc())
+        ).scalars().all()
+        if len(duplicate_rows) <= 1:
+            return print_row
+
+        canonical_row = self._choose_first(
+            self._prioritize_print_candidates(
+                duplicate_rows,
+                set_id=set_id,
+                card_id=card_id,
+                collector_number=collector_number,
+                collector_number_norm=collector_number_norm,
+                incoming_variant=variant,
+                ygo_print_id=ygo_print_id,
+                print_key=print_key,
+            ),
+            label="duplicate_prints",
+            context=f"yugioh_id={ygo_print_id}",
+        )
+        if canonical_row is None:
+            return print_row
+
+        for row in duplicate_rows:
+            if row.id == canonical_row.id:
+                continue
+            changed = False
+            if row.yugioh_id == ygo_print_id:
+                row.yugioh_id = None
+                changed = True
+            if print_key and row.print_key == print_key:
+                row.print_key = None
+                changed = True
+            if changed:
+                stats.records_updated += 1
+
+        return canonical_row
 
     def _find_existing_print(
         self,
@@ -761,7 +833,14 @@ class YgoProDeckYugiohConnector(SourceConnector):
             normalized_language = normalize_language(item.language)
             normalized_rarity = normalize_rarity(item.rarity)
             variant = normalize_variant(item.variant_key)
-            print_key = item.print_key
+            print_key = trim_or_none(item.print_key) or build_print_key(
+                game_slug="yugioh",
+                set_code=set_row.code,
+                collector_number=collector_number,
+                language=normalized_language,
+                finish="nonfoil",
+                variant=variant,
+            )
 
             print_row = self._find_existing_print(
                 session,
@@ -775,6 +854,19 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 ygo_print_id=ygo_print_id,
                 print_key=print_key,
             )
+            if print_row is not None and ygo_print_id:
+                print_row = self._collapse_duplicate_ygo_print_rows(
+                    session,
+                    print_row=print_row,
+                    set_id=set_row.id,
+                    card_id=card_row.id,
+                    collector_number=collector_number,
+                    collector_number_norm=item.collector_number_norm,
+                    variant=variant,
+                    ygo_print_id=ygo_print_id,
+                    print_key=print_key,
+                    stats=stats,
+                )
 
             if print_row is None:
                 print_row = Print(
