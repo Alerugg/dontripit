@@ -186,11 +186,28 @@ class TcgdexPokemonConnector(SourceConnector):
         set_id = kwargs.get("set")
         lang = kwargs.get("lang", "en")
 
+        self.logger.info(
+            "ingest tcgdex load_start fixture=%s limit=%s set=%s lang=%s",
+            fixture,
+            limit,
+            set_id,
+            lang,
+        )
+
         if fixture:
             fixture_path = self._resolve_fixture_path(path)
             cards = self._load_fixture(fixture_path, limit=limit)
         else:
             cards = self._load_remote(limit=limit, set_id=set_id, lang=lang)
+
+        self.logger.info(
+            "ingest tcgdex load_done fixture=%s cards=%s limit=%s set=%s lang=%s",
+            fixture,
+            len(cards),
+            limit,
+            set_id,
+            lang,
+        )
 
         payloads: list[tuple[Path, dict, str]] = []
         for idx, card in enumerate(cards):
@@ -316,25 +333,68 @@ class TcgdexPokemonConnector(SourceConnector):
 
     def _load_remote(self, limit: int | None = None, set_id: str | None = None, lang: str = "en") -> list[dict]:
         base_url = self.base_url_template.format(lang=lang)
+        if limit is not None and limit <= 0:
+            self.logger.info("ingest tcgdex load_done phase=remote reason=non_positive_limit limit=%s", limit)
+            return []
+
         out: list[dict] = []
         seen_card_ids: set[str] = set()
+        visited_sets = 0
+
+        def _log_progress() -> None:
+            self.logger.info(
+                "ingest tcgdex load_progress phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+                visited_sets,
+                len(out),
+                limit,
+                set_id,
+            )
+
+        self.logger.info(
+            "ingest tcgdex load_start phase=remote limit=%s set_filter=%s lang=%s",
+            limit,
+            set_id,
+            lang,
+        )
 
         if set_id:
             set_payload = self._request_json(f"{base_url}/sets/{set_id}")
+            visited_sets = 1
             cards = set_payload.get("cards") or []
+            if limit:
+                cards = cards[:limit]
+
             for card in cards:
                 card_id = card.get("id")
                 if not card_id:
                     continue
-                card_payload = self._request_json(f"{base_url}/cards/{card_id}")
-                dedupe_id = str(card_payload.get("id") or card_id).strip()
+                dedupe_id = str(card_id).strip()
                 if dedupe_id and dedupe_id in seen_card_ids:
                     continue
                 if dedupe_id:
                     seen_card_ids.add(dedupe_id)
-                out.append(self._build_card_payload(set_payload, card_payload))
+                out.append(self._build_card_payload(set_payload, card))
                 if limit and len(out) >= limit:
+                    _log_progress()
+                    self.logger.info(
+                        "ingest tcgdex load_done phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+                        visited_sets,
+                        len(out),
+                        limit,
+                        set_id,
+                    )
                     return out
+                if len(out) == 1 or len(out) % 25 == 0:
+                    _log_progress()
+
+            _log_progress()
+            self.logger.info(
+                "ingest tcgdex load_done phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+                visited_sets,
+                len(out),
+                limit,
+                set_id,
+            )
             return out
 
         sets = self._request_json(f"{base_url}/sets")
@@ -343,6 +403,7 @@ class TcgdexPokemonConnector(SourceConnector):
             if not remote_set_id:
                 continue
             set_payload = self._request_json(f"{base_url}/sets/{remote_set_id}")
+            visited_sets += 1
             cards = set_payload.get("cards") or []
             for card in cards:
                 dedupe_id = str(card.get("id") or "").strip()
@@ -352,18 +413,54 @@ class TcgdexPokemonConnector(SourceConnector):
                     seen_card_ids.add(dedupe_id)
                 out.append(self._build_card_payload(set_payload, card))
                 if limit and len(out) >= limit:
+                    _log_progress()
+                    self.logger.info(
+                        "ingest tcgdex load_done phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+                        visited_sets,
+                        len(out),
+                        limit,
+                        set_id,
+                    )
                     return out
+                if len(out) == 1 or len(out) % 25 == 0:
+                    _log_progress()
+            _log_progress()
+
+        self.logger.info(
+            "ingest tcgdex load_done phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+            visited_sets,
+            len(out),
+            limit,
+            set_id,
+        )
         return out
 
     def _request_json(self, url: str, params: dict | None = None):
         wait_seconds = 0.3
-        for _ in range(6):
+        for attempt in range(1, 7):
+            started_at = time.perf_counter()
             response = requests.get(url, params=params, timeout=30)
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000)
             if response.status_code in (429, 500, 502, 503, 504):
+                self.logger.warning(
+                    "ingest tcgdex request_retry url=%s status=%s attempt=%s elapsed_ms=%s wait_seconds=%s",
+                    url,
+                    response.status_code,
+                    attempt,
+                    elapsed_ms,
+                    wait_seconds,
+                )
                 time.sleep(wait_seconds)
                 wait_seconds *= 2
                 continue
             response.raise_for_status()
+            self.logger.info(
+                "ingest tcgdex request_done url=%s status=%s attempt=%s elapsed_ms=%s",
+                url,
+                response.status_code,
+                attempt,
+                elapsed_ms,
+            )
             time.sleep(0.1)
             return response.json()
         raise RuntimeError(f"TCGdex request failed after retries: {url}")

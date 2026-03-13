@@ -433,6 +433,112 @@ def test_tcgdex_fixture_path_resolution_supports_repo_backend_data_fixtures_layo
     assert default_payloads
 
 
+def test_tcgdex_remote_load_with_limit_stops_early_and_logs_progress(client, monkeypatch, caplog):
+    connector = get_connector("tcgdex_pokemon")
+    calls: list[str] = []
+
+    def _fake_request_json(url, params=None):
+        calls.append(url)
+        if url.endswith("/sets"):
+            return [{"id": "sv1"}, {"id": "sv2"}]
+        if url.endswith("/sets/sv1"):
+            return {
+                "id": "sv1",
+                "abbreviation": "SV1",
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+                "cards": [
+                    {"id": "sv1-1", "localId": "1", "name": "A", "image": "https://img/1"},
+                    {"id": "sv1-2", "localId": "2", "name": "B", "image": "https://img/2"},
+                    {"id": "sv1-3", "localId": "3", "name": "C", "image": "https://img/3"},
+                ],
+            }
+        if url.endswith("/sets/sv2"):
+            return {
+                "id": "sv2",
+                "abbreviation": "SV2",
+                "name": "Paldea Evolved",
+                "releaseDate": "2023-06-09",
+                "cards": [{"id": "sv2-1", "localId": "1", "name": "D", "image": "https://img/4"}],
+            }
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(connector, "_request_json", _fake_request_json)
+
+    caplog.set_level("INFO")
+    payloads = connector.load(None, fixture=False, limit=2, lang="en")
+
+    assert len(payloads) == 2
+    assert calls == [
+        "https://api.tcgdex.net/v2/en/sets",
+        "https://api.tcgdex.net/v2/en/sets/sv1",
+    ]
+    assert "ingest tcgdex load_start" in caplog.text
+    assert "ingest tcgdex load_progress" in caplog.text
+    assert "ingest tcgdex load_done" in caplog.text
+
+
+def test_tcgdex_remote_set_filter_does_not_fetch_per_card_endpoint(client, monkeypatch):
+    connector = get_connector("tcgdex_pokemon")
+    calls: list[str] = []
+
+    def _fake_request_json(url, params=None):
+        calls.append(url)
+        if url.endswith("/sets/sv1"):
+            return {
+                "id": "sv1",
+                "abbreviation": "SV1",
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+                "cards": [
+                    {"id": "sv1-1", "localId": "1", "name": "A", "image": "https://img/1"},
+                    {"id": "sv1-2", "localId": "2", "name": "B", "image": "https://img/2"},
+                ],
+            }
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(connector, "_request_json", _fake_request_json)
+
+    payloads = connector.load(None, fixture=False, set="sv1", limit=1, lang="en")
+
+    assert len(payloads) == 1
+    assert calls == ["https://api.tcgdex.net/v2/en/sets/sv1"]
+
+
+def test_tcgdex_remote_load_limit_run_persists_rows(client, monkeypatch):
+    connector = get_connector("tcgdex_pokemon")
+
+    def _fake_request_json(url, params=None):
+        if url.endswith("/sets"):
+            return [{"id": "sv1"}]
+        if url.endswith("/sets/sv1"):
+            return {
+                "id": "sv1",
+                "abbreviation": "SV1",
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+                "cards": [
+                    {"id": "sv1-1", "localId": "1", "name": "Sprigatito", "image": "https://img/1"},
+                    {"id": "sv1-2", "localId": "2", "name": "Fuecoco", "image": "https://img/2"},
+                ],
+            }
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(connector, "_request_json", _fake_request_json)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, None, fixture=False, incremental=False, limit=1)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        pokemon_game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+        card_count = session.execute(select(func.count(Card.id)).where(Card.game_id == pokemon_game.id)).scalar_one()
+
+    assert stats.files_seen == 1
+    assert stats.errors == 0
+    assert card_count == 1
+
+
 def test_tcgdex_fixture_path_resolution_default_none(client):
     connector = get_connector("tcgdex_pokemon")
 
@@ -471,7 +577,7 @@ class _FakeResponse:
             raise RuntimeError(f"http error: {self.status_code}")
 
 
-def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(
+def test_tcgdex_remote_set_ingest_fetches_set_only_with_limit(
     client, monkeypatch
 ):
     connector = get_connector("tcgdex_pokemon")
@@ -485,18 +591,6 @@ def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(
             "releaseDate": "1999-01-09",
             "cards": [{"id": "base1-1"}, {"id": "base1-2"}],
         },
-        "https://api.tcgdex.net/v2/en/cards/base1-1": {
-            "id": "base1-1",
-            "localId": "1",
-            "name": "Alakazam",
-            "image": "https://img/base1-1",
-        },
-        "https://api.tcgdex.net/v2/en/cards/base1-2": {
-            "id": "base1-2",
-            "localId": "2",
-            "name": "Blastoise",
-            "image": "https://img/base1-2",
-        },
     }
 
     def _fake_get(url, params=None, timeout=30):
@@ -508,10 +602,7 @@ def test_tcgdex_remote_set_ingest_fetches_set_then_cards_with_limit(
     payloads = connector.load(None, fixture=False, set="base1", lang="en", limit=1)
 
     assert len(payloads) == 1
-    assert requested_urls == [
-        "https://api.tcgdex.net/v2/en/sets/base1",
-        "https://api.tcgdex.net/v2/en/cards/base1-1",
-    ]
+    assert requested_urls == ["https://api.tcgdex.net/v2/en/sets/base1"]
 
 
 def test_tcgdex_remote_without_set_preserves_general_list_behavior(client, monkeypatch):

@@ -1,4 +1,6 @@
 import argparse
+import logging
+import os
 
 from app import db
 from app.ingest.registry import get_connector
@@ -18,6 +20,11 @@ def main() -> int:
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("INGEST_LOG_LEVEL", "INFO").upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
     db.init_engine()
     connector = get_connector(args.connector)
