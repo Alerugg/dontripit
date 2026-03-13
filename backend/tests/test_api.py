@@ -1,5 +1,8 @@
 import os
 import time
+import json
+from copy import deepcopy
+from pathlib import Path
 
 from sqlalchemy import func, select, text
 
@@ -1488,6 +1491,62 @@ def test_yugioh_incremental_rehydrates_exact_legacy_row_with_ygo_id_no_key_no_im
     assert print_payload["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
     assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
     assert card_payload["prints"][0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+
+def test_yugioh_incremental_limit_repairs_legacy_print_and_api_without_processing_card_payload(client, tmp_path):
+    connector = get_connector("ygoprodeck_yugioh")
+    fixture_source = Path("backend/data/fixtures/ygoprodeck_yugioh_sample.json")
+    sample_payload = json.loads(fixture_source.read_text(encoding="utf-8"))
+    blue_eyes = next(card for card in sample_payload["data"] if card.get("id") == 89631139)
+    dark_magician = next(card for card in sample_payload["data"] if card.get("id") == 46986414)
+    limited_payload = {"data": [deepcopy(blue_eyes), deepcopy(dark_magician)]}
+
+    fixture_path = tmp_path / "ygo_limited_payload_api.json"
+    fixture_path.write_text(json.dumps(limited_payload), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, str(fixture_path), fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")).scalar_one()
+        legacy_print_id = print_row.id
+        print_row.print_key = None
+        session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            str(fixture_path),
+            fixture=True,
+            incremental=True,
+            limit=1,
+        )
+        session.commit()
+
+    assert stats.files_seen == 1
+
+    with db.SessionLocal() as session:
+        refreshed = session.get(Print, legacy_print_id)
+        image_urls = session.execute(
+            select(PrintImage.url).where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
+        ).scalars().all()
+
+    assert refreshed is not None
+    assert refreshed.print_key is not None
+    assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+
+    print_response = client.get(f"/api/v1/prints/{legacy_print_id}", headers=_auth_headers())
+    assert print_response.status_code == 200
+    print_payload = print_response.get_json()
+    assert print_payload["image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
+
+    search_response = client.get("/api/v1/search?q=LOB-005&game=yugioh&type=print", headers=_auth_headers())
+    assert search_response.status_code == 200
+    search_payload = search_response.get_json()
+    target_hit = next(item for item in search_payload if item.get("id") == legacy_print_id)
+    assert target_hit["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
 
 def test_connectors_keep_primary_images_for_mtg_pokemon_and_riftbound(client):
