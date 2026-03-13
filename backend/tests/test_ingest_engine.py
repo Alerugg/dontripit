@@ -1539,3 +1539,95 @@ def test_ygoprodeck_incremental_skips_reindex_when_no_payload_changes(client, mo
         session.commit()
 
     assert len(reindex_calls) == 1
+
+
+def test_yugioh_incremental_rehydrates_legacy_prints_missing_print_key_and_primary_images(client):
+    connector = get_connector("ygoprodeck_yugioh")
+
+    with db.SessionLocal() as session:
+        game = Game(slug="yugioh", name="Yu-Gi-Oh!")
+        session.add(game)
+        session.flush()
+
+        dark_magician = Card(game_id=game.id, name="Dark Magician", yugoprodeck_id="46986414")
+        blue_eyes = Card(game_id=game.id, name="Blue-Eyes White Dragon", yugoprodeck_id="89631139")
+        session.add_all([dark_magician, blue_eyes])
+        session.flush()
+
+        lob_set = Set(
+            game_id=game.id,
+            code="lob",
+            name="Legend of Blue Eyes White Dragon",
+            yugioh_id="LOB",
+        )
+        session.add(lob_set)
+        session.flush()
+
+        dark_magician_print = Print(
+            set_id=lob_set.id,
+            card_id=dark_magician.id,
+            collector_number="LOB-005",
+            language="en",
+            rarity="Ultra Rare",
+            variant="default",
+            yugioh_id="46986414::LOB-005::1",
+            print_key=None,
+        )
+        blue_eyes_print = Print(
+            set_id=lob_set.id,
+            card_id=blue_eyes.id,
+            collector_number="LOB-001",
+            language="en",
+            rarity="Ultra Rare",
+            variant="glossy",
+            yugioh_id="89631139::LOB-001::1",
+            print_key=None,
+        )
+        session.add_all([dark_magician_print, blue_eyes_print])
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            "data/fixtures/ygoprodeck_yugioh_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    assert stats.records_updated >= 2
+
+    with db.SessionLocal() as session:
+        recovered_rows = session.execute(
+            select(
+                Print.collector_number,
+                Print.variant,
+                Print.print_key,
+                Print.yugioh_id,
+                func.count(PrintImage.id).label("primary_count"),
+            )
+            .outerjoin(
+                PrintImage,
+                (PrintImage.print_id == Print.id) & (PrintImage.is_primary.is_(True)),
+            )
+            .where(Print.yugioh_id.in_(["46986414::LOB-005::1", "89631139::LOB-001::1"]))
+            .group_by(Print.id)
+            .order_by(Print.collector_number.asc())
+        ).all()
+
+    assert len(recovered_rows) == 2
+    by_collector = {row.collector_number: row for row in recovered_rows}
+    assert by_collector["LOB-005"].print_key is not None
+    assert by_collector["LOB-001"].print_key is not None
+    assert by_collector["LOB-005"].primary_count == 1
+    assert by_collector["LOB-001"].primary_count == 1
+    # Existing non-default variant must be preserved for sparse payload compatibility.
+    assert by_collector["LOB-001"].variant == "glossy"
+
+    with db.SessionLocal() as session:
+        duplicates = session.execute(
+            select(func.count(Print.id)).where(
+                Print.yugioh_id.in_(["46986414::LOB-005::1", "89631139::LOB-001::1"])
+            )
+        ).scalar_one()
+    assert duplicates == 2

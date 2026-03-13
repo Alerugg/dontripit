@@ -193,9 +193,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
         if not yugoprodeck_id:
             return True
 
-        if not self._pick_best_image_url(raw_payload):
-            # If source payload has no image at all, reprocessing will not backfill media.
-            return True
+        has_payload_primary_image = self._pick_best_image_url(raw_payload) is not None
 
         game_id = session.execute(select(Game.id).where(Game.slug == "yugioh")).scalar_one_or_none()
         if game_id is None:
@@ -210,6 +208,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
         normalized = self.normalize(raw_payload)
         normalized_prints = normalized.get("normalized_prints") or []
         if not normalized_prints:
+            if not has_payload_primary_image:
+                return True
             has_any_primary = session.execute(
                 select(PrintImage.id)
                 .join(Print, Print.id == PrintImage.print_id)
@@ -245,11 +245,24 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 print_key=item.get("print_key"),
             )
             if print_row is None:
+                print(
+                    "[ygoprodeck_yugioh] incremental_rehydrate_required "
+                    f"reason=missing_print yugoprodeck_id={yugoprodeck_id} "
+                    f"set_code={set_code} collector_number={item.get('collector_number')}",
+                    flush=True,
+                )
                 return False
             if print_row.card_id != card_row.id:
                 return False
             incoming_print_key = trim_or_none(item.get("print_key"))
             if incoming_print_key and print_row.print_key != incoming_print_key:
+                print(
+                    "[ygoprodeck_yugioh] incremental_rehydrate_required "
+                    f"reason=missing_or_mismatched_print_key yugoprodeck_id={yugoprodeck_id} "
+                    f"print_id={print_row.id} incoming_print_key={incoming_print_key} "
+                    f"current_print_key={print_row.print_key}",
+                    flush=True,
+                )
                 return False
 
             incoming_ygo_print_id = next(
@@ -265,10 +278,16 @@ class YgoProDeckYugiohConnector(SourceConnector):
                         return False
                     if incoming_print_key and duplicate_row.print_key != incoming_print_key:
                         return False
-                    if not self._has_primary_image(session, duplicate_row.id):
+                    if has_payload_primary_image and not self._has_primary_image(session, duplicate_row.id):
                         return False
 
-            if not self._has_primary_image(session, print_row.id):
+            if has_payload_primary_image and not self._has_primary_image(session, print_row.id):
+                print(
+                    "[ygoprodeck_yugioh] incremental_rehydrate_required "
+                    f"reason=missing_primary_image yugoprodeck_id={yugoprodeck_id} "
+                    f"print_id={print_row.id}",
+                    flush=True,
+                )
                 return False
 
         return True
@@ -896,7 +915,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 existing_rarity = normalize_rarity(print_row.rarity)
                 incoming_rarity_is_specific = normalized_rarity != "unknown"
                 existing_rarity_is_specific = existing_rarity != "unknown"
-                if incoming_rarity_is_specific or not existing_rarity_is_specific:
+                if incoming_rarity_is_specific and existing_rarity_is_specific:
+                    pass
+                elif incoming_rarity_is_specific or not existing_rarity_is_specific:
                     if print_row.rarity != normalized_rarity:
                         print_row.rarity = normalized_rarity
                         changed = True
@@ -908,7 +929,9 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 existing_variant = normalize_variant(print_row.variant)
                 incoming_variant_is_specific = variant != "default"
                 existing_variant_is_specific = existing_variant != "default"
-                if incoming_variant_is_specific or not existing_variant_is_specific:
+                if incoming_variant_is_specific and existing_variant_is_specific:
+                    pass
+                elif incoming_variant_is_specific or not existing_variant_is_specific:
                     if print_row.variant != variant:
                         print_row.variant = variant
                         changed = True
