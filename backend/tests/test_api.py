@@ -803,7 +803,7 @@ def test_yugioh_backfill_populates_primary_image_and_catalog_endpoints_expose_it
             language="en",
             rarity="Ultra Rare",
             variant="default",
-            yugioh_id="46986414::LOB-005::1",
+            yugioh_id=None,
         )
         session.add(existing_print)
         session.commit()
@@ -1330,6 +1330,15 @@ def test_yugioh_incremental_rebuilds_print_key_and_image_for_legacy_matched_prin
 
     with db.SessionLocal() as session:
         card_id = session.execute(select(Card.id).where(Card.yugoprodeck_id == "46986414")).scalar_one()
+        canonical_row = session.execute(
+            select(Print).where(Print.yugioh_id == "46986414::LOB-005::1").order_by(Print.id.asc())
+        ).scalars().first()
+        legacy_print_id = canonical_row.id
+
+        # Simulate legacy row already reconciled by yugioh_id, but still missing derived/media fields.
+        canonical_row.print_key = None
+        canonical_row.variant = "default"
+        canonical_row.rarity = "Ultra Rare"
         print_row = session.execute(
             select(Print).where(Print.yugioh_id == "46986414::LOB-005::1")
         ).scalar_one()
@@ -1340,6 +1349,28 @@ def test_yugioh_incremental_rebuilds_print_key_and_image_for_legacy_matched_prin
         print_row.variant = "default"
         print_row.rarity = None
         session.query(PrintImage).filter(PrintImage.print_id == legacy_print_id).delete(synchronize_session=False)
+
+        # Add a competitor duplicate candidate (same set/collector) enriched with key/image to emulate real dataset ambiguity.
+        competitor = Print(
+            set_id=canonical_row.set_id,
+            card_id=canonical_row.card_id,
+            collector_number="005",
+            rarity="Ultra Rare",
+            language=canonical_row.language,
+            variant="default",
+            yugioh_id=None,
+            print_key="yugioh:lob:lob-005:en:nonfoil:ultra-rare",
+        )
+        session.add(competitor)
+        session.flush()
+        session.add(
+            PrintImage(
+                print_id=competitor.id,
+                url="https://images.ygoprodeck.com/images/cards/46986414.jpg",
+                is_primary=True,
+                source="ygoprodeck",
+            )
+        )
         session.commit()
 
     with db.SessionLocal() as session:
@@ -1353,14 +1384,29 @@ def test_yugioh_incremental_rebuilds_print_key_and_image_for_legacy_matched_prin
         image_urls = session.execute(
             select(PrintImage.url).where(PrintImage.print_id == legacy_print_id, PrintImage.is_primary.is_(True))
         ).scalars().all()
+        ygo_rows = session.execute(
+            select(Print.id, Print.yugioh_id).where(
+                Print.card_id == card_id,
+                Print.collector_number == "LOB-005",
+            ).order_by(Print.id.asc())
+        ).all()
 
     assert refreshed is not None
+    assert refreshed.id == legacy_print_id
     assert refreshed.yugioh_id == "46986414::LOB-005::1"
     assert refreshed.collector_number == "LOB-005"
     assert refreshed.variant == "ultra-rare"
     assert refreshed.rarity == "Ultra Rare"
     assert refreshed.print_key is not None
     assert image_urls == ["https://images.ygoprodeck.com/images/cards/46986414.jpg"]
+    assert sum(1 for _, ygo_id in ygo_rows if ygo_id == "46986414::LOB-005::1") == 1
+
+    search_response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=_auth_headers())
+    assert search_response.status_code == 200
+    search_payload = search_response.get_json()
+    print_hits = [item for item in search_payload if item.get("type") == "print" and item.get("id") == legacy_print_id]
+    assert print_hits
+    assert print_hits[0]["primary_image_url"] == "https://images.ygoprodeck.com/images/cards/46986414.jpg"
 
     search_response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh", headers=_auth_headers())
     assert search_response.status_code == 200
