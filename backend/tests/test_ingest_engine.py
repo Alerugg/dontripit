@@ -1677,7 +1677,7 @@ def test_riftbound_ingest_persists_primary_image_from_fixture(client):
         ).scalar_one_or_none()
 
     assert image is not None
-    assert image.url == "https://example.com/riftbound/rb1/001.png"
+    assert image.url == "https://images.riftbound.cards/sets/rb1/001-default-en.webp"
     assert image.source == "riftbound"
 
 

@@ -9,6 +9,22 @@ from app import db
 search_bp = Blueprint("search", __name__)
 logger = logging.getLogger(__name__)
 
+_PUBLIC_SEARCH_KEYS = (
+    "type",
+    "id",
+    "title",
+    "subtitle",
+    "game",
+    "set_code",
+    "collector_number",
+    "variant",
+    "primary_image_url",
+)
+
+
+def _to_public_search_row(row: dict) -> dict:
+    return {key: row.get(key) for key in _PUBLIC_SEARCH_KEYS}
+
 
 def _normalize_query(raw_query: str) -> str:
     return " ".join(raw_query.lower().split())
@@ -672,7 +688,7 @@ def search():
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
-    return jsonify([dict(row) for row in rows])
+    return jsonify([_to_public_search_row(dict(row)) for row in rows])
 
 
 @search_bp.get("/api/search/suggest")
@@ -693,4 +709,4 @@ def suggest():
             session.rollback()
             rows = _fallback_suggest_rows(session, q=q, game=game, limit=limit)
 
-    return jsonify([dict(row) for row in rows])
+    return jsonify([_to_public_search_row(dict(row)) for row in rows])

@@ -8,6 +8,7 @@ import requests
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
+from app.ingest.normalization import normalize_variant
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 
@@ -145,6 +146,7 @@ class RiftboundConnector(SourceConnector):
                 "language": self._normalize_language(print_payload.get("language") or card_payload.get("language")),
                 "rarity": self._normalize_rarity(print_payload.get("rarity")),
                 "raw_json": print_payload,
+                "variant": normalize_variant(print_payload.get("variant")),
                 "primary_image_url": (print_payload.get("primary_image_url") or "").strip() or None,
             },
         }
@@ -214,7 +216,7 @@ class RiftboundConnector(SourceConnector):
         rift_print_id = print_payload.get("riftbound_id")
         language = self._normalize_language(print_payload.get("language"))
         rarity = self._normalize_rarity(print_payload.get("rarity"))
-        variant = "default"
+        variant = normalize_variant(print_payload.get("variant"))
         print_row = None
         if rift_print_id:
             print_row = session.execute(select(Print).where(Print.riftbound_id == rift_print_id)).scalar_one_or_none()

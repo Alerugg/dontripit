@@ -1721,7 +1721,7 @@ def test_v1_card_detail_uses_primary_image_from_ingested_prints(client):
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["game"] == "riftbound"
-    assert payload["primary_image_url"] == "https://example.com/riftbound/rb1/001.png"
+    assert payload["primary_image_url"] == "https://images.riftbound.cards/sets/rb1/001-default-en.webp"
 
 
 def test_v1_print_detail_exposes_image_url_when_available(client):
@@ -1737,8 +1737,22 @@ def test_v1_print_detail_exposes_image_url_when_available(client):
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["game"] == "riftbound"
-    assert payload["primary_image_url"] == "https://example.com/riftbound/rb1/001.png"
-    assert payload["image_url"] == "https://example.com/riftbound/rb1/001.png"
+    assert payload["primary_image_url"] == "https://images.riftbound.cards/sets/rb1/001-default-en.webp"
+    assert payload["image_url"] == "https://images.riftbound.cards/sets/rb1/001-default-en.webp"
+
+
+
+def test_search_response_does_not_expose_internal_score(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=foundations&game=riftbound", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all("score" not in item for item in payload)
 
 def test_search_short_query_mode_uses_tighter_default_limit(client):
     _seed_yugioh_search_fixture()
