@@ -1,6 +1,10 @@
 export default function CatalogSidebar({
-  query,
-  onQueryChange,
+  inputValue,
+  onInputChange,
+  onSubmitSearch,
+  suggestions,
+  suggestionsLoading,
+  onSuggestionSelect,
   game,
   onGameChange,
   type,
@@ -10,16 +14,50 @@ export default function CatalogSidebar({
   gameOptions,
   typeOptions,
 }) {
+  const hasSuggestions = suggestionsLoading || suggestions.length > 0
+
   return (
     <aside className="catalog-sidebar panel">
       <div className="filter-group">
         <label className="filter-label">Buscar cartas / prints / sets</label>
-        <input
-          className="input"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Ej: pikachu, dark magician, black lotus"
-        />
+        <form
+          className="search-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onSubmitSearch()
+          }}
+        >
+          <div className="search-input-wrap">
+            <input
+              className="input"
+              value={inputValue}
+              onChange={(event) => onInputChange(event.target.value)}
+              placeholder="Ej: pikachu, kai'sa, dark magician"
+            />
+            {hasSuggestions && (
+              <div className="suggestions-dropdown panel">
+                {suggestionsLoading && <p className="suggestion-hint">Buscando sugerencias...</p>}
+                {!suggestionsLoading && suggestions.map((item) => (
+                  <button
+                    key={`${item.type}-${item.id}`}
+                    className="suggestion-item"
+                    type="button"
+                    onClick={() => onSuggestionSelect(item)}
+                  >
+                    <strong>{item.title || item.name || 'Sin título'}</strong>
+                    <small>
+                      {item.type || 'item'}
+                      {item.game ? ` · ${item.game}` : ''}
+                      {item.set_code ? ` · ${item.set_code}` : ''}
+                      {item.collector_number ? ` · #${item.collector_number}` : ''}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="submit" className="primary-btn">Buscar</button>
+        </form>
       </div>
 
       <div className="filter-group">

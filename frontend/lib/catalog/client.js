@@ -28,6 +28,11 @@ export async function searchCatalog(filters) {
   return payload.items || []
 }
 
+export async function suggestCatalog(filters) {
+  const payload = await request('/api/catalog/suggest', filters)
+  return payload.items || []
+}
+
 export function fetchCardById(id) {
   return request(`/api/catalog/cards/${id}`)
 }

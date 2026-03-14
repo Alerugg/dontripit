@@ -12,7 +12,8 @@ export default function TopNav() {
         </Link>
 
         <nav className="top-links">
-          <Link href="/" className="top-link">Explorer</Link>
+          <Link href="/" className="top-link">Home</Link>
+          <Link href="/explorer" className="top-link">Explorer</Link>
           <span className="top-link disabled">Colección</span>
           <span className="top-link disabled">Wishlist</span>
           <span className="top-link disabled">Marketplace</span>

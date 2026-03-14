@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 
 const routeFiles = [
   '../app/api/catalog/search/route.js',
+  '../app/api/catalog/suggest/route.js',
   '../app/api/catalog/cards/[id]/route.js',
   '../app/api/catalog/prints/[id]/route.js',
 ]
