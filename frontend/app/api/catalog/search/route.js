@@ -16,6 +16,7 @@ export async function GET(request) {
 
   if (!upstream.ok) {
     const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
+
     return NextResponse.json(
       {
         error: 'catalog_search_failed',

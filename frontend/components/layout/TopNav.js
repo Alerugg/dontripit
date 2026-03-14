@@ -17,6 +17,8 @@ export default function TopNav() {
           <span className="top-link disabled">Wishlist</span>
           <span className="top-link disabled">Marketplace</span>
         </nav>
+
+        <Link href="/admin/api-console" className="admin-link">Admin Console</Link>
       </div>
     </header>
   )

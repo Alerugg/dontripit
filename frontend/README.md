@@ -6,6 +6,12 @@ Base de producto para catálogo TCG multi-game con separación entre experiencia
 
 - **Público (catálogo)**: `/, /cards/[id], /prints/[id]`
 - **Privado/admin**: `/admin/api-console` (protegido por credenciales)
+Base de producto para catálogo TCG multi-game con separación clara entre experiencia pública y tooling admin.
+
+## Arquitectura
+
+- **Público (catálogo)**: `/, /cards/[id], /prints/[id]`
+- **Privado/admin**: `/admin/api-console`
 - **BFF interno (server-side)**:
   - `/api/catalog/search`
   - `/api/catalog/cards/[id]`
@@ -64,6 +70,46 @@ Abrir `http://localhost:3000`.
 - Requiere Basic Auth (`ADMIN_CONSOLE_USERNAME` + `ADMIN_CONSOLE_PASSWORD`).
 - Permite probar presets de `search/cards/prints` contra el BFF interno.
 - No aparece en la navegación pública del catálogo.
+
+### Puertos de desarrollo
+
+- Frontend Next.js: `3000`
+- Backend API: `5000`
+
+## Flujos
+
+### Catálogo público
+
+1. El navegador consulta `/api/catalog/*`.
+2. Las rutas BFF del frontend llaman a `INTERNAL_API_BASE_URL` con `INTERNAL_API_KEY` desde servidor.
+3. La UI recibe payload sanitizado y mensajes amigables.
+
+### Admin API Console
+
+- Ruta: `/admin/api-console`
+- Requiere Basic Auth (`ADMIN_CONSOLE_USERNAME` + `ADMIN_CONSOLE_PASSWORD`).
+- Permite probar presets de `search/cards/prints` contra el BFF interno.
+- No aparece en la navegación pública del catálogo.
+
+
+### Puertos de desarrollo
+
+- Frontend Next.js: `3000`
+- Backend API: `5000`
+
+## Flujos
+
+### Catálogo público
+
+1. El navegador consulta `/api/catalog/*`.
+2. Las rutas BFF del frontend llaman a `INTERNAL_API_BASE_URL` con `INTERNAL_API_KEY` desde servidor.
+3. La UI recibe payload sanitizado y mensajes amigables.
+
+### Admin API Console
+
+- Ruta: `/admin/api-console`
+- Permite probar presets de `search/cards/prints` contra el BFF interno.
+- Mantiene la experiencia técnica fuera de la home pública.
 
 ## Comandos útiles
 
