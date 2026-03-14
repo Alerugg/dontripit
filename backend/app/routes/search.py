@@ -1,11 +1,13 @@
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
+import logging
 import re
 
 from app import db
 
 search_bp = Blueprint("search", __name__)
+logger = logging.getLogger(__name__)
 
 
 def _normalize_query(raw_query: str) -> str:
@@ -241,8 +243,8 @@ def _short_query_search_rows(
                 CASE
                   WHEN length(title_l) = :q_len THEN 0
                   WHEN substr(title_l, :q_len + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')') THEN 0
-                  WHEN instr(title_l, ' ') = 0 THEN 0
-                  WHEN instr(title_l, ' ') > 0 AND :q_len >= (instr(title_l, ' ') - 1) THEN 0
+                  WHEN strpos(title_l, ' ') = 0 THEN 0
+                  WHEN strpos(title_l, ' ') > 0 AND :q_len >= (strpos(title_l, ' ') - 1) THEN 0
                   ELSE 1
                 END
               ELSE 2
@@ -620,6 +622,16 @@ def search():
                     },
                 ).mappings().all()
         except ProgrammingError:
+            logger.exception(
+                "ProgrammingError in search short-query branch; falling back to LIKE search",
+                extra={
+                    "q": q,
+                    "q_normalized": q_normalized,
+                    "short_query_mode": short_query_mode,
+                    "game": game,
+                    "result_type": result_type,
+                },
+            )
             session.rollback()
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
