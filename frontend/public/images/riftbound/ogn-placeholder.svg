@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="840" viewBox="0 0 600 840" role="img" aria-label="Riftbound OGN placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e2e1f"/>
+      <stop offset="100%" stop-color="#3f6334"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="840" fill="url(#bg)"/>
+  <rect x="36" y="36" width="528" height="768" rx="24" fill="none" stroke="#b7e88d" stroke-opacity="0.45" stroke-width="3"/>
+  <text x="300" y="350" text-anchor="middle" fill="#ecffd9" font-family="Inter,Arial,sans-serif" font-size="64" font-weight="700">RIFTBOUND</text>
+  <text x="300" y="430" text-anchor="middle" fill="#d7f3ba" font-family="Inter,Arial,sans-serif" font-size="92" font-weight="700">OGN</text>
+  <text x="300" y="500" text-anchor="middle" fill="#bdd0b3" font-family="Inter,Arial,sans-serif" font-size="26">Placeholder local estable</text>
+</svg>
