@@ -65,6 +65,118 @@ def _search_mode(query_length: int, is_text_query: int) -> str:
     return "broad"
 
 
+def _short_query_search_rows(
+    session,
+    *,
+    q_norm: str,
+    game: str,
+    result_type: str | None,
+    limit: int,
+    offset: int,
+):
+    params = {
+        "q_norm": q_norm,
+        "title_prefix": f"{q_norm}%",
+        "contains": f"%{q_norm}%",
+        "game": game,
+        "type": result_type,
+        "limit": limit,
+        "offset": offset,
+    }
+    sql = text(
+        """
+        WITH base AS (
+          SELECT
+            sd.doc_type AS type,
+            sd.object_id AS id,
+            sd.title,
+            COALESCE(sd.subtitle, '') AS subtitle,
+            g.slug AS game,
+            s.code AS set_code,
+            p.collector_number,
+            p.variant,
+            COALESCE(
+              (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
+              (
+                SELECT pi2.url
+                FROM print_images pi2
+                JOIN prints p2 ON p2.id = pi2.print_id
+                WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
+                ORDER BY pi2.is_primary DESC, pi2.id ASC
+                LIMIT 1
+              )
+            ) AS primary_image_url,
+            lower(sd.title) AS title_l,
+            lower(COALESCE(p.collector_number, '')) AS collector_l,
+            lower(COALESCE(s.code, '')) AS set_code_l
+          FROM search_documents sd
+          JOIN games g ON g.id = sd.game_id
+          LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
+          LEFT JOIN sets s ON (
+            (sd.doc_type = 'print' AND s.id = p.set_id)
+            OR (sd.doc_type = 'set' AND s.id = sd.object_id)
+          )
+          WHERE (:game = '' OR g.slug = :game)
+            AND (:type IS NULL OR sd.doc_type = :type)
+        ),
+        ranked AS (
+          SELECT
+            *,
+            CASE
+              WHEN title_l = :q_norm THEN 0
+              WHEN title_l LIKE :title_prefix THEN 1
+              WHEN collector_l = :q_norm THEN 2
+              WHEN collector_l LIKE :title_prefix THEN 3
+              WHEN set_code_l = :q_norm THEN 4
+              WHEN set_code_l LIKE :title_prefix THEN 5
+              WHEN title_l LIKE :contains THEN 6
+              WHEN collector_l LIKE :contains OR set_code_l LIKE :contains THEN 7
+              ELSE 8
+            END AS rank_bucket,
+            CASE WHEN type = 'card' THEN 0 WHEN type = 'print' THEN 1 ELSE 2 END AS type_rank,
+            ROW_NUMBER() OVER (
+              PARTITION BY title_l
+              ORDER BY CASE WHEN type = 'card' THEN 0 WHEN type = 'print' THEN 1 ELSE 2 END, id ASC
+            ) AS title_dedupe_rank,
+            ROW_NUMBER() OVER (
+              PARTITION BY set_code_l
+              ORDER BY
+                CASE
+                  WHEN set_code_l = :q_norm THEN 0
+                  WHEN set_code_l LIKE :title_prefix THEN 1
+                  WHEN collector_l = :q_norm THEN 2
+                  WHEN collector_l LIKE :title_prefix THEN 3
+                  WHEN title_l LIKE :title_prefix THEN 4
+                  ELSE 5
+                END,
+                CASE WHEN type = 'set' THEN 0 WHEN type = 'card' THEN 1 ELSE 2 END,
+                id ASC
+            ) AS set_code_rank
+          FROM base
+          WHERE (
+            title_l LIKE :title_prefix
+            OR collector_l LIKE :title_prefix
+            OR set_code_l LIKE :title_prefix
+            OR title_l LIKE :contains
+            OR collector_l LIKE :contains
+            OR set_code_l LIKE :contains
+          )
+        )
+        SELECT type, id, title, subtitle, game, set_code, collector_number, variant, primary_image_url
+        FROM ranked
+        WHERE rank_bucket < 8
+          AND title_dedupe_rank <= 2
+          AND (
+            set_code_l = ''
+            OR set_code_rank <= CASE WHEN set_code_l LIKE :title_prefix THEN 3 ELSE 6 END
+          )
+        ORDER BY rank_bucket ASC, type_rank ASC, length(title) ASC, title ASC, id ASC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    return session.execute(sql, params).mappings().all()
+
+
 def _fallback_search_rows(session, *, like: str, game: str, result_type: str | None, limit: int, offset: int):
     fallback = text(
         """
@@ -225,7 +337,7 @@ def search():
     game = request.args.get("game", "").strip()
     result_type = (request.args.get("type") or "").strip() or None
     query_length = len(_normalize_query(q))
-    short_query_mode = 1 if query_length <= 3 else 0
+    short_query_mode = 1 if query_length <= 4 else 0
     default_limit = 8 if query_length == 1 else 14 if query_length == 2 else 24
     max_limit = 12 if query_length == 1 else 24 if query_length == 2 else 100
     limit = min(max(request.args.get("limit", default=default_limit, type=int) or default_limit, 1), max_limit)
@@ -242,7 +354,16 @@ def search():
 
     with db.SessionLocal() as session:
         try:
-            if session.bind.dialect.name == "postgresql":
+            if short_query_mode == 1:
+                rows = _short_query_search_rows(
+                    session,
+                    q_norm=q_normalized,
+                    game=game,
+                    result_type=result_type,
+                    limit=limit,
+                    offset=offset,
+                )
+            elif session.bind.dialect.name == "postgresql":
                 sql = text(
                     """
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
@@ -250,20 +371,15 @@ def search():
                            (
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN (CASE WHEN :is_prefix_mode = 1 THEN 3200.0 WHEN :is_short_query = 1 THEN 1200.0 ELSE 360.0 END) ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN (CASE WHEN :is_prefix_mode = 1 THEN 1400.0 WHEN :is_short_query = 1 THEN 300.0 ELSE 210.0 END) ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND :is_short_query = 0 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND :is_prefix_mode = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' AND lower(sd.title) NOT LIKE :q_norm || '%' THEN -850.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN 210.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
-                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'card' THEN (CASE WHEN :is_prefix_mode = 1 THEN 650.0 ELSE 120.0 END) ELSE 0.0 END +
-                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'print' THEN (CASE WHEN :is_prefix_mode = 1 THEN -260.0 ELSE -35.0 END) ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
-                               CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug = 'pokemon' THEN 500.0 ELSE 0.0 END +
-                               CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug <> 'pokemon' THEN -220.0 ELSE 0.0 END +
                                ts_rank(
                                    to_tsvector(
                                        'simple',
@@ -289,39 +405,10 @@ def search():
                     JOIN games g ON g.id = sd.game_id
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
                     LEFT JOIN sets s ON p.set_id = s.id
-                    WHERE (
-                            (
-                                :is_short_query = 0
-                                AND to_tsvector(
-                                    'simple',
-                                    coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
-                                ) @@ query.term
-                            )
-                            OR (
-                                :is_short_query = 1
-                                AND (
-                                    lower(sd.title) LIKE :q_norm || '%'
-                                    OR (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%'
-                                    OR (
-                                        :is_code_like_query = 1
-                                        AND (
-                                            lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%'
-                                            OR lower(coalesce(s.code, '')) LIKE :q_norm || '%'
-                                        )
-                                    )
-                                )
-                            )
                     WHERE to_tsvector(
                             'simple',
                             coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
                           ) @@ query.term
-                      AND (
-                            :is_short_query = 0
-                            OR lower(sd.title) LIKE :q_norm || '%'
-                            OR (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%'
-                            OR lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%'
-                            OR lower(coalesce(s.code, '')) LIKE :q_norm || '%'
-                          )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
                     ORDER BY score DESC, sd.title ASC

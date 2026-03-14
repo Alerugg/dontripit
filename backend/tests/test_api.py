@@ -1189,6 +1189,29 @@ def _seed_multigame_search_fixture():
                     )
                 )
 
+        yugioh_game_id = session.execute(select(Game.id).where(Game.slug == "yugioh")).scalar_one()
+        yugioh_set_id = session.execute(select(Set.id).where(Set.game_id == yugioh_game_id).order_by(Set.id.asc())).scalars().first()
+        lo_card = session.execute(
+            select(Card).where(Card.game_id == yugioh_game_id, Card.name == "Lo, the Prayers of the Voiceless Voice")
+        ).scalar_one_or_none()
+        if lo_card is None:
+            lo_card = Card(game_id=yugioh_game_id, name="Lo, the Prayers of the Voiceless Voice")
+            session.add(lo_card)
+            session.flush()
+        lo_print = session.execute(
+            select(Print).where(Print.set_id == yugioh_set_id, Print.card_id == lo_card.id, Print.collector_number == "DUNE-EN001")
+        ).scalar_one_or_none()
+        if lo_print is None:
+            session.add(
+                Print(
+                    set_id=yugioh_set_id,
+                    card_id=lo_card.id,
+                    collector_number="DUNE-EN001",
+                    rarity="Ultra Rare",
+                    variant="default",
+                )
+            )
+
         session.execute(text("DELETE FROM search_documents"))
         rebuild_search_documents(session)
         session.commit()
@@ -1747,12 +1770,10 @@ def test_search_short_prefix_ch_prioritizes_pokemon_cards(client):
     assert payload
 
     top_titles = [(item.get("title") or "").lower() for item in payload[:6]]
+    assert top_titles[0].startswith("cha")
     assert any(title.startswith("charizard") for title in top_titles)
     assert any(title.startswith("chansey") or title.startswith("charmander") or title.startswith("charmeleon") for title in top_titles)
     assert all(title.startswith("ch") for title in top_titles if title)
-
-    first_non_char_prefix = next((i for i, title in enumerate(top_titles) if not title.startswith("cha") and not title.startswith("ch")), None)
-    assert first_non_char_prefix is None
 
 
 def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
@@ -1766,7 +1787,7 @@ def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
     titles = [(item.get("title") or "").lower() for item in payload]
     charizard_index = next((idx for idx, title in enumerate(titles) if title.startswith("charizard")), None)
     assert charizard_index is not None
-    assert charizard_index <= 2
+    assert charizard_index <= 1
 
     chaos_index = next((idx for idx, title in enumerate(titles) if title.startswith("chaos")), None)
     if chaos_index is not None:
@@ -1791,12 +1812,20 @@ def test_search_short_yugioh_lo_lob_still_supports_name_and_print_code(client):
     assert lo_response.status_code == 200
     lo_payload = lo_response.get_json()
     assert lo_payload
+    assert (lo_payload[0].get("title") or "").lower().startswith("lo, the prayers")
 
     lob_response = client.get("/api/v1/search?q=lob&game=yugioh", headers=_auth_headers())
     assert lob_response.status_code == 200
     lob_payload = lob_response.get_json()
     assert lob_payload
-    assert any("lob" in ((item.get("collector_number") or "").lower()) or "lob" in ((item.get("subtitle") or "").lower()) for item in lob_payload)
+
+    top_lob = lob_payload[:6]
+    assert all(
+        "lob" in ((item.get("collector_number") or "").lower())
+        or "lob" in ((item.get("set_code") or "").lower())
+        or "lob" in ((item.get("subtitle") or "").lower())
+        for item in top_lob
+    )
 
 
 def test_search_prefers_card_base_over_print_when_titles_match(client):
