@@ -174,6 +174,7 @@ def _short_query_search_rows(
           WHERE type = 'card'
             AND :q_len = 3
             AND :game <> ''
+            AND :q_len <= 3
             AND title_l LIKE :title_prefix
             AND length(title_l) > :q_len
           GROUP BY substr(title_l, :q_len + 1, 1)
@@ -254,6 +255,7 @@ def _short_query_search_rows(
             CASE
               WHEN :q_len = 3
                 AND :game <> ''
+              WHEN :q_len <= 3
                 AND title_l LIKE :title_prefix
                 AND length(title_l) > :q_len
               THEN COALESCE(
