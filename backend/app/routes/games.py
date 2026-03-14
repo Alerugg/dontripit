@@ -1,8 +1,8 @@
 from flask import Blueprint, jsonify
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app import db
-from app.models import Game
+from app.models import Card, Game
 
 games_bp = Blueprint("games", __name__)
 
@@ -23,5 +23,13 @@ def db_check():
 def list_games():
     with db.SessionLocal() as session:
         rows = session.execute(select(Game).order_by(Game.id)).scalars().all()
+        visible_rows = []
+        for row in rows:
+            if row.slug != "riftbound":
+                visible_rows.append(row)
+                continue
+            has_cards = session.execute(select(func.count(Card.id)).where(Card.game_id == row.id)).scalar_one()
+            if has_cards > 0:
+                visible_rows.append(row)
 
-    return jsonify([{"id": row.id, "slug": row.slug, "name": row.name} for row in rows])
+    return jsonify([{"id": row.id, "slug": row.slug, "name": row.name} for row in visible_rows])

@@ -1151,6 +1151,49 @@ def _seed_yugioh_search_fixture():
 
 
 
+def _seed_multigame_search_fixture():
+    run_seed()
+    runs = [
+        ("ygoprodeck_yugioh", "data/fixtures/ygoprodeck_yugioh_sample.json"),
+        ("scryfall_mtg", "data/fixtures/scryfall_mtg_sample.json"),
+        ("tcgdex_pokemon", "data/fixtures/tcgdex_pokemon_sample.json"),
+    ]
+
+    for connector_name, fixture_path in runs:
+        connector = get_connector(connector_name)
+        with db.SessionLocal() as session:
+            connector.run(session, fixture_path, fixture=True, incremental=False)
+            session.commit()
+
+    with db.SessionLocal() as session:
+        pokemon_game_id = session.execute(select(Game.id).where(Game.slug == "pokemon")).scalar_one()
+        pokemon_set_id = session.execute(select(Set.id).where(Set.game_id == pokemon_game_id).order_by(Set.id.asc())).scalars().first()
+
+        for idx, name in enumerate(["Charizard", "Chansey", "Charmander", "Charmeleon"], start=1):
+            card = session.execute(select(Card).where(Card.game_id == pokemon_game_id, Card.name == name)).scalar_one_or_none()
+            if card is None:
+                card = Card(game_id=pokemon_game_id, name=name)
+                session.add(card)
+                session.flush()
+            existing_print = session.execute(
+                select(Print).where(Print.set_id == pokemon_set_id, Print.card_id == card.id, Print.collector_number == f"CH-{idx:03d}")
+            ).scalar_one_or_none()
+            if existing_print is None:
+                session.add(
+                    Print(
+                        set_id=pokemon_set_id,
+                        card_id=card.id,
+                        collector_number=f"CH-{idx:03d}",
+                        rarity="Rare",
+                        variant="default",
+                    )
+                )
+
+        session.execute(text("DELETE FROM search_documents"))
+        rebuild_search_documents(session)
+        session.commit()
+
+
 def test_search_accepts_single_character_query(client):
     _seed_yugioh_search_fixture()
 
@@ -1693,3 +1736,98 @@ def test_search_normal_mode_keeps_broad_matching_for_three_chars(client):
     payload = response.get_json()
     assert payload
     assert any("mag" in (item.get("title") or "").lower() for item in payload)
+
+
+def test_search_short_prefix_ch_prioritizes_pokemon_cards(client):
+    _seed_multigame_search_fixture()
+
+    response = client.get("/api/v1/search?q=ch", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    top_titles = [(item.get("title") or "").lower() for item in payload[:6]]
+    assert any(title.startswith("charizard") for title in top_titles)
+    assert any(title.startswith("chansey") or title.startswith("charmander") or title.startswith("charmeleon") for title in top_titles)
+    assert all(title.startswith("ch") for title in top_titles if title)
+
+    first_non_char_prefix = next((i for i, title in enumerate(top_titles) if not title.startswith("cha") and not title.startswith("ch")), None)
+    assert first_non_char_prefix is None
+
+
+def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
+    _seed_multigame_search_fixture()
+
+    response = client.get("/api/v1/search?q=cha", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    titles = [(item.get("title") or "").lower() for item in payload]
+    charizard_index = next((idx for idx, title in enumerate(titles) if title.startswith("charizard")), None)
+    assert charizard_index is not None
+    assert charizard_index <= 2
+
+    chaos_index = next((idx for idx, title in enumerate(titles) if title.startswith("chaos")), None)
+    if chaos_index is not None:
+        assert charizard_index < chaos_index
+
+
+def test_search_short_mtg_fo_for_still_prioritizes_forest(client):
+    _seed_multigame_search_fixture()
+
+    for query in ("fo", "for"):
+        response = client.get(f"/api/v1/search?q={query}&game=mtg", headers=_auth_headers())
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload
+        assert (payload[0].get("title") or "").lower().startswith("for")
+
+
+def test_search_short_yugioh_lo_lob_still_supports_name_and_print_code(client):
+    _seed_multigame_search_fixture()
+
+    lo_response = client.get("/api/v1/search?q=lo&game=yugioh", headers=_auth_headers())
+    assert lo_response.status_code == 200
+    lo_payload = lo_response.get_json()
+    assert lo_payload
+
+    lob_response = client.get("/api/v1/search?q=lob&game=yugioh", headers=_auth_headers())
+    assert lob_response.status_code == 200
+    lob_payload = lob_response.get_json()
+    assert lob_payload
+    assert any("lob" in ((item.get("collector_number") or "").lower()) or "lob" in ((item.get("subtitle") or "").lower()) for item in lob_payload)
+
+
+def test_search_prefers_card_base_over_print_when_titles_match(client):
+    _seed_multigame_search_fixture()
+
+    response = client.get("/api/v1/search?q=charizard&game=pokemon", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    first_charizard = next(item for item in payload if (item.get("title") or "").lower() == "charizard")
+    assert first_charizard["type"] == "card"
+
+
+def test_games_hides_riftbound_without_ingested_cards(client):
+    run_seed()
+
+    response = client.get("/api/v1/games", headers=_auth_headers())
+    assert response.status_code == 200
+    slugs = {item["slug"] for item in response.get_json()}
+    assert "riftbound" not in slugs
+
+
+
+def test_search_short_prefix_char_prioritizes_charizard(client):
+    _seed_multigame_search_fixture()
+
+    response = client.get("/api/v1/search?q=char", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    top = payload[0]
+    assert (top.get("title") or "").lower().startswith("charizard")

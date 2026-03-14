@@ -48,11 +48,11 @@ Todos los conectores del catálogo (Pokémon, MTG, Yu-Gi-Oh!, Riftbound) siguen 
 - Limite conocido: la API puede rate-limit/403 intermitente, se mitiga con retry exponencial.
 
 ### riftbound
-- Fixture por defecto (`riftbound_sample.json`) y modo remoto (`/catalog`) cuando disponible.
+- **Modo actual: fixture/manual únicamente** (`riftbound_sample.json` o fixture local equivalente).
 - Dedupe por `print.id`.
 - Upsert de ids externos `riftbound_id` en set/card/print.
 - Guarda `PrintIdentifier(source=riftbound)` e imagen primaria.
-- Limitación actual: cobertura depende de la fuente; si el endpoint remoto no está accesible, usar fixture.
+- Decisión temporal: se deshabilita ingest remoto hasta contar con endpoint público estable y verificable.
 
 ## Dataset mínimo útil recomendado (QA frontend)
 - Yu-Gi-Oh!: `limit >= 120`.

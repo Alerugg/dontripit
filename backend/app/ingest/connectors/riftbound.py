@@ -13,7 +13,7 @@ from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 class RiftboundConnector(SourceConnector):
     name = "riftbound"
-    base_urls = ("https://api.riftbound.com/v1", "https://api.riftbound.com")
+    mode = "fixture_only"
 
     @staticmethod
     def _normalize_language(value: object) -> str:
@@ -81,49 +81,10 @@ class RiftboundConnector(SourceConnector):
         return out
 
     def _load_remote(self, limit: int | None = None) -> list[dict]:
-        payload = None
-        last_error: Exception | None = None
-        for base_url in self.base_urls:
-            endpoint = f"{base_url.rstrip('/')}/catalog"
-            self.logger.info("ingest riftbound remote_fetch_start endpoint=%s", endpoint)
-            try:
-                payload = self._request_json(endpoint)
-                if isinstance(payload, dict):
-                    break
-                raise RuntimeError("Riftbound remote payload must be a JSON object")
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                self.logger.warning("ingest riftbound remote_fetch_failed endpoint=%s error=%s", endpoint, exc)
-
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"Riftbound remote catalog unavailable from configured endpoints: {last_error}")
-
-        sets = {str(item.get("id") or item.get("code")): item for item in payload.get("sets") or []}
-        cards = {str(item.get("id") or item.get("name")): item for item in payload.get("cards") or []}
-
-        out: list[dict] = []
-        seen_print_ids: set[str] = set()
-        for print_item in payload.get("prints") or []:
-            dedupe_id = str(print_item.get("id") or "").strip()
-            if dedupe_id and dedupe_id in seen_print_ids:
-                continue
-            if dedupe_id:
-                seen_print_ids.add(dedupe_id)
-
-            out.append(
-                {
-                    "set": sets.get(str(print_item.get("set_id"))) or sets.get(str(print_item.get("set_code"))) or {},
-                    "card": cards.get(str(print_item.get("card_id"))) or cards.get(str(print_item.get("card_name"))) or {},
-                    "print": print_item,
-                }
-            )
-            if limit and len(out) >= limit:
-                break
-            if len(out) == 1 or len(out) % 25 == 0:
-                self.logger.info("ingest riftbound load_progress fixture=false processed=%s", len(out))
-
-        self.logger.info("ingest riftbound remote_fetch_done prints=%s", len(out))
-        return out
+        raise RuntimeError(
+            "Riftbound connector is fixture-only until a stable public catalog source is available. "
+            "Run with --fixture true and provide a local fixture path."
+        )
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
         wait_seconds = 0.5
