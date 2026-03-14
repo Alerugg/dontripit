@@ -1,3 +1,5 @@
+import { readStoredApiKey } from './apiKeyStorage'
+
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/$/, '')
 const API_KEY = (process.env.NEXT_PUBLIC_API_KEY || '').trim()
 
@@ -14,14 +16,31 @@ function makeUrl(path, params = {}) {
   return API_BASE_URL ? url.toString() : `${url.pathname}${url.search}`
 }
 
+function getActiveApiKey() {
+  if (API_KEY) return API_KEY
+  return readStoredApiKey().trim()
+}
+
+function buildFriendlyError(payload, status) {
+  const detail = payload?.detail || payload?.error || ''
+  if (String(detail).includes('missing_api_key')) {
+    return 'Falta API key. Configúrala en API Console o en NEXT_PUBLIC_API_KEY para desarrollo local.'
+  }
+  if (status === 401 || status === 403) {
+    return 'No autorizado. Verifica que tu API key sea válida para este entorno.'
+  }
+  return detail || `Request failed (${status})`
+}
+
 async function request(path, { params, ...options } = {}) {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {}),
   }
 
-  if (API_KEY) {
-    headers['X-API-Key'] = API_KEY
+  const runtimeApiKey = getActiveApiKey()
+  if (runtimeApiKey) {
+    headers['X-API-Key'] = runtimeApiKey
   }
 
   const response = await fetch(makeUrl(path, params), {
@@ -33,7 +52,7 @@ async function request(path, { params, ...options } = {}) {
   const payload = await response.json().catch(() => null)
 
   if (!response.ok) {
-    throw new Error(payload?.detail || payload?.error || `Request failed (${response.status})`)
+    throw new Error(buildFriendlyError(payload, response.status))
   }
 
   return payload
@@ -55,6 +74,10 @@ export function fetchPrintById(id) {
 
 export function fetchGames() {
   return request('/api/v1/games')
+}
+
+export function fetchApi(path, params = {}) {
+  return request(path, { params })
 }
 
 export function getApiBaseUrlLabel() {

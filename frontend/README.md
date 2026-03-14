@@ -1,6 +1,6 @@
 # Frontend · Next.js (JavaScript)
 
-MVP de explorador multi-game para TCG usando la API de `API-PROJECT`.
+Frontend MVP de catálogo TCG multi-game con estética companion app / proto-marketplace.
 
 ## Stack
 
@@ -14,9 +14,11 @@ Crear `frontend/.env.local`:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://localhost:5000
-# opcional si tu backend requiere auth por header
+# opcional: clave fija para todas las requests
 NEXT_PUBLIC_API_KEY=
 ```
+
+Si no defines `NEXT_PUBLIC_API_KEY`, puedes guardarla en runtime desde `/api-console` (localStorage).
 
 ## Correr localmente
 
@@ -30,23 +32,26 @@ Abrir: `http://localhost:3000`
 
 ## Rutas principales
 
-- `/` → Explorer (buscador, filtros, resultados)
-- `/cards/[id]` → Detalle de carta
-- `/prints/[id]` → Detalle de print
-- `/explorer` → alias que redirige a `/`
+- `/` → Explorer catálogo (hero + sidebar + grid/list)
+- `/cards/[id]` → Detalle de card + panel de prints/variantes
+- `/prints/[id]` → Detalle de print + metadata + vuelta a card
+- `/api-console` → Consola amigable para testing manual
+- `/console` → alias legado que redirige a `/api-console`
 
 ## Endpoints usados
 
-- `GET /api/v1/games`
-- `GET /api/v1/search?q=...&game=...&type=...`
+- `GET /api/v1/search?q=...&game=...`
 - `GET /api/v1/cards/:id`
 - `GET /api/v1/prints/:id`
+- `GET /api/v1/games`
+- `GET /api/v1/health` (solo API console)
 
-## Notas de arquitectura
+## Arquitectura frontend (MVP)
 
-- `lib/apiClient.js`: capa centralizada de llamadas API y manejo de `NEXT_PUBLIC_API_BASE_URL`.
-- `components/SearchControls.js`: input de búsqueda + filtros.
-- `components/ResultsGrid.js` y `components/ResultCard.js`: render de resultados (`card`, `print`, `set`).
-- `app/cards/[id]/page.js` y `app/prints/[id]/page.js`: vistas de detalle.
+- `components/AppShell.js`: topbar global y navegación preparada para crecer.
+- `components/ExplorerSidebar.js`: filtros laterales y selector de vista grid/list.
+- `components/ResultsGrid.js` + `components/ResultCard.js`: catálogo visual y cards reutilizables.
+- `lib/apiClient.js`: cliente API centralizado con soporte para `NEXT_PUBLIC_API_BASE_URL` y fallback de API key local.
+- `lib/apiKeyStorage.js`: persistencia local de API key para desarrollo.
 
-Base preparada para extender filtros y sumar autocomplete en próximas fases.
+Base lista para extender hacia colección, wishlist, binder y marketplace.

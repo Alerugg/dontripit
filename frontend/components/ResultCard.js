@@ -14,10 +14,16 @@ function buildSubtitle(item) {
     return item.subtitle || item.set_code || 'Set'
   }
 
-  return item.subtitle || item.game
+  return item.subtitle || item.game || 'Card entry'
 }
 
-function cardInner(item) {
+function getHref(item) {
+  if (item.type === 'card') return `/cards/${item.id}`
+  if (item.type === 'print') return `/prints/${item.id}`
+  return null
+}
+
+function Inner({ item }) {
   return (
     <>
       <div className="result-image-wrap">
@@ -26,7 +32,7 @@ function cardInner(item) {
       <div className="result-content">
         <div className="result-head">
           <TypeBadge type={item.type} />
-          <span className="result-game">{item.game || '-'}</span>
+          <span className="result-game">{item.game || 'multi-game'}</span>
         </div>
         <h3>{item.title}</h3>
         <p>{buildSubtitle(item)}</p>
@@ -35,11 +41,21 @@ function cardInner(item) {
   )
 }
 
-export default function ResultCard({ item }) {
-  if (item.type === 'set') {
-    return <article className="result-card">{cardInner(item)}</article>
+export default function ResultCard({ item, viewMode = 'grid' }) {
+  const href = getHref(item)
+  const className = `result-card ${viewMode === 'list' ? 'list' : ''}`
+
+  if (!href) {
+    return (
+      <article className={className}>
+        <Inner item={item} />
+      </article>
+    )
   }
 
-  const href = item.type === 'card' ? `/cards/${item.id}` : `/prints/${item.id}`
-  return <Link href={href} className="result-card">{cardInner(item)}</Link>
+  return (
+    <Link href={href} className={className}>
+      <Inner item={item} />
+    </Link>
+  )
 }

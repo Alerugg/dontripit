@@ -12,6 +12,14 @@ export function buildApiPath(action, params) {
     return '/api/v1/games'
   }
 
+  if (action === 'cardById') {
+    return `/api/v1/cards/${params.cardId || '1'}`
+  }
+
+  if (action === 'printById') {
+    return `/api/v1/prints/${params.printId || '1'}`
+  }
+
   if (params.game) {
     query.set('game', params.game)
   }
@@ -24,15 +32,6 @@ export function buildApiPath(action, params) {
 
   if (action === 'search') {
     return `/api/v1/search?${query.toString()}`
-  }
-
-  if (action === 'cards') {
-    return `/api/v1/cards?${query.toString()}`
-  }
-
-  if (action === 'prints') {
-    query.delete('q')
-    return `/api/v1/prints?${query.toString()}`
   }
 
   throw new Error(`Acción desconocida: ${action}`)
