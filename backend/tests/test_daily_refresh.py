@@ -199,3 +199,20 @@ def test_daily_refresh_runs_global_reindex_for_non_incremental_refresh(monkeypat
     assert summary["reindex"]["trigger"] == "full_refresh"
     assert reindex_called["value"] == 1
 
+
+def test_daily_refresh_pokemon_all_fetches_full_set_list(monkeypatch):
+    calls = []
+
+    def fake_get_connector(name):
+        return _FakeConnector(name=name, calls=calls)
+
+    monkeypatch.setattr(daily_refresh.db, "SessionLocal", _FakeSessionFactory())
+    monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
+    monkeypatch.setattr(daily_refresh, "rebuild_search_documents", lambda session: {"cards": 0, "sets": 0, "prints": 0})
+    monkeypatch.setattr(daily_refresh, "_fetch_all_pokemon_sets", lambda: ["base1", "sv1", "sv2"])
+
+    summary = daily_refresh.run_daily_refresh(_args(pokemon_all=True, pokemon_limit=2))
+
+    pokemon_calls = [call for call in calls if call["name"] == "tcgdex_pokemon"]
+    assert [call["kwargs"]["set"] for call in pokemon_calls] == ["base1", "sv1", "sv2"]
+    assert summary["pokemon"]["set_source"] == "tcgdex"

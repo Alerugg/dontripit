@@ -16,7 +16,11 @@ test('home page starts with empty search and 1-char behavior', async () => {
 
   assert.match(page, /const \[query, setQuery\] = useState\(''\)/)
   assert.doesNotMatch(page, /charizard/i)
+  assert.match(page, /const normalizedQuery = query\.trim\(\)/)
+  assert.match(page, /const isShortQuery = normalizedQuery\.length > 0 && normalizedQuery\.length <= 2/)
   assert.match(page, /if \(!normalizedQuery\)/)
+  assert.match(page, /limit: isShortQuery \? 12 : 36/)
+  assert.match(page, /Resultados rápidos/)
   assert.match(page, /setTimeout\(async \(\) => \{[\s\S]*\}, 300\)/)
 })
 

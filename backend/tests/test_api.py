@@ -1661,3 +1661,35 @@ def test_v1_print_detail_exposes_image_url_when_available(client):
     assert payload["game"] == "riftbound"
     assert payload["primary_image_url"] == "https://example.com/riftbound/rb1/001.png"
     assert payload["image_url"] == "https://example.com/riftbound/rb1/001.png"
+
+def test_search_short_query_mode_uses_tighter_default_limit(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=d&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+    assert len(payload) <= 8
+
+
+def test_search_short_query_mode_prioritizes_prefix_card_results(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=da&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    top = payload[0]
+    assert top.get("type") == "card"
+    assert (top.get("title") or "").lower().startswith("da")
+
+
+def test_search_normal_mode_keeps_broad_matching_for_three_chars(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=mag&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any("mag" in (item.get("title") or "").lower() for item in payload)

@@ -13,7 +13,7 @@ from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 class RiftboundConnector(SourceConnector):
     name = "riftbound"
-    base_url = "https://api.riftbound.com/v1"
+    base_urls = ("https://api.riftbound.com/v1", "https://api.riftbound.com")
 
     @staticmethod
     def _normalize_language(value: object) -> str:
@@ -26,7 +26,7 @@ class RiftboundConnector(SourceConnector):
         return rarity or "unknown"
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
-        fixture = bool(kwargs.get("fixture", True))
+        fixture = bool(kwargs.get("fixture", False))
         limit = kwargs.get("limit")
 
         self.logger.info("ingest riftbound load_start fixture=%s limit=%s", fixture, limit)
@@ -81,12 +81,22 @@ class RiftboundConnector(SourceConnector):
         return out
 
     def _load_remote(self, limit: int | None = None) -> list[dict]:
-        endpoint = f"{self.base_url}/catalog"
-        self.logger.info("ingest riftbound remote_fetch_start endpoint=%s", endpoint)
-        payload = self._request_json(endpoint)
+        payload = None
+        last_error: Exception | None = None
+        for base_url in self.base_urls:
+            endpoint = f"{base_url.rstrip('/')}/catalog"
+            self.logger.info("ingest riftbound remote_fetch_start endpoint=%s", endpoint)
+            try:
+                payload = self._request_json(endpoint)
+                if isinstance(payload, dict):
+                    break
+                raise RuntimeError("Riftbound remote payload must be a JSON object")
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                self.logger.warning("ingest riftbound remote_fetch_failed endpoint=%s error=%s", endpoint, exc)
 
         if not isinstance(payload, dict):
-            raise RuntimeError("Riftbound remote payload must be a JSON object")
+            raise RuntimeError(f"Riftbound remote catalog unavailable from configured endpoints: {last_error}")
 
         sets = {str(item.get("id") or item.get("code")): item for item in payload.get("sets") or []}
         cards = {str(item.get("id") or item.get("name")): item for item in payload.get("cards") or []}

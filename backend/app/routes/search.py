@@ -216,8 +216,11 @@ def search():
 
     game = request.args.get("game", "").strip()
     result_type = (request.args.get("type") or "").strip() or None
-    max_limit = 12 if len(q) == 1 else 30 if len(q) == 2 else 100
-    limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), max_limit)
+    query_length = len(_normalize_query(q))
+    short_query_mode = 1 if query_length <= 2 else 0
+    default_limit = 8 if query_length == 1 else 14 if query_length == 2 else 24
+    max_limit = 12 if query_length == 1 else 24 if query_length == 2 else 100
+    limit = min(max(request.args.get("limit", default=default_limit, type=int) or default_limit, 1), max_limit)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
 
     q_normalized = _normalize_query(q)
@@ -236,13 +239,16 @@ def search():
                            (
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN (CASE WHEN :is_short_query = 1 THEN 680.0 ELSE 360.0 END) ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN (CASE WHEN :is_short_query = 1 THEN 260.0 ELSE 210.0 END) ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND :is_short_query = 0 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
+                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'card' THEN 120.0 ELSE 0.0 END +
+                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'print' THEN -35.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
                                ts_rank(
                                    to_tsvector(
@@ -273,6 +279,12 @@ def search():
                             'simple',
                             coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
                           ) @@ query.term
+                      AND (
+                            :is_short_query = 0
+                            OR lower(sd.title) LIKE :q_norm || '%'
+                            OR lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%'
+                            OR lower(coalesce(s.code, '')) LIKE :q_norm || '%'
+                          )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
                     ORDER BY score DESC, sd.title ASC
@@ -287,6 +299,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_short_query": short_query_mode,
                         "code_prefix": code_prefix,
                         "game": game,
                         "type": result_type,
@@ -295,20 +308,23 @@ def search():
                     },
                 ).mappings().all()
             else:
-                like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
+                like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
                 sql = text(
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
                            (
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
-                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN (CASE WHEN :is_short_query = 1 THEN 680.0 ELSE 360.0 END) ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN (CASE WHEN :is_short_query = 1 THEN 260.0 ELSE 210.0 END) ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND :is_short_query = 0 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
+                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'card' THEN 120.0 ELSE 0.0 END +
+                               CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'print' THEN -35.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
                                1.0
                            ) AS score,
@@ -329,6 +345,12 @@ def search():
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
                     LEFT JOIN sets s ON p.set_id = s.id
                     WHERE lower(coalesce(sd.tsv, sd.title || ' ' || coalesce(sd.subtitle, ''))) LIKE :like
+                      AND (
+                            :is_short_query = 0
+                            OR lower(sd.title) LIKE :q_norm || '%'
+                            OR lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%'
+                            OR lower(coalesce(s.code, '')) LIKE :q_norm || '%'
+                          )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
                     ORDER BY score DESC, sd.title ASC
@@ -343,6 +365,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_short_query": short_query_mode,
                         "code_prefix": code_prefix,
                         "like": like,
                         "game": game,
@@ -353,11 +376,11 @@ def search():
                 ).mappings().all()
         except ProgrammingError:
             session.rollback()
-            like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
+            like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
         if not rows:
-            like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
+            like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
     return jsonify([dict(row) for row in rows])

@@ -1940,3 +1940,29 @@ def test_scryfall_upsert_returns_touched_entity_ids(client):
     assert touched.get("card_id")
     assert touched.get("set_id")
     assert touched.get("print_id")
+
+def test_riftbound_remote_load_tries_multiple_catalog_endpoints(monkeypatch):
+    connector = get_connector("riftbound")
+
+    payload = {
+        "sets": [{"id": "rb1", "code": "RB1", "name": "Rift One"}],
+        "cards": [{"id": "card-1", "name": "Alpha"}],
+        "prints": [{"id": "rb-print-1", "set_id": "rb1", "card_id": "card-1", "collector_number": "001"}],
+    }
+
+    calls = []
+
+    def _fake_request_json(url, params=None):
+        calls.append(url)
+        if url.startswith("https://api.riftbound.com/v1"):
+            raise RuntimeError("primary endpoint down")
+        return payload
+
+    monkeypatch.setattr(connector, "_request_json", _fake_request_json)
+
+    loaded = connector.load(fixture=False, limit=5)
+
+    assert len(loaded) == 1
+    assert loaded[0][1]["print"]["id"] == "rb-print-1"
+    assert calls[0].endswith("/v1/catalog")
+    assert calls[1].endswith("/catalog")

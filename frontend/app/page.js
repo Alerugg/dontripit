@@ -19,11 +19,13 @@ export default function ExplorerPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const normalizedQuery = query.trim()
+  const isShortQuery = normalizedQuery.length > 0 && normalizedQuery.length <= 2
+
   const lastRequestKeyRef = useRef('')
   const requestCounterRef = useRef(0)
 
   useEffect(() => {
-    const normalizedQuery = query.trim()
     if (!normalizedQuery) {
       setItems([])
       setError('')
@@ -43,7 +45,7 @@ export default function ExplorerPage() {
       setError('')
 
       try {
-        const nextItems = await searchCatalog({ q: normalizedQuery, game, type, limit: 36, offset: 0 })
+        const nextItems = await searchCatalog({ q: normalizedQuery, game, type, limit: isShortQuery ? 12 : 36, offset: 0 })
         if (requestId === requestCounterRef.current) {
           setItems(nextItems)
           lastRequestKeyRef.current = requestKey
@@ -61,7 +63,7 @@ export default function ExplorerPage() {
     }, 300)
 
     return () => clearTimeout(timer)
-  }, [query, game, type])
+  }, [normalizedQuery, game, type, isShortQuery])
 
   return (
     <main>
@@ -92,6 +94,12 @@ export default function ExplorerPage() {
             <StatePanel
               title="Empieza a explorar Don’tRipIt"
               description="Escribe desde 1 carácter para consultar el catálogo multi-juego en tiempo real."
+            />
+          )}
+          {normalizedQuery && !loading && !error && isShortQuery && (
+            <StatePanel
+              title="Resultados rápidos"
+              description="Mostramos un set acotado y priorizado para autocomplete en queries cortas."
             />
           )}
           {query.trim() && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo resultados actualizados para tu búsqueda." />}

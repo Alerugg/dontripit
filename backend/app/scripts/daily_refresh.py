@@ -12,7 +12,7 @@ from app import db
 from app.ingest.registry import get_connector
 from app.scripts.reindex_search import rebuild_search_documents
 
-DEFAULT_POKEMON_SETS = ["base1", "sv1"]
+DEFAULT_POKEMON_SETS = ["base1", "base2", "base3", "base4", "base5", "gym1", "gym2", "neo1", "neo2", "sv1"]
 TCGDEX_SETS_ENDPOINT = "https://api.tcgdex.net/v2/en/sets"
 
 
@@ -63,7 +63,14 @@ def _resolve_pokemon_sets(args: argparse.Namespace, summary: dict) -> list[str |
             return DEFAULT_POKEMON_SETS
 
     if args.pokemon_all:
-        return DEFAULT_POKEMON_SETS
+        try:
+            sets = _fetch_all_pokemon_sets()
+            summary["pokemon"]["set_source"] = "tcgdex"
+            return sets
+        except Exception as exc:  # noqa: BLE001
+            summary["pokemon"]["set_source"] = "default_fallback"
+            summary["pokemon"]["set_fetch_error"] = str(exc)
+            return DEFAULT_POKEMON_SETS
 
     return [None]
 
@@ -248,7 +255,7 @@ def build_refresh_args(
     incremental: bool = True,
     batch_size: int = 200,
     fixture: bool = False,
-    riftbound_fixture: bool = True,
+    riftbound_fixture: bool = False,
     skip_pokemon: bool = False,
     pokemon_all: bool = False,
     pokemon_all_sets: bool = False,
@@ -287,7 +294,7 @@ def main() -> int:
     parser.add_argument("--mtg-limit", type=int, default=None)
     parser.add_argument("--yugioh-limit", type=int, default=None)
     parser.add_argument("--riftbound-limit", type=int, default=None)
-    parser.add_argument("--riftbound-fixture", type=_to_bool, default=True)
+    parser.add_argument("--riftbound-fixture", type=_to_bool, default=False)
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
     parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Sleep between remote connector calls")
