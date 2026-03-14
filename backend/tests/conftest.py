@@ -19,6 +19,10 @@ def client(tmp_path):
     database_url = f"sqlite+pysqlite:///{db_path}"
     os.environ["DATABASE_URL"] = database_url
 
+    if db.engine is not None:
+        db.engine.dispose()
+    db.init_engine(database_url)
+
     os.environ["PUBLIC_API_ENABLED"] = "false"
     app = create_app(database_url=database_url)
     app.config["RATE_LIMIT_PER_MINUTE"] = 5
@@ -26,7 +30,11 @@ def client(tmp_path):
     catalog._RATE_LIMIT_BUCKETS.clear()
     catalog._CACHE.clear()
     middleware._RATE_WINDOWS.clear()
+    Base.metadata.drop_all(bind=db.engine)
     Base.metadata.create_all(bind=db.engine)
 
     with app.test_client() as test_client:
         yield test_client
+
+    if db.engine is not None:
+        db.engine.dispose()
