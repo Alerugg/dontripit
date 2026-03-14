@@ -1,30 +1,45 @@
 'use client'
 
 import Link from 'next/link'
+import TypeBadge from './TypeBadge'
 
-export default function ResultCard({ item }) {
-  const wrapperClass = 'catalog-card'
+function buildSubtitle(item) {
+  if (item.type === 'print') {
+    return [item.set_code, item.collector_number ? `#${item.collector_number}` : null, item.variant, item.rarity]
+      .filter(Boolean)
+      .join(' · ')
+  }
 
-  const content = (
+  if (item.type === 'set') {
+    return item.subtitle || item.set_code || 'Set'
+  }
+
+  return item.subtitle || item.game
+}
+
+function cardInner(item) {
+  return (
     <>
-      <div className="thumb-lg">
-        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} /> : <span>Sin imagen</span>}
+      <div className="result-image-wrap">
+        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} className="result-image" /> : <div className="result-image-placeholder">Sin imagen</div>}
       </div>
-      <div className="card-copy">
+      <div className="result-content">
+        <div className="result-head">
+          <TypeBadge type={item.type} />
+          <span className="result-game">{item.game || '-'}</span>
+        </div>
         <h3>{item.title}</h3>
-        <p>{item.game || item.game_slug || '-'}</p>
-        <small>
-          {item.type.toUpperCase()}
-          {item.set_code ? ` · ${item.set_code}` : ''}
-          {item.collector_number ? ` · #${item.collector_number}` : ''}
-          {item.variant ? ` · ${item.variant}` : ''}
-          {item.rarity ? ` · ${item.rarity}` : ''}
-        </small>
+        <p>{buildSubtitle(item)}</p>
       </div>
     </>
   )
+}
 
-  if (item.type === 'set') return <article className={wrapperClass}>{content}</article>
+export default function ResultCard({ item }) {
+  if (item.type === 'set') {
+    return <article className="result-card">{cardInner(item)}</article>
+  }
 
-  return <Link href={`/explorer/${item.type}/${item.id}`} className={wrapperClass}>{content}</Link>
+  const href = item.type === 'card' ? `/cards/${item.id}` : `/prints/${item.id}`
+  return <Link href={href} className="result-card">{cardInner(item)}</Link>
 }

@@ -1,89 +1,65 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || ''
-const DEFAULT_API_KEY = process.env.NEXT_PUBLIC_API_KEY || ''
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/$/, '')
+const API_KEY = (process.env.NEXT_PUBLIC_API_KEY || '').trim()
 
-function normalizeBaseUrl(baseUrl) {
-  if (!baseUrl) return ''
-  return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-}
-
-function buildUrl(path, params = {}) {
-  const base = normalizeBaseUrl(API_BASE_URL)
-  const prefix = path.startsWith('/') ? path : `/${path}`
-  const url = new URL(`${base}${prefix}`, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+function makeUrl(path, params = {}) {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  const base = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
+  const url = new URL(`${base}${cleanPath}`)
 
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return
     url.searchParams.set(key, String(value))
   })
 
-  if (!base) return `${url.pathname}${url.search}`
-  return `${url.origin}${url.pathname}${url.search}`
+  return API_BASE_URL ? url.toString() : `${url.pathname}${url.search}`
 }
 
-function buildHeaders(apiKey, extraHeaders = {}) {
+async function request(path, { params, ...options } = {}) {
   const headers = {
     'Content-Type': 'application/json',
-    ...extraHeaders,
+    ...(options.headers || {}),
   }
-  const key = (apiKey || DEFAULT_API_KEY || '').trim()
-  if (key) headers['X-API-Key'] = key
-  return headers
-}
 
-export async function apiRequest(path, { params, apiKey, headers, ...options } = {}) {
-  const response = await fetch(buildUrl(path, params), {
+  if (API_KEY) {
+    headers['X-API-Key'] = API_KEY
+  }
+
+  const response = await fetch(makeUrl(path, params), {
     ...options,
-    headers: buildHeaders(apiKey, headers),
+    headers,
     cache: 'no-store',
   })
 
-  let payload = null
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
+  const payload = await response.json().catch(() => null)
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error || `Request failed (${response.status})`
-    throw new Error(message)
+    throw new Error(payload?.detail || payload?.error || `Request failed (${response.status})`)
   }
 
   return payload
 }
 
-export async function generateDevApiKey(adminToken) {
-  return apiRequest('/api/admin/dev/api-keys', {
-    method: 'POST',
-    headers: {
-      'X-Admin-Token': (adminToken || '').trim(),
-    },
+export function searchCatalog({ q, game, type, limit = 30, offset = 0 }) {
+  return request('/api/v1/search', {
+    params: { q, game, type, limit, offset },
   })
 }
 
-export async function fetchGames(apiKey) {
-  return apiRequest('/api/v1/games', { apiKey })
+export function fetchCardById(id) {
+  return request(`/api/v1/cards/${id}`)
 }
 
-export async function fetchSearch(params, apiKey) {
-  return apiRequest('/api/v1/search', { params, apiKey })
+export function fetchPrintById(id) {
+  return request(`/api/v1/prints/${id}`)
 }
 
-export async function fetchSuggest(params, apiKey) {
-  return apiRequest('/api/v1/search/suggest', { params, apiKey })
+export function fetchGames() {
+  return request('/api/v1/games')
 }
 
-export async function fetchCardDetail(cardId, apiKey) {
-  return apiRequest(`/api/v1/cards/${cardId}`, { apiKey })
+export function getApiBaseUrlLabel() {
+  return API_BASE_URL || 'same-origin'
 }
 
-export async function fetchPrintDetail(printId, apiKey) {
-  return apiRequest(`/api/v1/prints/${printId}`, { apiKey })
-}
-
-export function getApiRuntimeConfig() {
-  return {
-    baseUrl: API_BASE_URL || 'same-origin (/api/* via rewrite)',
-    hasDefaultApiKey: Boolean(DEFAULT_API_KEY),
-  }
-}
+export const fetchCardDetail = fetchCardById
+export const fetchPrintDetail = fetchPrintById
