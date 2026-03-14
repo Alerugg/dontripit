@@ -76,7 +76,13 @@ def _looks_like_set_prefix_query(raw_query: str) -> bool:
     if "-" in normalized or "_" in normalized:
         return True
 
-    return normalized.isalpha() and len(normalized) <= 5
+    if normalized.isalpha() is False:
+        return False
+
+    # Keep short alpha-only prefixes (e.g. LOB) eligible for set intent, but
+    # avoid broad activation on longer natural-language fragments like
+    # "cha"/"char" that should stay in name-intent mode.
+    return 3 <= len(normalized) <= 3
 
 
 def _short_query_search_rows(
@@ -145,7 +151,15 @@ def _short_query_search_rows(
         ),
         intent AS (
           SELECT CASE
-            WHEN :is_set_intent_query = 1 AND EXISTS (SELECT 1 FROM base WHERE set_code_l LIKE :title_prefix) THEN 1
+            WHEN :is_set_intent_query = 1
+              AND EXISTS (SELECT 1 FROM base WHERE set_code_l LIKE :title_prefix)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM base
+                WHERE type = 'card'
+                  AND title_l LIKE :title_prefix
+              )
+            THEN 1
             ELSE 0
           END AS has_set_prefix_match
         ),
@@ -225,6 +239,8 @@ def _short_query_search_rows(
             CASE
               WHEN title_l LIKE :title_prefix THEN
                 CASE
+                  WHEN length(title_l) = :q_len THEN 0
+                  WHEN substr(title_l, :q_len + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')') THEN 0
                   WHEN instr(title_l, ' ') = 0 THEN 0
                   WHEN instr(title_l, ' ') > 0 AND :q_len >= (instr(title_l, ' ') - 1) THEN 0
                   ELSE 1
