@@ -1784,10 +1784,12 @@ def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
     payload = response.get_json()
     assert payload
 
+    top = payload[0]
+    assert (top.get("title") or "").lower() == "charizard"
+
     titles = [(item.get("title") or "").lower() for item in payload]
     charizard_index = next((idx for idx, title in enumerate(titles) if title.startswith("charizard")), None)
-    assert charizard_index is not None
-    assert charizard_index <= 1
+    assert charizard_index == 0
 
     chaos_index = next((idx for idx, title in enumerate(titles) if title.startswith("chaos")), None)
     if chaos_index is not None:
@@ -1812,7 +1814,7 @@ def test_search_short_yugioh_lo_lob_still_supports_name_and_print_code(client):
     assert lo_response.status_code == 200
     lo_payload = lo_response.get_json()
     assert lo_payload
-    assert (lo_payload[0].get("title") or "").lower().startswith("lo, the prayers")
+    assert (lo_payload[0].get("title") or "").lower() == "lo, the prayers of the voiceless voice"
 
     lob_response = client.get("/api/v1/search?q=lob&game=yugioh", headers=_auth_headers())
     assert lob_response.status_code == 200
@@ -1820,10 +1822,14 @@ def test_search_short_yugioh_lo_lob_still_supports_name_and_print_code(client):
     assert lob_payload
 
     top_lob = lob_payload[:6]
+    top_lob_types = [item.get("type") for item in top_lob]
+    assert top_lob_types[0] == "set"
+    assert "lob" in (((top_lob[0].get("subtitle") or "") + " " + (top_lob[0].get("set_code") or "")).lower())
+    assert all(item.get("type") != "card" for item in top_lob[:3])
     assert all(
-        "lob" in ((item.get("collector_number") or "").lower())
-        or "lob" in ((item.get("set_code") or "").lower())
-        or "lob" in ((item.get("subtitle") or "").lower())
+        ((item.get("set_code") or "").lower().startswith("lob"))
+        or ((item.get("subtitle") or "").lower().startswith("lob"))
+        or ((item.get("collector_number") or "").lower().startswith("lob"))
         for item in top_lob
     )
 

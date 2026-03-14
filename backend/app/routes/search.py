@@ -65,6 +65,20 @@ def _search_mode(query_length: int, is_text_query: int) -> str:
     return "broad"
 
 
+def _looks_like_set_prefix_query(raw_query: str) -> bool:
+    normalized = "".join(raw_query.strip().split()).lower()
+    if len(normalized) < 3 or len(normalized) > 10:
+        return False
+
+    if any(char.isdigit() for char in normalized):
+        return True
+
+    if "-" in normalized or "_" in normalized:
+        return True
+
+    return normalized.isalpha() and len(normalized) <= 5
+
+
 def _short_query_search_rows(
     session,
     *,
@@ -73,6 +87,7 @@ def _short_query_search_rows(
     result_type: str | None,
     limit: int,
     offset: int,
+    is_set_intent_query: int,
 ):
     params = {
         "q_norm": q_norm,
@@ -82,10 +97,16 @@ def _short_query_search_rows(
         "type": result_type,
         "limit": limit,
         "offset": offset,
+        "is_set_intent_query": is_set_intent_query,
     }
     sql = text(
         """
-        WITH base AS (
+        WITH card_print_counts AS (
+          SELECT p.card_id, CAST(COUNT(*) AS FLOAT) AS print_count
+          FROM prints p
+          GROUP BY p.card_id
+        ),
+        base AS (
           SELECT
             sd.doc_type AS type,
             sd.object_id AS id,
@@ -95,6 +116,7 @@ def _short_query_search_rows(
             s.code AS set_code,
             p.collector_number,
             p.variant,
+            COALESCE(cpc.print_count, 0.0) AS card_print_count,
             COALESCE(
               (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
               (
@@ -112,6 +134,7 @@ def _short_query_search_rows(
           FROM search_documents sd
           JOIN games g ON g.id = sd.game_id
           LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
+          LEFT JOIN card_print_counts cpc ON cpc.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
           LEFT JOIN sets s ON (
             (sd.doc_type = 'print' AND s.id = p.set_id)
             OR (sd.doc_type = 'set' AND s.id = sd.object_id)
@@ -119,24 +142,49 @@ def _short_query_search_rows(
           WHERE (:game = '' OR g.slug = :game)
             AND (:type IS NULL OR sd.doc_type = :type)
         ),
+        intent AS (
+          SELECT CASE
+            WHEN :is_set_intent_query = 1 AND EXISTS (SELECT 1 FROM base WHERE set_code_l LIKE :title_prefix) THEN 1
+            ELSE 0
+          END AS has_set_prefix_match
+        ),
         ranked AS (
           SELECT
             *,
             CASE
+              WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' AND set_code_l = :q_norm THEN -1
+              WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' AND set_code_l LIKE :title_prefix THEN 0
+              WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'print' AND set_code_l LIKE :title_prefix THEN 1
               WHEN title_l = :q_norm THEN 0
-              WHEN title_l LIKE :title_prefix THEN 1
-              WHEN collector_l = :q_norm THEN 2
-              WHEN collector_l LIKE :title_prefix THEN 3
-              WHEN set_code_l = :q_norm THEN 4
-              WHEN set_code_l LIKE :title_prefix THEN 5
-              WHEN title_l LIKE :contains THEN 6
-              WHEN collector_l LIKE :contains OR set_code_l LIKE :contains THEN 7
-              ELSE 8
+              WHEN title_l LIKE :q_norm || '%' AND (length(title_l) = length(:q_norm) OR substr(title_l, length(:q_norm) + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')')) THEN 1
+              WHEN title_l LIKE :title_prefix THEN 2
+              WHEN collector_l = :q_norm THEN 3
+              WHEN collector_l LIKE :title_prefix THEN 4
+              WHEN set_code_l = :q_norm THEN 5
+              WHEN set_code_l LIKE :title_prefix THEN 6
+              WHEN title_l LIKE :contains THEN 7
+              WHEN collector_l LIKE :contains OR set_code_l LIKE :contains THEN 8
+              ELSE 9
             END AS rank_bucket,
-            CASE WHEN type = 'card' THEN 0 WHEN type = 'print' THEN 1 ELSE 2 END AS type_rank,
+            CASE
+              WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' THEN 0
+              WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'print' THEN 1
+              WHEN type = 'card' THEN 0
+              WHEN type = 'print' THEN 1
+              ELSE 2
+            END AS type_rank,
             ROW_NUMBER() OVER (
               PARTITION BY title_l
-              ORDER BY CASE WHEN type = 'card' THEN 0 WHEN type = 'print' THEN 1 ELSE 2 END, id ASC
+              ORDER BY
+                CASE
+                  WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' THEN 0
+                  WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'print' THEN 1
+                  WHEN type = 'card' THEN 0
+                  WHEN type = 'print' THEN 1
+                  ELSE 2
+                END,
+                card_print_count DESC,
+                id ASC
             ) AS title_dedupe_rank,
             ROW_NUMBER() OVER (
               PARTITION BY set_code_l
@@ -164,13 +212,21 @@ def _short_query_search_rows(
         )
         SELECT type, id, title, subtitle, game, set_code, collector_number, variant, primary_image_url
         FROM ranked
-        WHERE rank_bucket < 8
+        WHERE rank_bucket < 9
           AND title_dedupe_rank <= 2
           AND (
             set_code_l = ''
             OR set_code_rank <= CASE WHEN set_code_l LIKE :title_prefix THEN 3 ELSE 6 END
           )
-        ORDER BY rank_bucket ASC, type_rank ASC, length(title) ASC, title ASC, id ASC
+        ORDER BY
+          rank_bucket ASC,
+          type_rank ASC,
+          card_print_count DESC,
+          CASE WHEN type = 'card' THEN id ELSE 0 END ASC,
+          CASE WHEN title_l LIKE :q_norm || '%' AND (length(title_l) = length(:q_norm) OR substr(title_l, length(:q_norm) + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')')) THEN 0 ELSE 1 END ASC,
+          length(title) ASC,
+          title ASC,
+          id ASC
         LIMIT :limit OFFSET :offset
         """
     )
@@ -351,6 +407,7 @@ def search():
     is_prefix_mode = 1 if search_mode == "prefix" else 0
     is_exact_mode = 1 if search_mode == "exact" else 0
     code_prefix = q_normalized.split("-", 1)[0].split("_", 1)[0]
+    is_set_intent_query = 1 if _looks_like_set_prefix_query(q) else 0
 
     with db.SessionLocal() as session:
         try:
@@ -362,6 +419,7 @@ def search():
                     result_type=result_type,
                     limit=limit,
                     offset=offset,
+                    is_set_intent_query=is_set_intent_query,
                 )
             elif session.bind.dialect.name == "postgresql":
                 sql = text(
