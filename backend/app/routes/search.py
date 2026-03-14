@@ -241,6 +241,8 @@ def _short_query_search_rows(
                 CASE
                   WHEN length(title_l) = :q_len THEN 0
                   WHEN substr(title_l, :q_len + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')') THEN 0
+                  WHEN instr(title_l, ' ') = 0 THEN 0
+                  WHEN instr(title_l, ' ') > 0 AND :q_len >= (instr(title_l, ' ') - 1) THEN 0
                   ELSE 1
                 END
               ELSE 2
