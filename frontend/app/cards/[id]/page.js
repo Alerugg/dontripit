@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import TopNav from '../../../components/layout/TopNav'
+import FallbackImage from '../../../components/common/FallbackImage'
 import StatePanel from '../../../components/catalog/StatePanel'
 import { fetchCardById } from '../../../lib/catalog/client'
 
@@ -55,11 +56,13 @@ export default function CardDetailPage({ params }) {
         {!loading && !error && card && (
           <article className="panel detail-page">
             <div className="detail-media">
-              {card.primary_image_url ? (
-                <img src={card.primary_image_url} alt={card.name} className="detail-image" />
-              ) : (
-                <div className="catalog-placeholder">Sin imagen</div>
-              )}
+              <FallbackImage
+                src={card.primary_image_url}
+                alt={card.name}
+                className="detail-image"
+                placeholderClassName="catalog-placeholder image-fallback"
+                label={card.game || 'TCG'}
+              />
             </div>
 
             <div className="detail-content">

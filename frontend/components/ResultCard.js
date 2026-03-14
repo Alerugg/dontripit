@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import TypeBadge from './TypeBadge'
+import FallbackImage from './common/FallbackImage'
 
 function buildSubtitle(item) {
   if (item.type === 'print') {
@@ -21,7 +22,13 @@ function cardInner(item) {
   return (
     <>
       <div className="result-image-wrap">
-        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} className="result-image" /> : <div className="result-image-placeholder">Sin imagen</div>}
+        <FallbackImage
+          src={item.primary_image_url}
+          alt={item.title}
+          className="result-image"
+          placeholderClassName="result-image-placeholder image-fallback"
+          label={item.game || item.type || 'TCG'}
+        />
       </div>
       <div className="result-content">
         <div className="result-head">
