@@ -172,6 +172,8 @@ def _short_query_search_rows(
             COUNT(*) AS next_char_count
           FROM base
           WHERE type = 'card'
+            AND :q_len = 3
+            AND :game <> ''
             AND :q_len <= 3
             AND title_l LIKE :title_prefix
             AND length(title_l) > :q_len
@@ -251,6 +253,8 @@ def _short_query_search_rows(
               ELSE 2
             END AS title_match_rank,
             CASE
+              WHEN :q_len = 3
+                AND :game <> ''
               WHEN :q_len <= 3
                 AND title_l LIKE :title_prefix
                 AND length(title_l) > :q_len
