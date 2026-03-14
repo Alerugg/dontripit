@@ -166,6 +166,17 @@ def _short_query_search_rows(
             ELSE 0
           END AS has_set_prefix_match
         ),
+        prefix_next_chars AS (
+          SELECT
+            substr(title_l, :q_len + 1, 1) AS next_char,
+            COUNT(*) AS next_char_count
+          FROM base
+          WHERE type = 'card'
+            AND :q_len <= 3
+            AND title_l LIKE :title_prefix
+            AND length(title_l) > :q_len
+          GROUP BY substr(title_l, :q_len + 1, 1)
+        ),
         ranked AS (
           SELECT
             *,
@@ -240,6 +251,21 @@ def _short_query_search_rows(
               ELSE 2
             END AS title_match_rank,
             CASE
+              WHEN :q_len <= 3
+                AND title_l LIKE :title_prefix
+                AND length(title_l) > :q_len
+              THEN COALESCE(
+                (
+                  SELECT -pnc.next_char_count
+                  FROM prefix_next_chars pnc
+                  WHERE pnc.next_char = substr(title_l, :q_len + 1, 1)
+                  LIMIT 1
+                ),
+                0
+              )
+              ELSE 0
+            END AS prefix_continuation_rank,
+            CASE
               WHEN title_l LIKE :title_prefix THEN
                 CASE
                   WHEN length(title_l) = :q_len THEN 0
@@ -277,6 +303,7 @@ def _short_query_search_rows(
           rank_bucket ASC,
           cross_game_name_rank ASC,
           title_match_rank ASC,
+          prefix_continuation_rank ASC,
           prefix_word_rank ASC,
           type_rank ASC,
           card_print_count DESC,
