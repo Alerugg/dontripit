@@ -65,6 +65,12 @@ services:
       NODE_ENV: development
       BACKEND_URL: ${BACKEND_URL:-http://localhost:5000}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:5000}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://backend:5000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      NEXT_PUBLIC_SITE_NAME: ${NEXT_PUBLIC_SITE_NAME:-TCG Nexus}
+      NEXT_PUBLIC_DEFAULT_GAME: ${NEXT_PUBLIC_DEFAULT_GAME:-}
+      ADMIN_CONSOLE_USERNAME: ${ADMIN_CONSOLE_USERNAME:-admin}
+      ADMIN_CONSOLE_PASSWORD: ${ADMIN_CONSOLE_PASSWORD:-admin}
     volumes:
       - ./frontend:/app
       - /app/node_modules
