@@ -531,6 +531,7 @@ def search():
                     """
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, sd.subtitle,
+                           g.slug AS game,
                            (
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +
@@ -601,6 +602,7 @@ def search():
                 sql = text(
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
+                           g.slug AS game,
                            (
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 1200.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) = :q_norm THEN 850.0 ELSE 0.0 END +

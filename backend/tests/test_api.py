@@ -1742,6 +1742,35 @@ def test_v1_print_detail_exposes_image_url_when_available(client):
 
 
 
+
+
+def test_search_returns_game_slug_for_riftbound_results(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=foundations&game=riftbound", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all(item.get("game") == "riftbound" for item in payload)
+
+
+def test_search_card_primary_image_falls_back_to_related_print_image(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=ogn&game=riftbound", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    card_hits = [item for item in payload if item.get("type") == "card" and item.get("title") == "Ogn, Relic Warden"]
+    assert card_hits
+    assert card_hits[0].get("primary_image_url") == "https://images.riftbound.cards/sets/ogn/003-showcase-en.webp"
+
+
 def test_search_response_does_not_expose_internal_score(client):
     connector = get_connector("riftbound")
     with db.SessionLocal() as session:
