@@ -1,28 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
 
-import { buildApiPath, parseNumberInput } from '../app/console/consoleUtils.js'
-
-test('buildApiPath for search includes q, game and pagination', () => {
-  const url = buildApiPath('search', { game: 'pokemon', q: 'pika', limit: 10, offset: 5 })
-  assert.equal(url, '/api/v1/search?game=pokemon&q=pika&limit=10&offset=5')
-})
-
-test('buildApiPath for prints ignores q and keeps game with pagination', () => {
-  const url = buildApiPath('prints', { game: 'mtg', q: 'bolt', limit: 5, offset: 0 })
-  assert.equal(url, '/api/v1/prints?game=mtg&limit=5&offset=0')
-})
-
-test('parseNumberInput uses fallback for negative values', () => {
-  assert.equal(parseNumberInput('-2', 20), 20)
-})
-
-test('console page exposes required action labels', async () => {
-  const fs = await import('node:fs/promises')
+test('legacy console route redirects to admin api console', async () => {
   const page = await fs.readFile(new URL('../app/console/page.js', import.meta.url), 'utf8')
-  assert.match(page, /Health/)
-  assert.match(page, /Games/)
+  assert.match(page, /redirect\('\/admin\/api-console'\)/)
+})
+
+test('admin api console includes endpoint presets and response viewer', async () => {
+  const page = await fs.readFile(new URL('../app/admin/api-console/page.js', import.meta.url), 'utf8')
   assert.match(page, /Search/)
-  assert.match(page, /Cards/)
-  assert.match(page, /Prints/)
+  assert.match(page, /Card by ID/)
+  assert.match(page, /Print by ID/)
+  assert.match(page, /Response Viewer/)
+})
+
+test('admin middleware requires configured credentials', async () => {
+  const middleware = await fs.readFile(new URL('../middleware.js', import.meta.url), 'utf8')
+  assert.match(middleware, /ADMIN_CONSOLE_USERNAME/)
+  assert.match(middleware, /ADMIN_CONSOLE_PASSWORD/)
+  assert.match(middleware, /WWW-Authenticate/)
 })

@@ -1,24 +1,41 @@
-# Frontend · Next.js (JavaScript)
+# Frontend · TCG Catalog (Next.js + JavaScript)
 
-MVP de explorador multi-game para TCG usando la API de `API-PROJECT`.
+Base de producto para catálogo TCG multi-game con separación entre experiencia pública y tooling admin privado.
 
-## Stack
+## Superficies
 
-- Next.js App Router
-- React
-- JavaScript (sin TypeScript)
+- **Público (catálogo)**: `/, /cards/[id], /prints/[id]`
+- **Privado/admin**: `/admin/api-console` (protegido por credenciales)
+- **BFF interno (server-side)**:
+  - `/api/catalog/search`
+  - `/api/catalog/cards/[id]`
+  - `/api/catalog/prints/[id]`
+
+La UI pública nunca llama directo al backend protegido; consume solamente el BFF interno.
 
 ## Variables de entorno
 
-Crear `frontend/.env.local`:
+Crear `frontend/.env.local` (entorno local fuera de Docker):
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=http://localhost:5000
-# opcional si tu backend requiere auth por header
-NEXT_PUBLIC_API_KEY=
+# Server only (NO exponer al cliente)
+INTERNAL_API_BASE_URL=http://localhost:5000
+INTERNAL_API_KEY=tu_api_key_interna
+
+# Público (opcionales)
+NEXT_PUBLIC_SITE_NAME=TCG Nexus
+NEXT_PUBLIC_DEFAULT_GAME=
+
+# Protección admin
+ADMIN_CONSOLE_USERNAME=admin
+ADMIN_CONSOLE_PASSWORD=admin
 ```
 
-## Correr localmente
+### Si corres con Docker Compose
+
+En el servicio `frontend`, `INTERNAL_API_BASE_URL` debe apuntar a `http://backend:5000` (red interna de Docker).
+
+## Correr localmente (npm)
 
 ```bash
 cd frontend
@@ -26,27 +43,31 @@ npm install
 npm run dev
 ```
 
-Abrir: `http://localhost:3000`
+Abrir `http://localhost:3000`.
 
-## Rutas principales
+### Puertos de desarrollo
 
-- `/` → Explorer (buscador, filtros, resultados)
-- `/cards/[id]` → Detalle de carta
-- `/prints/[id]` → Detalle de print
-- `/explorer` → alias que redirige a `/`
+- Frontend Next.js: `3000`
+- Backend API: `5000`
 
-## Endpoints usados
+## Flujos
 
-- `GET /api/v1/games`
-- `GET /api/v1/search?q=...&game=...&type=...`
-- `GET /api/v1/cards/:id`
-- `GET /api/v1/prints/:id`
+### Catálogo público
 
-## Notas de arquitectura
+1. El navegador consulta `/api/catalog/*`.
+2. Las rutas BFF del frontend llaman a `INTERNAL_API_BASE_URL` con `INTERNAL_API_KEY` desde servidor.
+3. La UI recibe payload sanitizado y mensajes amigables.
 
-- `lib/apiClient.js`: capa centralizada de llamadas API y manejo de `NEXT_PUBLIC_API_BASE_URL`.
-- `components/SearchControls.js`: input de búsqueda + filtros.
-- `components/ResultsGrid.js` y `components/ResultCard.js`: render de resultados (`card`, `print`, `set`).
-- `app/cards/[id]/page.js` y `app/prints/[id]/page.js`: vistas de detalle.
+### Admin API Console
 
-Base preparada para extender filtros y sumar autocomplete en próximas fases.
+- Ruta: `/admin/api-console`
+- Requiere Basic Auth (`ADMIN_CONSOLE_USERNAME` + `ADMIN_CONSOLE_PASSWORD`).
+- Permite probar presets de `search/cards/prints` contra el BFF interno.
+- No aparece en la navegación pública del catálogo.
+
+## Comandos útiles
+
+```bash
+npm run test
+npm run build
+```
