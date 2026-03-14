@@ -1751,6 +1751,9 @@ def test_search_short_prefix_ch_prioritizes_pokemon_cards(client):
     assert any(title.startswith("chansey") or title.startswith("charmander") or title.startswith("charmeleon") for title in top_titles)
     assert all(title.startswith("ch") for title in top_titles if title)
 
+    first_non_char_prefix = next((i for i, title in enumerate(top_titles) if not title.startswith("cha") and not title.startswith("ch")), None)
+    assert first_non_char_prefix is None
+
 
 def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
     _seed_multigame_search_fixture()
@@ -1764,6 +1767,10 @@ def test_search_short_prefix_cha_keeps_charizard_above_cross_game_noise(client):
     charizard_index = next((idx for idx, title in enumerate(titles) if title.startswith("charizard")), None)
     assert charizard_index is not None
     assert charizard_index <= 2
+
+    chaos_index = next((idx for idx, title in enumerate(titles) if title.startswith("chaos")), None)
+    if chaos_index is not None:
+        assert charizard_index < chaos_index
 
 
 def test_search_short_mtg_fo_for_still_prioritizes_forest(client):
@@ -1811,3 +1818,16 @@ def test_games_hides_riftbound_without_ingested_cards(client):
     assert response.status_code == 200
     slugs = {item["slug"] for item in response.get_json()}
     assert "riftbound" not in slugs
+
+
+
+def test_search_short_prefix_char_prioritizes_charizard(client):
+    _seed_multigame_search_fixture()
+
+    response = client.get("/api/v1/search?q=char", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    top = payload[0]
+    assert (top.get("title") or "").lower().startswith("charizard")

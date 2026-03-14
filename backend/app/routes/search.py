@@ -289,6 +289,28 @@ def search():
                     JOIN games g ON g.id = sd.game_id
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
                     LEFT JOIN sets s ON p.set_id = s.id
+                    WHERE (
+                            (
+                                :is_short_query = 0
+                                AND to_tsvector(
+                                    'simple',
+                                    coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
+                                ) @@ query.term
+                            )
+                            OR (
+                                :is_short_query = 1
+                                AND (
+                                    lower(sd.title) LIKE :q_norm || '%'
+                                    OR (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%'
+                                    OR (
+                                        :is_code_like_query = 1
+                                        AND (
+                                            lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%'
+                                            OR lower(coalesce(s.code, '')) LIKE :q_norm || '%'
+                                        )
+                                    )
+                                )
+                            )
                     WHERE to_tsvector(
                             'simple',
                             coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
