@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'TCG Nexus'
+const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'Don’tRipIt'
 
 export default function TopNav() {
   return (

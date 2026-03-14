@@ -66,7 +66,7 @@ def _args(**overrides):
     return argparse.Namespace(**data)
 
 
-def test_daily_refresh_calls_both_connectors_and_reindex(monkeypatch):
+def test_daily_refresh_calls_all_connectors_and_skips_global_reindex_in_incremental(monkeypatch):
     calls = []
 
     def fake_get_connector(name):
@@ -82,6 +82,8 @@ def test_daily_refresh_calls_both_connectors_and_reindex(monkeypatch):
     assert summary["pokemon"]["ok"] is True
     assert summary["mtg"]["ok"] is True
     assert summary["reindex"]["ok"] is True
+    assert summary["reindex"]["stats"]["skipped"] is True
+    assert summary["reindex"]["trigger"] == "skipped_targeted_connector_reindex"
     assert set(summary.keys()) >= {"pokemon", "mtg", "yugioh", "riftbound", "reindex", "exit_code"}
     assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg", "ygoprodeck_yugioh", "riftbound"]
 
@@ -174,3 +176,26 @@ def test_daily_refresh_none_limits_execute_connectors(monkeypatch):
     assert [call["name"] for call in calls] == ["tcgdex_pokemon", "scryfall_mtg", "ygoprodeck_yugioh", "riftbound"]
     assert summary["pokemon"]["skipped"] is False
     assert summary["yugioh"]["skipped"] is False
+
+
+def test_daily_refresh_runs_global_reindex_for_non_incremental_refresh(monkeypatch):
+    calls = []
+    reindex_called = {"value": 0}
+
+    def fake_get_connector(name):
+        return _FakeConnector(name=name, calls=calls)
+
+    def fake_reindex(session):
+        reindex_called["value"] += 1
+        return {"cards": 5, "sets": 4, "prints": 3}
+
+    monkeypatch.setattr(daily_refresh.db, "SessionLocal", _FakeSessionFactory())
+    monkeypatch.setattr(daily_refresh, "get_connector", fake_get_connector)
+    monkeypatch.setattr(daily_refresh, "rebuild_search_documents", fake_reindex)
+
+    summary = daily_refresh.run_daily_refresh(_args(incremental=False))
+
+    assert summary["reindex"]["ok"] is True
+    assert summary["reindex"]["trigger"] == "full_refresh"
+    assert reindex_called["value"] == 1
+

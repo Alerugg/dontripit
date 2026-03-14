@@ -203,14 +203,31 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["riftbound"]["totals"], riftbound_run["stats"])
         print("[daily_refresh] riftbound_run=" + json.dumps(riftbound_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    try:
-        with db.SessionLocal() as session:
-            reindex_stats = rebuild_search_documents(session)
-            session.commit()
+    connector_mutations = (
+        summary["pokemon"]["totals"]["inserted"]
+        + summary["pokemon"]["totals"]["updated"]
+        + summary["mtg"]["totals"]["inserted"]
+        + summary["mtg"]["totals"]["updated"]
+        + summary["yugioh"]["totals"]["inserted"]
+        + summary["yugioh"]["totals"]["updated"]
+        + summary["riftbound"]["totals"]["inserted"]
+        + summary["riftbound"]["totals"]["updated"]
+    )
+    should_reindex = (not args.incremental) and connector_mutations > 0
+    summary["reindex"]["trigger"] = "full_refresh" if should_reindex else "skipped_targeted_connector_reindex"
+
+    if should_reindex:
+        try:
+            with db.SessionLocal() as session:
+                reindex_stats = rebuild_search_documents(session)
+                session.commit()
+            summary["reindex"]["ok"] = True
+            summary["reindex"]["stats"] = reindex_stats
+        except Exception as exc:  # noqa: BLE001
+            summary["reindex"]["error"] = str(exc)
+    else:
         summary["reindex"]["ok"] = True
-        summary["reindex"]["stats"] = reindex_stats
-    except Exception as exc:  # noqa: BLE001
-        summary["reindex"]["error"] = str(exc)
+        summary["reindex"]["stats"] = {"skipped": True, "mutations": connector_mutations}
 
     summary["ended_at"] = datetime.now(timezone.utc).isoformat()
     summary["duration_seconds"] = (datetime.now(timezone.utc) - started_at).total_seconds()

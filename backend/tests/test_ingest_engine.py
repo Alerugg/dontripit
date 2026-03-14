@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from app import db
 from app.auth.service import hash_api_key
+from app.ingest.base import IngestStats
 from app.ingest.registry import get_connector
 from app.models import (
     ApiKey,
@@ -1890,3 +1891,52 @@ def test_yugioh_incremental_remote_mode_limit_terminates_and_persists_rows(clien
     assert cards > 0
     assert prints > 0
     assert primary_images > 0
+
+def test_riftbound_remote_load_supports_limit_and_dedupe(monkeypatch):
+    connector = get_connector("riftbound")
+
+    payload = {
+        "sets": [{"id": "rb1", "code": "RB1", "name": "Rift One"}],
+        "cards": [{"id": "card-1", "name": "Alpha"}],
+        "prints": [
+            {"id": "rb-print-1", "set_id": "rb1", "card_id": "card-1", "collector_number": "001"},
+            {"id": "rb-print-1", "set_id": "rb1", "card_id": "card-1", "collector_number": "001"},
+            {"id": "rb-print-2", "set_id": "rb1", "card_id": "card-1", "collector_number": "002"},
+        ],
+    }
+
+    monkeypatch.setattr(connector, "_request_json", lambda url, params=None: payload)
+
+    loaded = connector.load(fixture=False, limit=1)
+
+    assert len(loaded) == 1
+    assert loaded[0][1]["print"]["id"] == "rb-print-1"
+
+
+def test_scryfall_upsert_returns_touched_entity_ids(client):
+    connector = get_connector("scryfall_mtg")
+    payload = {
+        "set": {"code": "lea", "name": "Limited Edition Alpha", "released_at": "1993-08-05"},
+        "card": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "oracle_id": "00000000-0000-0000-0000-000000000002",
+            "set": "lea",
+            "set_name": "Limited Edition Alpha",
+            "released_at": "1993-08-05",
+            "name": "Black Lotus",
+            "collector_number": "233",
+            "lang": "en",
+            "rarity": "rare",
+            "foil": False,
+            "image_uris": {"normal": "https://example.com/black-lotus.png"},
+        },
+    }
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        touched = connector.upsert(session, payload, stats)
+        session.commit()
+
+    assert touched.get("card_id")
+    assert touched.get("set_id")
+    assert touched.get("print_id")

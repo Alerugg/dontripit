@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import CatalogSidebar from '../components/catalog/CatalogSidebar'
 import CatalogResults from '../components/catalog/CatalogResults'
 import StatePanel from '../components/catalog/StatePanel'
@@ -10,7 +10,7 @@ import { GAME_OPTIONS, RESULT_TYPE_OPTIONS, searchCatalog } from '../lib/catalog
 const defaultGame = process.env.NEXT_PUBLIC_DEFAULT_GAME || ''
 
 export default function ExplorerPage() {
-  const [query, setQuery] = useState('charizard')
+  const [query, setQuery] = useState('')
   const [game, setGame] = useState(defaultGame)
   const [type, setType] = useState('')
   const [view, setView] = useState('grid')
@@ -19,21 +19,46 @@ export default function ExplorerPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const lastRequestKeyRef = useRef('')
+  const requestCounterRef = useRef(0)
+
   useEffect(() => {
+    const normalizedQuery = query.trim()
+    if (!normalizedQuery) {
+      setItems([])
+      setError('')
+      setLoading(false)
+      lastRequestKeyRef.current = ''
+      return undefined
+    }
+
+    const requestKey = JSON.stringify({ q: normalizedQuery, game, type })
+    if (requestKey === lastRequestKeyRef.current) {
+      return undefined
+    }
+
+    const requestId = ++requestCounterRef.current
     const timer = setTimeout(async () => {
       setLoading(true)
       setError('')
 
       try {
-        const nextItems = await searchCatalog({ q: query, game, type, limit: 36, offset: 0 })
-        setItems(nextItems)
+        const nextItems = await searchCatalog({ q: normalizedQuery, game, type, limit: 36, offset: 0 })
+        if (requestId === requestCounterRef.current) {
+          setItems(nextItems)
+          lastRequestKeyRef.current = requestKey
+        }
       } catch (requestError) {
-        setItems([])
-        setError(requestError.message)
+        if (requestId === requestCounterRef.current) {
+          setItems([])
+          setError(requestError.message)
+        }
       } finally {
-        setLoading(false)
+        if (requestId === requestCounterRef.current) {
+          setLoading(false)
+        }
       }
-    }, 250)
+    }, 300)
 
     return () => clearTimeout(timer)
   }, [query, game, type])
@@ -63,22 +88,28 @@ export default function ExplorerPage() {
             <p>Catálogo visual diseñado para evolucionar a colección, wishlist y marketplace.</p>
           </header>
 
-          {loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo resultados actualizados para tu búsqueda." />}
-          {!loading && error && (
+          {!query.trim() && (
+            <StatePanel
+              title="Empieza a explorar Don’tRipIt"
+              description="Escribe desde 1 carácter para consultar el catálogo multi-juego en tiempo real."
+            />
+          )}
+          {query.trim() && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo resultados actualizados para tu búsqueda." />}
+          {query.trim() && !loading && error && (
             <StatePanel
               title="No pudimos cargar el catálogo"
               description={error || 'Intenta de nuevo en unos segundos.'}
               error
             />
           )}
-          {!loading && !error && items.length === 0 && (
+          {query.trim() && !loading && !error && items.length === 0 && (
             <StatePanel
               title="Sin resultados por ahora"
               description="Prueba otro término o cambia el juego para seguir explorando cartas y variantes."
             />
           )}
 
-          {!loading && !error && <CatalogResults items={items} view={view} />}
+          {!loading && !error && items.length > 0 && <CatalogResults items={items} view={view} />}
         </div>
       </section>
     </main>

@@ -18,7 +18,6 @@ function getInternalConfig() {
       reason: 'missing_internal_api_key',
       hint: 'Define INTERNAL_API_KEY para que el BFF autentique contra el backend.',
     }
-    return { ok: false, reason: 'missing_internal_api_base_url' }
   }
 
   return { ok: true, baseUrl, apiKey }
@@ -35,7 +34,6 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
         hint: config.hint,
       },
     }
-    return { ok: false, status: 503, payload: { error: config.reason } }
   }
 
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -54,7 +52,6 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
       method,
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': config.apiKey,
         ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,

@@ -1149,6 +1149,25 @@ def _seed_yugioh_search_fixture():
         session.commit()
 
 
+
+
+def test_search_accepts_single_character_query(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=d&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+
+
+def test_search_suggest_accepts_single_character_query(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search/suggest?q=d&game=yugioh", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+
 def test_search_suggest_dark_prioritizes_dark_magician_over_other_dark_cards(client):
     _seed_yugioh_search_fixture()
 

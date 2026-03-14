@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import TopNav from '../../../components/layout/TopNav'
 
 const PRESETS = [
-  { key: 'search', label: 'Search', path: '/api/catalog/search', params: { q: 'charizard', game: 'pokemon', type: '', limit: 20, offset: 0 } },
+  { key: 'search', label: 'Search', path: '/api/catalog/search', params: { q: 'p', game: 'pokemon', type: '', limit: 20, offset: 0 } },
   { key: 'card', label: 'Card by ID', path: '/api/catalog/cards/{id}', params: { id: '' } },
   { key: 'print', label: 'Print by ID', path: '/api/catalog/prints/{id}', params: { id: '' } },
 ]

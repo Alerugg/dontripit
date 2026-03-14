@@ -37,6 +37,8 @@ class YgoProDeckYugiohConnector(SourceConnector):
         fixture = bool(kwargs.get("fixture", False))
         limit = kwargs.get("limit")
 
+        self.logger.info("ingest ygoprodeck load_start fixture=%s limit=%s", fixture, limit)
+
         if fixture:
             fixture_path = self._resolve_fixture_path(path)
             cards = self._load_fixture(fixture_path, limit=limit)
@@ -56,6 +58,7 @@ class YgoProDeckYugiohConnector(SourceConnector):
                     self.checksum(card),
                 )
             )
+        self.logger.info("ingest ygoprodeck load_done fixture=%s cards=%s limit=%s", fixture, len(payloads), limit)
         return payloads
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
@@ -135,12 +138,14 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 break
             offset += batch_size
 
-        print(
-            "[ygoprodeck_yugioh] load_remote_done "
-            f"pages={pages_requested} downloaded={downloaded_cards} "
-            f"deduped={duplicate_cards} limit={requested_limit} "
-            f"page_size={normalized_page_size} returned={len(cards)}",
-            flush=True,
+        self.logger.info(
+            "ingest ygoprodeck load_done phase=remote pages=%s downloaded=%s deduped=%s limit=%s page_size=%s returned=%s",
+            pages_requested,
+            downloaded_cards,
+            duplicate_cards,
+            requested_limit,
+            normalized_page_size,
+            len(cards),
         )
         return cards
 
@@ -158,9 +163,12 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 )
                 if response.status_code in status_for_retry:
                     body_preview = response.text[:240].replace("\n", " ")
-                    print(
-                        f"[ygoprodeck_yugioh] retryable_status attempt={attempt} status={response.status_code} wait={wait_seconds:.1f}s body={body_preview}",
-                        flush=True,
+                    self.logger.warning(
+                        "ingest ygoprodeck request_retry attempt=%s status=%s wait_seconds=%.1f body=%s",
+                        attempt,
+                        response.status_code,
+                        wait_seconds,
+                        body_preview,
                     )
                     time.sleep(wait_seconds)
                     wait_seconds *= 2
@@ -171,9 +179,11 @@ class YgoProDeckYugiohConnector(SourceConnector):
                 last_error = exc
                 if attempt >= 5:
                     break
-                print(
-                    f"[ygoprodeck_yugioh] request_error attempt={attempt} wait={wait_seconds:.1f}s error={exc}",
-                    flush=True,
+                self.logger.warning(
+                    "ingest ygoprodeck request_error attempt=%s wait_seconds=%.1f error=%s",
+                    attempt,
+                    wait_seconds,
+                    exc,
                 )
                 time.sleep(wait_seconds)
                 wait_seconds *= 2

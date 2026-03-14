@@ -17,7 +17,6 @@ class ScryfallMtgConnector(SourceConnector):
     name = "scryfall_mtg"
     base_url = "https://api.scryfall.com"
 
-
     def should_bootstrap(self, session, source, **kwargs) -> bool:
         incremental = bool(kwargs.get("incremental", True))
         if not incremental:
@@ -38,13 +37,22 @@ class ScryfallMtgConnector(SourceConnector):
         fixture = bool(kwargs.get("fixture", False))
         set_code = kwargs.get("set_code")
         limit = kwargs.get("limit")
+        incremental = bool(kwargs.get("incremental", True))
+        bootstrap = bool(kwargs.get("bootstrap", False))
+
+        self.logger.info(
+            "ingest scryfall load_start fixture=%s incremental=%s bootstrap=%s limit=%s set_code=%s",
+            fixture,
+            incremental,
+            bootstrap,
+            limit,
+            set_code,
+        )
 
         if fixture:
             fixture_path = self._resolve_fixture_path(path)
             raw_items = self._load_fixture(fixture_path, set_code=set_code, limit=limit)
         else:
-            incremental = bool(kwargs.get("incremental", True))
-            bootstrap = bool(kwargs.get("bootstrap", False))
             if incremental and not bootstrap:
                 raw_items = self._load_incremental(limit=limit, last_run_at=kwargs.get("last_run_at"))
             else:
@@ -56,6 +64,13 @@ class ScryfallMtgConnector(SourceConnector):
             if set_code and card_set_code != set_code.lower():
                 continue
             payloads.append((Path(f"card_{card.get('id', idx)}.json"), card, self.checksum(card)))
+        self.logger.info(
+            "ingest scryfall load_done fixture=%s cards=%s limit=%s set_code=%s",
+            fixture,
+            len(payloads),
+            limit,
+            set_code,
+        )
         return payloads
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
@@ -187,7 +202,7 @@ class ScryfallMtgConnector(SourceConnector):
         set_payload = payload.get("set") or {}
         set_code = (set_payload.get("code") or "").lower()
         if not set_code:
-            return {}
+            return {"card_id": card_row.id, "set_id": set_row.id, "print_id": print_row.id}
 
         release_date = date.fromisoformat(set_payload["released_at"]) if set_payload.get("released_at") else None
         set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
@@ -211,7 +226,7 @@ class ScryfallMtgConnector(SourceConnector):
         card_payload = payload.get("card") or {}
         card_name = (card_payload.get("name") or "").strip()
         if not card_name:
-            return {}
+            return {"card_id": card_row.id, "set_id": set_row.id, "print_id": print_row.id}
 
         oracle_id = card_payload.get("oracle_id")
         if oracle_id:
@@ -325,7 +340,7 @@ class ScryfallMtgConnector(SourceConnector):
             },
         )
 
-        return {}
+        return {"card_id": card_row.id, "set_id": set_row.id, "print_id": print_row.id}
 
     def default_cursor(self, **kwargs) -> dict:
         return {

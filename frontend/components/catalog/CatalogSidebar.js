@@ -18,7 +18,7 @@ export default function CatalogSidebar({
           className="input"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Ej: charizard, blue-eyes, black lotus"
+          placeholder="Ej: pikachu, dark magician, black lotus"
         />
       </div>
 

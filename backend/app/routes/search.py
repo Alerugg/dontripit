@@ -95,6 +95,7 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
 
 def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
     term = _normalize_query(q)
+    short_query = len(term) <= 1
     is_code_like_query = 1 if _looks_like_code_query(q) else 0
     is_exact_code_query = 1 if _is_exact_code_query(q) else 0
     is_text_query = 1 if is_code_like_query == 0 else 0
@@ -103,7 +104,7 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
         "q": term,
         "code_prefix": code_prefix,
         "prefix": f"{term}%",
-        "contains": f"%{term}%",
+        "contains": f"{term}%" if short_query else f"%{term}%",
         "token_prefix": f"% {term}%",
         "is_code_like_query": is_code_like_query,
         "is_exact_code_query": is_exact_code_query,
@@ -210,12 +211,13 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
 @search_bp.get("/api/v1/search")
 def search():
     q = request.args.get("q", "").strip()
-    if len(q) < 2:
-        return jsonify({"error": "q is required (min 2 chars)"}), 400
+    if len(q) < 1:
+        return jsonify({"error": "q is required (min 1 char)"}), 400
 
     game = request.args.get("game", "").strip()
     result_type = (request.args.get("type") or "").strip() or None
-    limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), 100)
+    max_limit = 12 if len(q) == 1 else 30 if len(q) == 2 else 100
+    limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), max_limit)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
 
     q_normalized = _normalize_query(q)
@@ -293,7 +295,7 @@ def search():
                     },
                 ).mappings().all()
             else:
-                like = f"%{q.lower()}%"
+                like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
                 sql = text(
                     """
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
@@ -351,11 +353,11 @@ def search():
                 ).mappings().all()
         except ProgrammingError:
             session.rollback()
-            like = f"%{q.lower()}%"
+            like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
         if not rows:
-            like = f"%{q.lower()}%"
+            like = f"{q.lower()}%" if len(q_normalized) <= 1 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
     return jsonify([dict(row) for row in rows])
@@ -365,11 +367,12 @@ def search():
 @search_bp.get("/api/v1/search/suggest")
 def suggest():
     q = request.args.get("q", "").strip()
-    if len(q) < 2:
+    if len(q) < 1:
         return jsonify([])
 
     game = request.args.get("game", "").strip()
-    limit = min(max(request.args.get("limit", default=10, type=int) or 10, 1), 10)
+    max_limit = 6 if len(q) == 1 else 10
+    limit = min(max(request.args.get("limit", default=10, type=int) or 10, 1), max_limit)
 
     with db.SessionLocal() as session:
         try:

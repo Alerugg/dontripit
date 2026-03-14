@@ -120,6 +120,7 @@ class SourceConnector:
     def run(self, session, path: str | Path | None = None, **kwargs) -> IngestStats:
         stats = IngestStats()
         source = self.ensure_source(session)
+        incremental = bool(kwargs.get("incremental", True))
 
         sync_state = session.execute(select(SourceSyncState).where(SourceSyncState.source_id == source.id)).scalar_one_or_none()
         if sync_state is None:
@@ -149,7 +150,23 @@ class SourceConnector:
 
         try:
             bootstrap = self.should_bootstrap(session, source, **kwargs)
+            self.logger.info(
+                "ingest load_start connector=%s fixture=%s incremental=%s limit=%s set=%s bootstrap=%s",
+                self.name,
+                kwargs.get("fixture"),
+                incremental,
+                kwargs.get("limit"),
+                kwargs.get("set"),
+                bootstrap,
+            )
             payloads = self.load(path, session=session, last_run_at=last_run_at, bootstrap=bootstrap, **kwargs)
+            self.logger.info(
+                "ingest load_done connector=%s payloads=%s fixture=%s incremental=%s",
+                self.name,
+                len(payloads),
+                kwargs.get("fixture"),
+                incremental,
+            )
             touched_ids = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
             processed_payloads = 0
             for file_path, payload, checksum in payloads:
@@ -157,7 +174,6 @@ class SourceConnector:
                 existing_record = session.execute(
                     select(SourceRecord).where(SourceRecord.source_id == source.id, SourceRecord.checksum == checksum)
                 ).scalar_one_or_none()
-                incremental = bool(kwargs.get("incremental", True))
                 if incremental and existing_record and self.should_skip_existing_record(existing_record, session=session, **kwargs):
                     stats.files_skipped += 1
                     self.logger.info(
