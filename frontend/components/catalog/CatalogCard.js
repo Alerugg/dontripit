@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import FallbackImage from '../common/FallbackImage'
 
 function resolveHref(item) {
   if (item.type === 'print') return `/prints/${item.id}`
@@ -14,11 +15,13 @@ export default function CatalogCard({ item, view = 'grid' }) {
   return (
     <Link href={resolveHref(item)} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
       <div className="catalog-image-wrap">
-        {item.primary_image_url ? (
-          <img src={item.primary_image_url} alt={title} className="catalog-image" />
-        ) : (
-          <div className="catalog-placeholder">Sin imagen</div>
-        )}
+        <FallbackImage
+          src={item.primary_image_url}
+          alt={title}
+          className="catalog-image"
+          placeholderClassName="catalog-placeholder image-fallback"
+          label={item.game || item.type || 'TCG'}
+        />
       </div>
 
       <div className="catalog-card-content">

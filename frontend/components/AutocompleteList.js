@@ -1,10 +1,19 @@
 'use client'
 
+import FallbackImage from './common/FallbackImage'
+
 function Suggestion({ item }) {
   return (
     <>
       <div className="thumb-xs">
-        {item.primary_image_url ? <img src={item.primary_image_url} alt={item.title} /> : <span>TCG</span>}
+        <FallbackImage
+          src={item.primary_image_url}
+          alt={item.title}
+          className="thumb-xs-image"
+          placeholderClassName="image-fallback"
+          label={item.game || item.type || 'TCG'}
+          initials={item.game ? item.game.slice(0, 2).toUpperCase() : undefined}
+        />
       </div>
       <div className="suggestion-copy">
         <strong>{item.title}</strong>
