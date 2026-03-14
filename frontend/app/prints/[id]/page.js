@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { fetchPrintById } from '../../../lib/apiClient'
+import TopNav from '../../../components/layout/TopNav'
+import StatePanel from '../../../components/catalog/StatePanel'
+import { fetchPrintById } from '../../../lib/catalog/client'
+
+function MetaLine({ label, value }) {
+  if (!value && value !== false) return null
+  return <p><strong>{label}:</strong> {String(value)}</p>
+}
 
 export default function PrintDetailPage({ params }) {
   const [printDetail, setPrintDetail] = useState(null)
@@ -10,42 +17,77 @@ export default function PrintDetailPage({ params }) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    setLoading(true)
-    fetchPrintById(params.id)
-      .then(setPrintDetail)
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false))
+    let cancelled = false
+
+    async function loadPrint() {
+      setLoading(true)
+      setError('')
+
+      try {
+        const payload = await fetchPrintById(params.id)
+        if (!cancelled) setPrintDetail(payload)
+      } catch (requestError) {
+        if (!cancelled) {
+          setPrintDetail(null)
+          setError(requestError.message)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    loadPrint()
+    return () => {
+      cancelled = true
+    }
   }, [params.id])
 
   return (
-    <main className="explorer-page">
-      <Link href="/" className="ghost-btn">← Volver al explorer</Link>
-      {loading && <section className="panel state-panel">Cargando print...</section>}
-      {!loading && error && <section className="panel state-panel error">Error: {error}</section>}
+    <main>
+      <TopNav />
 
-      {!loading && !error && printDetail && (
-        <section className="panel detail-layout">
-          <div className="detail-image-wrap">
-            {printDetail.primary_image_url ? <img src={printDetail.primary_image_url} alt={printDetail.title} className="detail-image" /> : <div className="result-image-placeholder">Sin imagen</div>}
-          </div>
-          <div>
-            <h1>{printDetail.card?.name || printDetail.title}</h1>
-            <p className="subtle">{printDetail.set_name} ({printDetail.set_code})</p>
+      <section className="detail-shell">
+        <Link href={`/cards/${printDetail?.card?.id || ''}`} className="back-link">← Volver a la carta</Link>
 
-            <div className="meta-list">
-              <p><strong>Juego:</strong> {printDetail.game}</p>
-              <p><strong>Collector:</strong> {printDetail.collector_number || '-'}</p>
-              <p><strong>Rarity:</strong> {printDetail.rarity || '-'}</p>
-              <p><strong>Variant:</strong> {printDetail.variant || '-'}</p>
-              <p><strong>Language:</strong> {printDetail.language || '-'}</p>
+        {loading && <StatePanel title="Cargando print" description="Traemos metadata de edición y variantes." />}
+        {!loading && error && <StatePanel title="No pudimos cargar el print" description={error} error />}
+
+        {!loading && !error && printDetail && (
+          <article className="panel detail-page">
+            <div className="detail-media">
+              {printDetail.primary_image_url ? (
+                <img src={printDetail.primary_image_url} alt={printDetail.card?.name || 'Print'} className="detail-image" />
+              ) : (
+                <div className="catalog-placeholder">Sin imagen</div>
+              )}
             </div>
 
-            {printDetail.card?.id && (
-              <Link href={`/cards/${printDetail.card.id}`} className="primary-btn">Ver carta base</Link>
-            )}
-          </div>
-        </section>
-      )}
+            <div className="detail-content">
+              <p className="kicker">Print detail</p>
+              <h1>{printDetail.card?.name || 'Carta'}</h1>
+              <p className="meta-game">{printDetail.game || printDetail.card?.game}</p>
+
+              <section className="meta-grid panel-soft">
+                <MetaLine label="Set" value={printDetail.set_name} />
+                <MetaLine label="Set Code" value={printDetail.set_code} />
+                <MetaLine label="Collector" value={printDetail.collector_number} />
+                <MetaLine label="Rarity" value={printDetail.rarity} />
+                <MetaLine label="Variant" value={printDetail.variant} />
+                <MetaLine label="Foil" value={printDetail.foil} />
+                <MetaLine label="Language" value={printDetail.language} />
+              </section>
+
+              <section className="panel-soft identifiers">
+                <h2>Identifiers & external IDs</h2>
+                <MetaLine label="Print ID" value={printDetail.id} />
+                <MetaLine label="Scryfall" value={printDetail.external_ids?.scryfall_id} />
+                <MetaLine label="TCGPlayer" value={printDetail.external_ids?.tcgplayer_id} />
+                <MetaLine label="Cardmarket" value={printDetail.external_ids?.cardmarket_id} />
+              </section>
+            </div>
+          </article>
+        )}
+      </section>
     </main>
   )
 }

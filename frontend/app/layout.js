@@ -2,10 +2,11 @@ import './globals.css'
 import { Inter } from 'next/font/google'
 
 const inter = Inter({ subsets: ['latin'] })
+const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'TCG Nexus'
 
 export const metadata = {
-  title: 'API-PROJECT · TCG Catalog',
-  description: 'Catálogo visual de cartas TCG conectado a la API real de API-PROJECT',
+  title: `${siteName} · Multi-game Catalog`,
+  description: 'Catálogo público de cartas/prints y consola admin interna para API-PROJECT',
 }
 
 export default function RootLayout({ children }) {
