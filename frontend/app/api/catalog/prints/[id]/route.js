@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../../lib/catalog/internalApi'
-import { callInternalApi, getPublicErrorMessage } from '../../../../../lib/catalog/internalApi'
 
 export async function GET(_, { params }) {
   const upstream = await callInternalApi(`/api/v1/prints/${params.id}`)
@@ -13,8 +12,6 @@ export async function GET(_, { params }) {
         message: getPublicErrorMessage(upstream.status),
         ...(developerHint ? { developer_hint: developerHint } : {}),
       },
-    return NextResponse.json(
-      { error: 'catalog_print_failed', message: getPublicErrorMessage(upstream.status) },
       { status: upstream.status },
     )
   }
