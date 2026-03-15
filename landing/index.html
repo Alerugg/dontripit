@@ -3,123 +3,552 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dontripit — Coming Soon</title>
+    <title>DontRipIt | Infraestructura multi‑TCG para catálogo, datos y marketplace</title>
     <meta
       name="description"
-      content="Dontripit está en construcción. Estamos creando una nueva experiencia para catálogo y marketplace TCG."
+      content="DontRipIt está construyendo su V1: catálogo multi‑TCG, buscador avanzado, datos estructurados y API como base para colección, wishlist y futuro marketplace."
     />
     <style>
       :root {
         color-scheme: dark;
-        --bg-1: #05070d;
-        --bg-2: #0b1020;
-        --accent: #7c8cff;
-        --accent-soft: rgba(124, 140, 255, 0.25);
-        --text-main: #f3f5ff;
-        --text-muted: #b8c0e6;
-        --card-bg: rgba(12, 18, 35, 0.72);
-        --card-border: rgba(180, 197, 255, 0.2);
+        --bg: #05070d;
+        --bg-elevated: #0c1222;
+        --bg-soft: #131b31;
+        --text-main: #f2f6ff;
+        --text-muted: #b6c1e2;
+        --text-soft: #8f9ac0;
+        --line: rgba(196, 212, 255, 0.2);
+        --line-strong: rgba(196, 212, 255, 0.32);
+        --brand: #8f9dff;
+        --brand-strong: #6f7fff;
+        --brand-soft: rgba(143, 157, 255, 0.18);
+        --success-soft: rgba(90, 217, 161, 0.14);
+        --radius-xl: 24px;
+        --radius-lg: 16px;
+        --radius-md: 12px;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html,
       body {
         margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 24px;
-        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-          Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
+        padding: 0;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+          Cantarell, "Helvetica Neue", Arial, sans-serif;
         background:
-          radial-gradient(circle at 20% 15%, rgba(124, 140, 255, 0.18) 0%, transparent 40%),
-          radial-gradient(circle at 80% 80%, rgba(66, 191, 255, 0.12) 0%, transparent 38%),
-          linear-gradient(140deg, var(--bg-1) 0%, var(--bg-2) 45%, #050813 100%);
+          radial-gradient(circle at 5% 5%, rgba(127, 155, 255, 0.16), transparent 32%),
+          radial-gradient(circle at 90% 0%, rgba(86, 212, 255, 0.12), transparent 35%),
+          radial-gradient(circle at 85% 85%, rgba(134, 96, 255, 0.12), transparent 38%),
+          var(--bg);
         color: var(--text-main);
       }
 
-      .card {
-        width: min(100%, 760px);
-        padding: clamp(1.5rem, 3vw, 2.75rem);
-        border-radius: 20px;
-        background: var(--card-bg);
-        border: 1px solid var(--card-border);
-        box-shadow:
-          0 16px 44px rgba(0, 0, 0, 0.45),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(4px);
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page-shell {
+        width: min(1180px, 92vw);
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: blur(12px);
+        background: linear-gradient(to bottom, rgba(5, 7, 13, 0.9), rgba(5, 7, 13, 0.58));
+        border-bottom: 1px solid rgba(196, 212, 255, 0.08);
+      }
+
+      .topbar-inner {
+        min-height: 70px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand-mark {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: linear-gradient(140deg, #b3bcff, #6f7fff);
+        box-shadow: 0 0 20px rgba(143, 157, 255, 0.8);
+      }
+
+      .topbar-nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        color: var(--text-muted);
+        font-size: 0.92rem;
+      }
+
+      .topbar-nav a:hover {
+        color: #e6ebff;
+      }
+
+      .hero {
+        padding: clamp(3.4rem, 8vw, 6rem) 0 2.8rem;
       }
 
       .eyebrow {
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        margin: 0 0 18px;
-        padding: 6px 12px;
+        background: var(--brand-soft);
+        border: 1px solid rgba(154, 172, 255, 0.3);
         border-radius: 999px;
-        background: rgba(124, 140, 255, 0.14);
-        color: #dbe1ff;
-        font-size: 0.82rem;
+        padding: 0.42rem 0.78rem;
+        color: #dce4ff;
+        font-size: 0.8rem;
         font-weight: 600;
-        letter-spacing: 0.03em;
         text-transform: uppercase;
+        letter-spacing: 0.08em;
       }
 
-      .dot {
-        width: 8px;
-        height: 8px;
+      .eyebrow-dot {
+        width: 7px;
+        height: 7px;
         border-radius: 50%;
-        background: var(--accent);
-        box-shadow: 0 0 12px var(--accent);
+        background: #8f9dff;
       }
 
       h1 {
+        font-size: clamp(2.3rem, 6vw, 4.2rem);
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        margin: 1rem 0 1.1rem;
+        max-width: 14ch;
+      }
+
+      .hero-lead {
+        color: var(--text-muted);
+        font-size: clamp(1rem, 1.8vw, 1.16rem);
+        line-height: 1.75;
+        max-width: 66ch;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 1.8rem;
+      }
+
+      .btn {
+        border-radius: 999px;
+        padding: 0.82rem 1.24rem;
+        font-size: 0.93rem;
+        font-weight: 600;
+        border: 1px solid transparent;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(140deg, var(--brand), var(--brand-strong));
+        box-shadow: 0 14px 32px rgba(111, 127, 255, 0.34);
+      }
+
+      .btn-secondary {
+        background: rgba(13, 20, 38, 0.7);
+        border-color: var(--line-strong);
+        color: #dbe3ff;
+      }
+
+      .surface {
+        background: linear-gradient(170deg, rgba(14, 20, 36, 0.88), rgba(9, 14, 27, 0.86));
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xl);
+        padding: clamp(1.2rem, 2.6vw, 2rem);
+        box-shadow:
+          0 24px 44px rgba(0, 0, 0, 0.34),
+          inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .section {
+        padding: 1.6rem 0;
+      }
+
+      .section h2 {
         margin: 0;
-        font-size: clamp(2rem, 5vw, 3.2rem);
-        font-weight: 700;
+        font-size: clamp(1.45rem, 2.8vw, 2rem);
         letter-spacing: -0.02em;
       }
 
-      p {
-        margin: 0;
+      .section-intro {
+        margin-top: 0.9rem;
+        max-width: 80ch;
         color: var(--text-muted);
-        line-height: 1.65;
-        font-size: clamp(1rem, 2.4vw, 1.1rem);
+        line-height: 1.72;
       }
 
-      .lead {
-        margin-top: 16px;
-        max-width: 56ch;
+      .grid {
+        margin-top: 1.2rem;
+        display: grid;
+        gap: 12px;
       }
 
-      .soon {
-        margin-top: 26px;
+      .feature-grid {
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+      }
+
+      .feature {
+        grid-column: span 6;
+        padding: 1rem;
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(188, 203, 255, 0.16);
+        background: rgba(19, 27, 49, 0.62);
+      }
+
+      .feature h3,
+      .game h3,
+      .value h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1.02rem;
+      }
+
+      .feature p,
+      .game p,
+      .value p,
+      .phase p {
+        margin: 0;
+        color: var(--text-soft);
+        line-height: 1.58;
         font-size: 0.95rem;
-        color: #d8defb;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
       }
 
-      @media (max-width: 480px) {
-        body {
-          padding: 18px;
+      .games {
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+      }
+
+      .game {
+        grid-column: span 3;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(188, 203, 255, 0.16);
+        background: rgba(8, 14, 28, 0.68);
+      }
+
+      .tag {
+        display: inline-block;
+        margin-bottom: 0.55rem;
+        font-size: 0.74rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #d8e0ff;
+        padding: 0.22rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid rgba(188, 203, 255, 0.26);
+      }
+
+      .roadmap {
+        margin-top: 1.2rem;
+        display: grid;
+        gap: 10px;
+      }
+
+      .phase {
+        display: grid;
+        grid-template-columns: 110px 1fr;
+        gap: 0.9rem;
+        align-items: start;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(188, 203, 255, 0.16);
+        background: rgba(10, 16, 30, 0.7);
+        padding: 0.95rem;
+      }
+
+      .phase-id {
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #dde4ff;
+        letter-spacing: 0.05em;
+      }
+
+      .value-grid {
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+      }
+
+      .value {
+        grid-column: span 4;
+        padding: 1rem;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(188, 203, 255, 0.16);
+        background: rgba(12, 18, 34, 0.72);
+      }
+
+      .final-cta {
+        margin: 1.7rem 0 4rem;
+        border-radius: var(--radius-xl);
+        border: 1px solid rgba(188, 203, 255, 0.22);
+        background:
+          radial-gradient(circle at 10% 10%, rgba(143, 157, 255, 0.26), transparent 40%),
+          linear-gradient(160deg, rgba(18, 26, 47, 0.95), rgba(11, 17, 32, 0.9));
+        padding: clamp(1.4rem, 3.4vw, 2.4rem);
+      }
+
+      .final-cta p {
+        color: var(--text-muted);
+        margin: 0.8rem 0 0;
+        max-width: 62ch;
+      }
+
+      .status {
+        margin-top: 1rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(130, 228, 182, 0.3);
+        background: var(--success-soft);
+        color: #bff4dc;
+        padding: 0.38rem 0.7rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+      }
+
+      .status i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #59d9a1;
+      }
+
+      .footer {
+        color: #8d99bd;
+        font-size: 0.84rem;
+        padding: 0 0 2rem;
+      }
+
+      @media (max-width: 980px) {
+        .feature,
+        .value {
+          grid-column: span 12;
         }
 
-        .card {
-          border-radius: 16px;
+        .game {
+          grid-column: span 6;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .topbar-nav {
+          display: none;
+        }
+
+        .phase {
+          grid-template-columns: 1fr;
+          gap: 0.5rem;
+        }
+
+        .game {
+          grid-column: span 12;
         }
       }
     </style>
   </head>
   <body>
-    <main class="card" role="main" aria-label="Dontripit en construcción">
-      <p class="eyebrow"><span class="dot" aria-hidden="true"></span>Dontripit</p>
-      <h1>Dontripit está en construcción</h1>
-      <p class="lead">Estamos construyendo una nueva experiencia para catálogo y marketplace TCG.</p>
-      <p class="soon">Coming soon</p>
+    <header class="topbar">
+      <div class="page-shell topbar-inner">
+        <a class="brand" href="#inicio" aria-label="Ir al inicio de DontRipIt">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>DontRipIt</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Secciones de la landing">
+          <a href="#vision">Visión</a>
+          <a href="#v1">V1</a>
+          <a href="#roadmap">Roadmap</a>
+          <a href="#contacto">Acceso anticipado</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page-shell" id="inicio">
+      <section class="hero">
+        <span class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>V1 en construcción</span>
+        <h1>Infraestructura multi‑TCG para descubrir, consultar y escalar.</h1>
+        <p class="hero-lead">
+          En DontRipIt estamos construyendo una base seria para el ecosistema TCG: un catálogo multi‑juego
+          bien estructurado, un buscador útil para usuarios exigentes y una API preparada para producto,
+          integraciones y crecimiento hacia marketplace.
+        </p>
+        <div class="cta-row" role="group" aria-label="Acciones principales">
+          <a class="btn btn-primary" href="#contacto">Solicitar acceso anticipado</a>
+          <a class="btn btn-secondary" href="#v1">Ver alcance de la V1</a>
+        </div>
+      </section>
+
+      <section class="section surface" id="vision">
+        <h2>Qué es DontRipIt</h2>
+        <p class="section-intro">
+          DontRipIt no nace como un simple listado de cartas ni como un marketplace sin capa de datos.
+          Nace como una plataforma de descubrimiento y estructura de información para múltiples TCG,
+          diseñada para ofrecer consistencia en catálogo, rapidez en búsqueda y una base técnica capaz de
+          evolucionar de forma natural hacia colección, wishlist y compraventa entre usuarios.
+        </p>
+      </section>
+
+      <section class="section" id="v1">
+        <h2>Qué incluirá la V1</h2>
+        <p class="section-intro">
+          La primera versión se centra en resolver lo esencial con calidad: datos robustos, navegación clara y
+          cimientos de producto para crecer sin rehacer todo en cada etapa.
+        </p>
+        <div class="grid feature-grid">
+          <article class="feature">
+            <h3>Catálogo multi‑juego</h3>
+            <p>Estructura común para varios TCG con modelo escalable por juego, set, carta y variante.</p>
+          </article>
+          <article class="feature">
+            <h3>Buscador avanzado</h3>
+            <p>Filtros útiles por nombre, set, juego y atributos relevantes para encontrar resultados precisos.</p>
+          </article>
+          <article class="feature">
+            <h3>API estructurada</h3>
+            <p>Endpoints consistentes orientados a consumo interno y externo con una semántica de datos estable.</p>
+          </article>
+          <article class="feature">
+            <h3>Fichas de carta / print / set</h3>
+            <p>Detalle completo para explorar contexto, ediciones y relaciones entre entidades del catálogo.</p>
+          </article>
+          <article class="feature">
+            <h3>Cobertura progresiva</h3>
+            <p>Lanzamiento por etapas con ampliación continua de juegos y profundidad de metadatos.</p>
+          </article>
+          <article class="feature">
+            <h3>Base para colección y marketplace</h3>
+            <p>Arquitectura preparada para cuentas, wishlist, gestión de colección y futuro entorno de compraventa.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section surface" id="juegos">
+        <h2>Juegos del MVP y expansión</h2>
+        <p class="section-intro">
+          El enfoque es claramente multi‑juego desde el inicio. Priorizamos títulos con comunidad activa y
+          crecimiento sostenido para construir una plataforma verdaderamente transversal.
+        </p>
+        <div class="grid games">
+          <article class="game">
+            <span class="tag">MVP</span>
+            <h3>Pokémon</h3>
+            <p>Cobertura de catálogo y prints como bloque clave del lanzamiento inicial.</p>
+          </article>
+          <article class="game">
+            <span class="tag">MVP</span>
+            <h3>Magic: The Gathering</h3>
+            <p>Base sólida para navegación por sets y consulta detallada de cartas.</p>
+          </article>
+          <article class="game">
+            <span class="tag">MVP</span>
+            <h3>Yu‑Gi‑Oh!</h3>
+            <p>Integración en el núcleo de la V1 para reforzar utilidad real multi‑TCG.</p>
+          </article>
+          <article class="game">
+            <span class="tag">MVP</span>
+            <h3>Riftbound</h3>
+            <p>Seguimiento temprano para cubrir nuevas oportunidades dentro del ecosistema.</p>
+          </article>
+          <article class="game">
+            <span class="tag">Siguiente ola</span>
+            <h3>One Piece</h3>
+            <p>Expansión prevista tras estabilizar la primera versión de catálogo y API.</p>
+          </article>
+          <article class="game">
+            <span class="tag">Siguiente ola</span>
+            <h3>Dragon Ball</h3>
+            <p>Incorporación planificada en la siguiente fase de cobertura progresiva.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="roadmap">
+        <h2>Roadmap del producto</h2>
+        <p class="section-intro">
+          Construimos por fases, con objetivos concretos y entregables acumulativos. Cada etapa refuerza la
+          siguiente para mantener foco y credibilidad.
+        </p>
+        <div class="roadmap" aria-label="Roadmap visual por fases">
+          <article class="phase">
+            <span class="phase-id">Fase 1</span>
+            <p>Catálogo multi‑TCG con estructura robusta de cartas, prints y sets.</p>
+          </article>
+          <article class="phase">
+            <span class="phase-id">Fase 2</span>
+            <p>API estable para consumo de datos y automatización de funcionalidades de producto.</p>
+          </article>
+          <article class="phase">
+            <span class="phase-id">Fase 3</span>
+            <p>Cuentas de usuario, colección y wishlist como capa funcional personal.</p>
+          </article>
+          <article class="phase">
+            <span class="phase-id">Fase 4</span>
+            <p>Marketplace de nueva generación construido sobre una base de datos y experiencia ya maduras.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section surface">
+        <h2>Por qué DontRipIt</h2>
+        <p class="section-intro">
+          La propuesta combina lo mejor de dos mundos: la profundidad de un catálogo técnico y la ambición de un
+          marketplace moderno. No se trata solo de listar cartas ni solo de transaccionar, sino de crear una capa
+          de infraestructura útil para jugadores, coleccionistas y futuras integraciones del ecosistema TCG.
+        </p>
+        <div class="grid value-grid">
+          <article class="value">
+            <h3>Más que un catálogo</h3>
+            <p>Modelo de datos pensado para escalar en utilidad, no solo en volumen de resultados.</p>
+          </article>
+          <article class="value">
+            <h3>Más que un marketplace</h3>
+            <p>Primero calidad de información y experiencia de descubrimiento; después transacción con contexto.</p>
+          </article>
+          <article class="value">
+            <h3>Construcción realista</h3>
+            <p>Roadmap por fases, alcance claro de V1 y ejecución progresiva sin promesas vacías.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="final-cta" id="contacto">
+        <h2>Únete a la lista de acceso anticipado</h2>
+        <p>
+          Si quieres seguir el avance de la V1 o explorar colaboración técnica/comercial, déjanos tu contacto y
+          te compartiremos novedades de producto y próximas aperturas.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="mailto:hola@dontripit.com">Apuntarme a la lista de espera</a>
+          <a class="btn btn-secondary" href="mailto:hola@dontripit.com">Contactar con el equipo</a>
+        </div>
+        <span class="status"><i aria-hidden="true"></i>Estado actual: V1 en desarrollo activo</span>
+      </section>
+
+      <footer class="footer">
+        © <span id="year"></span> DontRipIt · Plataforma multi‑TCG en construcción.
+      </footer>
     </main>
+
+    <script>
+      document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
   </body>
 </html>

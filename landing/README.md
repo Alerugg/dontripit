@@ -1,8 +1,25 @@
-# Landing temporal pública
+# Landing pública de DontRipIt
 
-Este directorio contiene una landing pública temporal de **Dontripit** (coming soon), completamente estática e independiente del frontend principal.
+Este directorio contiene la **landing pública estática** de DontRipIt, separada del `frontend/` y `backend/`.
 
-Para desplegarla en Vercel, configura el proyecto con **Root Directory = `landing`**.
+## Objetivo actual
 
+La landing comunica la visión del producto y el alcance real de la **V1 en construcción**:
 
-Nota: `riot.txt` en este directorio se usa para la verificación de dominio de Riot y debe servirse de forma estática en `/riot.txt`.
+- catálogo multi‑TCG
+- buscador avanzado
+- base de datos robusta
+- API estructurada
+- base para colección, wishlist y futuro marketplace
+
+## Deploy en Vercel
+
+Configura el proyecto con:
+
+- **Root Directory**: `landing`
+
+Con la configuración actual, `index.html` se sirve como landing principal y los archivos estáticos del directorio se exponen directamente.
+
+## Riot verification
+
+`riot.txt` debe mantenerse en este directorio y servirse en `/riot.txt` para no romper la verificación de Riot.
