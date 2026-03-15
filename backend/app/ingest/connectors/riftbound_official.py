@@ -81,6 +81,9 @@ class RiftboundOfficialBackend(RiftboundBackend):
                             "verify key lifecycle (expired/revoked), product/API entitlement for riftbound-content-v1, "
                             "and that the Riot app/environment is enabled for this product."
                         )
+                        msg += " hint=verify RIFTBOUND_API_KEY and send it as X-Riot-Token"
+                    elif status == 403:
+                        msg += " hint=developer key may be expired or not authorized for this API"
                     elif status == 404:
                         msg += " hint=verify API base URL and path (/riftbound/content/v1/contents)"
                     raise RuntimeError(msg)
