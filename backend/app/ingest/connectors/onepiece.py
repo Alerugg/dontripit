@@ -209,6 +209,11 @@ class OnePieceConnector(SourceConnector):
 
         cards_payload_by_pack: dict[str, object] = {}
         pack_records = list(self._iter_pack_records(packs_payload))
+        tree_urls_by_pack = self._fetch_pack_card_file_urls_from_tree(
+            root_url=root_url,
+            language=language,
+            timeout=timeout,
+        )
         for raw_pack in pack_records:
             pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
             if not pack_id:
@@ -220,6 +225,7 @@ class OnePieceConnector(SourceConnector):
                 language=language,
                 timeout=timeout,
                 pack_id=pack_id or "unknown",
+                tree_urls_by_pack=tree_urls_by_pack,
             )
             if not card_urls:
                 continue
@@ -261,13 +267,111 @@ class OnePieceConnector(SourceConnector):
         path = f"{path_prefix}{language}/cards/{pack_id}"
         return f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
 
+    def _github_request_headers(self, *, url: str) -> dict[str, str] | None:
+        if "api.github.com" not in url:
+            return None
+        token = self._env("ONEPIECE_GITHUB_TOKEN", "")
+        if not token:
+            return None
+        return {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
     def _fetch_remote_json(self, *, url: str, timeout: int) -> object | None:
         try:
-            response = requests.get(url, timeout=timeout)
+            response = requests.get(url, timeout=timeout, headers=self._github_request_headers(url=url))
             response.raise_for_status()
             return response.json()
-        except (requests.RequestException, ValueError):
+        except requests.HTTPError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in {403, 429}:
+                remaining = str(getattr(exc.response, "headers", {}).get("X-RateLimit-Remaining") or "unknown")
+                reset = str(getattr(exc.response, "headers", {}).get("X-RateLimit-Reset") or "unknown")
+                self.logger.warning(
+                    "ingest onepiece remote request_failed url=%s reason=rate_limited status=%s remaining=%s reset=%s",
+                    url,
+                    status_code,
+                    remaining,
+                    reset,
+                )
+            else:
+                self.logger.warning(
+                    "ingest onepiece remote request_failed url=%s reason=http_error status=%s",
+                    url,
+                    status_code,
+                )
             return None
+        except requests.RequestException as exc:
+            self.logger.warning(
+                "ingest onepiece remote request_failed url=%s reason=network_error detail=%s",
+                url,
+                exc,
+            )
+            return None
+        except ValueError:
+            self.logger.warning("ingest onepiece remote request_failed url=%s reason=invalid_json", url)
+            return None
+
+    def _build_cards_tree_api_url(self, *, root_url: str) -> tuple[str, str] | None:
+        github_context = self._github_api_repo_context(root_url)
+        if github_context is None:
+            return None
+        owner, repo, ref, suffix = github_context
+        return f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1", suffix
+
+    def _fetch_pack_card_file_urls_from_tree(
+        self,
+        *,
+        root_url: str,
+        language: str,
+        timeout: int,
+    ) -> dict[str, list[str]]:
+        tree_context = self._build_cards_tree_api_url(root_url=root_url)
+        if tree_context is None:
+            self.logger.warning("ingest onepiece remote cards_tree_unavailable reason=unsupported_root_url")
+            return {}
+
+        tree_url, suffix = tree_context
+        payload = self._fetch_remote_json(url=tree_url, timeout=timeout)
+        if not isinstance(payload, dict):
+            self.logger.warning("ingest onepiece remote cards_tree_unavailable reason=invalid_tree_payload")
+            return {}
+
+        tree_rows = payload.get("tree")
+        if not isinstance(tree_rows, list):
+            self.logger.warning("ingest onepiece remote cards_tree_unavailable reason=missing_tree")
+            return {}
+
+        base_path = f"{suffix}/" if suffix else ""
+        cards_prefix = f"{base_path}{language}/cards/"
+        urls_by_pack: dict[str, list[str]] = {}
+
+        for row in tree_rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("type") or "").strip().lower() != "blob":
+                continue
+
+            raw_path = str(row.get("path") or "").strip()
+            if not raw_path.startswith(cards_prefix):
+                continue
+            relative_path = raw_path[len(cards_prefix) :]
+            if "/" not in relative_path:
+                continue
+
+            pack_id, filename = relative_path.split("/", 1)
+            if not pack_id or not filename.lower().endswith(".json"):
+                continue
+
+            urls_by_pack.setdefault(pack_id, []).append(self._build_url(root_url, raw_path))
+
+        for key, urls in urls_by_pack.items():
+            urls_by_pack[key] = sorted(set(urls))
+
+        if not urls_by_pack:
+            self.logger.warning("ingest onepiece remote cards_tree_unavailable reason=no_json_cards_found")
+        return urls_by_pack
 
     def _fetch_pack_card_file_urls(
         self,
@@ -276,7 +380,13 @@ class OnePieceConnector(SourceConnector):
         language: str,
         timeout: int,
         pack_id: str,
+        tree_urls_by_pack: dict[str, list[str]] | None = None,
     ) -> list[str]:
+        if tree_urls_by_pack:
+            from_tree = tree_urls_by_pack.get(pack_id)
+            if from_tree:
+                return sorted(from_tree)
+
         directory_api_url = self._build_cards_directory_api_url(root_url=root_url, language=language, pack_id=pack_id)
         if not directory_api_url:
             self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=missing_directory_api", pack_id)
