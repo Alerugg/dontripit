@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import date
 from pathlib import Path
 from typing import Iterable
 
 import requests
-from requests import HTTPError
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
@@ -168,9 +168,16 @@ class OnePieceConnector(SourceConnector):
                         "release_date": None,
                     }
 
-                card_id = str(self._record_get(raw_card, "card_id", "uuid") or card_name).strip().lower().replace(" ", "-")
+                logical_number = collector.split("_", 1)[0]
+                card_id = str(self._record_get(raw_card, "card_id", "uuid") or f"{set_code}:{logical_number}").strip().lower().replace(" ", "-")
                 if card_id not in cards_by_key:
                     cards_by_key[card_id] = {"id": card_id, "name": card_name, "prints": []}
+
+                variant = str(self._record_get(raw_card, "variant", "finish", "category") or "").strip()
+                if not variant and "_" in collector:
+                    variant = collector.split("_", 1)[1]
+                if not variant:
+                    variant = "default"
 
                 cards_by_key[card_id]["prints"].append(
                     {
@@ -178,7 +185,7 @@ class OnePieceConnector(SourceConnector):
                         "set_code": set_code,
                         "collector_number": collector,
                         "rarity": str(self._record_get(raw_card, "rarity", "rarity_code") or "").strip() or None,
-                        "variant": str(self._record_get(raw_card, "variant", "finish", "category") or "default").strip(),
+                        "variant": variant,
                         "image_url": self._resolve_remote_image_url(raw_card),
                     }
                 )
@@ -204,21 +211,24 @@ class OnePieceConnector(SourceConnector):
         pack_records = list(self._iter_pack_records(packs_payload))
         for raw_pack in pack_records:
             pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
-            candidate_names = list(self._cards_filename_candidates(raw_pack))
-            if not candidate_names:
-                self.logger.warning("ingest onepiece remote pack_skipped missing_filename pack=%s", pack_id or "unknown")
+            if not pack_id:
+                self.logger.warning("ingest onepiece remote pack_skipped missing_pack_id")
                 continue
-            cards_payload = self._fetch_cards_payload_with_fallback(
+
+            card_urls = self._fetch_pack_card_file_urls(
                 root_url=root_url,
                 language=language,
                 timeout=timeout,
                 pack_id=pack_id or "unknown",
-                candidate_names=candidate_names,
             )
-            if cards_payload is None:
+            if not card_urls:
                 continue
-            pack_key = str(candidate_names[0]).strip().lower()
-            cards_payload_by_pack[pack_key] = cards_payload
+
+            cards_payload_by_pack[pack_id.lower()] = []
+            for card_url in card_urls:
+                payload = self._fetch_remote_json(url=card_url, timeout=timeout)
+                if isinstance(payload, dict):
+                    cards_payload_by_pack[pack_id.lower()].append(payload)
 
         normalized = self._normalize_remote_payload(
             packs_payload=packs_payload,
@@ -229,72 +239,72 @@ class OnePieceConnector(SourceConnector):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
 
-    def _cards_filename_candidates(self, raw_pack: dict) -> Iterable[str]:
-        candidates: list[str] = []
+    @staticmethod
+    def _github_api_repo_context(root_url: str) -> tuple[str, str, str, str] | None:
+        pattern = r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)(?:/(.*))?$"
+        match = re.match(pattern, root_url.strip().rstrip("/"))
+        if not match:
+            return None
+        owner, repo, ref, suffix = match.groups()
+        return owner, repo, ref, (suffix or "").strip("/")
 
-        def _push(value: object) -> None:
-            text = str(value or "").strip()
-            if text and text not in candidates:
-                candidates.append(text)
+    def _build_cards_directory_api_url(self, *, root_url: str, language: str, pack_id: str) -> str | None:
+        override_base = self._env("ONEPIECE_PUNKRECORDS_CONTENTS_API_BASE_URL", "")
+        if override_base:
+            return self._build_url(override_base, f"{language}/cards/{pack_id}")
 
-        pack_id = self._record_get(raw_pack, "id", "code", "pack_id", "set_code")
-        _push(pack_id)
+        github_context = self._github_api_repo_context(root_url)
+        if github_context is None:
+            return None
+        owner, repo, ref, suffix = github_context
+        path_prefix = f"{suffix}/" if suffix else ""
+        path = f"{path_prefix}{language}/cards/{pack_id}"
+        return f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
 
-        title_parts = raw_pack.get("title_parts")
-        label = title_parts.get("label") if isinstance(title_parts, dict) else None
-        label_text = str(label or "").strip()
-        if label_text:
-            _push(label_text)
-            _push(label_text.lower())
-            _push(label_text.upper())
-            if "-" in label_text:
-                dehyphen = label_text.replace("-", "")
-                _push(dehyphen)
-                _push(dehyphen.lower())
-                _push(dehyphen.upper())
-        return candidates
+    def _fetch_remote_json(self, *, url: str, timeout: int) -> object | None:
+        try:
+            response = requests.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError):
+            return None
 
-    def _fetch_cards_payload_with_fallback(
+    def _fetch_pack_card_file_urls(
         self,
         *,
         root_url: str,
         language: str,
         timeout: int,
         pack_id: str,
-        candidate_names: list[str],
-    ) -> object | None:
-        failures: list[str] = []
-        for candidate in candidate_names:
-            cards_url = self._build_url(root_url, f"{language}/cards/{candidate}.json")
-            try:
-                response = requests.get(cards_url, timeout=timeout)
-                response.raise_for_status()
-                payload = response.json()
-            except HTTPError as exc:
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                if status_code == 404:
-                    failures.append(f"{candidate}:404")
-                    continue
-                failures.append(f"{candidate}:http_error")
-                continue
-            except ValueError:
-                failures.append(f"{candidate}:json_parse")
-                continue
-            except requests.RequestException:
-                failures.append(f"{candidate}:request_error")
-                continue
+    ) -> list[str]:
+        directory_api_url = self._build_cards_directory_api_url(root_url=root_url, language=language, pack_id=pack_id)
+        if not directory_api_url:
+            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=missing_directory_api", pack_id)
+            return []
 
-            if any(True for _ in self._iter_card_records(payload)):
-                return payload
-            failures.append(f"{candidate}:unsupported_structure")
+        payload = self._fetch_remote_json(url=directory_api_url, timeout=timeout)
+        if not isinstance(payload, list):
+            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=invalid_directory_listing", pack_id)
+            return []
 
-        self.logger.warning(
-            "ingest onepiece remote pack_skipped pack=%s candidates=%s failures=%s",
-            pack_id,
-            candidate_names,
-            failures,
-        )
-        return None
+        file_urls: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").lower() != "file":
+                continue
+            name = str(item.get("name") or "").strip().lower()
+            if not name.endswith(".json"):
+                continue
+            download_url = str(item.get("download_url") or "").strip()
+            path = str(item.get("path") or "").strip()
+            candidate = download_url or (self._build_url(root_url, path) if path else "")
+            if candidate:
+                file_urls.append(candidate)
+
+        if not file_urls:
+            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=no_json_files", pack_id)
+        return sorted(file_urls)
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"

@@ -1,6 +1,8 @@
 import json
 from copy import deepcopy
 from pathlib import Path
+
+import pytest
 from sqlalchemy import func, select
 
 from app import db
@@ -2379,8 +2381,147 @@ def test_onepiece_prints_have_non_null_primary_images_when_available(client):
     assert payload
     assert all(item.get("primary_image_url") for item in payload)
 
+def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(client, monkeypatch):
+    connector = get_connector("onepiece")
 
-def test_onepiece_remote_source_mode_uses_punkrecords_and_real_image_urls(client, monkeypatch):
+    class _FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            return self._payload
+
+    remote_packs = {
+        "569101": {
+            "id": "569101",
+            "raw_title": "Booster Pack Romance Dawn",
+            "title_parts": {"label": "OP-01"},
+            "code": "op-01",
+            "release_date": "2022-07-22",
+        }
+    }
+
+    directory_listing = [
+        {
+            "name": "OP01-001.json",
+            "type": "file",
+            "path": "english/cards/569101/OP01-001.json",
+            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001.json",
+        },
+        {
+            "name": "OP01-001_p1.json",
+            "type": "file",
+            "path": "english/cards/569101/OP01-001_p1.json",
+            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001_p1.json",
+        },
+    ]
+
+    urls_requested: list[str] = []
+
+    def _fake_get(url, timeout=0):
+        urls_requested.append(str(url))
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
+            return _FakeResponse(directory_listing)
+        if str(url).endswith("/english/cards/569101/OP01-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-001",
+                    "pack_id": "op-01",
+                    "name": "Monkey.D.Luffy",
+                    "rarity": "L",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+                    "img_url": "https://punkrecords.img.cdn/op01/op01-001-thumb.webp",
+                }
+            )
+        if str(url).endswith("/english/cards/569101/OP01-001_p1.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-001_p1",
+                    "pack_id": "op-01",
+                    "name": "Monkey.D.Luffy",
+                    "rarity": "L",
+                    "img_url": "https://punkrecords.img.cdn/op01/op01-001_p1-thumb.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert stats.records_inserted > 0
+    assert any(url.endswith("/english/packs.json") for url in urls_requested)
+    assert any("api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in url for url in urls_requested)
+    assert any(url.endswith("OP01-001.json") for url in urls_requested)
+    assert any(url.endswith("OP01-001_p1.json") for url in urls_requested)
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        prints_count = session.execute(
+            select(Print.id).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+        ).scalars().all()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
+            .order_by(PrintImage.url)
+        ).scalars().all()
+
+    assert len(prints_count) == 2
+    assert image_urls
+    assert "https://punkrecords.img.cdn/op01/op01-001.webp" in image_urls
+    assert "https://punkrecords.img.cdn/op01/op01-001_p1-thumb.webp" in image_urls
+
+
+def test_onepiece_remote_raises_when_pack_directory_listing_has_no_cards(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569006", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+
+    def _fake_get(url, timeout=0):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569006" in str(url):
+            return _FakeResponse([])
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    with pytest.raises(ValueError, match="found zero cards"):
+        connector._load_remote()
+
+
+def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_pack_directories(client, monkeypatch):
     connector = get_connector("onepiece")
 
     class _FakeResponse:
@@ -2396,275 +2537,40 @@ def test_onepiece_remote_source_mode_uses_punkrecords_and_real_image_urls(client
     remote_packs = {
         "569006": {
             "id": "569006",
-            "raw_title": "Starter Deck 1",
-            "title_parts": {"label": "OP-01"},
-            "code": "op-01",
-            "release_date": "2022-07-22",
-        },
-        "569007": {
-            "id": "569007",
-            "raw_title": "Starter Deck 10",
-            "title_parts": {"label": "ST-10"},
-            "code": "st-10",
-            "release_date": "2023-11-10",
-        },
-    }
-    op01_cards = [
-        {
-            "id": "OP01-001",
-            "pack_id": "op-01",
-            "name": "Monkey.D.Luffy",
-            "rarity": "L",
-            "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
-        }
-    ]
-
-    urls_requested: list[str] = []
-
-    st10_cards = {
-        "cards": [
-            {
-                "id": "ST10-001",
-                "pack_id": "st-10",
-                "name": "Monkey.D.Luffy",
-                "rarity": "LEADER",
-                "img_thumb_url": "https://punkrecords.img.cdn/st10/st10-001-thumb.webp",
-            },
-            {
-                "id": "ST10-002",
-                "pack_id": "st-10",
-                "name": "Roronoa Zoro",
-                "rarity": "SR",
-                "img_full_url": "https://example.cdn.onepiece/st10/st10-002.jpg",
-            },
-        ]
-    }
-
-    def _fake_get(url, timeout=0):
-        urls_requested.append(str(url))
-        if str(url).endswith("/english/packs.json"):
-            return _FakeResponse(remote_packs)
-        if str(url).endswith("/english/cards/569006.json"):
-            return _FakeResponse(None)
-        if str(url).endswith("/english/cards/569007.json"):
-            return _FakeResponse(None)
-        if str(url).endswith("/english/cards/op-01.json"):
-            return _FakeResponse(op01_cards)
-        if str(url).endswith("/english/cards/OP-01.json"):
-            return _FakeResponse(op01_cards)
-        if str(url).endswith("/english/cards/st-10.json"):
-            return _FakeResponse(st10_cards)
-        if str(url).endswith("/english/cards/ST-10.json"):
-            return _FakeResponse(st10_cards)
-        raise AssertionError(f"unexpected url requested: {url}")
-
-    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setenv("ONEPIECE_IMAGE_FALLBACK_URL", "https://cdn.fallback/onepiece-missing.png")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
-
-    with db.SessionLocal() as session:
-        stats = connector.run(session, fixture=False, incremental=False)
-        session.commit()
-
-    assert stats.records_inserted > 0
-    assert any(url.endswith("/english/packs.json") for url in urls_requested)
-    assert any(
-        url.endswith("/english/cards/op-01.json") or url.endswith("/english/cards/OP-01.json")
-        for url in urls_requested
-    )
-    assert any(
-        url.endswith("/english/cards/st-10.json") or url.endswith("/english/cards/ST-10.json")
-        for url in urls_requested
-    )
-
-    with db.SessionLocal() as session:
-        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
-        image_urls = session.execute(
-            select(PrintImage.url)
-            .join(Print, Print.id == PrintImage.print_id)
-            .join(Set, Set.id == Print.set_id)
-            .where(Set.game_id == game.id)
-            .order_by(PrintImage.url)
-        ).scalars().all()
-
-    assert image_urls
-    assert any(url == "https://cdn.fallback/onepiece-missing.png" for url in image_urls)
-    assert any("punkrecords.img.cdn" in url for url in image_urls)
-    assert all("example.cdn.onepiece" not in url for url in image_urls)
-
-
-def test_onepiece_remote_cards_filename_fallback_uses_pack_id_then_label_variants(client, monkeypatch):
-    connector = get_connector("onepiece")
-
-    class _FakeResponse:
-        def __init__(self, payload=None, status_code=200, json_error: bool = False):
-            self._payload = payload
-            self.status_code = status_code
-            self._json_error = json_error
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                from requests import HTTPError
-
-                error = HTTPError(f"status={self.status_code}")
-                error.response = self
-                raise error
-
-        def json(self):
-            if self._json_error:
-                raise ValueError("invalid json")
-            return self._payload
-
-    remote_packs = [
-        {
-            "id": "569006",
-            "code": "op-01",
-            "name": "Romance Dawn",
-            "title_parts": {"label": "OP-01"},
-            "release_date": "2022-07-22",
-        }
-    ]
-    op01_cards = [
-        {
-            "id": "OP01-001",
-            "pack_id": "op-01",
-            "name": "Monkey.D.Luffy",
-            "rarity": "L",
-            "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
-        }
-    ]
-
-    urls_requested: list[str] = []
-
-    def _fake_get(url, timeout=0):
-        urls_requested.append(str(url))
-        if str(url).endswith("/english/packs.json"):
-            return _FakeResponse(remote_packs)
-        if str(url).endswith("/english/cards/569006.json"):
-            return _FakeResponse(None, status_code=404)
-        if str(url).endswith("/english/cards/OP-01.json"):
-            return _FakeResponse(None, status_code=200, json_error=True)
-        if str(url).endswith("/english/cards/op-01.json"):
-            return _FakeResponse(op01_cards)
-        if str(url).endswith("/english/cards/OP01.json"):
-            return _FakeResponse(op01_cards)
-        raise AssertionError(f"unexpected url requested: {url}")
-
-    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
-
-    with db.SessionLocal() as session:
-        stats = connector.run(session, fixture=False, incremental=False)
-        session.commit()
-
-    assert stats.records_inserted > 0
-    assert any(url.endswith("/english/cards/569006.json") for url in urls_requested)
-    assert any(url.endswith("/english/cards/OP-01.json") for url in urls_requested)
-    assert any(
-        url.endswith("/english/cards/op-01.json") or url.endswith("/english/cards/OP01.json")
-        for url in urls_requested
-    )
-
-
-def test_onepiece_remote_raises_when_packs_exist_but_cards_resolve_to_empty(client, monkeypatch):
-    connector = get_connector("onepiece")
-
-    class _FakeResponse:
-        def __init__(self, payload=None, status_code=200):
-            self._payload = payload
-            self.status_code = status_code
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                from requests import HTTPError
-
-                error = HTTPError(f"status={self.status_code}")
-                error.response = self
-                raise error
-
-        def json(self):
-            return self._payload
-
-    remote_packs = {
-        "569006": {"id": "569006", "code": "op-01", "name": "Romance Dawn", "title_parts": {"label": "OP-01"}}
-    }
-
-    def _fake_get(url, timeout=0):
-        if str(url).endswith("/english/packs.json"):
-            return _FakeResponse(remote_packs)
-        return _FakeResponse(None, status_code=404)
-
-    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
-
-    error = None
-    with db.SessionLocal() as session:
-        try:
-            connector.run(session, fixture=False, incremental=False)
-        except ValueError as exc:
-            error = exc
-
-    assert error is not None
-    assert "zero cards" in str(error).lower()
-
-
-def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_dict_packs(client, monkeypatch):
-    connector = get_connector("onepiece")
-
-    class _FakeResponse:
-        def __init__(self, payload=None, status_code=200):
-            self._payload = payload
-            self.status_code = status_code
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                from requests import HTTPError
-
-                error = HTTPError(f"status={self.status_code}")
-                error.response = self
-                raise error
-
-        def json(self):
-            return self._payload
-
-    remote_packs = {
-        "569006": {
-            "id": "569006",
             "raw_title": "Booster Pack Romance Dawn",
             "title_parts": {"label": "OP-01"},
             "code": "op-01",
             "release_date": "2022-07-22",
         }
     }
-    cards_payload = {
-        "OP01-001": {
-            "id": "OP01-001",
-            "pack_id": "op-01",
-            "name": "Monkey.D.Luffy",
-            "rarity": "L",
-            "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+    directory_listing = [
+        {
+            "name": "OP01-001.json",
+            "type": "file",
+            "path": "english/cards/569006/OP01-001.json",
+            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json",
         }
-    }
+    ]
 
     def _fake_get(url, timeout=0):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if str(url).endswith("/english/cards/569006.json"):
-            return _FakeResponse(None, status_code=404)
-        if str(url).endswith("/english/cards/OP-01.json"):
-            return _FakeResponse(cards_payload)
-        if str(url).endswith("/english/cards/op-01.json"):
-            return _FakeResponse(cards_payload)
+        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569006" in str(url):
+            return _FakeResponse(directory_listing)
+        if str(url).endswith("/english/cards/569006/OP01-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-001",
+                    "pack_id": "op-01",
+                    "name": "Monkey.D.Luffy",
+                    "rarity": "L",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+                }
+            )
         raise AssertionError(f"unexpected url requested: {url}")
 
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
 
@@ -2688,37 +2594,45 @@ def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkey
         def json(self):
             return self._payload
 
-    remote_packs = [{"id": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
-    first_cards = [
+    remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    listing = [
         {
-            "id": "OP01-025",
-            "pack_id": "op-01",
-            "name": "Roronoa Zoro",
-            "rarity": "SR",
-            "img_full_url": "https://example.cdn.onepiece/op01/op01-025.jpg",
+            "name": "OP01-025.json",
+            "type": "file",
+            "path": "english/cards/569101/OP01-025.json",
+            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-025.json",
         }
     ]
-    second_cards = [
-        {
-            "id": "OP01-025",
-            "pack_id": "op-01",
-            "name": "Roronoa Zoro",
-            "rarity": "SR",
-            "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
-        }
-    ]
+    first_cards = {
+        "id": "OP01-025",
+        "pack_id": "569101",
+        "set_code": "op-01",
+        "name": "Roronoa Zoro",
+        "rarity": "SR",
+        "img_full_url": "https://example.cdn.onepiece/op01/op01-025.jpg",
+    }
+    second_cards = {
+        "id": "OP01-025",
+        "pack_id": "569101",
+        "set_code": "op-01",
+        "name": "Roronoa Zoro",
+        "rarity": "SR",
+        "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+    }
 
     state = {"phase": "first"}
 
     def _fake_get(url, timeout=0):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if str(url).endswith("/english/cards/op-01.json"):
+        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
+            return _FakeResponse(listing)
+        if str(url).endswith("/english/cards/569101/OP01-025.json"):
             return _FakeResponse(first_cards if state["phase"] == "first" else second_cards)
         raise AssertionError(f"unexpected url requested: {url}")
 
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setenv("ONEPIECE_IMAGE_FALLBACK_URL", "https://cdn.fallback/onepiece-missing.png")
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
@@ -2754,26 +2668,35 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
         def json(self):
             return self._payload
 
-    remote_packs = [{"id": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
-    op01_cards = [
+    remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    directory_listing = [
         {
-            "id": "OP01-025",
-            "pack_id": "op-01",
-            "name": "Roronoa Zoro",
-            "rarity": "SR",
-            "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+            "name": "OP01-025.json",
+            "type": "file",
+            "path": "english/cards/569101/OP01-025.json",
+            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-025.json",
         }
     ]
+    op01_card = {
+        "id": "OP01-025",
+        "pack_id": "569101",
+        "set_code": "op-01",
+        "name": "Roronoa Zoro",
+        "rarity": "SR",
+        "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+    }
 
     def _fake_get(url, timeout=0):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if str(url).endswith("/english/cards/op-01.json"):
-            return _FakeResponse(op01_cards)
+        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
+            return _FakeResponse(directory_listing)
+        if str(url).endswith("/english/cards/569101/OP01-025.json"):
+            return _FakeResponse(op01_card)
         raise AssertionError(f"unexpected url requested: {url}")
 
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
-    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
 
