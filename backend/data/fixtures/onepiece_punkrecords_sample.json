@@ -1,0 +1,87 @@
+{
+  "source": "punk_records",
+  "language": "en",
+  "sets": [
+    {
+      "id": "OP-01",
+      "code": "op-01",
+      "name": "Romance Dawn",
+      "type": "booster",
+      "release_date": "2022-07-22"
+    },
+    {
+      "id": "EB-01",
+      "code": "eb-01",
+      "name": "Memorial Collection",
+      "type": "booster",
+      "release_date": "2024-05-03"
+    },
+    {
+      "id": "ST-10",
+      "code": "st-10",
+      "name": "The Three Captains",
+      "type": "starter_deck",
+      "release_date": "2023-11-10"
+    }
+  ],
+  "cards": [
+    {
+      "id": "onepiece-luffy-001",
+      "name": "Monkey.D.Luffy",
+      "prints": [
+        {
+          "id": "op01-001-default-en",
+          "set_code": "op-01",
+          "collector_number": "OP01-001",
+          "rarity": "L",
+          "variant": "default",
+          "image_url": "https://example.cdn.onepiece/op01/op01-001.jpg"
+        },
+        {
+          "id": "st10-001-default-en",
+          "set_code": "st-10",
+          "collector_number": "ST10-001",
+          "rarity": "LEADER",
+          "variant": "default",
+          "image_url": "https://example.cdn.onepiece/st10/st10-001.jpg"
+        }
+      ]
+    },
+    {
+      "id": "onepiece-zoro-002",
+      "name": "Roronoa Zoro",
+      "prints": [
+        {
+          "id": "op01-025-default-en",
+          "set_code": "op-01",
+          "collector_number": "OP01-025",
+          "rarity": "SR",
+          "variant": "default",
+          "image_url": "https://example.cdn.onepiece/op01/op01-025.jpg"
+        },
+        {
+          "id": "eb01-012-parallel-en",
+          "set_code": "eb-01",
+          "collector_number": "EB01-012",
+          "rarity": "R",
+          "variant": "parallel",
+          "image_url": "https://example.cdn.onepiece/eb01/eb01-012-parallel.jpg"
+        }
+      ]
+    },
+    {
+      "id": "onepiece-nami-003",
+      "name": "Nami",
+      "prints": [
+        {
+          "id": "eb01-004-default-en",
+          "set_code": "eb-01",
+          "collector_number": "EB01-004",
+          "rarity": "UC",
+          "variant": "default",
+          "image_url": "https://example.cdn.onepiece/eb01/eb01-004.jpg"
+        }
+      ]
+    }
+  ]
+}
