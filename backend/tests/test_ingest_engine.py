@@ -2378,3 +2378,135 @@ def test_onepiece_prints_have_non_null_primary_images_when_available(client):
     payload = response.get_json()
     assert payload
     assert all(item.get("primary_image_url") for item in payload)
+
+
+def test_onepiece_remote_source_mode_uses_punkrecords_and_real_image_urls(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_sets = [
+        {"id": "OP-01", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"},
+        {"id": "ST-10", "code": "st-10", "name": "The Three Captains", "release_date": "2023-11-10"},
+    ]
+    remote_cards = [
+        {
+            "id": "OP01-001",
+            "set_code": "op-01",
+            "name": "Monkey.D.Luffy",
+            "rarity": "L",
+            "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+        },
+        {
+            "id": "ST10-001",
+            "set_code": "st-10",
+            "name": "Monkey.D.Luffy",
+            "rarity": "LEADER",
+            "img_thumb_url": "https://punkrecords.img.cdn/st10/st10-001-thumb.webp",
+        },
+        {
+            "id": "ST10-002",
+            "set_code": "st-10",
+            "name": "Roronoa Zoro",
+            "rarity": "SR",
+            "img_full_url": "https://example.cdn.onepiece/st10/st10-002.jpg",
+        },
+    ]
+
+    urls_requested: list[str] = []
+
+    def _fake_get(url, timeout=0):
+        urls_requested.append(str(url))
+        if str(url).endswith("/sets"):
+            return _FakeResponse(remote_sets)
+        if str(url).endswith("/cards"):
+            return _FakeResponse(remote_cards)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_BASE_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_SETS_PATH", "/sets")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_CARDS_PATH", "/cards")
+    monkeypatch.setenv("ONEPIECE_IMAGE_FALLBACK_URL", "https://cdn.fallback/onepiece-missing.png")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert stats.records_inserted > 0
+    assert any(url.endswith("/sets") for url in urls_requested)
+    assert any(url.endswith("/cards") for url in urls_requested)
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
+            .order_by(PrintImage.url)
+        ).scalars().all()
+
+    assert image_urls
+    assert any(url == "https://cdn.fallback/onepiece-missing.png" for url in image_urls)
+    assert any("punkrecords.img.cdn" in url for url in image_urls)
+    assert all("example.cdn.onepiece" not in url for url in image_urls)
+
+
+def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_sets = [{"id": "OP-01", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    remote_cards = [
+        {
+            "id": "OP01-025",
+            "set_code": "op-01",
+            "name": "Roronoa Zoro",
+            "rarity": "SR",
+            "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+        }
+    ]
+
+    def _fake_get(url, timeout=0):
+        if str(url).endswith("/sets"):
+            return _FakeResponse(remote_sets)
+        if str(url).endswith("/cards"):
+            return _FakeResponse(remote_cards)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_BASE_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_SETS_PATH", "/sets")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_CARDS_PATH", "/cards")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    with db.SessionLocal() as session:
+        first = connector.run(session, fixture=False, incremental=True)
+        session.commit()
+    with db.SessionLocal() as session:
+        second = connector.run(session, fixture=False, incremental=True)
+        session.commit()
+
+    assert first.records_inserted > 0
+    assert second.records_inserted == 0
+    assert second.records_updated == 0
+    assert second.files_skipped > 0

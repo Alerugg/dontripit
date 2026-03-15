@@ -1,7 +1,7 @@
 # Ingest connector guide (Don’tRipIt)
 
 ## Framework común
-Todos los conectores del catálogo (Pokémon, MTG, Yu-Gi-Oh!, Riftbound) siguen este patrón:
+Todos los conectores del catálogo (Pokémon, MTG, Yu-Gi-Oh!, Riftbound, One Piece) siguen este patrón:
 
 1. `load_start` → origen fixture/remote, filtros y limit.
 2. `load_progress` → progreso incremental de lotes.
@@ -55,6 +55,14 @@ Todos los conectores del catálogo (Pokémon, MTG, Yu-Gi-Oh!, Riftbound) siguen 
 - Ambos backends mapean al mismo esquema lógico y comparten normalización `{set, card, print}`.
 - Dedupe por checksum + `riftbound_id` y fallback funcional `(set_id, card_id, collector_number, language, variant)`.
 - Guarda `PrintIdentifier(source=riftbound)`; usa imagen oficial (`art.fullURL` / `art.thumbnailURL`) cuando existe y cae a placeholder local solo cuando no hay asset usable.
+
+### onepiece
+- Modo configurable por `ONEPIECE_SOURCE=fixture|remote`.
+- `fixture` conserva `onepiece_punkrecords_sample.json` para tests/local reproducible.
+- `remote` consume Punk Records por dos endpoints (`sets` + `cards`) configurables vía env (`ONEPIECE_PUNKRECORDS_*`).
+- La imagen primaria prioriza `img_full_url`; fallback ordenado: `image_url` → `img_url` → `img_thumb_url` → `image`.
+- Si no hay URL válida, usa `ONEPIECE_IMAGE_FALLBACK_URL` (controlado; sin URLs fake `example.cdn.onepiece` en remoto).
+- Dedupe/idempotencia mantiene `print_key` (`onepiece:{set}:{collector_norm}:{lang}:{variant}`) + checksum incremental.
 
 ## Dataset mínimo útil recomendado (QA frontend)
 - Yu-Gi-Oh!: `limit >= 120`.

@@ -262,6 +262,12 @@ python -m app.ingest.run ygoprodeck_yugioh --incremental true --limit 200
 
 # Riftbound (fixture/manual only, remote deshabilitado)
 python -m app.ingest.run riftbound --fixture true --path data/fixtures --incremental false --limit 200
+
+# One Piece fixture (Punk Records sample local)
+python -m app.ingest.run onepiece --fixture true --path data/fixtures/onepiece_punkrecords_sample.json --incremental false
+
+# One Piece remoto (Punk Records)
+ONEPIECE_SOURCE=remote python -m app.ingest.run onepiece --fixture false --incremental true
 ```
 
 ### Daily refresh (Pokemon + MTG + Yu-Gi-Oh + Riftbound + reindex)
