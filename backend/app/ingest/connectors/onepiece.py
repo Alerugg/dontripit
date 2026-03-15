@@ -86,29 +86,74 @@ class OnePieceConnector(SourceConnector):
             return candidate
         return self._env("ONEPIECE_IMAGE_FALLBACK_URL", self._DEFAULT_IMAGE_FALLBACK_URL)
 
+    def _iter_pack_records(self, packs_payload: object) -> Iterable[dict]:
+        if isinstance(packs_payload, list):
+            for raw_pack in packs_payload:
+                if isinstance(raw_pack, dict):
+                    yield raw_pack
+            return
+
+        if isinstance(packs_payload, dict):
+            for pack_key, raw_pack in packs_payload.items():
+                if isinstance(raw_pack, dict):
+                    pack_copy = dict(raw_pack)
+                    if not pack_copy.get("id"):
+                        pack_copy["id"] = str(pack_key)
+                    yield pack_copy
+
+    def _iter_card_records(self, cards_payload: object) -> Iterable[dict]:
+        if isinstance(cards_payload, list):
+            for raw_card in cards_payload:
+                if isinstance(raw_card, dict):
+                    yield raw_card
+            return
+
+        if isinstance(cards_payload, dict):
+            list_keys = ("cards", "data", "results", "items")
+            for key in list_keys:
+                nested = cards_payload.get(key)
+                if isinstance(nested, list):
+                    for raw_card in nested:
+                        if isinstance(raw_card, dict):
+                            yield raw_card
+                    return
+
+            for card_key, raw_card in cards_payload.items():
+                if isinstance(raw_card, dict):
+                    card_copy = dict(raw_card)
+                    if not card_copy.get("id"):
+                        card_copy["id"] = str(card_key)
+                    yield card_copy
+
     def _normalize_remote_payload(self, *, packs_payload: object, cards_payload_by_pack: dict[str, object], language: str) -> dict:
         normalized_sets: dict[str, dict] = {}
-        raw_packs = packs_payload if isinstance(packs_payload, list) else []
-        for raw_pack in raw_packs:
-            if not isinstance(raw_pack, dict):
-                continue
-            set_code = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip().lower()
+        for raw_pack in self._iter_pack_records(packs_payload):
+            title_parts = raw_pack.get("title_parts") if isinstance(raw_pack.get("title_parts"), dict) else {}
+            set_code = str(
+                self._record_get(raw_pack, "code", "pack_id", "set_code", "id")
+                or title_parts.get("label")
+                or raw_pack.get("raw_title")
+                or ""
+            ).strip().lower()
             if not set_code:
                 continue
             normalized_sets[set_code] = {
                 "id": str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or set_code).strip(),
                 "code": set_code,
-                "name": str(self._record_get(raw_pack, "name", "display_name", "set_name", "code") or set_code).strip(),
+                "name": str(
+                    self._record_get(raw_pack, "name", "display_name", "set_name")
+                    or title_parts.get("label")
+                    or raw_pack.get("raw_title")
+                    or raw_pack.get("code")
+                    or set_code
+                ).strip(),
                 "type": str(self._record_get(raw_pack, "type", "category") or "").strip() or None,
                 "release_date": self._record_get(raw_pack, "release_date", "date_release", "released_at", "date"),
             }
 
         cards_by_key: dict[str, dict] = {}
         for pack_code, payload in cards_payload_by_pack.items():
-            raw_cards = payload if isinstance(payload, list) else []
-            for raw_card in raw_cards:
-                if not isinstance(raw_card, dict):
-                    continue
+            for raw_card in self._iter_card_records(payload):
                 card_name = str(self._record_get(raw_card, "name", "card_name") or "").strip()
                 set_code = str(self._record_get(raw_card, "pack_id", "set_code", "set", "set_id") or pack_code).strip().lower()
                 collector = str(self._record_get(raw_card, "id", "code", "collector_number", "number") or "").strip()
@@ -156,9 +201,8 @@ class OnePieceConnector(SourceConnector):
         packs_payload = packs_response.json()
 
         cards_payload_by_pack: dict[str, object] = {}
-        for raw_pack in packs_payload if isinstance(packs_payload, list) else []:
-            if not isinstance(raw_pack, dict):
-                continue
+        pack_records = list(self._iter_pack_records(packs_payload))
+        for raw_pack in pack_records:
             pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
             candidate_names = list(self._cards_filename_candidates(raw_pack))
             if not candidate_names:
@@ -181,7 +225,7 @@ class OnePieceConnector(SourceConnector):
             cards_payload_by_pack=cards_payload_by_pack,
             language=language,
         )
-        if isinstance(packs_payload, list) and packs_payload and not normalized.get("cards"):
+        if pack_records and not normalized.get("cards"):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
 
@@ -240,9 +284,9 @@ class OnePieceConnector(SourceConnector):
                 failures.append(f"{candidate}:request_error")
                 continue
 
-            if isinstance(payload, list):
+            if any(True for _ in self._iter_card_records(payload)):
                 return payload
-            failures.append(f"{candidate}:not_list")
+            failures.append(f"{candidate}:unsupported_structure")
 
         self.logger.warning(
             "ingest onepiece remote pack_skipped pack=%s candidates=%s failures=%s",
