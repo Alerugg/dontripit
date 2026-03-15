@@ -1,16 +1,17 @@
-# Landing pública de DontRipIt
+# Landing pública de Dontripit
 
-Este directorio contiene la **landing pública estática** de DontRipIt, separada del `frontend/` y `backend/`.
+Este directorio contiene la **landing pública estática** de Dontripit, separada del `frontend/` y `backend/`.
 
 ## Objetivo actual
 
-La landing comunica la visión del producto y el alcance real de la **V1 en construcción**:
+La landing comunica la visión de plataforma y el alcance real de la **V1 en construcción**:
 
-- catálogo multi‑TCG
-- buscador avanzado
-- base de datos robusta
-- API estructurada
-- base para colección, wishlist y futuro marketplace
+- catálogo multi-TCG
+- buscador estructurado
+- API de datos
+- cobertura progresiva por juegos
+- base para colección, wishlist y marketplace futuro
+- bloque de comunidad y contacto oficial
 
 ## Deploy en Vercel
 
