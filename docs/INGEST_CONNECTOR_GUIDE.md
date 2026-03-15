@@ -60,6 +60,7 @@ Todos los conectores del catálogo (Pokémon, MTG, Yu-Gi-Oh!, Riftbound, One Pie
 - Modo configurable por `ONEPIECE_SOURCE=fixture|remote`.
 - `fixture` conserva `onepiece_punkrecords_sample.json` para tests/local reproducible.
 - `remote` consume Punk Records por dos endpoints (`sets` + `cards`) configurables vía env (`ONEPIECE_PUNKRECORDS_*`).
+- Soporta auth opcional con `GITHUB_TOKEN` para `api.github.com`; recomendado para evitar rate limits (403/429) en ingest remoto.
 - La imagen primaria prioriza `img_full_url`; fallback ordenado: `image_url` → `img_url` → `img_thumb_url` → `image`.
 - Si no hay URL válida, usa `ONEPIECE_IMAGE_FALLBACK_URL` (controlado; sin URLs fake `example.cdn.onepiece` en remoto).
 - Dedupe/idempotencia mantiene `print_key` (`onepiece:{set}:{collector_norm}:{lang}:{variant}`) + checksum incremental.

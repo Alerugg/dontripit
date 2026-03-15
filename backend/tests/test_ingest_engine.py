@@ -2684,3 +2684,132 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
     assert second.records_inserted == 0
     assert second.records_updated == 0
     assert second.files_skipped > 0
+
+
+def test_onepiece_github_api_uses_github_token_header(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    captured_headers: dict[str, str] = {}
+
+    def _fake_get(url, timeout=0, headers=None):
+        captured_headers.update(headers or {})
+        return _FakeResponse()
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    payload = connector._fetch_remote_json(
+        url="https://api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1",
+        timeout=30,
+    )
+
+    assert payload == {"ok": True}
+    assert captured_headers.get("Authorization") == "Bearer ghp_test_token"
+    assert captured_headers.get("Accept") == "application/vnd.github+json"
+
+
+def test_onepiece_github_api_rate_limited_raises_actionable_error(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self):
+            self.status_code = 403
+            self.headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1710000000"}
+
+        def raise_for_status(self):
+            from requests import HTTPError
+
+            error = HTTPError("status=403")
+            error.response = self
+            raise error
+
+        def json(self):
+            return {}
+
+    def _fake_get(url, timeout=0, headers=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    with pytest.raises(RuntimeError, match="Set GITHUB_TOKEN"):
+        connector._fetch_remote_json(
+            url="https://api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1",
+            timeout=30,
+        )
+
+
+def test_onepiece_remote_tree_listing_returns_pack_urls(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "tree": [
+                    {"path": "english/cards/569006/OP01-001.json", "type": "blob"},
+                    {"path": "english/cards/569006/OP01-001_p1.json", "type": "blob"},
+                    {"path": "english/cards/569006/README.md", "type": "blob"},
+                ]
+            }
+
+    def _fake_get(url, timeout=0, headers=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    result = connector._fetch_pack_card_file_urls_from_tree(
+        root_url="https://raw.githubusercontent.com/DevTheFrog/punk-records/main",
+        language="english",
+        timeout=30,
+    )
+
+    assert sorted(result["569006"]) == [
+        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json",
+        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001_p1.json",
+    ]
+
+
+def test_onepiece_remote_contents_listing_returns_json_download_urls(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [
+                {
+                    "type": "file",
+                    "name": "OP01-001.json",
+                    "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json",
+                },
+                {"type": "file", "name": "README.md", "download_url": "https://example/README.md"},
+            ]
+
+    def _fake_get(url, timeout=0, headers=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    result = connector._fetch_pack_card_file_urls(
+        root_url="https://raw.githubusercontent.com/DevTheFrog/punk-records/main",
+        language="english",
+        timeout=30,
+        pack_id="569006",
+        tree_urls_by_pack={},
+    )
+
+    assert result == [
+        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json"
+    ]
