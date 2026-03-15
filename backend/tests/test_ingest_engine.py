@@ -2410,29 +2410,21 @@ def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(clie
         }
     }
 
-    directory_listing = [
-        {
-            "name": "OP01-001.json",
-            "type": "file",
-            "path": "english/cards/569101/OP01-001.json",
-            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001.json",
-        },
-        {
-            "name": "OP01-001_p1.json",
-            "type": "file",
-            "path": "english/cards/569101/OP01-001_p1.json",
-            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001_p1.json",
-        },
-    ]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569101/OP01-001.json", "type": "blob"},
+            {"path": "english/cards/569101/OP01-001_p1.json", "type": "blob"},
+        ]
+    }
 
     urls_requested: list[str] = []
 
-    def _fake_get(url, timeout=0):
+    def _fake_get(url, timeout=0, headers=None):
         urls_requested.append(str(url))
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
-            return _FakeResponse(directory_listing)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
         if str(url).endswith("/english/cards/569101/OP01-001.json"):
             return _FakeResponse(
                 {
@@ -2467,7 +2459,7 @@ def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(clie
 
     assert stats.records_inserted > 0
     assert any(url.endswith("/english/packs.json") for url in urls_requested)
-    assert any("api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in url for url in urls_requested)
+    assert any("api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url for url in urls_requested)
     assert any(url.endswith("OP01-001.json") for url in urls_requested)
     assert any(url.endswith("OP01-001_p1.json") for url in urls_requested)
 
@@ -2490,7 +2482,7 @@ def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(clie
     assert "https://punkrecords.img.cdn/op01/op01-001_p1-thumb.webp" in image_urls
 
 
-def test_onepiece_remote_raises_when_pack_directory_listing_has_no_cards(client, monkeypatch):
+def test_onepiece_remote_raises_when_pack_tree_listing_has_no_cards(client, monkeypatch):
     connector = get_connector("onepiece")
 
     class _FakeResponse:
@@ -2505,9 +2497,11 @@ def test_onepiece_remote_raises_when_pack_directory_listing_has_no_cards(client,
 
     remote_packs = [{"id": "569006", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
 
-    def _fake_get(url, timeout=0):
+    def _fake_get(url, timeout=0, headers=None):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse({"tree": []})
         if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569006" in str(url):
             return _FakeResponse([])
         raise AssertionError(f"unexpected url requested: {url}")
@@ -2543,20 +2537,13 @@ def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_pack_direct
             "release_date": "2022-07-22",
         }
     }
-    directory_listing = [
-        {
-            "name": "OP01-001.json",
-            "type": "file",
-            "path": "english/cards/569006/OP01-001.json",
-            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json",
-        }
-    ]
+    tree_listing = {"tree": [{"path": "english/cards/569006/OP01-001.json", "type": "blob"}]}
 
-    def _fake_get(url, timeout=0):
+    def _fake_get(url, timeout=0, headers=None):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569006" in str(url):
-            return _FakeResponse(directory_listing)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
         if str(url).endswith("/english/cards/569006/OP01-001.json"):
             return _FakeResponse(
                 {
@@ -2595,14 +2582,7 @@ def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkey
             return self._payload
 
     remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
-    listing = [
-        {
-            "name": "OP01-025.json",
-            "type": "file",
-            "path": "english/cards/569101/OP01-025.json",
-            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-025.json",
-        }
-    ]
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
     first_cards = {
         "id": "OP01-025",
         "pack_id": "569101",
@@ -2622,11 +2602,11 @@ def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkey
 
     state = {"phase": "first"}
 
-    def _fake_get(url, timeout=0):
+    def _fake_get(url, timeout=0, headers=None):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
-            return _FakeResponse(listing)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
         if str(url).endswith("/english/cards/569101/OP01-025.json"):
             return _FakeResponse(first_cards if state["phase"] == "first" else second_cards)
         raise AssertionError(f"unexpected url requested: {url}")
@@ -2669,14 +2649,7 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
             return self._payload
 
     remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
-    directory_listing = [
-        {
-            "name": "OP01-025.json",
-            "type": "file",
-            "path": "english/cards/569101/OP01-025.json",
-            "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-025.json",
-        }
-    ]
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
     op01_card = {
         "id": "OP01-025",
         "pack_id": "569101",
@@ -2686,11 +2659,11 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
         "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
     }
 
-    def _fake_get(url, timeout=0):
+    def _fake_get(url, timeout=0, headers=None):
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
-        if "api.github.com/repos/DevTheFrog/punk-records/contents/english/cards/569101" in str(url):
-            return _FakeResponse(directory_listing)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
         if str(url).endswith("/english/cards/569101/OP01-025.json"):
             return _FakeResponse(op01_card)
         raise AssertionError(f"unexpected url requested: {url}")
