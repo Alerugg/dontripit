@@ -2511,7 +2511,7 @@ def test_onepiece_remote_raises_when_pack_tree_listing_has_no_cards(client, monk
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
 
-    with pytest.raises(ValueError, match="found zero cards"):
+    with pytest.raises(ValueError, match="zero card json paths"):
         connector._load_remote()
 
 
@@ -2780,36 +2780,74 @@ def test_onepiece_remote_tree_listing_returns_pack_urls(client, monkeypatch):
     ]
 
 
-def test_onepiece_remote_contents_listing_returns_json_download_urls(client, monkeypatch):
+def test_onepiece_remote_tree_lookup_resolves_pack_cards_from_pack_id_or_set_code(client):
+    connector = get_connector("onepiece")
+    card_urls_by_pack = {
+        "569006": ["https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/ST06-001.json"],
+        "op-01": ["https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001.json"],
+    }
+
+    by_pack_id = connector._resolve_pack_card_urls_from_tree(
+        card_urls_by_pack=card_urls_by_pack,
+        lookup_keys=["569006", "st-06"],
+    )
+    by_set_code = connector._resolve_pack_card_urls_from_tree(
+        card_urls_by_pack=card_urls_by_pack,
+        lookup_keys=["st-99", "op-01"],
+    )
+
+    assert by_pack_id == [
+        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/ST06-001.json"
+    ]
+    assert by_set_code == [
+        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569101/OP01-001.json"
+    ]
+
+
+def test_onepiece_remote_does_not_probe_contents_api_when_tree_has_valid_paths(client, monkeypatch):
     connector = get_connector("onepiece")
 
     class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
         def raise_for_status(self):
             return None
 
         def json(self):
-            return [
-                {
-                    "type": "file",
-                    "name": "OP01-001.json",
-                    "download_url": "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json",
-                },
-                {"type": "file", "name": "README.md", "download_url": "https://example/README.md"},
-            ]
+            return self._payload
+
+    remote_packs = [{"id": "569006", "code": "st-06", "name": "Starter Deck", "release_date": "2022-07-22"}]
+    tree_listing = {"tree": [{"path": "english/cards/569006/ST06-001.json", "type": "blob"}]}
+
+    urls_requested: list[str] = []
 
     def _fake_get(url, timeout=0, headers=None):
-        return _FakeResponse()
+        url_str = str(url)
+        urls_requested.append(url_str)
+        if url_str.endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url_str:
+            return _FakeResponse(tree_listing)
+        if url_str.endswith("/english/cards/569006/ST06-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "ST06-001",
+                    "pack_id": "569006",
+                    "set_code": "st-06",
+                    "name": "Sample card",
+                    "rarity": "C",
+                    "img_full_url": "https://punkrecords.img.cdn/st06/st06-001.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
 
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
 
-    result = connector._fetch_pack_card_file_urls(
-        root_url="https://raw.githubusercontent.com/DevTheFrog/punk-records/main",
-        language="english",
-        timeout=30,
-        pack_id="569006",
-        tree_urls_by_pack={},
-    )
+    payload = connector._load_remote()
 
-    assert result == [
-        "https://raw.githubusercontent.com/DevTheFrog/punk-records/main/english/cards/569006/OP01-001.json"
-    ]
+    assert payload.get("cards")
+    assert not any("/contents/" in requested for requested in urls_requested)

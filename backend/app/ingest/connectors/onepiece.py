@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import date
 from pathlib import Path
 from typing import Iterable
@@ -25,7 +26,6 @@ class OnePieceConnector(SourceConnector):
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
         self._remote_json_cache: dict[str, object | None] = {}
-        self._pack_file_urls_cache: dict[str, list[str]] = {}
 
     @staticmethod
     def _env(name: str, default: str) -> str:
@@ -204,37 +204,48 @@ class OnePieceConnector(SourceConnector):
 
     def _load_remote(self) -> dict:
         self._remote_json_cache.clear()
-        self._pack_file_urls_cache.clear()
-
+        started_at = time.monotonic()
         root_url = self._punkrecords_root_url()
         language = self._punkrecords_language()
         packs_url = self._build_url(root_url, f"{language}/packs.json")
         timeout = self._http_timeout()
 
-        packs_response = requests.get(packs_url, timeout=timeout)
-        packs_response.raise_for_status()
-        packs_payload = packs_response.json()
+        packs_fetch_started = time.monotonic()
+        packs_payload = self._request_json(url=packs_url, timeout=timeout)
+        self.logger.info(
+            "ingest onepiece remote packs_loaded elapsed_s=%.2f",
+            time.monotonic() - packs_fetch_started,
+        )
 
         cards_payload_by_pack: dict[str, object] = {}
         pack_records = list(self._iter_pack_records(packs_payload))
-        tree_urls_by_pack = self._fetch_pack_card_file_urls_from_tree(
+        tree_index_fetch_started = time.monotonic()
+        card_urls_by_pack = self._fetch_pack_card_file_urls_from_tree(
             root_url=root_url,
             language=language,
             timeout=timeout,
         )
+        self.logger.info(
+            "ingest onepiece remote tree_index_built packs_with_cards=%s elapsed_s=%.2f",
+            len(card_urls_by_pack),
+            time.monotonic() - tree_index_fetch_started,
+        )
+
+        if not card_urls_by_pack:
+            raise ValueError("One Piece remote ingest tree resolved but found zero card json paths under english/cards")
+
+        valid_cards_count = 0
+        progress_every_packs = 25
+        progress_every_cards = 200
+        cards_fetch_started = time.monotonic()
         for raw_pack in pack_records:
             pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
             if not pack_id:
                 self.logger.warning("ingest onepiece remote pack_skipped missing_pack_id")
                 continue
 
-            card_urls = self._fetch_pack_card_file_urls(
-                root_url=root_url,
-                language=language,
-                timeout=timeout,
-                pack_id=pack_id or "unknown",
-                tree_urls_by_pack=tree_urls_by_pack,
-            )
+            lookup_keys = self._pack_lookup_keys(raw_pack)
+            card_urls = self._resolve_pack_card_urls_from_tree(card_urls_by_pack=card_urls_by_pack, lookup_keys=lookup_keys)
             if not card_urls:
                 continue
 
@@ -243,11 +254,36 @@ class OnePieceConnector(SourceConnector):
                 payload = self._fetch_remote_json(url=card_url, timeout=timeout)
                 if isinstance(payload, dict):
                     cards_payload_by_pack[pack_id.lower()].append(payload)
+                    valid_cards_count += 1
+
+                    if valid_cards_count % progress_every_cards == 0:
+                        self.logger.info(
+                            "ingest onepiece remote progress cards=%s packs_processed=%s/%s elapsed_s=%.2f",
+                            valid_cards_count,
+                            len(cards_payload_by_pack),
+                            len(pack_records),
+                            time.monotonic() - cards_fetch_started,
+                        )
+
+            if len(cards_payload_by_pack) % progress_every_packs == 0:
+                self.logger.info(
+                    "ingest onepiece remote progress packs=%s/%s cards=%s elapsed_s=%.2f",
+                    len(cards_payload_by_pack),
+                    len(pack_records),
+                    valid_cards_count,
+                    time.monotonic() - cards_fetch_started,
+                )
 
         normalized = self._normalize_remote_payload(
             packs_payload=packs_payload,
             cards_payload_by_pack=cards_payload_by_pack,
             language=language,
+        )
+        self.logger.info(
+            "ingest onepiece remote cards_loaded cards=%s elapsed_s=%.2f total_elapsed_s=%.2f",
+            valid_cards_count,
+            time.monotonic() - cards_fetch_started,
+            time.monotonic() - started_at,
         )
         if pack_records and not normalized.get("cards"):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
@@ -261,19 +297,6 @@ class OnePieceConnector(SourceConnector):
             return None
         owner, repo, ref, suffix = match.groups()
         return owner, repo, ref, (suffix or "").strip("/")
-
-    def _build_cards_directory_api_url(self, *, root_url: str, language: str, pack_id: str) -> str | None:
-        override_base = self._env("ONEPIECE_PUNKRECORDS_CONTENTS_API_BASE_URL", "")
-        if override_base:
-            return self._build_url(override_base, f"{language}/cards/{pack_id}")
-
-        github_context = self._github_api_repo_context(root_url)
-        if github_context is None:
-            return None
-        owner, repo, ref, suffix = github_context
-        path_prefix = f"{suffix}/" if suffix else ""
-        path = f"{path_prefix}{language}/cards/{pack_id}"
-        return f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
 
     def _github_http(self) -> requests.Session:
         if self._github_http_session is None:
@@ -406,56 +429,22 @@ class OnePieceConnector(SourceConnector):
             self.logger.warning("ingest onepiece remote cards_tree_unavailable reason=no_json_cards_found")
         return urls_by_pack
 
-    def _fetch_pack_card_file_urls(
-        self,
-        *,
-        root_url: str,
-        language: str,
-        timeout: int,
-        pack_id: str,
-        tree_urls_by_pack: dict[str, list[str]] | None = None,
-    ) -> list[str]:
-        cache_key = f"{root_url}|{language}|{pack_id}"
-        if cache_key in self._pack_file_urls_cache:
-            return self._pack_file_urls_cache[cache_key]
+    @staticmethod
+    def _pack_lookup_keys(raw_pack: dict) -> list[str]:
+        keys: list[str] = []
+        for field in ("id", "pack_id", "set_id", "code", "set_code"):
+            value = str(raw_pack.get(field) or "").strip().lower()
+            if value and value not in keys:
+                keys.append(value)
+        return keys
 
-        if tree_urls_by_pack:
-            from_tree = tree_urls_by_pack.get(pack_id)
-            if from_tree:
-                self._pack_file_urls_cache[cache_key] = sorted(from_tree)
-                return self._pack_file_urls_cache[cache_key]
-
-        directory_api_url = self._build_cards_directory_api_url(root_url=root_url, language=language, pack_id=pack_id)
-        if not directory_api_url:
-            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=missing_directory_api", pack_id)
-            self._pack_file_urls_cache[cache_key] = []
-            return []
-
-        payload = self._fetch_remote_json(url=directory_api_url, timeout=timeout)
-        if not isinstance(payload, list):
-            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=invalid_directory_listing", pack_id)
-            self._pack_file_urls_cache[cache_key] = []
-            return []
-
-        file_urls: list[str] = []
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("type") or "").lower() != "file":
-                continue
-            name = str(item.get("name") or "").strip().lower()
-            if not name.endswith(".json"):
-                continue
-            download_url = str(item.get("download_url") or "").strip()
-            path = str(item.get("path") or "").strip()
-            candidate = download_url or (self._build_url(root_url, path) if path else "")
-            if candidate:
-                file_urls.append(candidate)
-
-        if not file_urls:
-            self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=no_json_files", pack_id)
-        self._pack_file_urls_cache[cache_key] = sorted(file_urls)
-        return self._pack_file_urls_cache[cache_key]
+    @staticmethod
+    def _resolve_pack_card_urls_from_tree(*, card_urls_by_pack: dict[str, list[str]], lookup_keys: list[str]) -> list[str]:
+        for lookup_key in lookup_keys:
+            direct = card_urls_by_pack.get(lookup_key)
+            if direct:
+                return direct
+        return []
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"
