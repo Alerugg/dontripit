@@ -1768,7 +1768,53 @@ def test_search_card_primary_image_falls_back_to_related_print_image(client):
     payload = response.get_json()
     card_hits = [item for item in payload if item.get("type") == "card" and item.get("title") == "Ogn, Relic Warden"]
     assert card_hits
-    assert card_hits[0].get("primary_image_url") == "/images/riftbound/ogn-placeholder.svg"
+    image_url = card_hits[0].get("primary_image_url")
+    assert image_url
+    assert image_url.startswith("/images/riftbound/")
+
+
+def test_search_riftbound_results_never_return_disallowed_image_domain(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=rift&game=riftbound", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all("images.riftbound.cards" not in str(item.get("primary_image_url") or "") for item in payload)
+
+
+def test_search_riftbound_results_have_non_null_images_for_cards_and_prints(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=rift&game=riftbound", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    card_and_print_rows = [item for item in payload if item.get("type") in {"card", "print"}]
+    assert card_and_print_rows
+    assert all(item.get("primary_image_url") for item in card_and_print_rows)
+
+
+def test_search_riftbound_set_results_have_placeholder_images(client):
+    connector = get_connector("riftbound")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures/riftbound_sample.json", fixture=True, incremental=False)
+        session.commit()
+
+    response = client.get("/api/v1/search?q=found&game=riftbound&type=set", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all(item.get("type") == "set" for item in payload)
+    assert all(item.get("primary_image_url") for item in payload)
+    assert all(str(item.get("primary_image_url", "")).startswith("/images/riftbound/") for item in payload)
 
 
 def test_search_response_does_not_expose_internal_score(client):

@@ -1681,6 +1681,37 @@ def test_riftbound_ingest_persists_primary_image_from_fixture(client):
     assert image.source == "riftbound"
 
 
+def test_riftbound_ingest_replaces_disallowed_domains_and_missing_images(client, tmp_path):
+    connector = get_connector("riftbound")
+    fixture_path = Path("data/fixtures/riftbound_sample.json")
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    payload["prints"][0]["primary_image_url"] = "https://images.riftbound.cards/sets/rb1/001-borderless-en.webp"
+    payload["prints"][14].pop("primary_image_url", None)
+
+    custom_fixture = tmp_path / "riftbound_custom.json"
+    custom_fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+    with db.SessionLocal() as session:
+        connector.run(session, custom_fixture, fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        riftbound_game_id = session.execute(select(Game.id).where(Game.slug == "riftbound")).scalar_one()
+        rows = session.execute(
+            select(Print.riftbound_id, PrintImage.url)
+            .join(PrintImage, PrintImage.print_id == Print.id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == riftbound_game_id, PrintImage.is_primary.is_(True))
+        ).all()
+
+    assert rows
+    assert all("images.riftbound.cards" not in url for _, url in rows)
+    row_map = {print_id: url for print_id, url in rows}
+    assert row_map["rb-print-1"] == "/images/riftbound/rb1-placeholder.svg"
+    assert row_map["rb-print-15"] == "/images/riftbound/rb2-placeholder.svg"
+
+
 def test_ygoprodeck_incremental_reindex_is_scoped_to_touched_entities(client, monkeypatch):
     connector = get_connector("ygoprodeck_yugioh")
     reindex_calls = []
@@ -1931,4 +1962,3 @@ def test_scryfall_upsert_returns_touched_entity_ids(client):
     assert touched.get("card_id")
     assert touched.get("set_id")
     assert touched.get("print_id")
-

@@ -245,7 +245,8 @@
       "collector_number": "015",
       "rarity": "rare",
       "language": "en",
-      "variant": "default"
+      "variant": "default",
+      "primary_image_url": "/images/riftbound/rb2-placeholder.svg"
     },
     {
       "id": "rb-print-16",

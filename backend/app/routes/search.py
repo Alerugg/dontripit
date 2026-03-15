@@ -153,7 +153,16 @@ def _short_query_search_rows(
                 WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
                 ORDER BY pi2.is_primary DESC, pi2.id ASC
                 LIMIT 1
-              )
+              ),
+              CASE
+                WHEN sd.doc_type = 'set' AND g.slug = 'riftbound' THEN CASE lower(COALESCE(s.code, ''))
+                  WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
+                  WHEN 'rb2' THEN '/images/riftbound/rb2-placeholder.svg'
+                  WHEN 'ogn' THEN '/images/riftbound/ogn-placeholder.svg'
+                  ELSE '/images/riftbound/rb1-placeholder.svg'
+                END
+                ELSE NULL
+              END
             ) AS primary_image_url,
             lower(sd.title) AS title_l,
             lower(COALESCE(p.collector_number, '')) AS collector_l,
@@ -355,7 +364,16 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
           FROM cards c JOIN games g ON g.id = c.game_id WHERE lower(c.name) LIKE :like
           UNION ALL
           SELECT 'set', s.id, s.name, s.code, g.slug,
-                 NULL, NULL, NULL, NULL
+                 NULL, NULL, NULL,
+                 CASE
+                   WHEN g.slug = 'riftbound' THEN CASE lower(s.code)
+                     WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
+                     WHEN 'rb2' THEN '/images/riftbound/rb2-placeholder.svg'
+                     WHEN 'ogn' THEN '/images/riftbound/ogn-placeholder.svg'
+                     ELSE '/images/riftbound/rb1-placeholder.svg'
+                   END
+                   ELSE NULL
+                 END
           FROM sets s JOIN games g ON g.id = s.game_id WHERE lower(s.name) LIKE :like OR lower(s.code) LIKE :like
           UNION ALL
           SELECT 'print', p.id, c.name, (s.code || ' #' || p.collector_number), g.slug,
@@ -412,7 +430,16 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             p.variant,
             COALESCE(
               (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
-              (SELECT pi2.url FROM print_images pi2 JOIN prints p2 ON p2.id = pi2.print_id WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE ORDER BY pi2.id LIMIT 1)
+              (SELECT pi2.url FROM print_images pi2 JOIN prints p2 ON p2.id = pi2.print_id WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE ORDER BY pi2.id LIMIT 1),
+              CASE
+                WHEN sd.doc_type = 'set' AND g.slug = 'riftbound' THEN CASE lower(COALESCE(s.code, ''))
+                  WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
+                  WHEN 'rb2' THEN '/images/riftbound/rb2-placeholder.svg'
+                  WHEN 'ogn' THEN '/images/riftbound/ogn-placeholder.svg'
+                  ELSE '/images/riftbound/rb1-placeholder.svg'
+                END
+                ELSE NULL
+              END
             ) AS primary_image_url,
             (
               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q THEN 2500.0 ELSE 0.0 END +
@@ -632,7 +659,16 @@ def search():
                                    WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
                                    ORDER BY pi2.is_primary DESC, pi2.id ASC
                                    LIMIT 1
-                               )
+                               ),
+                               CASE
+                                   WHEN sd.doc_type = 'set' AND g.slug = 'riftbound' THEN CASE lower(COALESCE(s.code, ''))
+                                       WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
+                                       WHEN 'rb2' THEN '/images/riftbound/rb2-placeholder.svg'
+                                       WHEN 'ogn' THEN '/images/riftbound/ogn-placeholder.svg'
+                                       ELSE '/images/riftbound/rb1-placeholder.svg'
+                                   END
+                                   ELSE NULL
+                               END
                            ) AS primary_image_url
                     FROM search_documents sd
                     JOIN games g ON g.id = sd.game_id

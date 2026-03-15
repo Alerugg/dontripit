@@ -15,6 +15,12 @@ from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 class RiftboundConnector(SourceConnector):
     name = "riftbound"
     mode = "fixture_only"
+    _RIFTBOUND_IMAGE_DOMAIN = "images.riftbound.cards"
+    _SET_PLACEHOLDERS: dict[str, str] = {
+        "rb1": "/images/riftbound/rb1-placeholder.svg",
+        "rb2": "/images/riftbound/rb2-placeholder.svg",
+        "ogn": "/images/riftbound/ogn-placeholder.svg",
+    }
 
     @staticmethod
     def _normalize_language(value: object) -> str:
@@ -25,6 +31,24 @@ class RiftboundConnector(SourceConnector):
     def _normalize_rarity(value: object) -> str:
         rarity = str(value or "").strip()
         return rarity or "unknown"
+
+    @classmethod
+    def _placeholder_for_set_code(cls, set_code: object) -> str:
+        normalized = str(set_code or "").strip().lower()
+        if normalized in cls._SET_PLACEHOLDERS:
+            return cls._SET_PLACEHOLDERS[normalized]
+        return cls._SET_PLACEHOLDERS["rb1"]
+
+    @classmethod
+    def _is_disallowed_image_url(cls, value: object) -> bool:
+        return cls._RIFTBOUND_IMAGE_DOMAIN in str(value or "").strip().lower()
+
+    @classmethod
+    def _resolve_primary_image_url(cls, raw_image_url: object, set_code: object) -> str:
+        image_url = str(raw_image_url or "").strip()
+        if image_url and not cls._is_disallowed_image_url(image_url):
+            return image_url
+        return cls._placeholder_for_set_code(set_code)
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
@@ -147,7 +171,10 @@ class RiftboundConnector(SourceConnector):
                 "rarity": self._normalize_rarity(print_payload.get("rarity")),
                 "raw_json": print_payload,
                 "variant": normalize_variant(print_payload.get("variant")),
-                "primary_image_url": (print_payload.get("primary_image_url") or "").strip() or None,
+                "primary_image_url": self._resolve_primary_image_url(
+                    print_payload.get("primary_image_url"),
+                    set_payload.get("code") or print_payload.get("set_code"),
+                ),
             },
         }
 
@@ -272,18 +299,16 @@ class RiftboundConnector(SourceConnector):
                 identifier.external_id = rift_print_id
                 stats.records_updated += 1
 
-        image_url = (print_payload.get("primary_image_url") or "").strip()
-        if image_url:
-            primary_image = session.execute(
-                select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
-            ).scalar_one_or_none()
-            if primary_image is None:
-                session.add(PrintImage(print_id=print_row.id, url=image_url, is_primary=True, source="riftbound"))
-                stats.records_inserted += 1
-            elif primary_image.url != image_url:
-                primary_image.url = image_url
-                if primary_image.source != "riftbound":
-                    primary_image.source = "riftbound"
-                stats.records_updated += 1
+        image_url = self._resolve_primary_image_url(print_payload.get("primary_image_url"), set_code)
+        primary_image = session.execute(
+            select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+        ).scalar_one_or_none()
+        if primary_image is None:
+            session.add(PrintImage(print_id=print_row.id, url=image_url, is_primary=True, source="riftbound"))
+            stats.records_inserted += 1
+        elif primary_image.url != image_url or primary_image.source != "riftbound":
+            primary_image.url = image_url
+            primary_image.source = "riftbound"
+            stats.records_updated += 1
 
         return {"set_id": set_row.id, "card_id": card_row.id, "print_id": print_row.id}
