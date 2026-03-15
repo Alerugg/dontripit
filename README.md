@@ -267,7 +267,9 @@ python -m app.ingest.run riftbound --fixture true --path data/fixtures --increme
 python -m app.ingest.run onepiece --fixture true --path data/fixtures/onepiece_punkrecords_sample.json --incremental false
 
 # One Piece remoto (Punk Records)
-ONEPIECE_SOURCE=remote ONEPIECE_PUNKRECORDS_ROOT_URL=https://raw.githubusercontent.com/DevTheFrog/punk-records/main ONEPIECE_PUNKRECORDS_LANGUAGE=english python -m app.ingest.run onepiece --fixture false --incremental true
+ONEPIECE_SOURCE=remote ONEPIECE_PUNKRECORDS_ROOT_URL=https://raw.githubusercontent.com/DevTheFrog/punk-records/main ONEPIECE_PUNKRECORDS_LANGUAGE=english GITHUB_TOKEN=ghp_xxx python -m app.ingest.run onepiece --fixture false --incremental true
+
+# Nota: GITHUB_TOKEN es opcional pero recomendado para reducir rate limiting (403/429) de GitHub API durante ingest remoto de One Piece.
 ```
 
 ### Daily refresh (Pokemon + MTG + Yu-Gi-Oh + Riftbound + reindex)

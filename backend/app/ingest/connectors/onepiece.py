@@ -22,6 +22,11 @@ class OnePieceConnector(SourceConnector):
     _DEFAULT_PUNKRECORDS_LANGUAGE = "english"
     _DEFAULT_IMAGE_FALLBACK_URL = "https://placehold.co/367x512?text=ONE+PIECE"
 
+    def __init__(self) -> None:
+        self._github_http_session: requests.Session | None = None
+        self._remote_json_cache: dict[str, object | None] = {}
+        self._pack_file_urls_cache: dict[str, list[str]] = {}
+
     @staticmethod
     def _env(name: str, default: str) -> str:
         value = str(os.getenv(name) or "").strip()
@@ -198,6 +203,9 @@ class OnePieceConnector(SourceConnector):
         }
 
     def _load_remote(self) -> dict:
+        self._remote_json_cache.clear()
+        self._pack_file_urls_cache.clear()
+
         root_url = self._punkrecords_root_url()
         language = self._punkrecords_language()
         packs_url = self._build_url(root_url, f"{language}/packs.json")
@@ -267,22 +275,38 @@ class OnePieceConnector(SourceConnector):
         path = f"{path_prefix}{language}/cards/{pack_id}"
         return f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
 
-    def _github_request_headers(self, *, url: str) -> dict[str, str] | None:
-        if "api.github.com" not in url:
-            return None
-        token = self._env("ONEPIECE_GITHUB_TOKEN", "")
-        if not token:
-            return None
-        return {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        }
+    def _github_http(self) -> requests.Session:
+        if self._github_http_session is None:
+            session = requests.Session()
+            session.headers.update(
+                {
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "api-project-onepiece-ingest/1.0",
+                }
+            )
+            token = self._env("GITHUB_TOKEN", "") or self._env("ONEPIECE_GITHUB_TOKEN", "")
+            if token:
+                session.headers.update({"Authorization": f"Bearer {token}"})
+            self._github_http_session = session
+        return self._github_http_session
+
+    def _request_json(self, *, url: str, timeout: int) -> object:
+        if "api.github.com" in url:
+            session = self._github_http()
+            response = requests.get(url, timeout=timeout, headers=dict(session.headers))
+        else:
+            response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
 
     def _fetch_remote_json(self, *, url: str, timeout: int) -> object | None:
+        if url in self._remote_json_cache:
+            return self._remote_json_cache[url]
+
         try:
-            response = requests.get(url, timeout=timeout, headers=self._github_request_headers(url=url))
-            response.raise_for_status()
-            return response.json()
+            payload = self._request_json(url=url, timeout=timeout)
+            self._remote_json_cache[url] = payload
+            return payload
         except requests.HTTPError as exc:
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
             if status_code in {403, 429}:
@@ -295,12 +319,19 @@ class OnePieceConnector(SourceConnector):
                     remaining,
                     reset,
                 )
+                if "api.github.com" in url:
+                    raise RuntimeError(
+                        "One Piece remote ingest hit GitHub API rate limit "
+                        f"(status={status_code}, remaining={remaining}, reset={reset}). "
+                        "Set GITHUB_TOKEN (recommended) or retry after reset."
+                    ) from exc
             else:
                 self.logger.warning(
                     "ingest onepiece remote request_failed url=%s reason=http_error status=%s",
                     url,
                     status_code,
                 )
+            self._remote_json_cache[url] = None
             return None
         except requests.RequestException as exc:
             self.logger.warning(
@@ -308,9 +339,11 @@ class OnePieceConnector(SourceConnector):
                 url,
                 exc,
             )
+            self._remote_json_cache[url] = None
             return None
         except ValueError:
             self.logger.warning("ingest onepiece remote request_failed url=%s reason=invalid_json", url)
+            self._remote_json_cache[url] = None
             return None
 
     def _build_cards_tree_api_url(self, *, root_url: str) -> tuple[str, str] | None:
@@ -382,19 +415,26 @@ class OnePieceConnector(SourceConnector):
         pack_id: str,
         tree_urls_by_pack: dict[str, list[str]] | None = None,
     ) -> list[str]:
+        cache_key = f"{root_url}|{language}|{pack_id}"
+        if cache_key in self._pack_file_urls_cache:
+            return self._pack_file_urls_cache[cache_key]
+
         if tree_urls_by_pack:
             from_tree = tree_urls_by_pack.get(pack_id)
             if from_tree:
-                return sorted(from_tree)
+                self._pack_file_urls_cache[cache_key] = sorted(from_tree)
+                return self._pack_file_urls_cache[cache_key]
 
         directory_api_url = self._build_cards_directory_api_url(root_url=root_url, language=language, pack_id=pack_id)
         if not directory_api_url:
             self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=missing_directory_api", pack_id)
+            self._pack_file_urls_cache[cache_key] = []
             return []
 
         payload = self._fetch_remote_json(url=directory_api_url, timeout=timeout)
         if not isinstance(payload, list):
             self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=invalid_directory_listing", pack_id)
+            self._pack_file_urls_cache[cache_key] = []
             return []
 
         file_urls: list[str] = []
@@ -414,7 +454,8 @@ class OnePieceConnector(SourceConnector):
 
         if not file_urls:
             self.logger.warning("ingest onepiece remote pack_skipped pack=%s reason=no_json_files", pack_id)
-        return sorted(file_urls)
+        self._pack_file_urls_cache[cache_key] = sorted(file_urls)
+        return self._pack_file_urls_cache[cache_key]
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"
