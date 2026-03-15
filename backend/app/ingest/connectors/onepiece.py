@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,135 @@ from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 class OnePieceConnector(SourceConnector):
     name = "onepiece"
+    _DEFAULT_TIMEOUT_SECONDS = 30
+    _DEFAULT_REMOTE_BASE_URL = "https://api.punkrecords.xyz"
+    _DEFAULT_REMOTE_SETS_PATH = "/api/onepiece/sets"
+    _DEFAULT_REMOTE_CARDS_PATH = "/api/onepiece/cards"
+    _DEFAULT_IMAGE_FALLBACK_URL = "https://placehold.co/367x512?text=ONE+PIECE"
+
+    @staticmethod
+    def _env(name: str, default: str) -> str:
+        value = str(os.getenv(name) or "").strip()
+        return value or default
+
+    def _source_mode(self, *, fixture: bool = False) -> str:
+        if fixture:
+            return "fixture"
+        mode = self._env("ONEPIECE_SOURCE", "fixture").lower()
+        if mode not in {"fixture", "remote"}:
+            self.logger.warning("ingest onepiece invalid_source_mode=%s using=fixture", mode)
+            return "fixture"
+        return mode
+
+    def _http_timeout(self) -> int:
+        raw = self._env("ONEPIECE_TIMEOUT_SECONDS", str(self._DEFAULT_TIMEOUT_SECONDS))
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return self._DEFAULT_TIMEOUT_SECONDS
+        return parsed if parsed > 0 else self._DEFAULT_TIMEOUT_SECONDS
+
+    @staticmethod
+    def _build_url(base_url: str, path: str) -> str:
+        if path.startswith(("https://", "http://")):
+            return path
+        return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+    @staticmethod
+    def _record_get(record: dict, *keys: str) -> object:
+        for key in keys:
+            value = record.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    def _resolve_remote_image_url(self, record: dict) -> str:
+        candidate = str(
+            self._record_get(
+                record,
+                "img_full_url",
+                "image_url",
+                "img_url",
+                "img_thumb_url",
+                "image",
+            )
+            or ""
+        ).strip()
+        if candidate and "example.cdn.onepiece" not in candidate.lower():
+            return candidate
+        return self._env("ONEPIECE_IMAGE_FALLBACK_URL", self._DEFAULT_IMAGE_FALLBACK_URL)
+
+    def _normalize_remote_payload(self, *, sets_payload: object, cards_payload: object) -> dict:
+        normalized_sets: dict[str, dict] = {}
+        raw_sets = sets_payload if isinstance(sets_payload, list) else []
+        for raw_set in raw_sets:
+            if not isinstance(raw_set, dict):
+                continue
+            set_code = str(self._record_get(raw_set, "code", "set_code", "id") or "").strip().lower()
+            if not set_code:
+                continue
+            normalized_sets[set_code] = {
+                "id": str(self._record_get(raw_set, "id", "code", "set_code") or set_code).strip(),
+                "code": set_code,
+                "name": str(self._record_get(raw_set, "name", "set_name", "code") or set_code).strip(),
+                "type": str(self._record_get(raw_set, "type") or "").strip() or None,
+                "release_date": self._record_get(raw_set, "release_date", "date_release", "released_at"),
+            }
+
+        cards_by_key: dict[str, dict] = {}
+        raw_cards = cards_payload if isinstance(cards_payload, list) else []
+        for raw_card in raw_cards:
+            if not isinstance(raw_card, dict):
+                continue
+            card_name = str(self._record_get(raw_card, "name", "card_name") or "").strip()
+            set_code = str(self._record_get(raw_card, "set_code", "set", "set_id") or "").strip().lower()
+            collector = str(self._record_get(raw_card, "id", "code", "collector_number", "number") or "").strip()
+            if not card_name or not set_code or not collector:
+                continue
+            if set_code not in normalized_sets:
+                normalized_sets[set_code] = {
+                    "id": set_code.upper(),
+                    "code": set_code,
+                    "name": set_code.upper(),
+                    "type": None,
+                    "release_date": None,
+                }
+
+            card_id = str(self._record_get(raw_card, "card_id", "uuid") or card_name).strip().lower().replace(" ", "-")
+            key = card_id
+            if key not in cards_by_key:
+                cards_by_key[key] = {"id": key, "name": card_name, "prints": []}
+
+            cards_by_key[key]["prints"].append(
+                {
+                    "id": str(self._record_get(raw_card, "id", "code", "external_id") or "").strip() or None,
+                    "set_code": set_code,
+                    "collector_number": collector,
+                    "rarity": str(self._record_get(raw_card, "rarity", "rarity_code") or "").strip() or None,
+                    "variant": str(self._record_get(raw_card, "variant", "finish") or "default").strip(),
+                    "image_url": self._resolve_remote_image_url(raw_card),
+                }
+            )
+
+        return {
+            "source": "punk_records",
+            "language": "en",
+            "sets": sorted(normalized_sets.values(), key=lambda row: row["code"]),
+            "cards": list(cards_by_key.values()),
+        }
+
+    def _load_remote(self) -> dict:
+        base_url = self._env("ONEPIECE_PUNKRECORDS_BASE_URL", self._DEFAULT_REMOTE_BASE_URL)
+        sets_url = self._build_url(base_url, self._env("ONEPIECE_PUNKRECORDS_SETS_PATH", self._DEFAULT_REMOTE_SETS_PATH))
+        cards_url = self._build_url(base_url, self._env("ONEPIECE_PUNKRECORDS_CARDS_PATH", self._DEFAULT_REMOTE_CARDS_PATH))
+        timeout = self._http_timeout()
+
+        sets_response = requests.get(sets_url, timeout=timeout)
+        sets_response.raise_for_status()
+        cards_response = requests.get(cards_url, timeout=timeout)
+        cards_response.raise_for_status()
+
+        return self._normalize_remote_payload(sets_payload=sets_response.json(), cards_payload=cards_response.json())
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"
@@ -41,17 +171,23 @@ class OnePieceConnector(SourceConnector):
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
-        if fixture:
+        source_mode = self._source_mode(fixture=fixture)
+        if source_mode == "fixture":
             fixture_path = self._resolve_fixture_path(path)
             raw = fixture_path.read_text(encoding="utf-8")
             payload = json.loads(raw)
             return [(fixture_path, payload, self.checksum(payload))]
 
         if isinstance(path, str) and path.startswith(("https://", "http://")):
-            response = requests.get(path, timeout=45)
+            response = requests.get(path, timeout=self._http_timeout())
             response.raise_for_status()
-            payload = response.json()
+            payload = self._normalize_remote_payload(sets_payload=[], cards_payload=response.json())
             source_path = Path("onepiece_remote.json")
+            return [(source_path, payload, self.checksum(payload))]
+
+        if source_mode == "remote":
+            payload = self._load_remote()
+            source_path = Path("onepiece_punkrecords_remote.json")
             return [(source_path, payload, self.checksum(payload))]
 
         return super().load(path, **kwargs)
