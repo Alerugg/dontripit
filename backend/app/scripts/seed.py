@@ -10,6 +10,7 @@ SEED_GAMES = [
     {"slug": "mtg", "name": "Magic: The Gathering"},
     {"slug": "yugioh", "name": "Yu-Gi-Oh!"},
     {"slug": "riftbound", "name": "Riftbound"},
+    {"slug": "onepiece", "name": "ONE PIECE Card Game"},
 ]
 
 SEED_SOURCES = [
@@ -18,6 +19,7 @@ SEED_SOURCES = [
     {"name": "scryfall_mtg", "description": "Scryfall MTG connector"},
     {"name": "ygoprodeck_yugioh", "description": "YGOProDeck Yu-Gi-Oh! connector"},
     {"name": "riftbound", "description": "Riftbound connector"},
+    {"name": "onepiece", "description": "ONE PIECE connector (Punk Records)"},
 ]
 
 

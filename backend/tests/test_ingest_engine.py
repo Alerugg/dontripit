@@ -2269,3 +2269,112 @@ def test_scryfall_upsert_returns_touched_entity_ids(client):
     assert touched.get("card_id")
     assert touched.get("set_id")
     assert touched.get("print_id")
+
+
+def test_onepiece_fixture_ingest_persists_sets_cards_prints_and_images(client):
+    connector = get_connector("onepiece")
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            "data/fixtures/onepiece_punkrecords_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    assert stats.records_inserted > 0
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        assert game is not None
+
+        set_codes = session.execute(select(Set.code).where(Set.game_id == game.id).order_by(Set.code)).scalars().all()
+        assert set_codes == ["eb-01", "op-01", "st-10"]
+
+        total_prints = session.execute(
+            select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+        ).scalar_one()
+        assert total_prints >= 5
+
+        image_count = session.execute(
+            select(func.count(PrintImage.id)).join(Print, Print.id == PrintImage.print_id).join(Set, Set.id == Print.set_id).where(Set.game_id == game.id)
+        ).scalar_one()
+        assert image_count >= 5
+
+
+def test_onepiece_fixture_incremental_idempotent_has_zero_second_run_changes(client):
+    connector = get_connector("onepiece")
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/onepiece_punkrecords_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/onepiece_punkrecords_sample.json",
+            fixture=True,
+            incremental=True,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        run = session.execute(select(IngestRun).order_by(IngestRun.id.desc())).scalars().first()
+
+    assert run is not None
+    assert run.counts_json["inserted"] == 0
+    assert run.counts_json["updated"] == 0
+
+
+def test_onepiece_search_by_name_and_set_code(client):
+    connector = get_connector("onepiece")
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/onepiece_punkrecords_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    by_name = client.get(
+        "/api/v1/search?q=luffy&game=onepiece",
+        headers=_auth_headers("onepiece-search", ["read:catalog"]),
+    )
+    assert by_name.status_code == 200
+    by_name_payload = by_name.get_json()
+    assert any(item.get("game") == "onepiece" for item in by_name_payload)
+    assert any("luffy" in str(item.get("title", "")).lower() for item in by_name_payload)
+
+    by_set_code = client.get(
+        "/api/v1/search?q=op-01&game=onepiece",
+        headers=_auth_headers("opset-001", ["read:catalog"]),
+    )
+    assert by_set_code.status_code == 200
+    by_set_payload = by_set_code.get_json()
+    assert any(item.get("type") == "set" and item.get("subtitle") == "op-01" for item in by_set_payload)
+
+
+def test_onepiece_prints_have_non_null_primary_images_when_available(client):
+    connector = get_connector("onepiece")
+    with db.SessionLocal() as session:
+        connector.run(
+            session,
+            "data/fixtures/onepiece_punkrecords_sample.json",
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    response = client.get(
+        "/api/v1/search?q=luffy&game=onepiece&type=print",
+        headers=_auth_headers("opimg-001", ["read:catalog"]),
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all(item.get("primary_image_url") for item in payload)

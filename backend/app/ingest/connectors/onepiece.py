@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import requests
+from sqlalchemy import select
+
+from app.ingest.base import IngestStats, SourceConnector
+from app.ingest.normalization import normalize_collector_number, normalize_variant
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+
+
+class OnePieceConnector(SourceConnector):
+    name = "onepiece"
+
+    def _resolve_fixture_path(self, path: str | Path | None) -> Path:
+        fixture_name = "onepiece_punkrecords_sample.json"
+        backend_root = Path(__file__).resolve().parents[3]
+        repo_root = backend_root.parent
+        default_candidates = [
+            backend_root / "data" / "fixtures" / fixture_name,
+            repo_root / "backend" / "data" / "fixtures" / fixture_name,
+        ]
+
+        if path is not None:
+            candidate = Path(path)
+            if candidate.is_file():
+                return candidate
+            if candidate.is_dir():
+                candidate = candidate / fixture_name
+                if candidate.is_file():
+                    return candidate
+
+        for candidate in default_candidates:
+            if candidate.is_file():
+                return candidate
+
+        raise FileNotFoundError(f"Unable to resolve fixture path for {fixture_name}")
+
+    def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
+        fixture = bool(kwargs.get("fixture", False))
+        if fixture:
+            fixture_path = self._resolve_fixture_path(path)
+            raw = fixture_path.read_text(encoding="utf-8")
+            payload = json.loads(raw)
+            return [(fixture_path, payload, self.checksum(payload))]
+
+        if isinstance(path, str) and path.startswith(("https://", "http://")):
+            response = requests.get(path, timeout=45)
+            response.raise_for_status()
+            payload = response.json()
+            source_path = Path("onepiece_remote.json")
+            return [(source_path, payload, self.checksum(payload))]
+
+        return super().load(path, **kwargs)
+
+    def _ensure_game(self, session, stats: IngestStats) -> Game:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+            stats.records_inserted += 1
+        return game
+
+    def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
+        game = self._ensure_game(session, stats)
+        language = str(payload.get("language") or "en").strip().lower() or "en"
+
+        touched = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
+        sets_by_code: dict[str, Set] = {}
+
+        for item in payload.get("sets") or []:
+            set_code = str(item.get("code") or "").strip().lower()
+            if not set_code:
+                continue
+
+            release_date = None
+            if item.get("release_date"):
+                release_date = date.fromisoformat(str(item["release_date"]))
+
+            set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
+            if set_row is None:
+                set_row = Set(
+                    game_id=game.id,
+                    code=set_code,
+                    name=str(item.get("name") or set_code).strip(),
+                    release_date=release_date,
+                )
+                session.add(set_row)
+                session.flush()
+                stats.records_inserted += 1
+            else:
+                changed = False
+                set_name = str(item.get("name") or "").strip()
+                if set_name and set_row.name != set_name:
+                    set_row.name = set_name
+                    changed = True
+                if release_date and set_row.release_date != release_date:
+                    set_row.release_date = release_date
+                    changed = True
+                if changed:
+                    stats.records_updated += 1
+
+            sets_by_code[set_code] = set_row
+            touched["set_ids"].add(set_row.id)
+
+        for card_item in payload.get("cards") or []:
+            card_name = str(card_item.get("name") or "").strip()
+            card_key = str(card_item.get("id") or "").strip().lower()
+            if not card_name or not card_key:
+                continue
+
+            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.card_key == card_key)).scalar_one_or_none()
+            if card_row is None:
+                card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.name == card_name)).scalar_one_or_none()
+
+            if card_row is None:
+                card_row = Card(game_id=game.id, name=card_name, card_key=card_key)
+                session.add(card_row)
+                session.flush()
+                stats.records_inserted += 1
+            else:
+                changed = False
+                if card_row.name != card_name:
+                    card_row.name = card_name
+                    changed = True
+                if card_row.card_key != card_key:
+                    card_row.card_key = card_key
+                    changed = True
+                if changed:
+                    stats.records_updated += 1
+
+            touched["card_ids"].add(card_row.id)
+
+            for print_item in card_item.get("prints") or []:
+                set_code = str(print_item.get("set_code") or "").strip().lower()
+                set_row = sets_by_code.get(set_code)
+                if set_row is None:
+                    continue
+
+                collector_number = str(print_item.get("collector_number") or "").strip()
+                collector_number_norm = normalize_collector_number(collector_number)
+                if not collector_number_norm:
+                    continue
+
+                variant = normalize_variant(print_item.get("variant"))
+                print_key = f"onepiece:{set_code}:{collector_number_norm}:{language}:{variant}"
+                rarity = str(print_item.get("rarity") or "").strip() or None
+                external_print_id = str(print_item.get("id") or "").strip() or None
+
+                print_row = session.execute(select(Print).where(Print.print_key == print_key)).scalar_one_or_none()
+                if print_row is None:
+                    print_row = session.execute(
+                        select(Print).where(
+                            Print.set_id == set_row.id,
+                            Print.card_id == card_row.id,
+                            Print.collector_number == collector_number,
+                            Print.language == language,
+                            Print.is_foil.is_(False),
+                            Print.variant == variant,
+                        )
+                    ).scalar_one_or_none()
+
+                if print_row is None:
+                    print_row = Print(
+                        set_id=set_row.id,
+                        card_id=card_row.id,
+                        collector_number=collector_number,
+                        language=language,
+                        rarity=rarity,
+                        is_foil=False,
+                        variant=variant,
+                        print_key=print_key,
+                    )
+                    session.add(print_row)
+                    session.flush()
+                    stats.records_inserted += 1
+                else:
+                    changed = False
+                    if print_row.rarity != rarity:
+                        print_row.rarity = rarity
+                        changed = True
+                    if print_row.print_key != print_key:
+                        print_row.print_key = print_key
+                        changed = True
+                    if changed:
+                        stats.records_updated += 1
+
+                touched["print_ids"].add(print_row.id)
+
+                if external_print_id:
+                    identifier = session.execute(
+                        select(PrintIdentifier).where(
+                            PrintIdentifier.print_id == print_row.id,
+                            PrintIdentifier.source == "punk_records",
+                        )
+                    ).scalar_one_or_none()
+                    if identifier is None:
+                        session.add(
+                            PrintIdentifier(
+                                print_id=print_row.id,
+                                source="punk_records",
+                                external_id=external_print_id,
+                            )
+                        )
+                        stats.records_inserted += 1
+                    elif identifier.external_id != external_print_id:
+                        identifier.external_id = external_print_id
+                        stats.records_updated += 1
+
+                image_url = str(print_item.get("image_url") or "").strip()
+                if image_url:
+                    primary_image = session.execute(
+                        select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+                    ).scalar_one_or_none()
+                    if primary_image is None:
+                        session.add(
+                            PrintImage(
+                                print_id=print_row.id,
+                                url=image_url,
+                                is_primary=True,
+                                source="punk_records",
+                            )
+                        )
+                        stats.records_inserted += 1
+                    elif primary_image.url != image_url:
+                        primary_image.url = image_url
+                        primary_image.source = "punk_records"
+                        stats.records_updated += 1
+
+        return touched
