@@ -4,8 +4,10 @@ import json
 import os
 from datetime import date
 from pathlib import Path
+from typing import Iterable
 
 import requests
+from requests import HTTPError
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
@@ -157,19 +159,98 @@ class OnePieceConnector(SourceConnector):
         for raw_pack in packs_payload if isinstance(packs_payload, list) else []:
             if not isinstance(raw_pack, dict):
                 continue
-            pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip().lower()
-            if not pack_id:
+            pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
+            candidate_names = list(self._cards_filename_candidates(raw_pack))
+            if not candidate_names:
+                self.logger.warning("ingest onepiece remote pack_skipped missing_filename pack=%s", pack_id or "unknown")
                 continue
-            cards_url = self._build_url(root_url, f"{language}/cards/{pack_id}.json")
-            cards_response = requests.get(cards_url, timeout=timeout)
-            cards_response.raise_for_status()
-            cards_payload_by_pack[pack_id] = cards_response.json()
+            cards_payload = self._fetch_cards_payload_with_fallback(
+                root_url=root_url,
+                language=language,
+                timeout=timeout,
+                pack_id=pack_id or "unknown",
+                candidate_names=candidate_names,
+            )
+            if cards_payload is None:
+                continue
+            pack_key = str(candidate_names[0]).strip().lower()
+            cards_payload_by_pack[pack_key] = cards_payload
 
-        return self._normalize_remote_payload(
+        normalized = self._normalize_remote_payload(
             packs_payload=packs_payload,
             cards_payload_by_pack=cards_payload_by_pack,
             language=language,
         )
+        if isinstance(packs_payload, list) and packs_payload and not normalized.get("cards"):
+            raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
+        return normalized
+
+    def _cards_filename_candidates(self, raw_pack: dict) -> Iterable[str]:
+        candidates: list[str] = []
+
+        def _push(value: object) -> None:
+            text = str(value or "").strip()
+            if text and text not in candidates:
+                candidates.append(text)
+
+        pack_id = self._record_get(raw_pack, "id", "code", "pack_id", "set_code")
+        _push(pack_id)
+
+        title_parts = raw_pack.get("title_parts")
+        label = title_parts.get("label") if isinstance(title_parts, dict) else None
+        label_text = str(label or "").strip()
+        if label_text:
+            _push(label_text)
+            _push(label_text.lower())
+            _push(label_text.upper())
+            if "-" in label_text:
+                dehyphen = label_text.replace("-", "")
+                _push(dehyphen)
+                _push(dehyphen.lower())
+                _push(dehyphen.upper())
+        return candidates
+
+    def _fetch_cards_payload_with_fallback(
+        self,
+        *,
+        root_url: str,
+        language: str,
+        timeout: int,
+        pack_id: str,
+        candidate_names: list[str],
+    ) -> object | None:
+        failures: list[str] = []
+        for candidate in candidate_names:
+            cards_url = self._build_url(root_url, f"{language}/cards/{candidate}.json")
+            try:
+                response = requests.get(cards_url, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+            except HTTPError as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code == 404:
+                    failures.append(f"{candidate}:404")
+                    continue
+                failures.append(f"{candidate}:http_error")
+                continue
+            except ValueError:
+                failures.append(f"{candidate}:json_parse")
+                continue
+            except requests.RequestException:
+                failures.append(f"{candidate}:request_error")
+                continue
+
+            if isinstance(payload, list):
+                return payload
+            failures.append(f"{candidate}:not_list")
+
+        self.logger.warning(
+            "ingest onepiece remote pack_skipped pack=%s candidates=%s failures=%s",
+            pack_id,
+            candidate_names,
+            failures,
+        )
+        return None
 
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"
