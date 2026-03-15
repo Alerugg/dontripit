@@ -2393,10 +2393,22 @@ def test_onepiece_remote_source_mode_uses_punkrecords_and_real_image_urls(client
         def json(self):
             return self._payload
 
-    remote_packs = [
-        {"id": "OP-01", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"},
-        {"id": "ST-10", "code": "st-10", "name": "The Three Captains", "release_date": "2023-11-10"},
-    ]
+    remote_packs = {
+        "569006": {
+            "id": "569006",
+            "raw_title": "Starter Deck 1",
+            "title_parts": {"label": "OP-01"},
+            "code": "op-01",
+            "release_date": "2022-07-22",
+        },
+        "569007": {
+            "id": "569007",
+            "raw_title": "Starter Deck 10",
+            "title_parts": {"label": "ST-10"},
+            "code": "st-10",
+            "release_date": "2023-11-10",
+        },
+    }
     op01_cards = [
         {
             "id": "OP01-001",
@@ -2409,27 +2421,33 @@ def test_onepiece_remote_source_mode_uses_punkrecords_and_real_image_urls(client
 
     urls_requested: list[str] = []
 
-    st10_cards = [
-        {
-            "id": "ST10-001",
-            "pack_id": "st-10",
-            "name": "Monkey.D.Luffy",
-            "rarity": "LEADER",
-            "img_thumb_url": "https://punkrecords.img.cdn/st10/st10-001-thumb.webp",
-        },
-        {
-            "id": "ST10-002",
-            "pack_id": "st-10",
-            "name": "Roronoa Zoro",
-            "rarity": "SR",
-            "img_full_url": "https://example.cdn.onepiece/st10/st10-002.jpg",
-        },
-    ]
+    st10_cards = {
+        "cards": [
+            {
+                "id": "ST10-001",
+                "pack_id": "st-10",
+                "name": "Monkey.D.Luffy",
+                "rarity": "LEADER",
+                "img_thumb_url": "https://punkrecords.img.cdn/st10/st10-001-thumb.webp",
+            },
+            {
+                "id": "ST10-002",
+                "pack_id": "st-10",
+                "name": "Roronoa Zoro",
+                "rarity": "SR",
+                "img_full_url": "https://example.cdn.onepiece/st10/st10-002.jpg",
+            },
+        ]
+    }
 
     def _fake_get(url, timeout=0):
         urls_requested.append(str(url))
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
+        if str(url).endswith("/english/cards/569006.json"):
+            return _FakeResponse(None)
+        if str(url).endswith("/english/cards/569007.json"):
+            return _FakeResponse(None)
         if str(url).endswith("/english/cards/op-01.json"):
             return _FakeResponse(op01_cards)
         if str(url).endswith("/english/cards/OP-01.json"):
@@ -2571,7 +2589,9 @@ def test_onepiece_remote_raises_when_packs_exist_but_cards_resolve_to_empty(clie
         def json(self):
             return self._payload
 
-    remote_packs = [{"id": "569006", "code": "op-01", "name": "Romance Dawn", "title_parts": {"label": "OP-01"}}]
+    remote_packs = {
+        "569006": {"id": "569006", "code": "op-01", "name": "Romance Dawn", "title_parts": {"label": "OP-01"}}
+    }
 
     def _fake_get(url, timeout=0):
         if str(url).endswith("/english/packs.json"):
@@ -2592,6 +2612,67 @@ def test_onepiece_remote_raises_when_packs_exist_but_cards_resolve_to_empty(clie
 
     assert error is not None
     assert "zero cards" in str(error).lower()
+
+
+def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_dict_packs(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload=None, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            return self._payload
+
+    remote_packs = {
+        "569006": {
+            "id": "569006",
+            "raw_title": "Booster Pack Romance Dawn",
+            "title_parts": {"label": "OP-01"},
+            "code": "op-01",
+            "release_date": "2022-07-22",
+        }
+    }
+    cards_payload = {
+        "OP01-001": {
+            "id": "OP01-001",
+            "pack_id": "op-01",
+            "name": "Monkey.D.Luffy",
+            "rarity": "L",
+            "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+        }
+    }
+
+    def _fake_get(url, timeout=0):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if str(url).endswith("/english/cards/569006.json"):
+            return _FakeResponse(None, status_code=404)
+        if str(url).endswith("/english/cards/OP-01.json"):
+            return _FakeResponse(cards_payload)
+        if str(url).endswith("/english/cards/op-01.json"):
+            return _FakeResponse(cards_payload)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://punkrecords.test")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+
+    payload = connector._load_remote()
+    assert payload.get("sets")
+    assert payload.get("cards")
+    assert len(payload["sets"]) > 0
+    assert len(payload["cards"]) > 0
 
 
 def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkeypatch):
