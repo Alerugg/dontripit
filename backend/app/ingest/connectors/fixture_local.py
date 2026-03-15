@@ -29,6 +29,26 @@ class FixtureLocalConnector(SourceConnector):
     name = "fixture_local"
 
 
+    @staticmethod
+    def _parse_game_payload(payload: dict) -> tuple[str | None, str | None]:
+        raw_game = payload.get("game")
+        if isinstance(raw_game, dict):
+            slug = str(raw_game.get("slug") or "").strip() or None
+            name = str(raw_game.get("name") or "").strip() or None
+            return slug, name
+        if isinstance(raw_game, str):
+            slug = raw_game.strip() or None
+            if not slug:
+                return None, None
+            friendly_names = {
+                "mtg": "Magic: The Gathering",
+                "pokemon": "Pokémon TCG",
+                "yugioh": "Yu-Gi-Oh!",
+                "riftbound": "Riftbound",
+            }
+            return slug, friendly_names.get(slug, slug.replace("_", " ").replace("-", " ").title())
+        return None, None
+
     def _ensure_price_source(self, session, source_payload: dict) -> PriceSource:
         source_name = (source_payload or {}).get("name") or "manual"
         source_row = session.execute(select(PriceSource).where(PriceSource.name == source_name)).scalar_one_or_none()
@@ -141,9 +161,7 @@ class FixtureLocalConnector(SourceConnector):
             self._upsert_prices(session, payload, stats)
             return {}
 
-        game_payload = payload.get("game") or {}
-        game_slug = game_payload.get("slug")
-        game_name = game_payload.get("name")
+        game_slug, game_name = self._parse_game_payload(payload)
         game = session.execute(select(Game).where(Game.slug == game_slug)).scalar_one_or_none() if game_slug else None
         if game is None and game_slug and game_name:
             game = Game(slug=game_slug, name=game_name)

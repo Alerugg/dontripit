@@ -83,6 +83,64 @@ def test_ingest_run_created(client):
     assert run.counts_json["files_seen"] >= 1
 
 
+def test_fixture_local_accepts_game_as_string_slug(client):
+    connector = get_connector("fixture_local")
+    payload = {
+        "game": "riftbound",
+        "sets": [{"code": "rbx", "name": "Riftbound X"}],
+        "cards": [{"name": "Compat Card"}],
+        "prints": [
+            {
+                "set_code": "rbx",
+                "card_name": "Compat Card",
+                "collector_number": "001",
+                "language": "en",
+                "rarity": "rare",
+                "is_foil": False,
+            }
+        ],
+    }
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        connector.upsert(session, payload, stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "riftbound")).scalar_one_or_none()
+    assert game is not None
+    assert game.name == "Riftbound"
+
+
+def test_fixture_local_accepts_game_as_dict_slug(client):
+    connector = get_connector("fixture_local")
+    payload = {
+        "game": {"slug": "pokemon", "name": "Pokémon TCG"},
+        "sets": [{"code": "svp", "name": "Scarlet & Violet Promos"}],
+        "cards": [{"name": "Compat Pikachu"}],
+        "prints": [
+            {
+                "set_code": "svp",
+                "card_name": "Compat Pikachu",
+                "collector_number": "123",
+                "language": "en",
+                "rarity": "common",
+                "is_foil": False,
+            }
+        ],
+    }
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        connector.upsert(session, payload, stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+    assert game is not None
+    assert game.name == "Pokémon TCG"
+
+
 def test_reindex_search_populates_and_search_finds_pikachu(client):
     connector = get_connector("fixture_local")
     with db.SessionLocal() as session:
@@ -2031,6 +2089,100 @@ def test_riftbound_official_backend_uses_x_riot_token_header_and_content_endpoin
     assert calls[0]["params"] == {"locale": "en"}
     assert backend.session.headers.get("X-Riot-Token") == "test-token"
     assert "Authorization" not in backend.session.headers
+
+
+def test_riftbound_auto_falls_back_when_official_forbidden_403(client, monkeypatch):
+    connector = get_connector("riftbound")
+    monkeypatch.setenv("RIFTBOUND_SOURCE", "auto")
+    monkeypatch.setenv("RIFTBOUND_API_BASE_URL", "https://americas.api.riotgames.com")
+    monkeypatch.setenv("RIFTBOUND_API_KEY", "token")
+
+    calls: list[str] = []
+
+    class _FakeOfficialBackend:
+        source_name = "official"
+
+        @staticmethod
+        def is_configured() -> bool:
+            return True
+
+        @staticmethod
+        def fetch_all(**kwargs):
+            raise RuntimeError(
+                'Riftbound official request failed url=https://americas.api.riotgames.com/riftbound/content/v1/contents '
+                'status=403 body={"status":{"message":"Forbidden","status_code":403}}'
+            )
+
+        @staticmethod
+        def to_logical_records(batch, **kwargs):
+            return []
+
+    class _FakeFallbackBackend:
+        source_name = "fallback"
+
+        def fetch_all(self, **kwargs):
+            calls.append("fallback")
+            from app.ingest.connectors.riftbound_types import RiftboundBatch
+
+            return RiftboundBatch(
+                sets=[{"id": "s1", "code": "RB1", "name": "Foundations"}],
+                cards=[{"id": "c1", "name": "Kai'Sa, Void Skirmisher"}],
+                prints=[
+                    {
+                        "id": "fp1",
+                        "set_id": "s1",
+                        "card_id": "c1",
+                        "collector_number": "001",
+                        "rarity": "mythic",
+                        "language": "en",
+                        "variant": "default",
+                        "primary_image_url": "/images/riftbound/rb1-placeholder.svg",
+                    }
+                ],
+            )
+
+        @staticmethod
+        def to_logical_records(batch, **kwargs):
+            from app.ingest.connectors.riftbound_fallback import RiftboundFallbackBackend
+
+            return RiftboundFallbackBackend(get_connector("riftbound").logger).to_logical_records(batch)
+
+    monkeypatch.setattr(connector, "_build_backends", lambda: (_FakeOfficialBackend(), _FakeFallbackBackend()))
+
+    payloads = connector.load(fixture=False)
+
+    assert calls == ["fallback"]
+    assert payloads
+    assert payloads[0][1]["print"]["source_system"] == "riftcodex"
+
+
+def test_riftbound_official_403_error_is_actionable(client, monkeypatch):
+    from app.ingest.connectors.riftbound_official import RiftboundOfficialBackend
+
+    monkeypatch.setenv("RIFTBOUND_API_BASE_URL", "https://americas.api.riotgames.com")
+    monkeypatch.setenv("RIFTBOUND_API_KEY", "token")
+
+    class _FakeResponse:
+        status_code = 403
+        text = '{"status":{"message":"Forbidden","status_code":403}}'
+
+        @staticmethod
+        def json() -> dict:
+            return {"status": {"message": "Forbidden", "status_code": 403}}
+
+    backend = RiftboundOfficialBackend(get_connector("riftbound").logger)
+    monkeypatch.setattr(backend.session, "get", lambda *args, **kwargs: _FakeResponse())
+
+    try:
+        backend.fetch_all()
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "url=https://americas.api.riotgames.com/riftbound/content/v1/contents" in message
+        assert "status=403" in message
+        assert "Forbidden" in message
+        assert "does not have valid authorization for Riftbound content" in message
+        assert "product/API entitlement for riftbound-content-v1" in message
 
 
 def test_riftbound_normalization_is_homogeneous_between_official_and_fallback(client):

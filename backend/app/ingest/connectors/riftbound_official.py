@@ -69,6 +69,18 @@ class RiftboundOfficialBackend(RiftboundBackend):
                         f"url={url} status={status} body={body_preview}"
                     )
                     if status == 401:
+                        msg += (
+                            " hint=riot authentication rejected the key. "
+                            "Confirm RIFTBOUND_API_KEY is current (not expired/revoked), "
+                            "is sent as X-Riot-Token, and your Riot app is enabled for Riftbound content access."
+                        )
+                    elif status == 403:
+                        msg += (
+                            " hint=riot accepted the request but forbids access. "
+                            "Your key exists but does not have valid authorization for Riftbound content; "
+                            "verify key lifecycle (expired/revoked), product/API entitlement for riftbound-content-v1, "
+                            "and that the Riot app/environment is enabled for this product."
+                        )
                         msg += " hint=verify RIFTBOUND_API_KEY and send it as X-Riot-Token"
                     elif status == 403:
                         msg += " hint=developer key may be expired or not authorized for this API"

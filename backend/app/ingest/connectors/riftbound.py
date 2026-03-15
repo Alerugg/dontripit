@@ -61,6 +61,11 @@ class RiftboundConnector(SourceConnector):
     def _build_backends(self) -> tuple[RiftboundOfficialBackend, RiftboundFallbackBackend]:
         return RiftboundOfficialBackend(self.logger), RiftboundFallbackBackend(self.logger)
 
+    @staticmethod
+    def _is_official_degradable_error(exc: Exception) -> bool:
+        message = str(exc)
+        return any(token in message for token in ["status=401", "status=403", "RIFTBOUND_API_BASE_URL is required", "RIFTBOUND_API_KEY is required"])
+
     def _select_backend(self, *, fixture: bool = False) -> RiftboundBackend:
         official_backend, fallback_backend = self._build_backends()
         mode = self._source_mode()
@@ -116,8 +121,28 @@ class RiftboundConnector(SourceConnector):
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
         limit = kwargs.get("limit")
+        mode = self._source_mode()
         backend = self._select_backend(fixture=fixture)
-        batch = backend.fetch_all(path=path, fixture=fixture, limit=limit)
+
+        try:
+            batch = backend.fetch_all(path=path, fixture=fixture, limit=limit)
+        except RuntimeError as exc:
+            if (
+                not fixture
+                and mode == "auto"
+                and getattr(backend, "source_name", "") == "official"
+                and self._is_official_degradable_error(exc)
+            ):
+                self.logger.warning(
+                    "ingest riftbound auto_fallback_from_official reason=%s",
+                    exc,
+                )
+                _, fallback_backend = self._build_backends()
+                backend = fallback_backend
+                batch = backend.fetch_all(path=path, fixture=fixture, limit=limit)
+            else:
+                raise
+
         logical_records = backend.to_logical_records(batch, path=path, fixture=fixture, limit=limit)
 
         payloads: list[tuple[Path, dict, str]] = []
