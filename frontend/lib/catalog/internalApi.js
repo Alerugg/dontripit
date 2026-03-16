@@ -12,15 +12,23 @@ function getInternalConfig() {
     }
   }
 
-  if (!apiKey) {
-    return {
-      ok: false,
-      reason: 'missing_internal_api_key',
-      hint: 'Define INTERNAL_API_KEY para que el BFF autentique contra el backend.',
-    }
-  }
-
   return { ok: true, baseUrl, apiKey }
+}
+
+async function _fetchInternal(url, { method, body, apiKey, signal }) {
+  const response = await fetch(url.toString(), {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
+    signal,
+  })
+
+  const payload = await response.json().catch(() => null)
+  return { response, payload }
 }
 
 export async function callInternalApi(path, { method = 'GET', params = {}, body } = {}) {
@@ -48,18 +56,21 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
 
   try {
-    const response = await fetch(url.toString(), {
+    let { response, payload } = await _fetchInternal(url, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      cache: 'no-store',
+      body,
+      apiKey: config.apiKey,
       signal: controller.signal,
     })
 
-    const payload = await response.json().catch(() => null)
+    if (!response.ok && config.apiKey && (response.status === 401 || response.status === 403)) {
+      ;({ response, payload } = await _fetchInternal(url, {
+        method,
+        body,
+        apiKey: '',
+        signal: controller.signal,
+      }))
+    }
 
     if (!response.ok) {
       return {

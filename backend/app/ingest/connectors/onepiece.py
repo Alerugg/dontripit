@@ -1470,9 +1470,5 @@ class OnePieceConnector(SourceConnector):
             reconcile_summary_values["conflicts_avoided"],
             reconcile_summary_values["reassign_skipped"],
         )
-        self.logger.info(
-            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
-            *reconcile_summary_values,
-        )
-
+        
         return touched
