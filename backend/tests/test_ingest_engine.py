@@ -2425,10 +2425,6 @@ def test_onepiece_fixture_flag_false_forces_remote_even_if_env_defaults_fixture(
 
     def _fake_get(url, timeout=0, headers=None):
         urls_requested.append(str(url))
-        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
-            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
-        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
-            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2500,6 +2496,8 @@ def test_onepiece_remote_falls_back_to_official_cardlist_when_punkrecords_404(cl
         urls_requested.append(target)
         if "api.github.com/repos/DevTheFrog/punk-records" in target and "git/trees" not in target:
             return _FakeResponse(status_code=404)
+    def _fake_get(url, timeout=0, headers=None):
+        target = str(url)
         if target.endswith("/english/packs.json"):
             return _FakeResponse(status_code=404)
         if target == "https://en.onepiece-cardgame.com/cardlist/":
