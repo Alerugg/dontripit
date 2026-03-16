@@ -3327,6 +3327,76 @@ def test_onepiece_reconcile_is_stable_across_repeated_calls(client, caplog):
     assert not any("identifier_reassigned" in str(record.message) for record in caplog.records)
 
 
+
+
+def test_onepiece_reconcile_residual_variant_ping_pong_is_stable(client, caplog):
+    connector = get_connector("onepiece")
+    caplog.set_level("INFO")
+
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="ONE PIECE Card Game")
+        session.add(game)
+        session.flush()
+
+        op05 = Set(game_id=game.id, code="op-05", name="Awakening of the New Era")
+        st01 = Set(game_id=game.id, code="st-01", name="Straw Hat Crew")
+        session.add_all([op05, st01])
+        session.flush()
+
+        card_a = Card(game_id=game.id, name="Card OP05-118", card_key="op05-118")
+        card_b = Card(game_id=game.id, name="Card OP05-119", card_key="op05-119")
+        card_c = Card(game_id=game.id, name="Card ST01-012", card_key="st01-012")
+        session.add_all([card_a, card_b, card_c])
+        session.flush()
+
+        print_118 = Print(set_id=op05.id, card_id=card_a.id, collector_number="OP05-118", language="en", variant="parallel", print_key="onepiece:op-05:op05-118:en:parallel")
+        print_119 = Print(set_id=op05.id, card_id=card_b.id, collector_number="OP05-119", language="en", variant="parallel", print_key="onepiece:op-05:op05-119:en:parallel")
+        print_st = Print(set_id=st01.id, card_id=card_c.id, collector_number="ST01-012", language="en", variant="parallel", print_key="onepiece:st-01:st01-012:en:parallel")
+        session.add_all([print_118, print_119, print_st])
+        session.flush()
+
+        session.add_all(
+            [
+                PrintIdentifier(print_id=print_118.id, source="punk_records", external_id="OP05-118"),
+                PrintIdentifier(print_id=print_119.id, source="punk_records", external_id="OP05-119_p2"),
+                PrintIdentifier(print_id=print_st.id, source="punk_records", external_id="ST01-012_p3"),
+            ]
+        )
+        session.flush()
+
+        stats = IngestStats()
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_118, external_print_id="OP05-118_p1")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_119, external_print_id="OP05-119")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_119, external_print_id="OP05-119_p1")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_st, external_print_id="ST01-012_p2")
+
+        # second pass should remain stable (idempotent for these residual families)
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_118, external_print_id="OP05-118_p1")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_119, external_print_id="OP05-119")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_119, external_print_id="OP05-119_p1")
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_st, external_print_id="ST01-012_p2")
+
+        print_118_id = print_118.id
+        print_119_id = print_119.id
+        print_st_id = print_st.id
+        session.commit()
+
+    with db.SessionLocal() as session:
+        by_print = {
+            print_id: external
+            for print_id, external in session.execute(
+                select(PrintIdentifier.print_id, PrintIdentifier.external_id).where(
+                    PrintIdentifier.source == "punk_records",
+                    PrintIdentifier.print_id.in_([print_118_id, print_119_id, print_st_id]),
+                )
+            ).all()
+        }
+
+    assert by_print[print_118_id] == "OP05-118"
+    assert by_print[print_119_id] == "OP05-119_p2"
+    assert by_print[print_st_id] == "ST01-012_p3"
+    assert not any("identifier_reassigned" in str(record.message) for record in caplog.records)
+
 def test_onepiece_remote_repair_prefers_real_images_over_fake_legacy_in_search(client, monkeypatch):
     connector = get_connector("onepiece")
 

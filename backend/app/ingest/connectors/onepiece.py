@@ -559,6 +559,60 @@ class OnePieceConnector(SourceConnector):
             return ""
         return value.split("_", 1)[0]
 
+
+    @staticmethod
+    def _canonical_external_id_family_rank(external_id: str | None) -> tuple[int, int]:
+        value = str(external_id or "").strip()
+        if not value or not is_onepiece_canonical_external_id(value):
+            return (9, 0)
+        lowered = value.lower()
+        if "_" not in lowered:
+            return (0, 0)
+        suffix = lowered.split("_", 1)[1]
+        if re.fullmatch(r"p\d+", suffix):
+            return (1, 0)
+        if re.fullmatch(r"r\d+", suffix):
+            return (2, 0)
+        return (3, 0)
+
+    def _should_reassign_external_id_value(self, *, current_external_id: str | None, incoming_external_id: str) -> tuple[bool, str]:
+        current = str(current_external_id or "").strip()
+        incoming = str(incoming_external_id or "").strip()
+        if not current or current == incoming:
+            return True, "missing_or_equal"
+
+        current_base = self._external_id_base_token(current)
+        incoming_base = self._external_id_base_token(incoming)
+        if not current_base or current_base != incoming_base:
+            return True, "different_base"
+
+        if is_onepiece_canonical_external_id(current) and is_onepiece_canonical_external_id(incoming):
+            return False, "same_base_canonical_preserve_owner"
+
+        current_rank = self._canonical_external_id_family_rank(current)
+        incoming_rank = self._canonical_external_id_family_rank(incoming)
+        if incoming_rank < current_rank:
+            return True, "better_family_rank"
+        return False, "same_or_weaker_family_rank"
+
+    @staticmethod
+    def _set_owner_priority(set_code: str | None) -> int:
+        normalized = str(set_code or "").strip().lower()
+        if re.fullmatch(r"(op|st|eb)-?\d{1,2}", normalized):
+            return 0
+        if re.fullmatch(r"p-\d{3}", normalized):
+            return 0
+        if re.fullmatch(r"\d{6}", normalized):
+            return 2
+        return 1
+
+    @staticmethod
+    def _external_id_base_token(external_id: str | None) -> str:
+        value = str(external_id or "").strip().lower()
+        if not value:
+            return ""
+        return value.split("_", 1)[0]
+
     def _print_owner_rank(self, *, session, print_row: Print, external_id: str | None) -> tuple[int, int, int, int]:
         set_row = session.execute(select(Set).where(Set.id == print_row.set_id)).scalar_one_or_none()
         set_priority = self._set_owner_priority(set_row.code if set_row is not None else None)
@@ -932,6 +986,24 @@ class OnePieceConnector(SourceConnector):
             return print_row
 
         if identifier_for_print.external_id != external_print_id:
+            should_reassign, reason = self._should_reassign_external_id_value(
+                current_external_id=identifier_for_print.external_id,
+                incoming_external_id=external_print_id,
+            )
+            if not should_reassign:
+                self.logger.info(
+                    "ingest onepiece identifier_reassign_skipped print_id=%s old_external_id=%s candidate_external_id=%s reason=%s",
+                    print_row.id,
+                    identifier_for_print.external_id,
+                    external_print_id,
+                    reason,
+                )
+                self._reconcile_metrics.setdefault("reassign_skipped", 0)
+                self._reconcile_metrics["reassign_skipped"] += 1
+                self._reconcile_metrics.setdefault("noop_kept", 0)
+                self._reconcile_metrics["noop_kept"] += 1
+                return print_row
+
             conflicting = session.execute(
                 select(PrintIdentifier).where(
                     PrintIdentifier.source == "punk_records",
@@ -1201,6 +1273,7 @@ class OnePieceConnector(SourceConnector):
             "owner_preserved": 0,
             "noop_kept": 0,
             "conflicts_avoided": 0,
+            "reassign_skipped": 0,
         }
         game = self._ensure_game(session, stats)
         language = self._normalize_language(str(payload.get("language") or "en"))
@@ -1379,6 +1452,7 @@ class OnePieceConnector(SourceConnector):
                         stats.records_updated += 1
 
         self.logger.info(
+            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
             "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s",
             self._reconcile_metrics.get("calls", 0),
             self._reconcile_metrics.get("identifier_reassigned", 0),
@@ -1386,6 +1460,7 @@ class OnePieceConnector(SourceConnector):
             self._reconcile_metrics.get("owner_preserved", 0),
             self._reconcile_metrics.get("noop_kept", 0),
             self._reconcile_metrics.get("conflicts_avoided", 0),
+            self._reconcile_metrics.get("reassign_skipped", 0),
         )
 
         return touched
