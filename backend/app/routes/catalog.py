@@ -25,6 +25,17 @@ def _json_error(error: str, detail: str, status: int):
     return jsonify({"error": error, "detail": detail}), status
 
 
+def _variant_order_sql(column: str) -> str:
+    return f"""
+    CASE
+      WHEN lower(COALESCE({column}, '')) IN ('default', 'base', '') THEN 0
+      WHEN lower(COALESCE({column}, '')) LIKE 'r%' THEN 1
+      WHEN lower(COALESCE({column}, '')) LIKE '%parallel%' THEN 2
+      ELSE 3
+    END
+    """
+
+
 def _request_requires_game() -> bool:
     return request.path.startswith("/api/v1/")
 
@@ -112,7 +123,7 @@ def get_card_detail(card_id: int):
         """
     )
     prints_sql = text(
-        """
+        f"""
         SELECT p.id,
                s.code AS set_code,
                s.name AS set_name,
@@ -152,7 +163,11 @@ def get_card_detail(card_id: int):
         FROM prints p
         JOIN sets s ON s.id = p.set_id
         WHERE p.card_id = :card_id
-        ORDER BY s.code ASC, p.collector_number ASC, p.id ASC
+        ORDER BY s.code ASC,
+                 p.collector_number ASC,
+                 {_variant_order_sql('p.variant')} ASC,
+                 lower(COALESCE(p.variant, 'default')) ASC,
+                 p.id ASC
         LIMIT 50
         """
     )

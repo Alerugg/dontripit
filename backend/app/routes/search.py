@@ -265,6 +265,9 @@ def _short_query_search_rows(
         "offset": offset,
         "is_set_intent_query": is_set_intent_query,
         "enable_contains": 1 if len(q_norm) >= 3 else 0,
+        "is_onepiece_simple_name_query": 1 if (game == "onepiece" and _is_simple_name_query(q_norm)) else 0,
+        "name_token_contains": f"% {q_norm}%",
+        "name_token_hyphen_contains": f"%-{q_norm}%",
     }
     sql = text(
         f"""
@@ -371,6 +374,14 @@ def _short_query_search_rows(
               WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' AND set_code_l = :q_norm THEN -1
               WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'set' AND set_code_l LIKE :title_prefix THEN 0
               WHEN (SELECT has_set_prefix_match FROM intent) = 1 AND type = 'print' AND set_code_l LIKE :title_prefix THEN 1
+              WHEN :is_onepiece_simple_name_query = 1
+                AND type = 'card'
+                AND (
+                  title_l = :q_norm
+                  OR title_l LIKE :name_token_contains
+                  OR title_l LIKE :name_token_hyphen_contains
+                )
+              THEN 0
               WHEN title_l = :q_norm THEN 0
               WHEN title_l LIKE :q_norm || '%' AND (length(title_l) = length(:q_norm) OR substr(title_l, length(:q_norm) + 1, 1) IN (' ', ',', '-', ':', ';', '.', '/', '(', ')')) THEN 1
               WHEN title_l LIKE :title_prefix THEN 2
@@ -480,6 +491,15 @@ def _short_query_search_rows(
               ) THEN 2
               ELSE 1
             END AS image_quality_rank
+            ,CASE
+              WHEN :is_onepiece_simple_name_query = 1
+                AND game = 'onepiece'
+                AND type = 'card'
+                AND title_l LIKE :q_norm || ' %'
+                AND (title_l LIKE '% & %' OR title_l LIKE '%/%')
+              THEN 1
+              ELSE 0
+            END AS onepiece_compound_penalty_rank
           FROM base
           WHERE (
             title_l LIKE :title_prefix
@@ -509,6 +529,7 @@ def _short_query_search_rows(
           title_match_rank ASC,
           prefix_continuation_rank ASC,
           prefix_word_rank ASC,
+          onepiece_compound_penalty_rank ASC,
           type_rank ASC,
           image_quality_rank ASC,
           card_print_count DESC,
