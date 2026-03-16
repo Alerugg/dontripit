@@ -1451,16 +1451,24 @@ class OnePieceConnector(SourceConnector):
                         primary_image.source = "punk_records"
                         stats.records_updated += 1
 
+        reconcile_summary_values = {
+            "calls": self._reconcile_metrics.get("calls", 0),
+            "reassigned": self._reconcile_metrics.get("identifier_reassigned", 0),
+            "owner_moved": self._reconcile_metrics.get("owner_moved", 0),
+            "owner_preserved": self._reconcile_metrics.get("owner_preserved", 0),
+            "noop_kept": self._reconcile_metrics.get("noop_kept", 0),
+            "conflicts_avoided": self._reconcile_metrics.get("conflicts_avoided", 0),
+            "reassign_skipped": self._reconcile_metrics.get("reassign_skipped", 0),
+        }
         self.logger.info(
             "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
-            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s",
-            self._reconcile_metrics.get("calls", 0),
-            self._reconcile_metrics.get("identifier_reassigned", 0),
-            self._reconcile_metrics.get("owner_moved", 0),
-            self._reconcile_metrics.get("owner_preserved", 0),
-            self._reconcile_metrics.get("noop_kept", 0),
-            self._reconcile_metrics.get("conflicts_avoided", 0),
-            self._reconcile_metrics.get("reassign_skipped", 0),
+            reconcile_summary_values["calls"],
+            reconcile_summary_values["reassigned"],
+            reconcile_summary_values["owner_moved"],
+            reconcile_summary_values["owner_preserved"],
+            reconcile_summary_values["noop_kept"],
+            reconcile_summary_values["conflicts_avoided"],
+            reconcile_summary_values["reassign_skipped"],
         )
 
         return touched

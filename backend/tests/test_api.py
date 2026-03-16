@@ -100,6 +100,18 @@ def test_search_works(client):
     assert isinstance(payload, list)
 
 
+def test_search_allows_admin_scope_only_key(client):
+    connector = get_connector("fixture_local")
+    with db.SessionLocal() as session:
+        connector.run(session, "data/fixtures")
+        session.commit()
+
+    response = client.get("/api/v1/search?q=pika&game=pokemon", headers=_auth_headers("admin-only-key", ["read:admin"]))
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+
+
 def test_search_returns_results_after_seed_or_ingest(client):
     connector = get_connector("fixture_local")
     with db.SessionLocal() as session:
