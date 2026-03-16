@@ -30,6 +30,14 @@ def _normalize_query(raw_query: str) -> str:
     return " ".join(raw_query.lower().split())
 
 
+def _is_simple_name_query(raw_query: str) -> bool:
+    normalized = " ".join(raw_query.strip().lower().split())
+    if len(normalized) < 3 or len(normalized) > 24:
+        return False
+
+    return re.fullmatch(r"[a-z][a-z\s'\-.]{1,23}", normalized) is not None
+
+
 def _onepiece_image_signals(primary_image_url: str | None) -> tuple[bool, bool]:
     image_url = (primary_image_url or "").lower()
     is_placeholder_image = "placehold.co" in image_url or "example.cdn.onepiece" in image_url
@@ -684,6 +692,7 @@ def search():
     is_exact_code_query = 1 if _is_exact_code_query(q) else 0
     is_code_like_query = 1 if _looks_like_code_query(q) else 0
     is_text_query = 1 if is_code_like_query == 0 else 0
+    is_simple_name_query = 1 if _is_simple_name_query(q) else 0
     search_mode = _search_mode(query_length, is_text_query)
     is_prefix_mode = 1 if search_mode == "prefix" else 0
     is_exact_mode = 1 if search_mode == "exact" else 0
@@ -719,7 +728,17 @@ def search():
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
-                               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                               ) THEN 1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
+                               ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
+                                   SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
+                               ) THEN -1300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND lower(coalesce(primary_img.url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND (
                                    lower(coalesce(primary_img.url, '')) LIKE '%placehold.co%'
@@ -787,6 +806,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_simple_name_query": is_simple_name_query,
                         "is_short_query": short_query_mode,
                         "is_prefix_mode": is_prefix_mode,
                         "is_exact_mode": is_exact_mode,
@@ -818,6 +838,17 @@ def search():
                                CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'card' THEN (CASE WHEN :is_prefix_mode = 1 THEN 650.0 ELSE 120.0 END) ELSE 0.0 END +
                                CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'print' THEN (CASE WHEN :is_prefix_mode = 1 THEN -260.0 ELSE -35.0 END) ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                               ) THEN 1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
+                               ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
+                                   SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
+                               ) THEN -1300.0 ELSE 0.0 END +
                                CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug = 'pokemon' THEN 500.0 ELSE 0.0 END +
                                CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug <> 'pokemon' THEN -220.0 ELSE 0.0 END +
                                1.0
@@ -888,6 +919,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_simple_name_query": is_simple_name_query,
                         "is_short_query": short_query_mode,
                         "is_prefix_mode": is_prefix_mode,
                         "is_exact_mode": is_exact_mode,
