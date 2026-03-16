@@ -974,14 +974,27 @@ class OnePieceConnector(SourceConnector):
     ) -> Print:
         self._reconcile_metrics.setdefault("calls", 0)
         self._reconcile_metrics["calls"] += 1
+        pending_identifier_for_print = next(
+            (
+                pending
+                for pending in session.new
+                if isinstance(pending, PrintIdentifier)
+                and pending.print_id == print_row.id
+                and pending.source == "punk_records"
+            ),
+            None,
+        )
+
         identifier_for_print = session.execute(
             select(PrintIdentifier).where(
                 PrintIdentifier.print_id == print_row.id,
                 PrintIdentifier.source == "punk_records",
             )
         ).scalars().all()
+        if pending_identifier_for_print is not None:
+            identifier_for_print.append(pending_identifier_for_print)
         if len(identifier_for_print) > 1:
-            best_identifier = sorted(identifier_for_print, key=lambda item: item.id)[0]
+            best_identifier = sorted(identifier_for_print, key=lambda item: (item.id is None, item.id or 0))[0]
             for duplicate in identifier_for_print[1:]:
                 session.delete(duplicate)
                 stats.records_updated += 1
@@ -989,12 +1002,24 @@ class OnePieceConnector(SourceConnector):
         else:
             identifier_for_print = identifier_for_print[0] if identifier_for_print else None
 
+        pending_identifiers_by_external = [
+            pending
+            for pending in session.new
+            if isinstance(pending, PrintIdentifier)
+            and pending.source == "punk_records"
+            and pending.external_id == external_print_id
+        ]
         identifier_by_external_matches = session.execute(
             select(PrintIdentifier).where(
                 PrintIdentifier.source == "punk_records",
                 PrintIdentifier.external_id == external_print_id,
             )
         ).scalars().all()
+        if pending_identifiers_by_external:
+            existing_pending_ids = {row.id for row in identifier_by_external_matches if row.id is not None}
+            for pending in pending_identifiers_by_external:
+                if pending.id is None or pending.id not in existing_pending_ids:
+                    identifier_by_external_matches.append(pending)
 
         if identifier_by_external_matches:
             candidate_print_ids = {identifier.print_id for identifier in identifier_by_external_matches}
@@ -1092,6 +1117,21 @@ class OnePieceConnector(SourceConnector):
                     self._reconcile_metrics["owner_moved"] += 1
 
         if identifier_for_print is None:
+            duplicate_pending = next(
+                (
+                    pending
+                    for pending in session.new
+                    if isinstance(pending, PrintIdentifier)
+                    and pending.print_id == print_row.id
+                    and pending.source == "punk_records"
+                    and pending.external_id == external_print_id
+                ),
+                None,
+            )
+            if duplicate_pending is not None:
+                self._reconcile_metrics.setdefault("noop_kept", 0)
+                self._reconcile_metrics["noop_kept"] += 1
+                return print_row
             session.add(
                 PrintIdentifier(
                     print_id=print_row.id,
