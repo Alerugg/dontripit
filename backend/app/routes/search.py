@@ -30,6 +30,70 @@ def _normalize_query(raw_query: str) -> str:
     return " ".join(raw_query.lower().split())
 
 
+def _is_simple_name_query(raw_query: str) -> bool:
+    normalized = " ".join(raw_query.strip().lower().split())
+    if len(normalized) < 3 or len(normalized) > 24:
+        return False
+
+    return re.fullmatch(r"[a-z][a-z\s'\-.]{1,23}", normalized) is not None
+
+
+def _onepiece_image_signals(primary_image_url: str | None) -> tuple[bool, bool]:
+    image_url = (primary_image_url or "").lower()
+    is_placeholder_image = "placehold.co" in image_url or "example.cdn.onepiece" in image_url
+    has_official_image = "en.onepiece-cardgame.com" in image_url
+    return has_official_image, is_placeholder_image
+
+
+def _apply_onepiece_search_policy(rows):
+    """Hide legacy placeholder print rows when official One Piece alternatives exist."""
+    normalized_rows: list[dict] = []
+    official_titles: set[str] = set()
+    official_collectors: set[str] = set()
+
+    for row in rows:
+        normalized_row = dict(row)
+        has_official_image, is_placeholder_image = _onepiece_image_signals(normalized_row.get("primary_image_url"))
+        normalized_row["has_official_image"] = has_official_image
+        normalized_row["is_placeholder_image"] = is_placeholder_image
+        normalized_rows.append(normalized_row)
+
+        if normalized_row.get("game") != "onepiece":
+            continue
+
+        if has_official_image:
+            title = str(normalized_row.get("title") or "").strip().lower()
+            if title:
+                official_titles.add(title)
+
+            collector_number = str(normalized_row.get("collector_number") or "").strip().lower()
+            if collector_number:
+                official_collectors.add(collector_number)
+
+    filtered_rows: list[dict] = []
+    for row in normalized_rows:
+        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_placeholder_image"):
+            title = str(row.get("title") or "").strip().lower()
+            collector_number = str(row.get("collector_number") or "").strip().lower()
+            if title in official_titles or collector_number in official_collectors:
+                continue
+        filtered_rows.append(row)
+
+    # Preserve the existing order as much as possible while preferring official
+    # One Piece images over placeholder ones when both are present.
+    filtered_rows.sort(
+        key=lambda row: (
+            0
+            if row.get("game") == "onepiece" and row.get("has_official_image")
+            else 2
+            if row.get("game") == "onepiece" and row.get("is_placeholder_image")
+            else 1
+        )
+    )
+
+    return filtered_rows
+
+
 def _is_exact_code_query(raw_query: str) -> bool:
     normalized = "".join(raw_query.strip().split())
     if len(normalized) < 3 or len(normalized) > 16:
@@ -258,6 +322,14 @@ def _short_query_search_rows(
                   WHEN type = 'card' THEN 0
                   WHEN type = 'print' THEN 1
                   ELSE 2
+                END,
+                CASE
+                  WHEN type = 'print' AND game = 'onepiece' AND lower(COALESCE(primary_image_url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                  WHEN type = 'print' AND game = 'onepiece' AND (
+                    lower(COALESCE(primary_image_url, '')) LIKE '%placehold.co%'
+                    OR lower(COALESCE(primary_image_url, '')) LIKE '%example.cdn.onepiece%'
+                  ) THEN 2
+                  ELSE 1
                 END,
                 card_print_count DESC,
                 id ASC
@@ -620,6 +692,7 @@ def search():
     is_exact_code_query = 1 if _is_exact_code_query(q) else 0
     is_code_like_query = 1 if _looks_like_code_query(q) else 0
     is_text_query = 1 if is_code_like_query == 0 else 0
+    is_simple_name_query = 1 if _is_simple_name_query(q) else 0
     search_mode = _search_mode(query_length, is_text_query)
     is_prefix_mode = 1 if search_mode == "prefix" else 0
     is_exact_mode = 1 if search_mode == "exact" else 0
@@ -655,7 +728,17 @@ def search():
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
-                               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                               ) THEN 1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
+                               ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
+                                   SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
+                               ) THEN -1300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND lower(coalesce(primary_img.url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND (
                                    lower(coalesce(primary_img.url, '')) LIKE '%placehold.co%'
@@ -723,6 +806,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_simple_name_query": is_simple_name_query,
                         "is_short_query": short_query_mode,
                         "is_prefix_mode": is_prefix_mode,
                         "is_exact_mode": is_exact_mode,
@@ -754,6 +838,17 @@ def search():
                                CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'card' THEN (CASE WHEN :is_prefix_mode = 1 THEN 650.0 ELSE 120.0 END) ELSE 0.0 END +
                                CASE WHEN :is_short_query = 1 AND :is_code_like_query = 0 AND sd.doc_type = 'print' THEN (CASE WHEN :is_prefix_mode = 1 THEN -260.0 ELSE -35.0 END) ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                               ) THEN 1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
+                               ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
+                                   SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
+                               ) THEN -1300.0 ELSE 0.0 END +
                                CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug = 'pokemon' THEN 500.0 ELSE 0.0 END +
                                CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug <> 'pokemon' THEN -220.0 ELSE 0.0 END +
                                1.0
@@ -824,6 +919,7 @@ def search():
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
+                        "is_simple_name_query": is_simple_name_query,
                         "is_short_query": short_query_mode,
                         "is_prefix_mode": is_prefix_mode,
                         "is_exact_mode": is_exact_mode,
@@ -850,9 +946,12 @@ def search():
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
+        rows = _apply_onepiece_search_policy(rows)
+
         if not rows:
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
+            rows = _apply_onepiece_search_policy(rows)
 
     return jsonify([_to_public_search_row(dict(row)) for row in rows])
 

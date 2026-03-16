@@ -113,6 +113,96 @@ def test_search_returns_results_after_seed_or_ingest(client):
     assert any(item["type"] in {"card", "print"} for item in payload)
 
 
+
+
+def _seed_onepiece_natural_name_ranking_fixture() -> dict[str, dict[str, int]]:
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="One Piece")
+        session.add(game)
+        session.flush()
+
+        op01 = Set(game_id=game.id, name="ROMANCE DAWN", code="OP-01")
+        op02 = Set(game_id=game.id, name="PARAMOUNT WAR", code="OP-02")
+        session.add_all([op01, op02])
+        session.flush()
+
+        core_names = ["Luffy", "Nami", "Roronoa Zoro", "Law"]
+        core_cards: dict[str, Card] = {}
+        for name in core_names:
+            card = Card(game_id=game.id, name=name)
+            session.add(card)
+            core_cards[name.lower()] = card
+
+        noise_names = [
+            "Luffy Is the Man Who Will Be King of the Pirates!!!",
+            "Luffy-Tarou",
+            "Ace & Sabo & Luffy",
+            "Nami's Resolve at Sea",
+            "Three Sword Style of Zoro",
+            "Law's Tactical Room",
+        ]
+        for name in noise_names:
+            session.add(Card(game_id=game.id, name=name))
+        session.flush()
+
+        print_map: dict[str, int] = {}
+        for idx, key in enumerate(["luffy", "nami", "roronoa zoro", "law"], start=1):
+            card = core_cards[key]
+            collector = ["OP01-001", "EB01-004", "OP01-025", "OP02-017"][idx - 1]
+            pr = Print(set_id=op01.id if idx <= 3 else op02.id, card_id=card.id, collector_number=collector, language="en", variant="default")
+            session.add(pr)
+            session.flush()
+            print_map[key] = pr.id
+            session.add(
+                PrintImage(
+                    print_id=pr.id,
+                    url=f"https://en.onepiece-cardgame.com/images/cardlist/card/{collector}.png",
+                    is_primary=True,
+                    source="remote",
+                )
+            )
+
+        rebuild_search_documents(session)
+        session.commit()
+
+        return {
+            "cards": {k: v.id for k, v in core_cards.items()},
+            "prints": print_map,
+        }
+
+
+def test_search_onepiece_simple_names_prioritize_main_cards_and_direct_prints(client):
+    ids = _seed_onepiece_natural_name_ranking_fixture()
+    headers = _auth_headers("onepiece-natural", ["read:catalog"])
+
+    expectations = {
+        "luffy": "luffy",
+        "nami": "nami",
+        "zoro": "roronoa zoro",
+        "law": "law",
+    }
+
+    for query, expected_card_key in expectations.items():
+        response = client.get(f"/api/v1/search?q={query}&game=onepiece", headers=headers)
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload
+
+        first = payload[0]
+        assert first["type"] == "card"
+        assert str(first["title"]).lower() == expected_card_key
+
+        top_titles = [str(item.get("title", "")).lower() for item in payload[:6]]
+        top_print_ids = [item["id"] for item in payload[:6] if item.get("type") == "print"]
+
+        assert ids["cards"][expected_card_key] in [item["id"] for item in payload if item.get("type") == "card"]
+        assert ids["prints"][expected_card_key] in top_print_ids
+
+        if query == "luffy":
+            assert top_titles.index("luffy") < top_titles.index("luffy-tarou")
+            assert top_titles.index("luffy") < top_titles.index("ace & sabo & luffy")
+            assert top_titles.index("luffy") < top_titles.index("luffy is the man who will be king of the pirates!!!")
+
 def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
     with db.SessionLocal() as session:
         game = Game(slug="onepiece", name="One Piece")
@@ -130,9 +220,9 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
         session.flush()
 
         nami_official = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="default")
-        nami_legacy = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
+        nami_legacy = Print(id=97582, set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
         zoro_official = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="default")
-        zoro_legacy = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
+        zoro_legacy = Print(id=97580, set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
         session.add_all([nami_official, nami_legacy, zoro_official, zoro_legacy])
         session.flush()
 
