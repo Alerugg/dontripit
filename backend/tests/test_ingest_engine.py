@@ -2425,6 +2425,8 @@ def test_onepiece_fixture_flag_false_forces_remote_even_if_env_defaults_fixture(
 
     def _fake_get(url, timeout=0, headers=None):
         urls_requested.append(str(url))
+        if str(url) == "https://api.github.com/repos/DevTheFrog/punk-records":
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2494,10 +2496,8 @@ def test_onepiece_remote_falls_back_to_official_cardlist_when_punkrecords_404(cl
     def _fake_get(url, timeout=0, headers=None):
         target = str(url)
         urls_requested.append(target)
-        if "api.github.com/repos/DevTheFrog/punk-records" in target and "git/trees" not in target:
+        if target == "https://api.github.com/repos/DevTheFrog/punk-records":
             return _FakeResponse(status_code=404)
-    def _fake_get(url, timeout=0, headers=None):
-        target = str(url)
         if target.endswith("/english/packs.json"):
             return _FakeResponse(status_code=404)
         if target == "https://en.onepiece-cardgame.com/cardlist/":
@@ -2528,7 +2528,7 @@ def test_onepiece_remote_falls_back_to_official_cardlist_when_punkrecords_404(cl
     assert image_urls
     assert all("example.cdn.onepiece" not in url for url in image_urls)
     assert any("en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png" in url for url in image_urls)
-    assert not any(url.endswith("/english/packs.json") for url in urls_requested)
+    assert any(url == "https://api.github.com/repos/DevTheFrog/punk-records" for url in urls_requested)
 
 
 
@@ -2996,6 +2996,8 @@ def test_onepiece_remote_does_not_probe_contents_api_when_tree_has_valid_paths(c
     def _fake_get(url, timeout=0, headers=None):
         url_str = str(url)
         urls_requested.append(url_str)
+        if url_str == "https://api.github.com/repos/DevTheFrog/punk-records":
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if url_str.endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url_str:
@@ -3104,6 +3106,8 @@ def test_onepiece_remote_load_remote_concurrency_keeps_logical_payload(client, m
 
     def _fake_get(url, timeout=0, headers=None):
         url_str = str(url)
+        if url_str == "https://api.github.com/repos/DevTheFrog/punk-records":
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if url_str.endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url_str:
