@@ -2,19 +2,21 @@ const DEFAULT_TIMEOUT_MS = 12000
 
 function getInternalConfig() {
   const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
-  const apiKey = [
-    process.env.INTERNAL_API_KEY,
-    process.env.BACKEND_API_KEY,
-    process.env.API_KEY,
-  ]
-    .map((value) => (value || '').trim())
-    .find(Boolean)
+  const apiKey = (process.env.INTERNAL_API_KEY || '').trim()
 
   if (!baseUrl) {
     return {
       ok: false,
       reason: 'missing_internal_api_base_url',
       hint: 'Define INTERNAL_API_BASE_URL (ej: http://backend:5000 en Docker).',
+    }
+  }
+
+  if (!apiKey) {
+    return {
+      ok: false,
+      reason: 'missing_internal_api_key',
+      hint: 'Define INTERNAL_API_KEY en el entorno del frontend (misma clave aceptada por backend).',
     }
   }
 
@@ -62,21 +64,12 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
 
   try {
-    let { response, payload } = await _fetchInternal(url, {
+    const { response, payload } = await _fetchInternal(url, {
       method,
       body,
       apiKey: config.apiKey,
       signal: controller.signal,
     })
-
-    if (!response.ok && config.apiKey && (response.status === 401 || response.status === 403)) {
-      ;({ response, payload } = await _fetchInternal(url, {
-        method,
-        body,
-        apiKey: '',
-        signal: controller.signal,
-      }))
-    }
 
     if (!response.ok) {
       return {
@@ -120,7 +113,7 @@ export function getDeveloperErrorHint(upstreamPayload = {}, status) {
   }
 
   if (status === 401 || status === 403) {
-    return 'El backend rechazó la credencial. Revisa INTERNAL_API_KEY/BACKEND_API_KEY/API_KEY en el entorno del frontend.'
+    return 'El backend rechazó la credencial. Revisa INTERNAL_API_KEY en el entorno del frontend.'
   }
 
   return undefined

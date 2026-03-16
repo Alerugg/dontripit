@@ -8,28 +8,18 @@ const originalEnv = {
   API_KEY: process.env.API_KEY,
 }
 
-test('callInternalApi uses fallback env key when INTERNAL_API_KEY is missing', async () => {
+test('callInternalApi requires INTERNAL_API_KEY and does not fallback to other env vars', async () => {
   process.env.INTERNAL_API_BASE_URL = 'http://backend:5000'
   process.env.INTERNAL_API_KEY = ''
   process.env.BACKEND_API_KEY = 'fallback-key'
   process.env.API_KEY = ''
 
-  const calls = []
-  global.fetch = async (url, options) => {
-    calls.push({ url: String(url), headers: options.headers })
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({ items: [] }),
-    }
-  }
-
   const { callInternalApi } = await import(`../lib/catalog/internalApi.js?ts=${Date.now()}`)
   const response = await callInternalApi('/api/v1/search', { params: { q: 'nami', game: 'onepiece' } })
 
-  assert.equal(response.ok, true)
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].headers['X-API-Key'], 'fallback-key')
+  assert.equal(response.ok, false)
+  assert.equal(response.status, 503)
+  assert.equal(response.payload.error, 'missing_internal_api_key')
 })
 
 test.after(() => {
