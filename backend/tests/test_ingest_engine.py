@@ -2391,6 +2391,149 @@ def _patch_onepiece_http(monkeypatch, fake_get):
 
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.sessions.Session.get", _fake_session_get)
 
+def test_onepiece_fixture_flag_false_forces_remote_even_if_env_defaults_fixture(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            return self._payload
+
+    remote_packs = {
+        "569101": {
+            "id": "569101",
+            "raw_title": "Booster Pack Romance Dawn",
+            "title_parts": {"label": "OP-01"},
+            "code": "op-01",
+            "release_date": "2022-07-22",
+        }
+    }
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-001.json", "type": "blob"}]}
+
+    urls_requested: list[str] = []
+
+    def _fake_get(url, timeout=0, headers=None):
+        urls_requested.append(str(url))
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569101/OP01-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-001",
+                    "pack_id": "op-01",
+                    "name": "Monkey.D.Luffy",
+                    "rarity": "L",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "fixture")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert any(url.endswith("/english/packs.json") for url in urls_requested)
+
+
+def test_onepiece_remote_falls_back_to_official_cardlist_when_punkrecords_404(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload=None, text="", status_code=200, headers=None):
+            self._payload = payload
+            self.text = text
+            self.status_code = status_code
+            self.headers = headers or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("missing json payload")
+            return self._payload
+
+    official_index = """
+    <select id="series"> 
+      <option value="569101">BOOSTER PACK [OP-01]</option>
+    </select>
+    """
+    official_series_page = """
+    <dl class="modalCol" id="OP01-001">
+      <div class="infoCol"><span>OP01-001</span> | <span>L</span> | <span>LEADER</span></div>
+      <div class="cardName">Monkey.D.Luffy</div>
+      <img data-src="../images/cardlist/card/OP01-001.png?260305" />
+    </dl>
+    """
+
+    urls_requested: list[str] = []
+
+    def _fake_get(url, timeout=0, headers=None):
+        target = str(url)
+        urls_requested.append(target)
+        if "api.github.com/repos/DevTheFrog/punk-records" in target and "git/trees" not in target:
+            return _FakeResponse(status_code=404)
+        if target.endswith("/english/packs.json"):
+            return _FakeResponse(status_code=404)
+        if target == "https://en.onepiece-cardgame.com/cardlist/":
+            return _FakeResponse(text=official_index)
+        if target == "https://en.onepiece-cardgame.com/cardlist/?series=569101":
+            return _FakeResponse(text=official_series_page)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_OFFICIAL_CARDLIST_URL", "https://en.onepiece-cardgame.com/cardlist/")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert stats.records_inserted > 0
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
+        ).scalars().all()
+
+    assert image_urls
+    assert all("example.cdn.onepiece" not in url for url in image_urls)
+    assert any("en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png" in url for url in image_urls)
+    assert not any(url.endswith("/english/packs.json") for url in urls_requested)
+
+
+
 def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(client, monkeypatch):
     connector = get_connector("onepiece")
 
@@ -2431,6 +2574,10 @@ def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(clie
 
     def _fake_get(url, timeout=0, headers=None):
         urls_requested.append(str(url))
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2508,6 +2655,10 @@ def test_onepiece_remote_raises_when_pack_tree_listing_has_no_cards(client, monk
     remote_packs = [{"id": "569006", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2550,6 +2701,10 @@ def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_pack_direct
     tree_listing = {"tree": [{"path": "english/cards/569006/OP01-001.json", "type": "blob"}]}
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2613,6 +2768,10 @@ def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkey
     state = {"phase": "first"}
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -2670,6 +2829,10 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
     }
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -3022,6 +3185,10 @@ def test_onepiece_remote_reconciles_legacy_and_remote_equivalent_sets(client, mo
     tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -3099,6 +3266,10 @@ def test_onepiece_remote_replaces_legacy_fake_urls_when_equivalent_print_exists(
     }
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -3144,6 +3315,10 @@ def test_onepiece_incremental_repair_cleans_residual_fake_images_even_when_paylo
     tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -3420,6 +3595,10 @@ def test_onepiece_remote_repair_prefers_real_images_over_fake_legacy_in_search(c
     }
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
@@ -3495,6 +3674,10 @@ def test_onepiece_remote_reingest_is_idempotent_without_duplicate_external_ident
     }
 
     def _fake_get(url, timeout=0, headers=None):
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if "api.github.com/repos/DevTheFrog/punk-records" in str(url) and "git/trees" not in str(url):
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
         if str(url).endswith("/english/packs.json"):
             return _FakeResponse(remote_packs)
         if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
