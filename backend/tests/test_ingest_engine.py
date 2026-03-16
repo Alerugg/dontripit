@@ -2980,4 +2980,149 @@ def test_onepiece_remote_load_remote_concurrency_keeps_logical_payload(client, m
     payload = connector._load_remote()
 
     cards = sorted(payload.get("cards") or [], key=lambda c: c["id"])
-    assert [item["id"] for item in cards] == ["569006:st06-001", "569006:st06-002"]
+    assert [item["id"] for item in cards] == ["st-06:st06-001", "st-06:st06-002"]
+
+def test_onepiece_remote_pack_id_maps_to_commercial_set_codes(client):
+    connector = get_connector("onepiece")
+
+    payload = connector._normalize_remote_payload(
+        packs_payload=[
+            {"id": "569006", "raw_title": "STARTER DECK", "name": "Starter 6"},
+            {"id": "569107", "raw_title": "Booster Pack 07", "name": "Booster 07"},
+            {"id": "569101", "raw_title": "Romance Dawn"},
+            {"id": "569201", "raw_title": "Extra Booster 01"},
+        ],
+        cards_payload_by_pack={
+            "569006": [{"id": "ST06-001", "pack_id": "569006", "name": "Tashigi", "img_full_url": "https://img/st06-001.webp"}],
+            "569107": [{"id": "OP07-001", "pack_id": "569107", "name": "Jewelry Bonney", "img_full_url": "https://img/op07-001.webp"}],
+            "569101": [{"id": "OP01-025", "pack_id": "569101", "name": "Roronoa Zoro", "img_full_url": "https://img/op01-025.webp"}],
+            "569201": [{"id": "EB01-004", "pack_id": "569201", "name": "Nami", "img_full_url": "https://img/eb01-004.webp"}],
+        },
+        language="english",
+    )
+
+    set_codes = sorted(item["code"] for item in payload["sets"])
+    assert set_codes == ["eb-01", "op-01", "op-07", "st-06"]
+
+
+def test_onepiece_remote_reconciles_legacy_and_remote_equivalent_sets(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
+
+    def _fake_get(url, timeout=0, headers=None):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569101/OP01-025.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-025",
+                    "pack_id": "569101",
+                    "name": "Roronoa Zoro",
+                    "rarity": "SR",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=True, incremental=False)
+        session.commit()
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        set_codes = session.execute(select(Set.code).where(Set.game_id == game.id).order_by(Set.code)).scalars().all()
+        op01_set = session.execute(select(Set).where(Set.game_id == game.id, Set.code == "op-01")).scalar_one()
+        op01_prints = session.execute(select(Print.id).where(Print.set_id == op01_set.id)).scalars().all()
+
+    assert "569101" not in set_codes
+    assert "op-01" in set_codes
+    assert len(op01_prints) == 2
+
+
+def test_onepiece_remote_replaces_legacy_fake_urls_when_equivalent_print_exists(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [
+        {"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"},
+        {"id": "569010", "name": "The Three Captains", "release_date": "2023-11-10"},
+        {"id": "569201", "name": "Memorial Collection", "release_date": "2024-05-03"},
+    ]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569101/OP01-001.json", "type": "blob"},
+            {"path": "english/cards/569101/OP01-025.json", "type": "blob"},
+            {"path": "english/cards/569010/ST10-001.json", "type": "blob"},
+            {"path": "english/cards/569201/EB01-012_p1.json", "type": "blob"},
+            {"path": "english/cards/569201/EB01-004.json", "type": "blob"},
+        ]
+    }
+
+    cards = {
+        "OP01-001": {"id": "OP01-001", "pack_id": "569101", "name": "Monkey.D.Luffy", "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp"},
+        "OP01-025": {"id": "OP01-025", "pack_id": "569101", "name": "Roronoa Zoro", "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp"},
+        "ST10-001": {"id": "ST10-001", "pack_id": "569010", "name": "Monkey.D.Luffy", "img_full_url": "https://punkrecords.img.cdn/st10/st10-001.webp"},
+        "EB01-012_p1": {"id": "EB01-012_p1", "pack_id": "569201", "name": "Roronoa Zoro", "img_full_url": "https://punkrecords.img.cdn/eb01/eb01-012_p1.webp"},
+        "EB01-004": {"id": "EB01-004", "pack_id": "569201", "name": "Nami", "img_full_url": "https://punkrecords.img.cdn/eb01/eb01-004.webp"},
+    }
+
+    def _fake_get(url, timeout=0, headers=None):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        for key, payload in cards.items():
+            if str(url).endswith(f"/{key}.json"):
+                return _FakeResponse(payload)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=True, incremental=False)
+        session.commit()
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        urls = session.execute(select(PrintImage.url).order_by(PrintImage.url)).scalars().all()
+
+    assert urls
+    assert all("example.cdn.onepiece" not in url for url in urls)
