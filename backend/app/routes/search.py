@@ -145,13 +145,32 @@ def _short_query_search_rows(
             p.variant,
             COALESCE(cpc.print_count, 0.0) AS card_print_count,
             COALESCE(
-              (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
+              (
+                SELECT pi.url
+                FROM print_images pi
+                WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
+                ORDER BY
+                  CASE
+                    WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                    WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                    ELSE 1
+                  END,
+                  pi.id
+                LIMIT 1
+              ),
               (
                 SELECT pi2.url
                 FROM print_images pi2
                 JOIN prints p2 ON p2.id = pi2.print_id
                 WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
-                ORDER BY pi2.is_primary DESC, pi2.id ASC
+                ORDER BY
+                  CASE
+                    WHEN lower(pi2.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                    WHEN lower(pi2.url) LIKE '%example.cdn.onepiece%' THEN 2
+                    ELSE 1
+                  END,
+                  pi2.is_primary DESC,
+                  pi2.id ASC
                 LIMIT 1
               ),
               CASE
@@ -358,7 +377,14 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
                    FROM print_images pi
                    JOIN prints p ON p.id = pi.print_id
                    WHERE p.card_id = c.id
-                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   ORDER BY
+                     CASE
+                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                       ELSE 1
+                     END,
+                     pi.is_primary DESC,
+                     pi.id ASC
                    LIMIT 1
                  ) AS primary_image_url
           FROM cards c JOIN games g ON g.id = c.game_id WHERE lower(c.name) LIKE :like
@@ -378,7 +404,19 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
           UNION ALL
           SELECT 'print', p.id, c.name, (s.code || ' #' || p.collector_number), g.slug,
                  s.code, p.collector_number, p.variant,
-                 (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1)
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
+                   ORDER BY
+                     CASE
+                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                       ELSE 1
+                     END,
+                     pi.id
+                   LIMIT 1
+                 )
           FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=s.game_id
           WHERE lower(c.name) LIKE :like OR lower(p.collector_number) LIKE :like OR lower(s.code) LIKE :like
         ) t WHERE (:game = '' OR t.game = :game)
@@ -430,8 +468,33 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             p.collector_number,
             p.variant,
             COALESCE(
-              (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
-              (SELECT pi2.url FROM print_images pi2 JOIN prints p2 ON p2.id = pi2.print_id WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE ORDER BY pi2.id LIMIT 1),
+              (
+                SELECT pi.url
+                FROM print_images pi
+                WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
+                ORDER BY
+                  CASE
+                    WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                    WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                    ELSE 1
+                  END,
+                  pi.id
+                LIMIT 1
+              ),
+              (
+                SELECT pi2.url
+                FROM print_images pi2
+                JOIN prints p2 ON p2.id = pi2.print_id
+                WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE
+                ORDER BY
+                  CASE
+                    WHEN lower(pi2.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                    WHEN lower(pi2.url) LIKE '%example.cdn.onepiece%' THEN 2
+                    ELSE 1
+                  END,
+                  pi2.id
+                LIMIT 1
+              ),
               CASE
                 WHEN sd.doc_type = 'set' AND g.slug = 'riftbound' THEN CASE lower(COALESCE(s.code, ''))
                   WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
@@ -584,13 +647,32 @@ def search():
                            ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
                            COALESCE(
-                               (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary = true ORDER BY pi.id LIMIT 1),
+                               (
+                                   SELECT pi.url
+                                   FROM print_images pi
+                                   WHERE pi.print_id = p.id AND pi.is_primary = true
+                                   ORDER BY
+                                     CASE
+                                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                                       ELSE 1
+                                     END,
+                                     pi.id
+                                   LIMIT 1
+                               ),
                                (
                                    SELECT pi2.url
                                    FROM print_images pi2
                                    JOIN prints p2 ON p2.id = pi2.print_id
                                    WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
-                                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                                   ORDER BY
+                                     CASE
+                                       WHEN lower(pi2.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                                       WHEN lower(pi2.url) LIKE '%example.cdn.onepiece%' THEN 2
+                                       ELSE 1
+                                     END,
+                                     pi2.is_primary DESC,
+                                     pi2.id ASC
                                    LIMIT 1
                                )
                            ) AS primary_image_url
@@ -654,13 +736,32 @@ def search():
                            ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
                            COALESCE(
-                               (SELECT pi.url FROM print_images pi WHERE pi.print_id = p.id AND pi.is_primary IS TRUE ORDER BY pi.id LIMIT 1),
+                               (
+                                   SELECT pi.url
+                                   FROM print_images pi
+                                   WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
+                                   ORDER BY
+                                     CASE
+                                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                                       ELSE 1
+                                     END,
+                                     pi.id
+                                   LIMIT 1
+                               ),
                                (
                                    SELECT pi2.url
                                    FROM print_images pi2
                                    JOIN prints p2 ON p2.id = pi2.print_id
                                    WHERE p2.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
-                                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                                   ORDER BY
+                                     CASE
+                                       WHEN lower(pi2.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                                       WHEN lower(pi2.url) LIKE '%example.cdn.onepiece%' THEN 2
+                                       ELSE 1
+                                     END,
+                                     pi2.is_primary DESC,
+                                     pi2.id ASC
                                    LIMIT 1
                                ),
                                CASE

@@ -3198,3 +3198,188 @@ def test_onepiece_incremental_repair_cleans_residual_fake_images_even_when_paylo
         ).scalar_one()
 
     assert fake_count == 0
+
+
+def test_onepiece_reconcile_print_identifier_handles_multiple_candidates_deterministically(client, caplog):
+    connector = get_connector("onepiece")
+    caplog.set_level("WARNING")
+
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="ONE PIECE Card Game")
+        set_row = Set(game_id=1, code="op-01", name="Romance Dawn")
+        set_row_2 = Set(game_id=1, code="st-10", name="The Three Captains")
+        card_a = Card(game_id=1, name="Monkey.D.Luffy", card_key="luffy-a")
+        card_b = Card(game_id=1, name="Monkey.D.Luffy Alt", card_key="luffy-b")
+        session.add_all([game])
+        session.flush()
+        set_row.game_id = game.id
+        card_a.game_id = game.id
+        card_b.game_id = game.id
+        session.add_all([set_row, set_row_2, card_a, card_b])
+        session.flush()
+
+        print_a = Print(set_id=set_row.id, card_id=card_a.id, collector_number="OP01-001", language="en", is_foil=False, variant="default")
+        print_b = Print(set_id=set_row.id, card_id=card_b.id, collector_number="AA-001", language="en", is_foil=False, variant="default")
+        print_c = Print(set_id=set_row_2.id, card_id=card_b.id, collector_number="ST10-001", language="en", is_foil=False, variant="default")
+        session.add_all([print_a, print_b, print_c])
+        session.flush()
+        session.add_all(
+            [
+                PrintIdentifier(print_id=print_a.id, source="punk_records", external_id="OP01-001"),
+                PrintIdentifier(print_id=print_c.id, source="punk_records", external_id="OP01-001"),
+                PrintImage(print_id=print_a.id, url="https://en.onepiece-cardgame.com/images/op01-001.png", is_primary=True, source="punk_records"),
+                PrintImage(print_id=print_b.id, url="https://example.cdn.onepiece/legacy/aa-001.jpg", is_primary=True, source="legacy"),
+                PrintImage(print_id=print_c.id, url="https://example.cdn.onepiece/legacy/op01-001-c.jpg", is_primary=True, source="legacy"),
+            ]
+        )
+        session.flush()
+        stats = IngestStats()
+        connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_b, external_print_id="OP01-001")
+        session.commit()
+
+    with db.SessionLocal() as session:
+        identifiers = session.execute(
+            select(PrintIdentifier).where(
+                PrintIdentifier.source == "punk_records",
+                PrintIdentifier.external_id == "OP01-001",
+            )
+        ).scalars().all()
+
+    assert len(identifiers) == 1
+    assert any("identifier_collision_multiple_candidates" in message for message in [record.message for record in caplog.records])
+
+
+def test_onepiece_remote_repair_prefers_real_images_over_fake_legacy_in_search(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569101/OP01-001.json", "type": "blob"},
+            {"path": "english/cards/569101/OP01-025.json", "type": "blob"},
+            {"path": "english/cards/569101/EB01-004.json", "type": "blob"},
+        ]
+    }
+
+    def _fake_get(url, timeout=0, headers=None):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569101/OP01-001.json"):
+            return _FakeResponse(
+                {"id": "OP01-001", "pack_id": "569101", "name": "Monkey.D.Luffy", "img_full_url": "https://en.onepiece-cardgame.com/images/op01-001.png"}
+            )
+        if str(url).endswith("/english/cards/569101/OP01-025.json"):
+            return _FakeResponse(
+                {"id": "OP01-025", "pack_id": "569101", "name": "Roronoa Zoro", "img_full_url": "https://en.onepiece-cardgame.com/images/op01-025.png"}
+            )
+        if str(url).endswith("/english/cards/569101/EB01-004.json"):
+            return _FakeResponse(
+                {"id": "EB01-004", "pack_id": "569101", "name": "Nami", "img_full_url": "https://en.onepiece-cardgame.com/images/eb01-004.png"}
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=True, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        luffy_print = session.execute(select(Print).where(Print.collector_number == "OP01-001")).scalar_one()
+        session.add(
+            PrintImage(
+                print_id=luffy_print.id,
+                url="https://example.cdn.onepiece/op01/op01-001-legacy.jpg",
+                is_primary=True,
+                source="legacy",
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    response = client.get(
+        "/api/v1/search?q=luffy&game=onepiece&type=print",
+        headers=_auth_headers("onepiece-real-image", ["read:catalog"]),
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert all("example.cdn.onepiece" not in str(item.get("primary_image_url") or "") for item in payload)
+
+
+def test_onepiece_remote_reingest_is_idempotent_without_duplicate_external_identifiers(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569010", "name": "The Three Captains", "release_date": "2023-11-10"}]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569010/ST10-001.json", "type": "blob"},
+            {"path": "english/cards/569010/EB01-012_p1.json", "type": "blob"},
+        ]
+    }
+
+    def _fake_get(url, timeout=0, headers=None):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569010/ST10-001.json"):
+            return _FakeResponse(
+                {"id": "ST10-001", "pack_id": "569010", "name": "Monkey.D.Luffy", "img_full_url": "https://en.onepiece-cardgame.com/images/st10-001.png"}
+            )
+        if str(url).endswith("/english/cards/569010/EB01-012_p1.json"):
+            return _FakeResponse(
+                {"id": "EB01-012_p1", "pack_id": "569010", "name": "Roronoa Zoro", "img_full_url": "https://en.onepiece-cardgame.com/images/eb01-012-p1.png"}
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        duplicate_external_ids = session.execute(
+            select(func.count(PrintIdentifier.id)).where(PrintIdentifier.source == "punk_records")
+        ).scalar_one()
+        unique_external_ids = session.execute(
+            select(func.count(func.distinct(PrintIdentifier.external_id))).where(PrintIdentifier.source == "punk_records")
+        ).scalar_one()
+
+    assert duplicate_external_ids == unique_external_ids
