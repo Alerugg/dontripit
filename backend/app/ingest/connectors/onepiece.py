@@ -595,6 +595,24 @@ class OnePieceConnector(SourceConnector):
             return True, "better_family_rank"
         return False, "same_or_weaker_family_rank"
 
+    @staticmethod
+    def _set_owner_priority(set_code: str | None) -> int:
+        normalized = str(set_code or "").strip().lower()
+        if re.fullmatch(r"(op|st|eb)-?\d{1,2}", normalized):
+            return 0
+        if re.fullmatch(r"p-\d{3}", normalized):
+            return 0
+        if re.fullmatch(r"\d{6}", normalized):
+            return 2
+        return 1
+
+    @staticmethod
+    def _external_id_base_token(external_id: str | None) -> str:
+        value = str(external_id or "").strip().lower()
+        if not value:
+            return ""
+        return value.split("_", 1)[0]
+
     def _print_owner_rank(self, *, session, print_row: Print, external_id: str | None) -> tuple[int, int, int, int]:
         set_row = session.execute(select(Set).where(Set.id == print_row.set_id)).scalar_one_or_none()
         set_priority = self._set_owner_priority(set_row.code if set_row is not None else None)
@@ -928,6 +946,17 @@ class OnePieceConnector(SourceConnector):
                     identifier_for_print = identifier_by_external
                     self._reconcile_metrics.setdefault("owner_preserved", 0)
                     self._reconcile_metrics["owner_preserved"] += 1
+                requested_is_legacy = self._is_legacy_print_candidate(session=session, print_row=print_row)
+                existing_is_legacy = self._is_legacy_print_candidate(session=session, print_row=existing_print) if existing_print is not None else True
+                if existing_print is not None and requested_is_legacy and not existing_is_legacy:
+                    self.logger.info(
+                        "ingest onepiece identifier_collision_resolved strategy=prefer_canonical_print external_id=%s existing_print_id=%s requested_print_id=%s",
+                        external_print_id,
+                        existing_print.id,
+                        print_row.id,
+                    )
+                    print_row = existing_print
+                    identifier_for_print = identifier_by_external
                 else:
                     self.logger.warning(
                         "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
@@ -1424,6 +1453,7 @@ class OnePieceConnector(SourceConnector):
 
         self.logger.info(
             "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
+            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s",
             self._reconcile_metrics.get("calls", 0),
             self._reconcile_metrics.get("identifier_reassigned", 0),
             self._reconcile_metrics.get("owner_moved", 0),
