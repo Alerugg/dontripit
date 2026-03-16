@@ -323,7 +323,15 @@ def _short_query_search_rows(
                   ELSE 1
                 END
               ELSE 2
-            END AS prefix_word_rank
+            END AS prefix_word_rank,
+            CASE
+              WHEN game = 'onepiece' AND lower(COALESCE(primary_image_url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 0
+              WHEN game = 'onepiece' AND (
+                lower(COALESCE(primary_image_url, '')) LIKE '%placehold.co%'
+                OR lower(COALESCE(primary_image_url, '')) LIKE '%example.cdn.onepiece%'
+              ) THEN 2
+              ELSE 1
+            END AS image_quality_rank
           FROM base
           WHERE (
             title_l LIKE :title_prefix
@@ -354,6 +362,7 @@ def _short_query_search_rows(
           prefix_continuation_rank ASC,
           prefix_word_rank ASC,
           type_rank ASC,
+          image_quality_rank ASC,
           card_print_count DESC,
           CASE WHEN type = 'card' THEN id ELSE 0 END ASC,
           length(title) ASC,
@@ -528,6 +537,11 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'print' THEN 180.0 ELSE 0.0 END +
               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'set' THEN 120.0 ELSE 0.0 END +
               CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -90.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND lower(COALESCE(primary_img.url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 300.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND (
+                lower(COALESCE(primary_img.url, '')) LIKE '%placehold.co%'
+                OR lower(COALESCE(primary_img.url, '')) LIKE '%example.cdn.onepiece%'
+              ) THEN -800.0 ELSE 0.0 END +
               CASE WHEN :is_code_like_query = 1 THEN -35.0 * (
                 ROW_NUMBER() OVER (
                   PARTITION BY lower(COALESCE(s.code, ''))
@@ -563,6 +577,11 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             (sd.doc_type = 'print' AND s.id = p.set_id)
             OR (sd.doc_type = 'set' AND s.id = sd.object_id)
           )
+          LEFT JOIN (
+            SELECT pi.print_id, pi.url
+            FROM print_images pi
+            WHERE pi.is_primary IS TRUE
+          ) primary_img ON primary_img.print_id = p.id
           WHERE (
             lower(sd.title) LIKE :contains
             OR replace(replace(replace(lower(sd.title), '''', ''), '-', ''), ' ', '') LIKE :compact_contains
@@ -637,6 +656,11 @@ def search():
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(p.collector_number, '')) LIKE :q_norm || '%' THEN 920.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND lower(coalesce(primary_img.url, '')) LIKE '%en.onepiece-cardgame.com%' THEN 300.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND (
+                                   lower(coalesce(primary_img.url, '')) LIKE '%placehold.co%'
+                                   OR lower(coalesce(primary_img.url, '')) LIKE '%example.cdn.onepiece%'
+                               ) THEN -800.0 ELSE 0.0 END +
                                ts_rank(
                                    to_tsvector(
                                        'simple',
@@ -646,20 +670,7 @@ def search():
                                )
                            ) AS score,
                            s.code AS set_code, p.collector_number, p.variant,
-                           COALESCE(
-                               (
-                                   SELECT pi.url
-                                   FROM print_images pi
-                                   WHERE pi.print_id = p.id AND pi.is_primary = true
-                                   ORDER BY
-                                     CASE
-                                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
-                                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
-                                       ELSE 1
-                                     END,
-                                     pi.id
-                                   LIMIT 1
-                               ),
+                           COALESCE(primary_img.url,
                                (
                                    SELECT pi2.url
                                    FROM print_images pi2
@@ -681,6 +692,19 @@ def search():
                     JOIN games g ON g.id = sd.game_id
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
                     LEFT JOIN sets s ON p.set_id = s.id
+                    LEFT JOIN LATERAL (
+                        SELECT pi.url
+                        FROM print_images pi
+                        WHERE pi.print_id = p.id AND pi.is_primary = true
+                        ORDER BY
+                          CASE
+                            WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                            WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                            ELSE 1
+                          END,
+                          pi.id
+                        LIMIT 1
+                    ) primary_img ON true
                     WHERE to_tsvector(
                             'simple',
                             coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
