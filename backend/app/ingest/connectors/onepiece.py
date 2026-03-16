@@ -47,9 +47,11 @@ class OnePieceConnector(SourceConnector):
         value = str(os.getenv(name) or "").strip()
         return value or default
 
-    def _source_mode(self, *, fixture: bool = False) -> str:
-        if fixture:
+    def _source_mode(self, *, fixture: bool | None = None) -> str:
+        if fixture is True:
             return "fixture"
+        if fixture is False:
+            return "remote"
         mode = self._env("ONEPIECE_SOURCE", "fixture").lower()
         if mode not in {"fixture", "remote"}:
             self.logger.warning("ingest onepiece invalid_source_mode=%s using=fixture", mode)
@@ -840,7 +842,7 @@ class OnePieceConnector(SourceConnector):
         return touched
 
     def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
-        if self._source_mode(fixture=bool(kwargs.get("fixture", False))) != "remote":
+        if self._source_mode(fixture=kwargs.get("fixture")) != "remote":
             return {}
         game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
         if game is None:
@@ -1230,7 +1232,7 @@ class OnePieceConnector(SourceConnector):
         raise FileNotFoundError(f"Unable to resolve fixture path for {fixture_name}")
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
-        fixture = bool(kwargs.get("fixture", False))
+        fixture = kwargs.get("fixture")
         source_mode = self._source_mode(fixture=fixture)
         if source_mode == "fixture":
             fixture_path = self._resolve_fixture_path(path)
