@@ -352,17 +352,21 @@ class OnePieceConnector(SourceConnector):
 
     def _load_remote(self) -> dict:
         self._remote_json_cache.clear()
-        try:
-            return self._load_punkrecords_remote()
-        except requests.HTTPError as exc:
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            if status_code != 404:
-                raise
-            self.logger.warning(
-                "ingest onepiece remote punkrecords_unavailable status=%s fallback=official_cardlist",
-                status_code,
-            )
-            return self._load_official_cardlist_remote()
+        timeout = self._http_timeout()
+        root_url = self._punkrecords_root_url()
+        if self._should_attempt_punkrecords_remote(root_url=root_url, timeout=timeout):
+            try:
+                return self._load_punkrecords_remote()
+            except requests.HTTPError as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code != 404:
+                    raise
+                self.logger.warning(
+                    "ingest onepiece remote punkrecords_unavailable status=%s fallback=official_cardlist",
+                    status_code,
+                )
+
+        return self._load_official_cardlist_remote()
 
     def _load_punkrecords_remote(self) -> dict:
         started_at = time.monotonic()
@@ -1237,6 +1241,23 @@ class OnePieceConnector(SourceConnector):
             return None
         owner, repo, ref, suffix = github_context
         return f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1", suffix
+
+    def _should_attempt_punkrecords_remote(self, *, root_url: str, timeout: int) -> bool:
+        github_context = self._github_api_repo_context(root_url)
+        if github_context is None:
+            return True
+
+        owner, repo, _ref, _suffix = github_context
+        repo_api_url = f"https://api.github.com/repos/{owner}/{repo}"
+        payload = self._fetch_remote_json(url=repo_api_url, timeout=timeout)
+        if isinstance(payload, dict) and payload.get("full_name"):
+            return True
+
+        self.logger.warning(
+            "ingest onepiece remote punkrecords_repo_unavailable root_url=%s fallback=official_cardlist",
+            root_url,
+        )
+        return False
 
     def _fetch_pack_card_file_urls_from_tree(
         self,
