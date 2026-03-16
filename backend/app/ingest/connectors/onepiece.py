@@ -16,6 +16,11 @@ from sqlalchemy import select
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.normalization import normalize_collector_number, normalize_variant
 from app.models import Card, Game, Price, Print, PrintIdentifier, PrintImage, Set
+from app.onepiece_legacy_policy import (
+    is_legacy_onepiece_print,
+    is_onepiece_official_image,
+    is_onepiece_placeholder_or_fake_image,
+)
 
 
 class OnePieceConnector(SourceConnector):
@@ -503,7 +508,7 @@ class OnePieceConnector(SourceConnector):
 
     @classmethod
     def _is_fake_image_url(cls, value: str | None) -> bool:
-        return cls._FAKE_IMAGE_HOST in str(value or "").strip().lower()
+        return is_onepiece_placeholder_or_fake_image(value)
 
     def _resolve_primary_image(self, session, *, print_id: int) -> PrintImage | None:
         primary_images = session.execute(
@@ -513,7 +518,25 @@ class OnePieceConnector(SourceConnector):
 
     @classmethod
     def _is_official_image_url(cls, value: str | None) -> bool:
-        return cls._OFFICIAL_IMAGE_HOST in str(value or "").strip().lower()
+        return is_onepiece_official_image(value)
+
+
+    def _punk_records_external_id_for_print(self, *, session, print_id: int) -> str | None:
+        return session.execute(
+            select(PrintIdentifier.external_id).where(
+                PrintIdentifier.print_id == print_id,
+                PrintIdentifier.source == "punk_records",
+            )
+        ).scalar_one_or_none()
+
+    def _is_legacy_print_candidate(self, *, session, print_row: Print) -> bool:
+        primary_image = self._resolve_primary_image(session, print_id=print_row.id)
+        external_id = self._punk_records_external_id_for_print(session=session, print_id=print_row.id)
+        return is_legacy_onepiece_print(
+            game_slug="onepiece",
+            primary_image_url=primary_image.url if primary_image is not None else None,
+            external_id=external_id,
+        )
 
     @staticmethod
     def _print_priority_key(print_row: Print) -> tuple[int, int]:
@@ -530,6 +553,12 @@ class OnePieceConnector(SourceConnector):
     ) -> tuple[Print, str]:
         if len(print_candidates) == 1:
             return print_candidates[0], "only_candidate"
+
+        non_legacy_candidates = [
+            candidate for candidate in print_candidates if not self._is_legacy_print_candidate(session=session, print_row=candidate)
+        ]
+        if non_legacy_candidates:
+            print_candidates = non_legacy_candidates
 
         external_id_candidates = []
         for candidate in print_candidates:
@@ -777,19 +806,31 @@ class OnePieceConnector(SourceConnector):
                 print_row = existing_print
                 identifier_for_print = identifier_by_external
             else:
-                self.logger.warning(
-                    "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
-                    external_print_id,
-                    identifier_by_external.print_id,
-                    print_row.id,
-                )
-                if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
-                    session.delete(identifier_for_print)
+                requested_is_legacy = self._is_legacy_print_candidate(session=session, print_row=print_row)
+                existing_is_legacy = self._is_legacy_print_candidate(session=session, print_row=existing_print) if existing_print is not None else True
+                if existing_print is not None and requested_is_legacy and not existing_is_legacy:
+                    self.logger.info(
+                        "ingest onepiece identifier_collision_resolved strategy=prefer_canonical_print external_id=%s existing_print_id=%s requested_print_id=%s",
+                        external_print_id,
+                        existing_print.id,
+                        print_row.id,
+                    )
+                    print_row = existing_print
+                    identifier_for_print = identifier_by_external
+                else:
+                    self.logger.warning(
+                        "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
+                        external_print_id,
+                        identifier_by_external.print_id,
+                        print_row.id,
+                    )
+                    if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
+                        session.delete(identifier_for_print)
+                        stats.records_updated += 1
+                        identifier_for_print = None
+                    identifier_by_external.print_id = print_row.id
                     stats.records_updated += 1
-                    identifier_for_print = None
-                identifier_by_external.print_id = print_row.id
-                stats.records_updated += 1
-                identifier_for_print = identifier_by_external
+                    identifier_for_print = identifier_by_external
 
         if identifier_for_print is None:
             session.add(

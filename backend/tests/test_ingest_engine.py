@@ -3235,6 +3235,7 @@ def test_onepiece_reconcile_print_identifier_handles_multiple_candidates_determi
         session.flush()
         stats = IngestStats()
         connector._reconcile_print_identifier(session=session, stats=stats, print_row=print_b, external_print_id="OP01-001")
+        print_a_id = print_a.id
         session.commit()
 
     with db.SessionLocal() as session:
@@ -3246,6 +3247,7 @@ def test_onepiece_reconcile_print_identifier_handles_multiple_candidates_determi
         ).scalars().all()
 
     assert len(identifiers) == 1
+    assert identifiers[0].print_id == print_a_id
     assert any("identifier_collision_multiple_candidates" in message for message in [record.message for record in caplog.records])
 
 

@@ -6,27 +6,18 @@ from sqlalchemy import delete, select
 
 from app import db
 from app.ingest.normalization import normalize_collector_number
-from app.models import Card, Game, Print, PrintImage, SearchDocument, Set
-
-
-_ONEPIECE_OFFICIAL_HOST = "en.onepiece-cardgame.com"
-_ONEPIECE_LEGACY_FAKE_HOST = "example.cdn.onepiece"
-_PLACEHOLDER_HOST = "placehold.co"
-
-
-def _is_onepiece_official_image(url: str | None) -> bool:
-    return _ONEPIECE_OFFICIAL_HOST in str(url or "").strip().lower()
-
-
-def _is_placeholder_or_fake_image(url: str | None) -> bool:
-    lowered = str(url or "").strip().lower()
-    return _PLACEHOLDER_HOST in lowered or _ONEPIECE_LEGACY_FAKE_HOST in lowered
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage, SearchDocument, Set
+from app.onepiece_legacy_policy import (
+    is_legacy_onepiece_print,
+    is_onepiece_official_image,
+    is_onepiece_placeholder_or_fake_image,
+)
 
 
 def _image_quality_token(url: str | None) -> str:
-    if _is_onepiece_official_image(url):
+    if is_onepiece_official_image(url):
         return "imgq_official"
-    if _is_placeholder_or_fake_image(url):
+    if is_onepiece_placeholder_or_fake_image(url):
         return "imgq_placeholder"
     return "imgq_generic"
 
@@ -113,15 +104,32 @@ def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids:
     image_rows = session.execute(image_query).all()
     for print_id, url, is_primary, image_id in image_rows:
         current = primary_images.get(print_id)
-        candidate = (0 if _is_onepiece_official_image(url) else 2 if _is_placeholder_or_fake_image(url) else 1, 0 if is_primary else 1, image_id, url)
+        candidate = (
+            0 if is_onepiece_official_image(url) else 2 if is_onepiece_placeholder_or_fake_image(url) else 1,
+            0 if is_primary else 1,
+            image_id,
+            url,
+        )
         if current is None or candidate < current:
             primary_images[print_id] = candidate
+
+    external_ids_by_print_id = {
+        print_id: external_id
+        for print_id, external_id in session.execute(
+            select(Print.id, PrintIdentifier.external_id)
+            .join(PrintIdentifier, PrintIdentifier.print_id == Print.id)
+            .where(PrintIdentifier.source == "punk_records")
+        ).all()
+    }
 
     onepiece_official_keys: dict[tuple[int, str, str], list[int]] = {}
     for row in print_rows:
         print_id, _game_id, game_slug, card_id, _title, set_code, collector_number, _subtitle, _set_name, _variant, _language = row
         url = (primary_images.get(print_id) or (None, None, None, None))[3]
-        if game_slug != "onepiece" or not _is_onepiece_official_image(url):
+        external_id = external_ids_by_print_id.get(print_id)
+        if game_slug != "onepiece" or not is_onepiece_official_image(url):
+            continue
+        if is_legacy_onepiece_print(game_slug=game_slug, primary_image_url=url, external_id=external_id):
             continue
         key = (card_id, str(set_code or "").strip().lower(), normalize_collector_number(collector_number))
         onepiece_official_keys.setdefault(key, []).append(print_id)
@@ -140,9 +148,10 @@ def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids:
         _language,
     ) in print_rows:
         primary_image_url = (primary_images.get(print_id) or (None, None, None, None))[3]
+        external_id = external_ids_by_print_id.get(print_id)
         image_quality = _image_quality_token(primary_image_url)
         should_exclude = False
-        if game_slug == "onepiece" and _is_placeholder_or_fake_image(primary_image_url):
+        if is_legacy_onepiece_print(game_slug=game_slug, primary_image_url=primary_image_url, external_id=external_id):
             key = (card_id, str(set_code or "").strip().lower(), normalize_collector_number(collector_number))
             alternatives = [candidate_id for candidate_id in onepiece_official_keys.get(key, []) if candidate_id != print_id]
             should_exclude = bool(alternatives)
