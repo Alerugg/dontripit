@@ -12,7 +12,7 @@ from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.base import IngestStats
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, PrintImage, Product, Set, SourceRecord
+from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, PrintIdentifier, PrintImage, Product, Set, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
 
@@ -231,6 +231,12 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
 
         session.add_all(
             [
+                PrintIdentifier(print_id=luffy_official.id, source="punk_records", external_id="OP01-001"),
+                PrintIdentifier(print_id=luffy_legacy.id, source="punk_records", external_id="op01-001-default-en"),
+                PrintIdentifier(print_id=nami_official.id, source="punk_records", external_id="EB01-004"),
+                PrintIdentifier(print_id=nami_legacy.id, source="punk_records", external_id="eb01-004-default-en"),
+                PrintIdentifier(print_id=zoro_official.id, source="punk_records", external_id="OP01-025_r2"),
+                PrintIdentifier(print_id=zoro_legacy.id, source="punk_records", external_id="op01-025-parallel-en"),
                 PrintImage(
                     print_id=luffy_official.id,
                     url="https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png",
@@ -316,6 +322,41 @@ def test_search_onepiece_excludes_legacy_placeholder_prints_when_official_exists
     zoro_print_ids = [item["id"] for item in zoro_payload if item.get("type") == "print"]
     assert ids["zoro_official"] in zoro_print_ids
 
+
+
+
+def test_search_onepiece_policy_does_not_affect_other_games(client):
+    with db.SessionLocal() as session:
+        game = Game(slug="yugioh", name="Yu-Gi-Oh!")
+        set_row = Set(game_id=1, name="Legend of Blue Eyes", code="LOB")
+        card = Card(game_id=1, name="Dark Magician")
+        session.add(game)
+        session.flush()
+        set_row.game_id = game.id
+        card.game_id = game.id
+        session.add_all([set_row, card])
+        session.flush()
+
+        legacy_like_print = Print(set_id=set_row.id, card_id=card.id, collector_number="LOB-005", language="en", variant="default")
+        session.add(legacy_like_print)
+        session.flush()
+        session.add(
+            PrintImage(
+                print_id=legacy_like_print.id,
+                url="https://placehold.co/367x512?text=YGO",
+                is_primary=True,
+                source="fixture",
+            )
+        )
+        rebuild_search_documents(session)
+        legacy_like_print_id = legacy_like_print.id
+        session.commit()
+
+    response = client.get("/api/v1/search?q=dark magician&game=yugioh&type=print", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert any(item.get("id") == legacy_like_print_id for item in payload if item.get("type") == "print")
 
 def test_search_with_empty_type_and_no_results_returns_200(client):
     response = client.get("/api/search?q=zzzz-no-results&game=pokemon&type=", headers=_auth_headers())
