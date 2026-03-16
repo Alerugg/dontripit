@@ -2,7 +2,13 @@ const DEFAULT_TIMEOUT_MS = 12000
 
 function getInternalConfig() {
   const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
-  const apiKey = (process.env.INTERNAL_API_KEY || '').trim()
+  const apiKey = [
+    process.env.INTERNAL_API_KEY,
+    process.env.BACKEND_API_KEY,
+    process.env.API_KEY,
+  ]
+    .map((value) => (value || '').trim())
+    .find(Boolean)
 
   if (!baseUrl) {
     return {
@@ -111,6 +117,10 @@ export function getDeveloperErrorHint(upstreamPayload = {}, status) {
 
   if (status === 502) {
     return 'No hay conexión al backend. Verifica red Docker y que backend esté saludable.'
+  }
+
+  if (status === 401 || status === 403) {
+    return 'El backend rechazó la credencial. Revisa INTERNAL_API_KEY/BACKEND_API_KEY/API_KEY en el entorno del frontend.'
   }
 
   return undefined
