@@ -16,6 +16,13 @@ from sqlalchemy import select
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.normalization import normalize_collector_number, normalize_variant
 from app.models import Card, Game, Price, Print, PrintIdentifier, PrintImage, Set
+from app.onepiece_legacy_policy import (
+    is_legacy_onepiece_print,
+    is_onepiece_canonical_external_id,
+    is_onepiece_legacy_external_id,
+    is_onepiece_official_image,
+    is_onepiece_placeholder_or_fake_image,
+)
 
 
 class OnePieceConnector(SourceConnector):
@@ -33,6 +40,7 @@ class OnePieceConnector(SourceConnector):
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
         self._remote_json_cache: dict[str, object | None] = {}
+        self._reconcile_metrics: dict[str, int] = {}
 
     @staticmethod
     def _env(name: str, default: str) -> str:
@@ -503,7 +511,7 @@ class OnePieceConnector(SourceConnector):
 
     @classmethod
     def _is_fake_image_url(cls, value: str | None) -> bool:
-        return cls._FAKE_IMAGE_HOST in str(value or "").strip().lower()
+        return is_onepiece_placeholder_or_fake_image(value)
 
     def _resolve_primary_image(self, session, *, print_id: int) -> PrintImage | None:
         primary_images = session.execute(
@@ -513,12 +521,123 @@ class OnePieceConnector(SourceConnector):
 
     @classmethod
     def _is_official_image_url(cls, value: str | None) -> bool:
-        return cls._OFFICIAL_IMAGE_HOST in str(value or "").strip().lower()
+        return is_onepiece_official_image(value)
+
+
+    def _punk_records_external_id_for_print(self, *, session, print_id: int) -> str | None:
+        return session.execute(
+            select(PrintIdentifier.external_id).where(
+                PrintIdentifier.print_id == print_id,
+                PrintIdentifier.source == "punk_records",
+            )
+        ).scalar_one_or_none()
+
+    def _is_legacy_print_candidate(self, *, session, print_row: Print) -> bool:
+        primary_image = self._resolve_primary_image(session, print_id=print_row.id)
+        external_id = self._punk_records_external_id_for_print(session=session, print_id=print_row.id)
+        return is_legacy_onepiece_print(
+            game_slug="onepiece",
+            primary_image_url=primary_image.url if primary_image is not None else None,
+            external_id=external_id,
+        )
 
     @staticmethod
-    def _print_priority_key(print_row: Print) -> tuple[int, int]:
+    def _set_owner_priority(set_code: str | None) -> int:
+        normalized = str(set_code or "").strip().lower()
+        if re.fullmatch(r"(op|st|eb)-?\d{1,2}", normalized):
+            return 0
+        if re.fullmatch(r"p-\d{3}", normalized):
+            return 0
+        if re.fullmatch(r"\d{6}", normalized):
+            return 2
+        return 1
+
+    @staticmethod
+    def _external_id_base_token(external_id: str | None) -> str:
+        value = str(external_id or "").strip().lower()
+        if not value:
+            return ""
+        return value.split("_", 1)[0]
+
+
+    @staticmethod
+    def _canonical_external_id_family_rank(external_id: str | None) -> tuple[int, int]:
+        value = str(external_id or "").strip()
+        if not value or not is_onepiece_canonical_external_id(value):
+            return (9, 0)
+        lowered = value.lower()
+        if "_" not in lowered:
+            return (0, 0)
+        suffix = lowered.split("_", 1)[1]
+        if re.fullmatch(r"p\d+", suffix):
+            return (1, 0)
+        if re.fullmatch(r"r\d+", suffix):
+            return (2, 0)
+        return (3, 0)
+
+    def _should_reassign_external_id_value(self, *, current_external_id: str | None, incoming_external_id: str) -> tuple[bool, str]:
+        current = str(current_external_id or "").strip()
+        incoming = str(incoming_external_id or "").strip()
+        if not current or current == incoming:
+            return True, "missing_or_equal"
+
+        current_base = self._external_id_base_token(current)
+        incoming_base = self._external_id_base_token(incoming)
+        if not current_base or current_base != incoming_base:
+            return True, "different_base"
+
+        if is_onepiece_canonical_external_id(current) and is_onepiece_canonical_external_id(incoming):
+            return False, "same_base_canonical_preserve_owner"
+
+        current_rank = self._canonical_external_id_family_rank(current)
+        incoming_rank = self._canonical_external_id_family_rank(incoming)
+        if incoming_rank < current_rank:
+            return True, "better_family_rank"
+        return False, "same_or_weaker_family_rank"
+
+    def _print_owner_rank(self, *, session, print_row: Print, external_id: str | None) -> tuple[int, int, int, int]:
+        set_row = session.execute(select(Set).where(Set.id == print_row.set_id)).scalar_one_or_none()
+        set_priority = self._set_owner_priority(set_row.code if set_row is not None else None)
+        legacy_priority = 1 if self._is_legacy_print_candidate(session=session, print_row=print_row) else 0
+        if is_onepiece_canonical_external_id(external_id):
+            external_priority = 0
+        elif is_onepiece_legacy_external_id(external_id):
+            external_priority = 2
+        else:
+            external_priority = 1
         has_print_key = 0 if str(print_row.print_key or "").strip() else 1
-        return (has_print_key, -int(getattr(print_row, "id", 0) or 0))
+        return (legacy_priority, set_priority, external_priority, has_print_key)
+
+    def _should_keep_existing_identifier_owner(
+        self,
+        *,
+        session,
+        existing_print: Print,
+        requested_print: Print,
+        external_print_id: str,
+    ) -> tuple[bool, str]:
+        existing_rank = self._print_owner_rank(session=session, print_row=existing_print, external_id=external_print_id)
+        requested_rank = self._print_owner_rank(session=session, print_row=requested_print, external_id=external_print_id)
+        if existing_rank < requested_rank:
+            return True, "existing_better_rank"
+        if existing_rank > requested_rank:
+            return False, "requested_better_rank"
+
+        existing_current_external = self._punk_records_external_id_for_print(session=session, print_id=existing_print.id)
+        requested_current_external = self._punk_records_external_id_for_print(session=session, print_id=requested_print.id)
+        existing_base = self._external_id_base_token(existing_current_external)
+        requested_base = self._external_id_base_token(requested_current_external)
+        incoming_base = self._external_id_base_token(external_print_id)
+
+        if existing_base == incoming_base and requested_base != incoming_base:
+            return True, "existing_has_matching_base"
+        if requested_base == incoming_base and existing_base != incoming_base:
+            return False, "requested_has_matching_base"
+        return True, "ambiguous_keep_existing"
+
+    def _print_priority_key(self, *, session, print_row: Print, external_id: str | None = None) -> tuple[int, int, int, int, int]:
+        owner_rank = self._print_owner_rank(session=session, print_row=print_row, external_id=external_id)
+        return (*owner_rank, -int(getattr(print_row, "id", 0) or 0))
 
     def _select_best_print_candidate(
         self,
@@ -531,6 +650,12 @@ class OnePieceConnector(SourceConnector):
         if len(print_candidates) == 1:
             return print_candidates[0], "only_candidate"
 
+        non_legacy_candidates = [
+            candidate for candidate in print_candidates if not self._is_legacy_print_candidate(session=session, print_row=candidate)
+        ]
+        if non_legacy_candidates:
+            print_candidates = non_legacy_candidates
+
         external_id_candidates = []
         for candidate in print_candidates:
             identifiers = session.execute(
@@ -542,7 +667,7 @@ class OnePieceConnector(SourceConnector):
             if external_print_id in identifiers:
                 external_id_candidates.append(candidate)
         if external_id_candidates:
-            external_id_candidates.sort(key=self._print_priority_key)
+            external_id_candidates.sort(key=lambda row: self._print_priority_key(session=session, print_row=row, external_id=external_print_id))
             return external_id_candidates[0], "exact_identifier"
 
         same_set_and_collector = [
@@ -553,7 +678,7 @@ class OnePieceConnector(SourceConnector):
             == normalize_collector_number(requested_print.collector_number)
         ]
         if same_set_and_collector:
-            same_set_and_collector.sort(key=self._print_priority_key)
+            same_set_and_collector.sort(key=lambda row: self._print_priority_key(session=session, print_row=row, external_id=external_print_id))
             return same_set_and_collector[0], "same_set_collector"
 
         official_candidates = []
@@ -562,10 +687,10 @@ class OnePieceConnector(SourceConnector):
             if primary_image is not None and self._is_official_image_url(primary_image.url):
                 official_candidates.append(candidate)
         if official_candidates:
-            official_candidates.sort(key=self._print_priority_key)
+            official_candidates.sort(key=lambda row: self._print_priority_key(session=session, print_row=row, external_id=external_print_id))
             return official_candidates[0], "official_image"
 
-        sorted_candidates = sorted(print_candidates, key=self._print_priority_key)
+        sorted_candidates = sorted(print_candidates, key=lambda row: self._print_priority_key(session=session, print_row=row, external_id=external_print_id))
         return sorted_candidates[0], "latest_non_legacy"
 
     def _merge_print_rows(self, *, session, stats: IngestStats, legacy_print: Print, canonical_print: Print) -> None:
@@ -712,6 +837,8 @@ class OnePieceConnector(SourceConnector):
         print_row: Print,
         external_print_id: str,
     ) -> Print:
+        self._reconcile_metrics.setdefault("calls", 0)
+        self._reconcile_metrics["calls"] += 1
         identifier_for_print = session.execute(
             select(PrintIdentifier).where(
                 PrintIdentifier.print_id == print_row.id,
@@ -776,20 +903,47 @@ class OnePieceConnector(SourceConnector):
                 )
                 print_row = existing_print
                 identifier_for_print = identifier_by_external
+                self._reconcile_metrics.setdefault("owner_preserved", 0)
+                self._reconcile_metrics["owner_preserved"] += 1
             else:
-                self.logger.warning(
-                    "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
-                    external_print_id,
-                    identifier_by_external.print_id,
-                    print_row.id,
+                keep_existing, reason = (
+                    self._should_keep_existing_identifier_owner(
+                        session=session,
+                        existing_print=existing_print,
+                        requested_print=print_row,
+                        external_print_id=external_print_id,
+                    )
+                    if existing_print is not None
+                    else (False, "missing_existing")
                 )
-                if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
-                    session.delete(identifier_for_print)
+                if keep_existing and existing_print is not None:
+                    self.logger.info(
+                        "ingest onepiece identifier_collision_resolved strategy=preserve_existing_owner external_id=%s existing_print_id=%s requested_print_id=%s reason=%s",
+                        external_print_id,
+                        existing_print.id,
+                        print_row.id,
+                        reason,
+                    )
+                    print_row = existing_print
+                    identifier_for_print = identifier_by_external
+                    self._reconcile_metrics.setdefault("owner_preserved", 0)
+                    self._reconcile_metrics["owner_preserved"] += 1
+                else:
+                    self.logger.warning(
+                        "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
+                        external_print_id,
+                        identifier_by_external.print_id,
+                        print_row.id,
+                    )
+                    if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
+                        session.delete(identifier_for_print)
+                        stats.records_updated += 1
+                        identifier_for_print = None
+                    identifier_by_external.print_id = print_row.id
                     stats.records_updated += 1
-                    identifier_for_print = None
-                identifier_by_external.print_id = print_row.id
-                stats.records_updated += 1
-                identifier_for_print = identifier_by_external
+                    identifier_for_print = identifier_by_external
+                    self._reconcile_metrics.setdefault("owner_moved", 0)
+                    self._reconcile_metrics["owner_moved"] += 1
 
         if identifier_for_print is None:
             session.add(
@@ -803,6 +957,24 @@ class OnePieceConnector(SourceConnector):
             return print_row
 
         if identifier_for_print.external_id != external_print_id:
+            should_reassign, reason = self._should_reassign_external_id_value(
+                current_external_id=identifier_for_print.external_id,
+                incoming_external_id=external_print_id,
+            )
+            if not should_reassign:
+                self.logger.info(
+                    "ingest onepiece identifier_reassign_skipped print_id=%s old_external_id=%s candidate_external_id=%s reason=%s",
+                    print_row.id,
+                    identifier_for_print.external_id,
+                    external_print_id,
+                    reason,
+                )
+                self._reconcile_metrics.setdefault("reassign_skipped", 0)
+                self._reconcile_metrics["reassign_skipped"] += 1
+                self._reconcile_metrics.setdefault("noop_kept", 0)
+                self._reconcile_metrics["noop_kept"] += 1
+                return print_row
+
             conflicting = session.execute(
                 select(PrintIdentifier).where(
                     PrintIdentifier.source == "punk_records",
@@ -817,6 +989,8 @@ class OnePieceConnector(SourceConnector):
                     external_print_id,
                     conflicting.print_id,
                 )
+                self._reconcile_metrics.setdefault("conflicts_avoided", 0)
+                self._reconcile_metrics["conflicts_avoided"] += 1
                 return print_row
 
             self.logger.warning(
@@ -827,6 +1001,11 @@ class OnePieceConnector(SourceConnector):
             )
             identifier_for_print.external_id = external_print_id
             stats.records_updated += 1
+            self._reconcile_metrics.setdefault("identifier_reassigned", 0)
+            self._reconcile_metrics["identifier_reassigned"] += 1
+        else:
+            self._reconcile_metrics.setdefault("noop_kept", 0)
+            self._reconcile_metrics["noop_kept"] += 1
 
         return print_row
 
@@ -1058,6 +1237,15 @@ class OnePieceConnector(SourceConnector):
         return game
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
+        self._reconcile_metrics = {
+            "calls": 0,
+            "identifier_reassigned": 0,
+            "owner_moved": 0,
+            "owner_preserved": 0,
+            "noop_kept": 0,
+            "conflicts_avoided": 0,
+            "reassign_skipped": 0,
+        }
         game = self._ensure_game(session, stats)
         language = self._normalize_language(str(payload.get("language") or "en"))
 
@@ -1233,5 +1421,16 @@ class OnePieceConnector(SourceConnector):
                         primary_image.url = image_url
                         primary_image.source = "punk_records"
                         stats.records_updated += 1
+
+        self.logger.info(
+            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
+            self._reconcile_metrics.get("calls", 0),
+            self._reconcile_metrics.get("identifier_reassigned", 0),
+            self._reconcile_metrics.get("owner_moved", 0),
+            self._reconcile_metrics.get("owner_preserved", 0),
+            self._reconcile_metrics.get("noop_kept", 0),
+            self._reconcile_metrics.get("conflicts_avoided", 0),
+            self._reconcile_metrics.get("reassign_skipped", 0),
+        )
 
         return touched

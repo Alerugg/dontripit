@@ -5,6 +5,11 @@ import logging
 import re
 
 from app import db
+from app.onepiece_legacy_policy import (
+    is_legacy_onepiece_print,
+    is_onepiece_official_image,
+    is_onepiece_placeholder_or_fake_image,
+)
 
 search_bp = Blueprint("search", __name__)
 logger = logging.getLogger(__name__)
@@ -39,10 +44,7 @@ def _is_simple_name_query(raw_query: str) -> bool:
 
 
 def _onepiece_image_signals(primary_image_url: str | None) -> tuple[bool, bool]:
-    image_url = (primary_image_url or "").lower()
-    is_placeholder_image = "placehold.co" in image_url or "example.cdn.onepiece" in image_url
-    has_official_image = "en.onepiece-cardgame.com" in image_url
-    return has_official_image, is_placeholder_image
+    return is_onepiece_official_image(primary_image_url), is_onepiece_placeholder_or_fake_image(primary_image_url)
 
 
 def _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids: list[int]) -> set[int]:
@@ -87,22 +89,48 @@ def _legacy_onepiece_placeholder_prints_with_official_alternatives(session, plac
 
 
 def _apply_onepiece_search_policy(rows, *, session):
-    """Hide legacy placeholder print rows when official One Piece alternatives exist."""
+    """Hide legacy One Piece print rows when official alternatives exist."""
     normalized_rows: list[dict] = []
     official_titles: set[str] = set()
     official_collectors: set[str] = set()
+
+    onepiece_print_ids = [
+        int(row.get("id"))
+        for row in rows
+        if dict(row).get("game") == "onepiece" and dict(row).get("type") == "print" and dict(row).get("id") is not None
+    ]
+    external_ids_by_print_id = {
+        int(print_id): external_id
+        for print_id, external_id in session.execute(
+            text(
+                """
+                SELECT pi.print_id, pi.external_id
+                FROM print_identifiers pi
+                WHERE pi.source = 'punk_records'
+                  AND pi.print_id IN :print_ids
+                """
+            ).bindparams(bindparam("print_ids", expanding=True)),
+            {"print_ids": onepiece_print_ids},
+        ).all()
+    } if onepiece_print_ids else {}
 
     for row in rows:
         normalized_row = dict(row)
         has_official_image, is_placeholder_image = _onepiece_image_signals(normalized_row.get("primary_image_url"))
         normalized_row["has_official_image"] = has_official_image
         normalized_row["is_placeholder_image"] = is_placeholder_image
+        normalized_row["external_id"] = external_ids_by_print_id.get(int(normalized_row.get("id"))) if normalized_row.get("id") is not None else None
+        normalized_row["is_legacy_onepiece_print"] = is_legacy_onepiece_print(
+            game_slug=normalized_row.get("game"),
+            primary_image_url=normalized_row.get("primary_image_url"),
+            external_id=normalized_row.get("external_id"),
+        )
         normalized_rows.append(normalized_row)
 
         if normalized_row.get("game") != "onepiece":
             continue
 
-        if has_official_image:
+        if has_official_image and not normalized_row["is_legacy_onepiece_print"]:
             title = str(normalized_row.get("title") or "").strip().lower()
             if title:
                 official_titles.add(title)
@@ -111,16 +139,16 @@ def _apply_onepiece_search_policy(rows, *, session):
             if collector_number:
                 official_collectors.add(collector_number)
 
-    placeholder_print_ids = [
+    candidate_print_ids = [
         int(row.get("id"))
         for row in normalized_rows
-        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_placeholder_image") and row.get("id") is not None
+        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_legacy_onepiece_print") and row.get("id") is not None
     ]
-    removable_legacy_print_ids = _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids)
+    removable_legacy_print_ids = _legacy_onepiece_placeholder_prints_with_official_alternatives(session, candidate_print_ids)
 
     filtered_rows: list[dict] = []
     for row in normalized_rows:
-        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_placeholder_image"):
+        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_legacy_onepiece_print"):
             if row.get("id") in removable_legacy_print_ids:
                 continue
             title = str(row.get("title") or "").strip().lower()
@@ -129,14 +157,12 @@ def _apply_onepiece_search_policy(rows, *, session):
                 continue
         filtered_rows.append(row)
 
-    # Preserve the existing order as much as possible while preferring official
-    # One Piece images over placeholder ones when both are present.
     filtered_rows.sort(
         key=lambda row: (
             0
             if row.get("game") == "onepiece" and row.get("has_official_image")
             else 2
-            if row.get("game") == "onepiece" and row.get("is_placeholder_image")
+            if row.get("game") == "onepiece" and row.get("is_legacy_onepiece_print")
             else 1
         )
     )
