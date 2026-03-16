@@ -113,6 +113,93 @@ def test_search_returns_results_after_seed_or_ingest(client):
     assert any(item["type"] in {"card", "print"} for item in payload)
 
 
+def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="One Piece")
+        session.add(game)
+        session.flush()
+
+        op01 = Set(game_id=game.id, name="ROMANCE DAWN", code="OP-01")
+        eb01 = Set(game_id=game.id, name="Extra Booster Memorial Collection", code="EB-01")
+        session.add_all([op01, eb01])
+        session.flush()
+
+        nami = Card(game_id=game.id, name="Nami")
+        zoro = Card(game_id=game.id, name="Roronoa Zoro")
+        session.add_all([nami, zoro])
+        session.flush()
+
+        nami_official = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="default")
+        nami_legacy = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
+        zoro_official = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="default")
+        zoro_legacy = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
+        session.add_all([nami_official, nami_legacy, zoro_official, zoro_legacy])
+        session.flush()
+
+        session.add_all(
+            [
+                PrintImage(
+                    print_id=nami_official.id,
+                    url="https://en.onepiece-cardgame.com/images/cardlist/card/EB01-004.png",
+                    is_primary=True,
+                    source="remote",
+                ),
+                PrintImage(
+                    print_id=nami_legacy.id,
+                    url="https://placehold.co/367x512?text=ONE+PIECE",
+                    is_primary=True,
+                    source="legacy",
+                ),
+                PrintImage(
+                    print_id=zoro_official.id,
+                    url="https://en.onepiece-cardgame.com/images/cardlist/card/OP01-025.png",
+                    is_primary=True,
+                    source="remote",
+                ),
+                PrintImage(
+                    print_id=zoro_legacy.id,
+                    url="https://example.cdn.onepiece/OP01-025.png",
+                    is_primary=True,
+                    source="legacy",
+                ),
+            ]
+        )
+
+        rebuild_search_documents(session)
+        session.commit()
+        return {
+            "nami_official": nami_official.id,
+            "nami_legacy": nami_legacy.id,
+            "zoro_official": zoro_official.id,
+            "zoro_legacy": zoro_legacy.id,
+        }
+
+
+def test_search_onepiece_excludes_legacy_placeholder_prints_when_official_exists(client):
+    ids = _seed_onepiece_legacy_vs_official_prints()
+    headers = _auth_headers()
+
+    nami_response = client.get("/api/v1/search?q=nami&game=onepiece", headers=headers)
+    assert nami_response.status_code == 200
+    nami_payload = nami_response.get_json()
+    assert nami_payload
+    assert nami_payload[0]["type"] == "card"
+    assert "en.onepiece-cardgame.com" in str(nami_payload[0]["primary_image_url"])
+    assert all(item.get("id") != ids["nami_legacy"] for item in nami_payload[:10])
+    nami_print_ids = [item["id"] for item in nami_payload if item.get("type") == "print"]
+    assert ids["nami_official"] in nami_print_ids
+
+    zoro_response = client.get("/api/v1/search?q=zoro&game=onepiece", headers=headers)
+    assert zoro_response.status_code == 200
+    zoro_payload = zoro_response.get_json()
+    assert zoro_payload
+    assert zoro_payload[0]["type"] == "card"
+    assert "en.onepiece-cardgame.com" in str(zoro_payload[0]["primary_image_url"])
+    assert all(item.get("id") != ids["zoro_legacy"] for item in zoro_payload[:10])
+    zoro_print_ids = [item["id"] for item in zoro_payload if item.get("type") == "print"]
+    assert ids["zoro_official"] in zoro_print_ids
+
+
 def test_search_with_empty_type_and_no_results_returns_200(client):
     response = client.get("/api/search?q=zzzz-no-results&game=pokemon&type=", headers=_auth_headers())
     assert response.status_code == 200

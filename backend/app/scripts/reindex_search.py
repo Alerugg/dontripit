@@ -5,7 +5,30 @@ import re
 from sqlalchemy import delete, select
 
 from app import db
-from app.models import Card, Print, SearchDocument, Set
+from app.ingest.normalization import normalize_collector_number
+from app.models import Card, Game, Print, PrintImage, SearchDocument, Set
+
+
+_ONEPIECE_OFFICIAL_HOST = "en.onepiece-cardgame.com"
+_ONEPIECE_LEGACY_FAKE_HOST = "example.cdn.onepiece"
+_PLACEHOLDER_HOST = "placehold.co"
+
+
+def _is_onepiece_official_image(url: str | None) -> bool:
+    return _ONEPIECE_OFFICIAL_HOST in str(url or "").strip().lower()
+
+
+def _is_placeholder_or_fake_image(url: str | None) -> bool:
+    lowered = str(url or "").strip().lower()
+    return _PLACEHOLDER_HOST in lowered or _ONEPIECE_LEGACY_FAKE_HOST in lowered
+
+
+def _image_quality_token(url: str | None) -> str:
+    if _is_onepiece_official_image(url):
+        return "imgq_official"
+    if _is_placeholder_or_fake_image(url):
+        return "imgq_placeholder"
+    return "imgq_generic"
 
 
 def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids: set[int] | None = None, print_ids: set[int] | None = None) -> dict[str, int]:
@@ -56,17 +79,81 @@ def rebuild_search_documents(session, card_ids: set[int] | None = None, set_ids:
         select(
             Print.id,
             Card.game_id,
+            Game.slug,
+            Card.id,
             Card.name,
+            Set.code,
+            Print.collector_number,
             (Set.code + " #" + Print.collector_number).label("subtitle"),
-            (Card.name + " " + Set.name + " " + Set.code + " " + Print.collector_number).label("doc_text"),
+            Set.name,
+            Print.variant,
+            Print.language,
         )
         .join(Card, Card.id == Print.card_id)
         .join(Set, Set.id == Print.set_id)
+        .join(Game, Game.id == Card.game_id)
     )
     if print_ids is not None:
         print_query = print_query.where(Print.id.in_(print_ids))
 
-    for print_id, game_id, title, subtitle, doc_text in session.execute(print_query).all():
+    print_rows = session.execute(print_query).all()
+
+    primary_images = {}
+    image_query = (
+        select(
+            Print.id,
+            PrintImage.url,
+            PrintImage.is_primary,
+            PrintImage.id,
+        )
+        .join(PrintImage, PrintImage.print_id == Print.id)
+    )
+    if print_ids is not None:
+        image_query = image_query.where(Print.id.in_(print_ids))
+    image_rows = session.execute(image_query).all()
+    for print_id, url, is_primary, image_id in image_rows:
+        current = primary_images.get(print_id)
+        candidate = (0 if _is_onepiece_official_image(url) else 2 if _is_placeholder_or_fake_image(url) else 1, 0 if is_primary else 1, image_id, url)
+        if current is None or candidate < current:
+            primary_images[print_id] = candidate
+
+    onepiece_official_keys: dict[tuple[int, str, str], list[int]] = {}
+    for row in print_rows:
+        print_id, _game_id, game_slug, card_id, _title, set_code, collector_number, _subtitle, _set_name, _variant, _language = row
+        url = (primary_images.get(print_id) or (None, None, None, None))[3]
+        if game_slug != "onepiece" or not _is_onepiece_official_image(url):
+            continue
+        key = (card_id, str(set_code or "").strip().lower(), normalize_collector_number(collector_number))
+        onepiece_official_keys.setdefault(key, []).append(print_id)
+
+    for (
+        print_id,
+        game_id,
+        game_slug,
+        card_id,
+        title,
+        set_code,
+        collector_number,
+        subtitle,
+        set_name,
+        _variant,
+        _language,
+    ) in print_rows:
+        primary_image_url = (primary_images.get(print_id) or (None, None, None, None))[3]
+        image_quality = _image_quality_token(primary_image_url)
+        should_exclude = False
+        if game_slug == "onepiece" and _is_placeholder_or_fake_image(primary_image_url):
+            key = (card_id, str(set_code or "").strip().lower(), normalize_collector_number(collector_number))
+            alternatives = [candidate_id for candidate_id in onepiece_official_keys.get(key, []) if candidate_id != print_id]
+            should_exclude = bool(alternatives)
+
+        if should_exclude:
+            existing_doc = existing_prints.get(print_id)
+            if existing_doc is not None:
+                session.delete(existing_doc)
+            continue
+
+        doc_text = f"{title} {set_name} {set_code} {collector_number} {image_quality}".strip()
         _upsert_doc(
             session,
             "print",
