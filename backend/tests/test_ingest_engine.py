@@ -2453,6 +2453,77 @@ def test_onepiece_fixture_flag_false_forces_remote_even_if_env_defaults_fixture(
     assert any(url.endswith("/english/packs.json") for url in urls_requested)
 
 
+def test_onepiece_remote_falls_back_to_official_cardlist_when_punkrecords_404(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload=None, text="", status_code=200, headers=None):
+            self._payload = payload
+            self.text = text
+            self.status_code = status_code
+            self.headers = headers or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("missing json payload")
+            return self._payload
+
+    official_index = """
+    <select id="series"> 
+      <option value="569101">BOOSTER PACK [OP-01]</option>
+    </select>
+    """
+    official_series_page = """
+    <dl class="modalCol" id="OP01-001">
+      <div class="infoCol"><span>OP01-001</span> | <span>L</span> | <span>LEADER</span></div>
+      <div class="cardName">Monkey.D.Luffy</div>
+      <img data-src="../images/cardlist/card/OP01-001.png?260305" />
+    </dl>
+    """
+
+    def _fake_get(url, timeout=0, headers=None):
+        target = str(url)
+        if target.endswith("/english/packs.json"):
+            return _FakeResponse(status_code=404)
+        if target == "https://en.onepiece-cardgame.com/cardlist/":
+            return _FakeResponse(text=official_index)
+        if target == "https://en.onepiece-cardgame.com/cardlist/?series=569101":
+            return _FakeResponse(text=official_series_page)
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_OFFICIAL_CARDLIST_URL", "https://en.onepiece-cardgame.com/cardlist/")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert stats.records_inserted > 0
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        image_urls = session.execute(
+            select(PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id)
+        ).scalars().all()
+
+    assert image_urls
+    assert all("example.cdn.onepiece" not in url for url in image_urls)
+    assert any("en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png" in url for url in image_urls)
+
+
+
 def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(client, monkeypatch):
     connector = get_connector("onepiece")
 

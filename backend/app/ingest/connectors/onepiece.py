@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from html import unescape
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urljoin
 
 import requests
 from sqlalchemy import select
@@ -30,6 +32,7 @@ class OnePieceConnector(SourceConnector):
     _DEFAULT_TIMEOUT_SECONDS = 30
     _DEFAULT_PUNKRECORDS_ROOT_URL = "https://raw.githubusercontent.com/DevTheFrog/punk-records/main"
     _DEFAULT_PUNKRECORDS_LANGUAGE = "english"
+    _DEFAULT_OFFICIAL_CARDLIST_URL = "https://en.onepiece-cardgame.com/cardlist/"
     _DEFAULT_IMAGE_FALLBACK_URL = "https://placehold.co/367x512?text=ONE+PIECE"
     _DEFAULT_REMOTE_MAX_WORKERS = 12
     _COMMERCIAL_CODE_RE = re.compile(r"\b(op|st|eb)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
@@ -349,6 +352,19 @@ class OnePieceConnector(SourceConnector):
 
     def _load_remote(self) -> dict:
         self._remote_json_cache.clear()
+        try:
+            return self._load_punkrecords_remote()
+        except requests.HTTPError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code != 404:
+                raise
+            self.logger.warning(
+                "ingest onepiece remote punkrecords_unavailable status=%s fallback=official_cardlist",
+                status_code,
+            )
+            return self._load_official_cardlist_remote()
+
+    def _load_punkrecords_remote(self) -> dict:
         started_at = time.monotonic()
         root_url = self._punkrecords_root_url()
         language = self._punkrecords_language()
@@ -447,6 +463,101 @@ class OnePieceConnector(SourceConnector):
         if pack_records and not normalized.get("cards"):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
+
+    def _load_official_cardlist_remote(self) -> dict:
+        base_url = self._env("ONEPIECE_OFFICIAL_CARDLIST_URL", self._DEFAULT_OFFICIAL_CARDLIST_URL)
+        timeout = self._http_timeout()
+        index_html = requests.get(base_url, timeout=timeout)
+        index_html.raise_for_status()
+        index_text = index_html.text
+
+        series_options = self._parse_official_series_options(index_text)
+        if not series_options:
+            raise ValueError("One Piece remote official ingest found zero series options in cardlist page")
+
+        sets: list[dict] = []
+        cards_by_key: dict[str, dict] = {}
+
+        for series_id, label in series_options:
+            series_url = f"{base_url}?series={series_id}"
+            series_response = requests.get(series_url, timeout=timeout)
+            series_response.raise_for_status()
+            for entry in self._parse_official_cards_page(series_response.text, base_url=base_url):
+                set_code = entry["set_code"]
+                if not any(row["code"] == set_code for row in sets):
+                    sets.append({"id": series_id, "code": set_code, "name": label})
+
+                card_id = str(entry["card_id"] or "").strip() or entry["collector_number"]
+                card_row = cards_by_key.setdefault(card_id, {"id": card_id, "name": entry["name"], "prints": []})
+                card_row["prints"].append(
+                    {
+                        "id": entry["print_id"],
+                        "set_code": set_code,
+                        "collector_number": entry["collector_number"],
+                        "rarity": entry["rarity"],
+                        "variant": entry["variant"],
+                        "image_url": entry["image_url"],
+                    }
+                )
+
+        if not cards_by_key:
+            raise ValueError("One Piece remote official ingest found zero cards after parsing series pages")
+
+        return {
+            "source": "onepiece_official",
+            "language": "en",
+            "sets": sorted(sets, key=lambda row: row["code"]),
+            "cards": list(cards_by_key.values()),
+        }
+
+    @staticmethod
+    def _parse_official_series_options(index_html: str) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        for value, raw_label in re.findall(r'<option\s+value="(\d+)"[^>]*>(.*?)</option>', index_html, flags=re.IGNORECASE | re.DOTALL):
+            label = re.sub(r"<[^>]+>", " ", unescape(raw_label))
+            label = re.sub(r"\s+", " ", label).strip()
+            if not label:
+                continue
+            options.append((value, label))
+        return options
+
+    def _parse_official_cards_page(self, html: str, *, base_url: str) -> list[dict[str, str]]:
+        records: list[dict[str, str]] = []
+        for block in re.findall(r'<dl\s+class="modalCol"\s+id="([^"]+)"[^>]*>(.*?)</dl>', html, flags=re.IGNORECASE | re.DOTALL):
+            print_id, body = block
+            raw_collector = print_id.strip().upper()
+            if not raw_collector:
+                continue
+            collector_base, _, variant_suffix = raw_collector.partition("_")
+            set_code = self._extract_commercial_code(collector_base)
+            if not set_code:
+                continue
+
+            name_match = re.search(r'<div\s+class="cardName">(.*?)</div>', body, flags=re.IGNORECASE | re.DOTALL)
+            rarity_match = re.search(r'<div\s+class="infoCol">.*?<span>[^<]+</span>\s*\|\s*<span>([^<]+)</span>', body, flags=re.IGNORECASE | re.DOTALL)
+            image_match = re.search(r'data-src="([^"]+)"', body, flags=re.IGNORECASE)
+            if image_match is None:
+                image_match = re.search(r'<img[^>]+src="([^"]+)"', body, flags=re.IGNORECASE)
+            if image_match is None:
+                continue
+
+            image_url = urljoin(base_url, unescape(image_match.group(1)))
+            image_url = image_url.split("?", 1)[0]
+            variant = self._normalize_onepiece_variant(variant_suffix or "default")
+
+            records.append(
+                {
+                    "print_id": raw_collector,
+                    "card_id": collector_base,
+                    "collector_number": collector_base,
+                    "set_code": set_code,
+                    "name": re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", name_match.group(1) if name_match else collector_base))).strip(),
+                    "rarity": re.sub(r"\s+", " ", unescape(rarity_match.group(1) if rarity_match else "")).strip() or None,
+                    "variant": variant,
+                    "image_url": image_url,
+                }
+            )
+        return records
 
     def _remote_max_workers(self) -> int:
         raw = self._env("ONEPIECE_REMOTE_MAX_WORKERS", str(self._DEFAULT_REMOTE_MAX_WORKERS))
