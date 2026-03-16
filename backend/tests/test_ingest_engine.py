@@ -2391,6 +2391,68 @@ def _patch_onepiece_http(monkeypatch, fake_get):
 
     monkeypatch.setattr("app.ingest.connectors.onepiece.requests.sessions.Session.get", _fake_session_get)
 
+def test_onepiece_fixture_flag_false_forces_remote_even_if_env_defaults_fixture(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests import HTTPError
+
+                error = HTTPError(f"status={self.status_code}")
+                error.response = self
+                raise error
+
+        def json(self):
+            return self._payload
+
+    remote_packs = {
+        "569101": {
+            "id": "569101",
+            "raw_title": "Booster Pack Romance Dawn",
+            "title_parts": {"label": "OP-01"},
+            "code": "op-01",
+            "release_date": "2022-07-22",
+        }
+    }
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-001.json", "type": "blob"}]}
+
+    urls_requested: list[str] = []
+
+    def _fake_get(url, timeout=0, headers=None):
+        urls_requested.append(str(url))
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569101/OP01-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-001",
+                    "pack_id": "op-01",
+                    "name": "Monkey.D.Luffy",
+                    "rarity": "L",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-001.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "fixture")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    assert any(url.endswith("/english/packs.json") for url in urls_requested)
+
+
 def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(client, monkeypatch):
     connector = get_connector("onepiece")
 
