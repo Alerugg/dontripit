@@ -57,7 +57,7 @@ def _auth_headers(key: str = "test-key", scopes: list[str] | None = None) -> dic
 
 def test_allows_health_without_key(client):
     response = client.get("/api/health")
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     payload = response.get_json()
     assert payload["ok"] is True
     assert "revision" in payload
@@ -95,7 +95,7 @@ def test_search_works(client):
         session.commit()
 
     response = client.get("/api/search?q=pika&game=pokemon", headers=_auth_headers())
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     payload = response.get_json()
     assert isinstance(payload, list)
 
@@ -150,6 +150,8 @@ def _seed_onepiece_natural_name_ranking_fixture() -> dict[str, dict[str, int]]:
             "Luffy-Tarou",
             "Ace & Sabo & Luffy",
             "Nami's Resolve at Sea",
+            "Zoro-Juurou",
+            "Law & Bepo",
             "Three Sword Style of Zoro",
             "Law's Tactical Room",
         ]
@@ -214,6 +216,39 @@ def test_search_onepiece_simple_names_prioritize_main_cards_and_direct_prints(cl
             assert top_titles.index("luffy") < top_titles.index("luffy-tarou")
             assert top_titles.index("luffy") < top_titles.index("ace & sabo & luffy")
             assert top_titles.index("luffy") < top_titles.index("luffy is the man who will be king of the pirates!!!")
+        if query == "zoro":
+            assert top_titles.index("roronoa zoro") < top_titles.index("zoro-juurou")
+        if query == "law":
+            assert top_titles.index("law") < top_titles.index("law & bepo")
+
+
+def test_card_detail_prints_variant_order_prefers_default_then_r_then_parallel(client):
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="One Piece")
+        session.add(game)
+        session.flush()
+
+        set_row = Set(game_id=game.id, name="ROMANCE DAWN", code="OP-01")
+        card = Card(game_id=game.id, name="Monkey.D.Luffy")
+        session.add_all([set_row, card])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(set_id=set_row.id, card_id=card.id, collector_number="OP01-001", language="en", variant="parallel"),
+                Print(set_id=set_row.id, card_id=card.id, collector_number="OP01-001", language="en", variant="r1"),
+                Print(set_id=set_row.id, card_id=card.id, collector_number="OP01-001", language="en", variant="default"),
+            ]
+        )
+        session.commit()
+
+        card_id = card.id
+
+    response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers("variant-order", ["read:catalog"]))
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    variants = [row.get("variant") for row in payload.get("prints") or []]
+    assert variants[:3] == ["default", "r1", "parallel"]
 
 def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
     with db.SessionLocal() as session:
