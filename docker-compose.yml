@@ -23,6 +23,9 @@ services:
       FLASK_ENV: development
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required to register backend local key}
+      INTERNAL_API_LABEL: ${INTERNAL_API_LABEL:-local-internal}
+      INTERNAL_API_PLAN: ${INTERNAL_API_PLAN:-free}
       PUBLIC_API_ENABLED: ${PUBLIC_API_ENABLED:-false}
       PUBLIC_IP_RATE_LIMIT_RPM: ${PUBLIC_IP_RATE_LIMIT_RPM:-30}
     volumes:

@@ -113,3 +113,35 @@ def ensure_default_plans(session: Session) -> int:
     if inserted:
         session.commit()
     return inserted
+
+
+def ensure_active_api_key(
+    session: Session,
+    raw_key: str,
+    *,
+    plan_name: str = "free",
+    label: str | None = None,
+    scopes: list[str] | None = None,
+) -> ApiKey:
+    ensure_default_plans(session)
+    key_hash = hash_api_key(raw_key)
+    existing = session.execute(select(ApiKey).where(ApiKey.key_hash == key_hash)).scalar_one_or_none()
+
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            session.commit()
+        return existing
+
+    plan = session.execute(select(ApiPlan).where(ApiPlan.name == plan_name)).scalar_one()
+    api_key = ApiKey(
+        key_hash=key_hash,
+        prefix=raw_key[:8],
+        plan_id=plan.id,
+        label=label,
+        is_active=True,
+        scopes=scopes or ["read:catalog"],
+    )
+    session.add(api_key)
+    session.commit()
+    return api_key
