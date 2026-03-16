@@ -892,6 +892,17 @@ class OnePieceConnector(SourceConnector):
                     identifier_for_print = identifier_by_external
                     self._reconcile_metrics.setdefault("owner_preserved", 0)
                     self._reconcile_metrics["owner_preserved"] += 1
+                requested_is_legacy = self._is_legacy_print_candidate(session=session, print_row=print_row)
+                existing_is_legacy = self._is_legacy_print_candidate(session=session, print_row=existing_print) if existing_print is not None else True
+                if existing_print is not None and requested_is_legacy and not existing_is_legacy:
+                    self.logger.info(
+                        "ingest onepiece identifier_collision_resolved strategy=prefer_canonical_print external_id=%s existing_print_id=%s requested_print_id=%s",
+                        external_print_id,
+                        existing_print.id,
+                        print_row.id,
+                    )
+                    print_row = existing_print
+                    identifier_for_print = identifier_by_external
                 else:
                     self.logger.warning(
                         "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
