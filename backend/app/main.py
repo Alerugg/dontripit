@@ -1,8 +1,13 @@
+import os
+
 from flask import Flask, jsonify
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from werkzeug.exceptions import HTTPException
 
 from app.auth import register_api_product_middleware
+from app.auth.service import ensure_active_api_key
 from app.db import init_engine
+from app import db
 from app.routes.catalog import catalog_bp
 from app.routes.admin import admin_bp
 from app.routes.admin_ingest import admin_ingest_bp
@@ -19,6 +24,20 @@ from app.routes.prices import prices_bp
 
 def create_app(database_url: str | None = None) -> Flask:
     init_engine(database_url)
+    local_internal_api_key = os.getenv("INTERNAL_API_KEY", "").strip()
+    if local_internal_api_key:
+        try:
+            with db.SessionLocal() as session:
+                ensure_active_api_key(
+                    session,
+                    local_internal_api_key,
+                    plan_name=os.getenv("INTERNAL_API_PLAN", "free"),
+                    label=os.getenv("INTERNAL_API_LABEL", "local-internal"),
+                )
+        except (OperationalError, ProgrammingError):
+            # During first boot before migrations, API product tables may not exist yet.
+            pass
+
     flask_app = Flask(__name__)
     flask_app.register_blueprint(health_bp)
     flask_app.register_blueprint(games_bp)
