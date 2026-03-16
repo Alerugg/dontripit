@@ -1453,7 +1453,6 @@ class OnePieceConnector(SourceConnector):
 
         self.logger.info(
             "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
-            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s",
             self._reconcile_metrics.get("calls", 0),
             self._reconcile_metrics.get("identifier_reassigned", 0),
             self._reconcile_metrics.get("owner_moved", 0),
