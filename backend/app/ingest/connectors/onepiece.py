@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.normalization import normalize_collector_number, normalize_variant
-from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+from app.models import Card, Game, Price, Print, PrintIdentifier, PrintImage, Set
 
 
 class OnePieceConnector(SourceConnector):
@@ -27,6 +27,7 @@ class OnePieceConnector(SourceConnector):
     _DEFAULT_REMOTE_MAX_WORKERS = 12
     _COMMERCIAL_CODE_RE = re.compile(r"\b(op|st|eb)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
     _PACK_PREFIX_BY_FAMILY = {"0": "st", "1": "op", "2": "eb"}
+    _FAKE_IMAGE_HOST = "example.cdn.onepiece"
 
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
@@ -498,6 +499,139 @@ class OnePieceConnector(SourceConnector):
             and left.variant == right.variant
             and normalize_collector_number(left.collector_number) == normalize_collector_number(right.collector_number)
         )
+
+    @classmethod
+    def _is_fake_image_url(cls, value: str | None) -> bool:
+        return cls._FAKE_IMAGE_HOST in str(value or "").strip().lower()
+
+    def _resolve_primary_image(self, session, *, print_id: int) -> PrintImage | None:
+        return session.execute(
+            select(PrintImage).where(PrintImage.print_id == print_id, PrintImage.is_primary.is_(True)).order_by(PrintImage.id.asc())
+        ).scalar_one_or_none()
+
+    def _merge_print_rows(self, *, session, stats: IngestStats, legacy_print: Print, canonical_print: Print) -> None:
+        if legacy_print.id == canonical_print.id:
+            return
+
+        existing_identifier_sources = {
+            source
+            for source in session.execute(
+                select(PrintIdentifier.source).where(PrintIdentifier.print_id == canonical_print.id)
+            ).scalars().all()
+        }
+        for identifier in session.execute(select(PrintIdentifier).where(PrintIdentifier.print_id == legacy_print.id)).scalars().all():
+            if identifier.source in existing_identifier_sources:
+                session.delete(identifier)
+            else:
+                identifier.print_id = canonical_print.id
+                existing_identifier_sources.add(identifier.source)
+            stats.records_updated += 1
+
+        existing_image_urls = {
+            str(url).strip()
+            for url in session.execute(select(PrintImage.url).where(PrintImage.print_id == canonical_print.id)).scalars().all()
+            if str(url).strip()
+        }
+        for image in session.execute(select(PrintImage).where(PrintImage.print_id == legacy_print.id)).scalars().all():
+            image_url = str(image.url or "").strip()
+            if not image_url or self._is_fake_image_url(image_url) or image_url in existing_image_urls:
+                session.delete(image)
+            else:
+                image.print_id = canonical_print.id
+                existing_image_urls.add(image_url)
+            stats.records_updated += 1
+
+        linked_prices = session.execute(select(Price).where(Price.print_id == legacy_print.id)).scalars().all()
+        for price in linked_prices:
+            price.print_id = canonical_print.id
+            if price.card_id == legacy_print.card_id:
+                price.card_id = canonical_print.card_id
+            stats.records_updated += 1
+
+        if not canonical_print.rarity and legacy_print.rarity:
+            canonical_print.rarity = legacy_print.rarity
+            stats.records_updated += 1
+
+        session.delete(legacy_print)
+        stats.records_updated += 1
+
+    def _repair_onepiece_fake_images(self, *, session, stats: IngestStats, onepiece_game_id: int) -> dict:
+        touched = {"card_ids": set(), "print_ids": set()}
+
+        onepiece_prints = session.execute(
+            select(Print, Set.code)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == onepiece_game_id)
+        ).all()
+
+        primary_image_by_print_id: dict[int, PrintImage | None] = {}
+        for print_row, _set_code in onepiece_prints:
+            primary_image_by_print_id[print_row.id] = self._resolve_primary_image(session, print_id=print_row.id)
+
+        canonical_candidates: dict[tuple[str, str, str], list[Print]] = {}
+        for print_row, set_code in onepiece_prints:
+            primary_image = primary_image_by_print_id.get(print_row.id)
+            if primary_image is None or self._is_fake_image_url(primary_image.url):
+                continue
+            key = (
+                str(set_code or ""),
+                normalize_collector_number(print_row.collector_number),
+                str(print_row.language or ""),
+                str(print_row.variant or "default"),
+            )
+            canonical_candidates.setdefault(key, []).append(print_row)
+
+        for print_row, set_code in onepiece_prints:
+            primary_image = primary_image_by_print_id.get(print_row.id)
+            if primary_image is None or not self._is_fake_image_url(primary_image.url):
+                continue
+
+            key = (
+                str(set_code or ""),
+                normalize_collector_number(print_row.collector_number),
+                str(print_row.language or ""),
+                str(print_row.variant or "default"),
+            )
+            candidates = [candidate for candidate in canonical_candidates.get(key, []) if candidate.id != print_row.id]
+            if candidates:
+                canonical_print = candidates[0]
+                self._merge_print_rows(session=session, stats=stats, legacy_print=print_row, canonical_print=canonical_print)
+                touched["card_ids"].update({canonical_print.card_id, print_row.card_id})
+                touched["print_ids"].add(canonical_print.id)
+                continue
+
+            replacement_url = self._env("ONEPIECE_IMAGE_FALLBACK_URL", self._DEFAULT_IMAGE_FALLBACK_URL)
+            if primary_image.url != replacement_url:
+                primary_image.url = replacement_url
+                primary_image.source = "legacy_repair"
+                stats.records_updated += 1
+            touched["print_ids"].add(print_row.id)
+            touched["card_ids"].add(print_row.card_id)
+
+        remaining_fake_images = session.execute(
+            select(PrintImage, Print.card_id)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == onepiece_game_id)
+            .where(PrintImage.url.ilike(f"%{self._FAKE_IMAGE_HOST}%"))
+        ).all()
+        replacement_url = self._env("ONEPIECE_IMAGE_FALLBACK_URL", self._DEFAULT_IMAGE_FALLBACK_URL)
+        for image_row, card_id in remaining_fake_images:
+            image_row.url = replacement_url
+            image_row.source = "legacy_repair"
+            stats.records_updated += 1
+            touched["print_ids"].add(image_row.print_id)
+            touched["card_ids"].add(card_id)
+
+        return touched
+
+    def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
+        if self._source_mode(fixture=bool(kwargs.get("fixture", False))) != "remote":
+            return {}
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            return {}
+        return self._repair_onepiece_fake_images(session=session, stats=stats, onepiece_game_id=game.id)
 
     def _reconcile_print_identifier(
         self,

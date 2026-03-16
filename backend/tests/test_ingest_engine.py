@@ -3126,3 +3126,75 @@ def test_onepiece_remote_replaces_legacy_fake_urls_when_equivalent_print_exists(
 
     assert urls
     assert all("example.cdn.onepiece" not in url for url in urls)
+
+def test_onepiece_incremental_repair_cleans_residual_fake_images_even_when_payload_is_skipped(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569101", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    tree_listing = {"tree": [{"path": "english/cards/569101/OP01-025.json", "type": "blob"}]}
+
+    def _fake_get(url, timeout=0, headers=None):
+        if str(url).endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in str(url):
+            return _FakeResponse(tree_listing)
+        if str(url).endswith("/english/cards/569101/OP01-025.json"):
+            return _FakeResponse(
+                {
+                    "id": "OP01-025",
+                    "pack_id": "569101",
+                    "name": "Roronoa Zoro",
+                    "rarity": "SR",
+                    "img_full_url": "https://punkrecords.img.cdn/op01/op01-025.webp",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=False)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one()
+        zoro_print = session.execute(
+            select(Print)
+            .join(Set, Set.id == Print.set_id)
+            .where(Set.game_id == game.id, Print.collector_number == "OP01-025")
+        ).scalar_one()
+        primary = session.execute(select(PrintImage).where(PrintImage.print_id == zoro_print.id, PrintImage.is_primary.is_(True))).scalar_one()
+        primary.url = "https://example.cdn.onepiece/op01/op01-025.jpg"
+        session.add(
+            PrintImage(
+                print_id=zoro_print.id,
+                url="https://example.cdn.onepiece/op01/op01-025-secondary.jpg",
+                is_primary=False,
+                source="legacy",
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        connector.run(session, fixture=False, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        fake_count = session.execute(
+            select(func.count(PrintImage.id)).where(PrintImage.url.ilike("%example.cdn.onepiece%"))
+        ).scalar_one()
+
+    assert fake_count == 0
