@@ -16,6 +16,7 @@ from app.models import (
     Game,
     IngestRun,
     Print,
+    PrintIdentifier,
     PrintImage,
     SearchDocument,
     Set,
@@ -2381,6 +2382,15 @@ def test_onepiece_prints_have_non_null_primary_images_when_available(client):
     assert payload
     assert all(item.get("primary_image_url") for item in payload)
 
+
+def _patch_onepiece_http(monkeypatch, fake_get):
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", fake_get)
+
+    def _fake_session_get(self, url, timeout=0, **kwargs):
+        return fake_get(url, timeout=timeout, headers=kwargs.get("headers"))
+
+    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.sessions.Session.get", _fake_session_get)
+
 def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(client, monkeypatch):
     connector = get_connector("onepiece")
 
@@ -2451,7 +2461,7 @@ def test_onepiece_remote_source_mode_reads_pack_directories_and_real_images(clie
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     with db.SessionLocal() as session:
         stats = connector.run(session, fixture=False, incremental=False)
@@ -2509,7 +2519,7 @@ def test_onepiece_remote_raises_when_pack_tree_listing_has_no_cards(client, monk
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     with pytest.raises(ValueError, match="zero card json paths"):
         connector._load_remote()
@@ -2559,7 +2569,7 @@ def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_pack_direct
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     payload = connector._load_remote()
     assert payload.get("sets")
@@ -2615,7 +2625,7 @@ def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkey
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
     monkeypatch.setenv("ONEPIECE_IMAGE_FALLBACK_URL", "https://cdn.fallback/onepiece-missing.png")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     with db.SessionLocal() as session:
         connector.run(session, fixture=False, incremental=False)
@@ -2671,7 +2681,7 @@ def test_onepiece_remote_incremental_second_run_is_idempotent(client, monkeypatc
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     with db.SessionLocal() as session:
         first = connector.run(session, fixture=False, incremental=True)
@@ -2705,7 +2715,7 @@ def test_onepiece_github_api_uses_github_token_header(client, monkeypatch):
         return _FakeResponse()
 
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     payload = connector._fetch_remote_json(
         url="https://api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1",
@@ -2738,7 +2748,7 @@ def test_onepiece_github_api_rate_limited_raises_actionable_error(client, monkey
     def _fake_get(url, timeout=0, headers=None):
         return _FakeResponse()
 
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     with pytest.raises(RuntimeError, match="Set GITHUB_TOKEN"):
         connector._fetch_remote_json(
@@ -2766,7 +2776,7 @@ def test_onepiece_remote_tree_listing_returns_pack_urls(client, monkeypatch):
     def _fake_get(url, timeout=0, headers=None):
         return _FakeResponse()
 
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     result = connector._fetch_pack_card_file_urls_from_tree(
         root_url="https://raw.githubusercontent.com/DevTheFrog/punk-records/main",
@@ -2845,9 +2855,129 @@ def test_onepiece_remote_does_not_probe_contents_api_when_tree_has_valid_paths(c
     monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
     monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
-    monkeypatch.setattr("app.ingest.connectors.onepiece.requests.get", _fake_get)
+    _patch_onepiece_http(monkeypatch, _fake_get)
 
     payload = connector._load_remote()
 
     assert payload.get("cards")
     assert not any("/contents/" in requested for requested in urls_requested)
+
+
+def test_onepiece_identifier_collision_does_not_break_ingest_and_reconciles(client):
+    connector = get_connector("onepiece")
+    payload = {
+        "source": "punk_records",
+        "language": "en",
+        "sets": [{"code": "op-07", "name": "Set 07", "release_date": "2024-01-01"}],
+        "cards": [
+            {
+                "id": "card-a",
+                "name": "Card A",
+                "prints": [
+                    {
+                        "id": "OP07-091_p1",
+                        "set_code": "op-07",
+                        "collector_number": "OP07-091_p1",
+                        "rarity": "SR",
+                        "variant": "p1",
+                        "image_url": "https://en.onepiece-cardgame.com/images/card-a.jpg",
+                    }
+                ],
+            },
+            {
+                "id": "card-b",
+                "name": "Card B",
+                "prints": [
+                    {
+                        "id": "OP07-091_p1",
+                        "set_code": "op-07",
+                        "collector_number": "OP07-091_p1",
+                        "rarity": "SR",
+                        "variant": "p1",
+                        "image_url": "https://en.onepiece-cardgame.com/images/card-b.jpg",
+                    }
+                ],
+            },
+        ],
+    }
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        connector.upsert(session, payload, stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        identifiers = session.execute(
+            select(PrintIdentifier).where(
+                PrintIdentifier.source == "punk_records",
+                PrintIdentifier.external_id == "OP07-091_p1",
+            )
+        ).scalars().all()
+        prints = session.execute(select(Print.id).join(Set, Set.id == Print.set_id).where(Set.code == "op-07")).scalars().all()
+
+    assert len(identifiers) == 1
+    assert len(prints) == 1
+
+
+def test_onepiece_remote_load_remote_concurrency_keeps_logical_payload(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569006", "code": "st-06", "name": "Starter Deck", "release_date": "2022-07-22"}]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569006/ST06-001.json", "type": "blob"},
+            {"path": "english/cards/569006/ST06-002.json", "type": "blob"},
+        ]
+    }
+
+    def _fake_get(url, timeout=0, headers=None):
+        url_str = str(url)
+        if url_str.endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url_str:
+            return _FakeResponse(tree_listing)
+        if url_str.endswith("/english/cards/569006/ST06-001.json"):
+            return _FakeResponse(
+                {
+                    "id": "ST06-001",
+                    "pack_id": "569006",
+                    "set_code": "st-06",
+                    "name": "Sample One",
+                    "rarity": "C",
+                    "img_full_url": "https://en.onepiece-cardgame.com/images/st06-001.png",
+                }
+            )
+        if url_str.endswith("/english/cards/569006/ST06-002.json"):
+            return _FakeResponse(
+                {
+                    "id": "ST06-002",
+                    "pack_id": "569006",
+                    "set_code": "st-06",
+                    "name": "Sample Two",
+                    "rarity": "C",
+                    "img_full_url": "https://en.onepiece-cardgame.com/images/st06-002.png",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    monkeypatch.setenv("ONEPIECE_REMOTE_MAX_WORKERS", "4")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    payload = connector._load_remote()
+
+    cards = sorted(payload.get("cards") or [], key=lambda c: c["id"])
+    assert [item["id"] for item in cards] == ["569006:st06-001", "569006:st06-002"]

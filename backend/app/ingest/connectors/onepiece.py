@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +24,7 @@ class OnePieceConnector(SourceConnector):
     _DEFAULT_PUNKRECORDS_ROOT_URL = "https://raw.githubusercontent.com/DevTheFrog/punk-records/main"
     _DEFAULT_PUNKRECORDS_LANGUAGE = "english"
     _DEFAULT_IMAGE_FALLBACK_URL = "https://placehold.co/367x512?text=ONE+PIECE"
+    _DEFAULT_REMOTE_MAX_WORKERS = 12
 
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
@@ -235,9 +238,11 @@ class OnePieceConnector(SourceConnector):
             raise ValueError("One Piece remote ingest tree resolved but found zero card json paths under english/cards")
 
         valid_cards_count = 0
+        failed_cards_count = 0
         progress_every_packs = 25
         progress_every_cards = 200
         cards_fetch_started = time.monotonic()
+        card_jobs: list[tuple[str, str]] = []
         for raw_pack in pack_records:
             pack_id = str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or "").strip()
             if not pack_id:
@@ -251,19 +256,7 @@ class OnePieceConnector(SourceConnector):
 
             cards_payload_by_pack[pack_id.lower()] = []
             for card_url in card_urls:
-                payload = self._fetch_remote_json(url=card_url, timeout=timeout)
-                if isinstance(payload, dict):
-                    cards_payload_by_pack[pack_id.lower()].append(payload)
-                    valid_cards_count += 1
-
-                    if valid_cards_count % progress_every_cards == 0:
-                        self.logger.info(
-                            "ingest onepiece remote progress cards=%s packs_processed=%s/%s elapsed_s=%.2f",
-                            valid_cards_count,
-                            len(cards_payload_by_pack),
-                            len(pack_records),
-                            time.monotonic() - cards_fetch_started,
-                        )
+                card_jobs.append((pack_id.lower(), card_url))
 
             if len(cards_payload_by_pack) % progress_every_packs == 0:
                 self.logger.info(
@@ -274,20 +267,189 @@ class OnePieceConnector(SourceConnector):
                     time.monotonic() - cards_fetch_started,
                 )
 
+        max_workers = self._remote_max_workers()
+        workers_used = min(max_workers, len(card_jobs)) if card_jobs else 0
+
+        if card_jobs:
+            for pack_key, payload in self._fetch_card_payloads_concurrently(card_jobs=card_jobs, timeout=timeout, max_workers=max_workers):
+                if isinstance(payload, dict):
+                    cards_payload_by_pack[pack_key].append(payload)
+                    valid_cards_count += 1
+                else:
+                    failed_cards_count += 1
+
+                if (valid_cards_count + failed_cards_count) % progress_every_cards == 0:
+                    self.logger.info(
+                        "ingest onepiece remote progress cards_downloaded=%s cards_failed=%s packs_processed=%s/%s workers=%s elapsed_s=%.2f",
+                        valid_cards_count,
+                        failed_cards_count,
+                        len(cards_payload_by_pack),
+                        len(pack_records),
+                        workers_used,
+                        time.monotonic() - cards_fetch_started,
+                    )
+
         normalized = self._normalize_remote_payload(
             packs_payload=packs_payload,
             cards_payload_by_pack=cards_payload_by_pack,
             language=language,
         )
         self.logger.info(
-            "ingest onepiece remote cards_loaded cards=%s elapsed_s=%.2f total_elapsed_s=%.2f",
+            "ingest onepiece remote cards_loaded cards=%s cards_failed=%s workers=%s elapsed_s=%.2f total_elapsed_s=%.2f",
             valid_cards_count,
+            failed_cards_count,
+            workers_used,
             time.monotonic() - cards_fetch_started,
             time.monotonic() - started_at,
         )
         if pack_records and not normalized.get("cards"):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
+
+    def _remote_max_workers(self) -> int:
+        raw = self._env("ONEPIECE_REMOTE_MAX_WORKERS", str(self._DEFAULT_REMOTE_MAX_WORKERS))
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return self._DEFAULT_REMOTE_MAX_WORKERS
+        return max(1, parsed)
+
+    def _fetch_card_payloads_concurrently(
+        self,
+        *,
+        card_jobs: list[tuple[str, str]],
+        timeout: int,
+        max_workers: int,
+    ) -> list[tuple[str, object | None]]:
+        thread_local = threading.local()
+
+        def _session() -> requests.Session:
+            session = getattr(thread_local, "session", None)
+            if session is None:
+                session = requests.Session()
+                thread_local.session = session
+            return session
+
+        def _fetch(pack_key: str, card_url: str) -> tuple[str, object | None]:
+            cached = self._remote_json_cache.get(card_url)
+            if card_url in self._remote_json_cache:
+                return pack_key, cached
+            session = _session()
+            try:
+                response = session.get(card_url, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+                self._remote_json_cache[card_url] = payload
+                return pack_key, payload
+            except requests.RequestException as exc:
+                self.logger.warning(
+                    "ingest onepiece remote request_failed url=%s reason=network_error detail=%s",
+                    card_url,
+                    exc,
+                )
+                self._remote_json_cache[card_url] = None
+                return pack_key, None
+            except ValueError:
+                self.logger.warning("ingest onepiece remote request_failed url=%s reason=invalid_json", card_url)
+                self._remote_json_cache[card_url] = None
+                return pack_key, None
+
+        results: list[tuple[str, object | None]] = []
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+            futures = [executor.submit(_fetch, pack_key, card_url) for pack_key, card_url in card_jobs]
+            for future in as_completed(futures):
+                results.append(future.result())
+        return results
+
+    def _same_logical_print(self, left: Print, right: Print) -> bool:
+        return (
+            left.set_id == right.set_id
+            and left.language == right.language
+            and left.variant == right.variant
+            and normalize_collector_number(left.collector_number) == normalize_collector_number(right.collector_number)
+        )
+
+    def _reconcile_print_identifier(
+        self,
+        *,
+        session,
+        stats: IngestStats,
+        print_row: Print,
+        external_print_id: str,
+    ) -> Print:
+        identifier_for_print = session.execute(
+            select(PrintIdentifier).where(
+                PrintIdentifier.print_id == print_row.id,
+                PrintIdentifier.source == "punk_records",
+            )
+        ).scalar_one_or_none()
+        identifier_by_external = session.execute(
+            select(PrintIdentifier).where(
+                PrintIdentifier.source == "punk_records",
+                PrintIdentifier.external_id == external_print_id,
+            )
+        ).scalar_one_or_none()
+
+        if identifier_by_external is not None and identifier_by_external.print_id != print_row.id:
+            existing_print = session.execute(select(Print).where(Print.id == identifier_by_external.print_id)).scalar_one_or_none()
+            if existing_print is not None and self._same_logical_print(existing_print, print_row):
+                self.logger.info(
+                    "ingest onepiece identifier_collision_resolved strategy=reuse_existing_print external_id=%s existing_print_id=%s requested_print_id=%s",
+                    external_print_id,
+                    existing_print.id,
+                    print_row.id,
+                )
+                print_row = existing_print
+                identifier_for_print = identifier_by_external
+            else:
+                self.logger.warning(
+                    "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
+                    external_print_id,
+                    identifier_by_external.print_id,
+                    print_row.id,
+                )
+                identifier_by_external.print_id = print_row.id
+                stats.records_updated += 1
+                identifier_for_print = identifier_by_external
+
+        if identifier_for_print is None:
+            session.add(
+                PrintIdentifier(
+                    print_id=print_row.id,
+                    source="punk_records",
+                    external_id=external_print_id,
+                )
+            )
+            stats.records_inserted += 1
+            return print_row
+
+        if identifier_for_print.external_id != external_print_id:
+            conflicting = session.execute(
+                select(PrintIdentifier).where(
+                    PrintIdentifier.source == "punk_records",
+                    PrintIdentifier.external_id == external_print_id,
+                    PrintIdentifier.id != identifier_for_print.id,
+                )
+            ).scalar_one_or_none()
+            if conflicting is not None:
+                self.logger.warning(
+                    "ingest onepiece identifier_collision_avoided action=skip_update print_id=%s external_id=%s conflicting_print_id=%s",
+                    print_row.id,
+                    external_print_id,
+                    conflicting.print_id,
+                )
+                return print_row
+
+            self.logger.warning(
+                "ingest onepiece identifier_reassigned print_id=%s old_external_id=%s new_external_id=%s",
+                print_row.id,
+                identifier_for_print.external_id,
+                external_print_id,
+            )
+            identifier_for_print.external_id = external_print_id
+            stats.records_updated += 1
+
+        return print_row
 
     @staticmethod
     def _github_api_repo_context(root_url: str) -> tuple[str, str, str, str] | None:
@@ -633,24 +795,12 @@ class OnePieceConnector(SourceConnector):
                 touched["print_ids"].add(print_row.id)
 
                 if external_print_id:
-                    identifier = session.execute(
-                        select(PrintIdentifier).where(
-                            PrintIdentifier.print_id == print_row.id,
-                            PrintIdentifier.source == "punk_records",
-                        )
-                    ).scalar_one_or_none()
-                    if identifier is None:
-                        session.add(
-                            PrintIdentifier(
-                                print_id=print_row.id,
-                                source="punk_records",
-                                external_id=external_print_id,
-                            )
-                        )
-                        stats.records_inserted += 1
-                    elif identifier.external_id != external_print_id:
-                        identifier.external_id = external_print_id
-                        stats.records_updated += 1
+                    print_row = self._reconcile_print_identifier(
+                        session=session,
+                        stats=stats,
+                        print_row=print_row,
+                        external_print_id=external_print_id,
+                    )
 
                 image_url = str(print_item.get("image_url") or "").strip()
                 if image_url:
