@@ -130,9 +130,9 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
         session.flush()
 
         nami_official = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="default")
-        nami_legacy = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
+        nami_legacy = Print(id=97582, set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
         zoro_official = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="default")
-        zoro_legacy = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
+        zoro_legacy = Print(id=97580, set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
         session.add_all([nami_official, nami_legacy, zoro_official, zoro_legacy])
         session.flush()
 
