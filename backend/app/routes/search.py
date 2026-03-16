@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import ProgrammingError
 import logging
 import re
@@ -45,7 +45,48 @@ def _onepiece_image_signals(primary_image_url: str | None) -> tuple[bool, bool]:
     return has_official_image, is_placeholder_image
 
 
-def _apply_onepiece_search_policy(rows):
+def _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids: list[int]) -> set[int]:
+    if not placeholder_print_ids:
+        return set()
+
+    sql = text(
+        """
+        SELECT DISTINCT legacy.id
+        FROM prints legacy
+        JOIN sets legacy_set ON legacy_set.id = legacy.set_id
+        JOIN games legacy_game ON legacy_game.id = legacy_set.game_id
+        JOIN print_images legacy_img ON legacy_img.print_id = legacy.id AND legacy_img.is_primary IS TRUE
+        WHERE legacy.id IN :print_ids
+          AND legacy_game.slug = 'onepiece'
+          AND (
+            lower(COALESCE(legacy_img.url, '')) LIKE '%placehold.co%'
+            OR lower(COALESCE(legacy_img.url, '')) LIKE '%example.cdn.onepiece%'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM prints official
+            JOIN sets official_set ON official_set.id = official.set_id
+            JOIN games official_game ON official_game.id = official_set.game_id
+            JOIN print_images official_img ON official_img.print_id = official.id AND official_img.is_primary IS TRUE
+            WHERE official.id <> legacy.id
+              AND official_game.slug = 'onepiece'
+              AND lower(COALESCE(official_img.url, '')) LIKE '%en.onepiece-cardgame.com%'
+              AND (
+                official.card_id = legacy.card_id
+                OR (
+                  lower(COALESCE(official.collector_number, '')) = lower(COALESCE(legacy.collector_number, ''))
+                  AND COALESCE(official.collector_number, '') <> ''
+                )
+              )
+          )
+        """
+    ).bindparams(bindparam("print_ids", expanding=True))
+
+    rows = session.execute(sql, {"print_ids": placeholder_print_ids}).scalars().all()
+    return set(rows)
+
+
+def _apply_onepiece_search_policy(rows, *, session):
     """Hide legacy placeholder print rows when official One Piece alternatives exist."""
     normalized_rows: list[dict] = []
     official_titles: set[str] = set()
@@ -70,9 +111,18 @@ def _apply_onepiece_search_policy(rows):
             if collector_number:
                 official_collectors.add(collector_number)
 
+    placeholder_print_ids = [
+        int(row.get("id"))
+        for row in normalized_rows
+        if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_placeholder_image") and row.get("id") is not None
+    ]
+    removable_legacy_print_ids = _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids)
+
     filtered_rows: list[dict] = []
     for row in normalized_rows:
         if row.get("game") == "onepiece" and row.get("type") == "print" and row.get("is_placeholder_image"):
+            if row.get("id") in removable_legacy_print_ids:
+                continue
             title = str(row.get("title") or "").strip().lower()
             collector_number = str(row.get("collector_number") or "").strip().lower()
             if title in official_titles or collector_number in official_collectors:
@@ -946,12 +996,12 @@ def search():
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
-        rows = _apply_onepiece_search_policy(rows)
+        rows = _apply_onepiece_search_policy(rows, session=session)
 
         if not rows:
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
-            rows = _apply_onepiece_search_policy(rows)
+            rows = _apply_onepiece_search_policy(rows, session=session)
 
     return jsonify([_to_public_search_row(dict(row)) for row in rows])
 

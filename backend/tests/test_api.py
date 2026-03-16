@@ -214,20 +214,35 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
         session.add_all([op01, eb01])
         session.flush()
 
+        luffy = Card(game_id=game.id, name="Monkey.D.Luffy")
         nami = Card(game_id=game.id, name="Nami")
         zoro = Card(game_id=game.id, name="Roronoa Zoro")
-        session.add_all([nami, zoro])
+        session.add_all([luffy, nami, zoro])
         session.flush()
 
+        luffy_official = Print(set_id=op01.id, card_id=luffy.id, collector_number="OP01-001", language="en", variant="default")
+        luffy_legacy = Print(id=97578, set_id=op01.id, card_id=luffy.id, collector_number="OP01-001", language="en", variant="legacy")
         nami_official = Print(set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="default")
         nami_legacy = Print(id=97582, set_id=eb01.id, card_id=nami.id, collector_number="EB01-004", language="en", variant="legacy")
         zoro_official = Print(set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="default")
         zoro_legacy = Print(id=97580, set_id=op01.id, card_id=zoro.id, collector_number="OP01-025", language="en", variant="legacy")
-        session.add_all([nami_official, nami_legacy, zoro_official, zoro_legacy])
+        session.add_all([luffy_official, luffy_legacy, nami_official, nami_legacy, zoro_official, zoro_legacy])
         session.flush()
 
         session.add_all(
             [
+                PrintImage(
+                    print_id=luffy_official.id,
+                    url="https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png",
+                    is_primary=True,
+                    source="remote",
+                ),
+                PrintImage(
+                    print_id=luffy_legacy.id,
+                    url="https://placehold.co/367x512?text=ONE+PIECE",
+                    is_primary=True,
+                    source="legacy",
+                ),
                 PrintImage(
                     print_id=nami_official.id,
                     url="https://en.onepiece-cardgame.com/images/cardlist/card/EB01-004.png",
@@ -258,6 +273,8 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
         rebuild_search_documents(session)
         session.commit()
         return {
+            "luffy_official": luffy_official.id,
+            "luffy_legacy": luffy_legacy.id,
             "nami_official": nami_official.id,
             "nami_legacy": nami_legacy.id,
             "zoro_official": zoro_official.id,
@@ -268,6 +285,16 @@ def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
 def test_search_onepiece_excludes_legacy_placeholder_prints_when_official_exists(client):
     ids = _seed_onepiece_legacy_vs_official_prints()
     headers = _auth_headers()
+
+    luffy_response = client.get("/api/v1/search?q=luffy&game=onepiece", headers=headers)
+    assert luffy_response.status_code == 200
+    luffy_payload = luffy_response.get_json()
+    assert luffy_payload
+    assert luffy_payload[0]["type"] == "card"
+    assert "en.onepiece-cardgame.com" in str(luffy_payload[0]["primary_image_url"])
+    assert all(item.get("id") != ids["luffy_legacy"] for item in luffy_payload[:10])
+    luffy_print_ids = [item["id"] for item in luffy_payload if item.get("type") == "print"]
+    assert ids["luffy_official"] in luffy_print_ids
 
     nami_response = client.get("/api/v1/search?q=nami&game=onepiece", headers=headers)
     assert nami_response.status_code == 200
