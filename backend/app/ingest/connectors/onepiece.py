@@ -25,6 +25,8 @@ class OnePieceConnector(SourceConnector):
     _DEFAULT_PUNKRECORDS_LANGUAGE = "english"
     _DEFAULT_IMAGE_FALLBACK_URL = "https://placehold.co/367x512?text=ONE+PIECE"
     _DEFAULT_REMOTE_MAX_WORKERS = 12
+    _COMMERCIAL_CODE_RE = re.compile(r"\b(op|st|eb)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
+    _PACK_PREFIX_BY_FAMILY = {"0": "st", "1": "op", "2": "eb"}
 
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
@@ -135,16 +137,14 @@ class OnePieceConnector(SourceConnector):
 
     def _normalize_remote_payload(self, *, packs_payload: object, cards_payload_by_pack: dict[str, object], language: str) -> dict:
         normalized_sets: dict[str, dict] = {}
+        commercial_code_by_pack_key: dict[str, str] = {}
         for raw_pack in self._iter_pack_records(packs_payload):
             title_parts = raw_pack.get("title_parts") if isinstance(raw_pack.get("title_parts"), dict) else {}
-            set_code = str(
-                self._record_get(raw_pack, "code", "pack_id", "set_code", "id")
-                or title_parts.get("label")
-                or raw_pack.get("raw_title")
-                or ""
-            ).strip().lower()
+            set_code = self._derive_commercial_set_code(raw_pack)
             if not set_code:
                 continue
+            for key in self._pack_lookup_keys(raw_pack):
+                commercial_code_by_pack_key[key] = set_code
             normalized_sets[set_code] = {
                 "id": str(self._record_get(raw_pack, "id", "code", "pack_id", "set_code") or set_code).strip(),
                 "code": set_code,
@@ -163,7 +163,7 @@ class OnePieceConnector(SourceConnector):
         for pack_code, payload in cards_payload_by_pack.items():
             for raw_card in self._iter_card_records(payload):
                 card_name = str(self._record_get(raw_card, "name", "card_name") or "").strip()
-                set_code = str(self._record_get(raw_card, "pack_id", "set_code", "set", "set_id") or pack_code).strip().lower()
+                set_code = self._derive_card_set_code(raw_card, fallback_pack_code=pack_code, known_set_codes=commercial_code_by_pack_key)
                 collector = str(self._record_get(raw_card, "id", "code", "collector_number", "number") or "").strip()
                 if not card_name or not set_code or not collector:
                     continue
@@ -184,14 +184,13 @@ class OnePieceConnector(SourceConnector):
                 variant = str(self._record_get(raw_card, "variant", "finish", "category") or "").strip()
                 if not variant and "_" in collector:
                     variant = collector.split("_", 1)[1]
-                if not variant:
-                    variant = "default"
+                variant = self._normalize_onepiece_variant(variant or "default")
 
                 cards_by_key[card_id]["prints"].append(
                     {
                         "id": str(self._record_get(raw_card, "id", "code", "external_id") or "").strip() or None,
                         "set_code": set_code,
-                        "collector_number": collector,
+                        "collector_number": logical_number,
                         "rarity": str(self._record_get(raw_card, "rarity", "rarity_code") or "").strip() or None,
                         "variant": variant,
                         "image_url": self._resolve_remote_image_url(raw_card),
@@ -204,6 +203,137 @@ class OnePieceConnector(SourceConnector):
             "sets": sorted(normalized_sets.values(), key=lambda row: row["code"]),
             "cards": list(cards_by_key.values()),
         }
+
+    @staticmethod
+    def _normalize_onepiece_variant(value: object) -> str:
+        variant = normalize_variant(value)
+        if re.fullmatch(r"p\d+", variant):
+            return "parallel"
+        return variant
+
+    def _derive_commercial_set_code(self, raw_pack: dict) -> str:
+        candidates: list[str] = []
+        title_parts = raw_pack.get("title_parts") if isinstance(raw_pack.get("title_parts"), dict) else {}
+        for field in ("code", "set_code", "pack_id", "id", "name", "display_name", "set_name", "raw_title"):
+            value = str(raw_pack.get(field) or "").strip()
+            if value:
+                candidates.append(value)
+        for key in ("label", "code", "name"):
+            value = str(title_parts.get(key) or "").strip()
+            if value:
+                candidates.append(value)
+
+        for candidate in candidates:
+            parsed = self._extract_commercial_code(candidate)
+            if parsed:
+                return parsed
+
+        remote_pack_id = str(self._record_get(raw_pack, "id", "pack_id", "set_id") or "").strip().lower()
+        return self._commercial_code_from_remote_pack_id(remote_pack_id)
+
+    def _derive_card_set_code(self, raw_card: dict, *, fallback_pack_code: str, known_set_codes: dict[str, str]) -> str:
+        for field in ("set_code", "pack_id", "set", "set_id"):
+            candidate = str(raw_card.get(field) or "").strip().lower()
+            if not candidate:
+                continue
+            if candidate in known_set_codes:
+                return known_set_codes[candidate]
+            parsed = self._extract_commercial_code(candidate)
+            if parsed:
+                return parsed
+            parsed = self._commercial_code_from_remote_pack_id(candidate)
+            if parsed:
+                return parsed
+
+        fallback = str(fallback_pack_code or "").strip().lower()
+        if fallback in known_set_codes:
+            return known_set_codes[fallback]
+        parsed = self._extract_commercial_code(fallback)
+        if parsed:
+            return parsed
+        parsed = self._commercial_code_from_remote_pack_id(fallback)
+        if parsed:
+            return parsed
+        return fallback
+
+    def _extract_commercial_code(self, candidate: str) -> str:
+        normalized = str(candidate or "").strip().lower()
+        if not normalized:
+            return ""
+        match = self._COMMERCIAL_CODE_RE.search(normalized)
+        if not match:
+            return ""
+        prefix, number = match.groups()
+        return f"{prefix.lower()}-{int(number):02d}"
+
+    def _commercial_code_from_remote_pack_id(self, remote_pack_id: str) -> str:
+        raw = str(remote_pack_id or "").strip().lower()
+        if not raw.isdigit() or len(raw) < 6:
+            return ""
+        if not raw.startswith("569"):
+            return ""
+        family = raw[3]
+        prefix = self._PACK_PREFIX_BY_FAMILY.get(family)
+        if not prefix:
+            return ""
+        return f"{prefix}-{int(raw[-2:]):02d}"
+
+    def _merge_set_into_canonical(self, *, session, stats: IngestStats, source_set: Set, canonical_set: Set, language: str) -> None:
+        source_prints = session.execute(select(Print).where(Print.set_id == source_set.id)).scalars().all()
+        for source_print in source_prints:
+            same_identity = session.execute(
+                select(Print).where(
+                    Print.set_id == canonical_set.id,
+                    Print.collector_number == source_print.collector_number,
+                    Print.language == source_print.language,
+                    Print.is_foil == source_print.is_foil,
+                    Print.variant == source_print.variant,
+                )
+            ).scalar_one_or_none()
+            if same_identity is None:
+                source_print.set_id = canonical_set.id
+                normalized_language = self._normalize_language(source_print.language or language)
+                source_print.language = normalized_language
+                source_print.print_key = f"onepiece:{canonical_set.code}:{normalize_collector_number(source_print.collector_number)}:{normalized_language}:{source_print.variant}"
+                stats.records_updated += 1
+                continue
+
+            source_images = session.execute(select(PrintImage).where(PrintImage.print_id == source_print.id)).scalars().all()
+            existing_image_urls = {
+                str(url).strip()
+                for url in session.execute(select(PrintImage.url).where(PrintImage.print_id == same_identity.id)).scalars().all()
+                if str(url).strip()
+            }
+            for image in source_images:
+                if image.url not in existing_image_urls:
+                    image.print_id = same_identity.id
+                    stats.records_updated += 1
+                else:
+                    session.delete(image)
+                    stats.records_updated += 1
+
+            source_identifiers = session.execute(select(PrintIdentifier).where(PrintIdentifier.print_id == source_print.id)).scalars().all()
+            for identifier in source_identifiers:
+                existing_identifier = session.execute(
+                    select(PrintIdentifier).where(
+                        PrintIdentifier.print_id == same_identity.id,
+                        PrintIdentifier.source == identifier.source,
+                    )
+                ).scalar_one_or_none()
+                if existing_identifier is None:
+                    identifier.print_id = same_identity.id
+                    stats.records_updated += 1
+                else:
+                    session.delete(identifier)
+                    stats.records_updated += 1
+
+            session.delete(source_print)
+            stats.records_updated += 1
+
+        session.flush()
+        if session.execute(select(Print.id).where(Print.set_id == source_set.id)).first() is None:
+            session.delete(source_set)
+            stats.records_updated += 1
 
     def _load_remote(self) -> dict:
         self._remote_json_cache.clear()
@@ -608,6 +738,16 @@ class OnePieceConnector(SourceConnector):
                 return direct
         return []
 
+
+    @staticmethod
+    def _normalize_language(value: str | None) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"", "english", "en-us", "en-gb"}:
+            return "en"
+        if raw in {"japanese", "ja-jp"}:
+            return "ja"
+        return raw
+
     def _resolve_fixture_path(self, path: str | Path | None) -> Path:
         fixture_name = "onepiece_punkrecords_sample.json"
         backend_root = Path(__file__).resolve().parents[3]
@@ -670,7 +810,7 @@ class OnePieceConnector(SourceConnector):
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
         game = self._ensure_game(session, stats)
-        language = str(payload.get("language") or "en").strip().lower() or "en"
+        language = self._normalize_language(str(payload.get("language") or "en"))
 
         touched = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
         sets_by_code: dict[str, Set] = {}
@@ -679,6 +819,7 @@ class OnePieceConnector(SourceConnector):
             set_code = str(item.get("code") or "").strip().lower()
             if not set_code:
                 continue
+            remote_pack_id = str(item.get("id") or "").strip().lower()
 
             release_date = None
             if item.get("release_date"):
@@ -709,6 +850,19 @@ class OnePieceConnector(SourceConnector):
 
             sets_by_code[set_code] = set_row
             touched["set_ids"].add(set_row.id)
+
+            if remote_pack_id and remote_pack_id != set_code:
+                alias_set = session.execute(
+                    select(Set).where(Set.game_id == game.id, Set.code == remote_pack_id)
+                ).scalar_one_or_none()
+                if alias_set is not None and alias_set.id != set_row.id:
+                    self._merge_set_into_canonical(
+                        session=session,
+                        stats=stats,
+                        source_set=alias_set,
+                        canonical_set=set_row,
+                        language=language,
+                    )
 
         for card_item in payload.get("cards") or []:
             card_name = str(card_item.get("name") or "").strip()
