@@ -1451,6 +1451,7 @@ class OnePieceConnector(SourceConnector):
                         primary_image.source = "punk_records"
                         stats.records_updated += 1
 
+        reconcile_summary_values = (
         self.logger.info(
             "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
             self._reconcile_metrics.get("calls", 0),
@@ -1460,6 +1461,10 @@ class OnePieceConnector(SourceConnector):
             self._reconcile_metrics.get("noop_kept", 0),
             self._reconcile_metrics.get("conflicts_avoided", 0),
             self._reconcile_metrics.get("reassign_skipped", 0),
+        )
+        self.logger.info(
+            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
+            *reconcile_summary_values,
         )
 
         return touched
