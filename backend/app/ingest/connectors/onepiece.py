@@ -28,6 +28,7 @@ class OnePieceConnector(SourceConnector):
     _COMMERCIAL_CODE_RE = re.compile(r"\b(op|st|eb)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
     _PACK_PREFIX_BY_FAMILY = {"0": "st", "1": "op", "2": "eb"}
     _FAKE_IMAGE_HOST = "example.cdn.onepiece"
+    _OFFICIAL_IMAGE_HOST = "en.onepiece-cardgame.com"
 
     def __init__(self) -> None:
         self._github_http_session: requests.Session | None = None
@@ -505,9 +506,67 @@ class OnePieceConnector(SourceConnector):
         return cls._FAKE_IMAGE_HOST in str(value or "").strip().lower()
 
     def _resolve_primary_image(self, session, *, print_id: int) -> PrintImage | None:
-        return session.execute(
+        primary_images = session.execute(
             select(PrintImage).where(PrintImage.print_id == print_id, PrintImage.is_primary.is_(True)).order_by(PrintImage.id.asc())
-        ).scalar_one_or_none()
+        ).scalars().all()
+        return primary_images[0] if primary_images else None
+
+    @classmethod
+    def _is_official_image_url(cls, value: str | None) -> bool:
+        return cls._OFFICIAL_IMAGE_HOST in str(value or "").strip().lower()
+
+    @staticmethod
+    def _print_priority_key(print_row: Print) -> tuple[int, int]:
+        has_print_key = 0 if str(print_row.print_key or "").strip() else 1
+        return (has_print_key, -int(getattr(print_row, "id", 0) or 0))
+
+    def _select_best_print_candidate(
+        self,
+        *,
+        session,
+        print_candidates: list[Print],
+        requested_print: Print,
+        external_print_id: str,
+    ) -> tuple[Print, str]:
+        if len(print_candidates) == 1:
+            return print_candidates[0], "only_candidate"
+
+        external_id_candidates = []
+        for candidate in print_candidates:
+            identifiers = session.execute(
+                select(PrintIdentifier.external_id).where(
+                    PrintIdentifier.print_id == candidate.id,
+                    PrintIdentifier.source == "punk_records",
+                )
+            ).scalars().all()
+            if external_print_id in identifiers:
+                external_id_candidates.append(candidate)
+        if external_id_candidates:
+            external_id_candidates.sort(key=self._print_priority_key)
+            return external_id_candidates[0], "exact_identifier"
+
+        same_set_and_collector = [
+            candidate
+            for candidate in print_candidates
+            if candidate.set_id == requested_print.set_id
+            and normalize_collector_number(candidate.collector_number)
+            == normalize_collector_number(requested_print.collector_number)
+        ]
+        if same_set_and_collector:
+            same_set_and_collector.sort(key=self._print_priority_key)
+            return same_set_and_collector[0], "same_set_collector"
+
+        official_candidates = []
+        for candidate in print_candidates:
+            primary_image = self._resolve_primary_image(session, print_id=candidate.id)
+            if primary_image is not None and self._is_official_image_url(primary_image.url):
+                official_candidates.append(candidate)
+        if official_candidates:
+            official_candidates.sort(key=self._print_priority_key)
+            return official_candidates[0], "official_image"
+
+        sorted_candidates = sorted(print_candidates, key=self._print_priority_key)
+        return sorted_candidates[0], "latest_non_legacy"
 
     def _merge_print_rows(self, *, session, stats: IngestStats, legacy_print: Print, canonical_print: Print) -> None:
         if legacy_print.id == canonical_print.id:
@@ -594,7 +653,12 @@ class OnePieceConnector(SourceConnector):
             )
             candidates = [candidate for candidate in canonical_candidates.get(key, []) if candidate.id != print_row.id]
             if candidates:
-                canonical_print = candidates[0]
+                def _canonical_key(candidate: Print) -> tuple[int, tuple[int, int]]:
+                    primary = primary_image_by_print_id.get(candidate.id)
+                    has_official = 0 if (primary is not None and self._is_official_image_url(primary.url)) else 1
+                    return (has_official, self._print_priority_key(candidate))
+
+                canonical_print = sorted(candidates, key=_canonical_key)[0]
                 self._merge_print_rows(session=session, stats=stats, legacy_print=print_row, canonical_print=canonical_print)
                 touched["card_ids"].update({canonical_print.card_id, print_row.card_id})
                 touched["print_ids"].add(canonical_print.id)
@@ -605,6 +669,13 @@ class OnePieceConnector(SourceConnector):
                 primary_image.url = replacement_url
                 primary_image.source = "legacy_repair"
                 stats.records_updated += 1
+
+            for extra_image in session.execute(select(PrintImage).where(PrintImage.print_id == print_row.id)).scalars().all():
+                if extra_image.id == primary_image.id:
+                    continue
+                if self._is_fake_image_url(extra_image.url):
+                    session.delete(extra_image)
+                    stats.records_updated += 1
             touched["print_ids"].add(print_row.id)
             touched["card_ids"].add(print_row.card_id)
 
@@ -646,13 +717,53 @@ class OnePieceConnector(SourceConnector):
                 PrintIdentifier.print_id == print_row.id,
                 PrintIdentifier.source == "punk_records",
             )
-        ).scalar_one_or_none()
-        identifier_by_external = session.execute(
+        ).scalars().all()
+        if len(identifier_for_print) > 1:
+            best_identifier = sorted(identifier_for_print, key=lambda item: item.id)[0]
+            for duplicate in identifier_for_print[1:]:
+                session.delete(duplicate)
+                stats.records_updated += 1
+            identifier_for_print = best_identifier
+        else:
+            identifier_for_print = identifier_for_print[0] if identifier_for_print else None
+
+        identifier_by_external_matches = session.execute(
             select(PrintIdentifier).where(
                 PrintIdentifier.source == "punk_records",
                 PrintIdentifier.external_id == external_print_id,
             )
-        ).scalar_one_or_none()
+        ).scalars().all()
+
+        if identifier_by_external_matches:
+            candidate_print_ids = {identifier.print_id for identifier in identifier_by_external_matches}
+            print_candidates = session.execute(select(Print).where(Print.id.in_(candidate_print_ids))).scalars().all()
+            selected_print, strategy = self._select_best_print_candidate(
+                session=session,
+                print_candidates=print_candidates,
+                requested_print=print_row,
+                external_print_id=external_print_id,
+            )
+            if len(print_candidates) > 1:
+                self.logger.warning(
+                    "ingest onepiece identifier_collision_multiple_candidates external_id=%s requested_print_id=%s candidates=%s selected_print_id=%s strategy=%s",
+                    external_print_id,
+                    print_row.id,
+                    sorted(candidate_print_ids),
+                    selected_print.id,
+                    strategy,
+                )
+
+            identifier_by_external = next(
+                (item for item in identifier_by_external_matches if item.print_id == selected_print.id),
+                identifier_by_external_matches[0],
+            )
+            for duplicate in identifier_by_external_matches:
+                if duplicate.id == identifier_by_external.id:
+                    continue
+                session.delete(duplicate)
+                stats.records_updated += 1
+        else:
+            identifier_by_external = None
 
         if identifier_by_external is not None and identifier_by_external.print_id != print_row.id:
             existing_print = session.execute(select(Print).where(Print.id == identifier_by_external.print_id)).scalar_one_or_none()
@@ -672,6 +783,10 @@ class OnePieceConnector(SourceConnector):
                     identifier_by_external.print_id,
                     print_row.id,
                 )
+                if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
+                    session.delete(identifier_for_print)
+                    stats.records_updated += 1
+                    identifier_for_print = None
                 identifier_by_external.print_id = print_row.id
                 stats.records_updated += 1
                 identifier_for_print = identifier_by_external
@@ -1092,9 +1207,18 @@ class OnePieceConnector(SourceConnector):
 
                 image_url = str(print_item.get("image_url") or "").strip()
                 if image_url:
-                    primary_image = session.execute(
-                        select(PrintImage).where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
-                    ).scalar_one_or_none()
+                    primary_images = session.execute(
+                        select(PrintImage)
+                        .where(PrintImage.print_id == print_row.id, PrintImage.is_primary.is_(True))
+                        .order_by(PrintImage.id.asc())
+                    ).scalars().all()
+                    primary_image = primary_images[0] if primary_images else None
+                    for duplicate_primary in primary_images[1:]:
+                        if self._is_fake_image_url(duplicate_primary.url):
+                            session.delete(duplicate_primary)
+                        else:
+                            duplicate_primary.is_primary = False
+                        stats.records_updated += 1
                     if primary_image is None:
                         session.add(
                             PrintImage(
