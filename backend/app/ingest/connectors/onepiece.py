@@ -1452,6 +1452,8 @@ class OnePieceConnector(SourceConnector):
                         stats.records_updated += 1
 
         reconcile_summary_values = (
+        self.logger.info(
+            "ingest onepiece reconcile_summary calls=%s reassigned=%s owner_moved=%s owner_preserved=%s noop_kept=%s conflicts_avoided=%s reassign_skipped=%s",
             self._reconcile_metrics.get("calls", 0),
             self._reconcile_metrics.get("identifier_reassigned", 0),
             self._reconcile_metrics.get("owner_moved", 0),
