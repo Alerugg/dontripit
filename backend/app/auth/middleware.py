@@ -134,7 +134,7 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                 if required_scope == "read:admin":
                     if "read:admin" not in scopes and "admin" not in scopes:
                         return jsonify({"error": "insufficient_scope"}), 403
-                elif required_scope not in scopes:
+                elif required_scope not in scopes and "admin" not in scopes and "read:admin" not in scopes:
                     return jsonify({"error": "insufficient_scope"}), 403
 
                 plan = session.execute(select(ApiPlan).where(ApiPlan.id == api_key.plan_id)).scalar_one_or_none()
