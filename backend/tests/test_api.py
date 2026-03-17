@@ -138,7 +138,7 @@ def _seed_onepiece_natural_name_ranking_fixture() -> dict[str, dict[str, int]]:
         session.add_all([op01, op02])
         session.flush()
 
-        core_names = ["Luffy", "Nami", "Roronoa Zoro", "Law"]
+        core_names = ["Monkey.D.Luffy", "Nami", "Roronoa Zoro", "Law"]
         core_cards: dict[str, Card] = {}
         for name in core_names:
             card = Card(game_id=game.id, name=name)
@@ -160,8 +160,9 @@ def _seed_onepiece_natural_name_ranking_fixture() -> dict[str, dict[str, int]]:
         session.flush()
 
         print_map: dict[str, int] = {}
-        for idx, key in enumerate(["luffy", "nami", "roronoa zoro", "law"], start=1):
-            card = core_cards[key]
+        for idx, card_name in enumerate(["Monkey.D.Luffy", "Nami", "Roronoa Zoro", "Law"], start=1):
+            key = "luffy" if card_name == "Monkey.D.Luffy" else card_name.lower()
+            card = core_cards[card_name.lower()]
             collector = ["OP01-001", "EB01-004", "OP01-025", "OP02-017"][idx - 1]
             pr = Print(set_id=op01.id if idx <= 3 else op02.id, card_id=card.id, collector_number=collector, language="en", variant="default")
             session.add(pr)
@@ -170,6 +171,26 @@ def _seed_onepiece_natural_name_ranking_fixture() -> dict[str, dict[str, int]]:
             session.add(
                 PrintImage(
                     print_id=pr.id,
+                    url=f"https://en.onepiece-cardgame.com/images/cardlist/card/{collector}.png",
+                    is_primary=True,
+                    source="remote",
+                )
+            )
+
+        noisy_prints = [
+            ("Luffy-Tarou", "OP01-090"),
+            ("Zoro-Juurou", "OP01-091"),
+            ("Nami's Resolve at Sea", "OP01-092"),
+        ]
+        for noise_name, collector in noisy_prints:
+            noise_card = session.query(Card).filter(Card.game_id == game.id, Card.name == noise_name).one()
+            noise_print = Print(set_id=op01.id, card_id=noise_card.id, collector_number=collector, language="en", variant="r1")
+            session.add(noise_print)
+            session.flush()
+            print_map[noise_name.lower()] = noise_print.id
+            session.add(
+                PrintImage(
+                    print_id=noise_print.id,
                     url=f"https://en.onepiece-cardgame.com/images/cardlist/card/{collector}.png",
                     is_primary=True,
                     source="remote",
@@ -190,7 +211,7 @@ def test_search_onepiece_simple_names_prioritize_main_cards_and_direct_prints(cl
     headers = _auth_headers("onepiece-natural", ["read:catalog"])
 
     expectations = {
-        "luffy": "luffy",
+        "luffy": "monkey.d.luffy",
         "nami": "nami",
         "zoro": "roronoa zoro",
         "law": "law",
@@ -209,15 +230,24 @@ def test_search_onepiece_simple_names_prioritize_main_cards_and_direct_prints(cl
         top_titles = [str(item.get("title", "")).lower() for item in payload[:6]]
         top_print_ids = [item["id"] for item in payload[:6] if item.get("type") == "print"]
 
+        print_key = "luffy" if expected_card_key == "monkey.d.luffy" else expected_card_key
         assert ids["cards"][expected_card_key] in [item["id"] for item in payload if item.get("type") == "card"]
-        assert ids["prints"][expected_card_key] in top_print_ids
+        assert ids["prints"][print_key] in top_print_ids
 
         if query == "luffy":
-            assert top_titles.index("luffy") < top_titles.index("luffy-tarou")
-            assert top_titles.index("luffy") < top_titles.index("ace & sabo & luffy")
-            assert top_titles.index("luffy") < top_titles.index("luffy is the man who will be king of the pirates!!!")
+            assert top_titles.index("monkey.d.luffy") < top_titles.index("luffy-tarou")
+            assert top_titles.index("monkey.d.luffy") < top_titles.index("ace & sabo & luffy")
+            assert top_titles.index("monkey.d.luffy") < top_titles.index("luffy is the man who will be king of the pirates!!!")
+            top10_prints = [item["id"] for item in payload[:10] if item.get("type") == "print"]
+            assert top10_prints.index(ids["prints"]["luffy"]) < top10_prints.index(ids["prints"]["luffy-tarou"])
         if query == "zoro":
             assert top_titles.index("roronoa zoro") < top_titles.index("zoro-juurou")
+            top10_prints = [item["id"] for item in payload[:10] if item.get("type") == "print"]
+            assert top10_prints.index(ids["prints"]["roronoa zoro"]) < top10_prints.index(ids["prints"]["zoro-juurou"])
+        if query == "nami":
+            assert top_titles.index("nami") < top_titles.index("nami's resolve at sea")
+            top10_prints = [item["id"] for item in payload[:10] if item.get("type") == "print"]
+            assert top10_prints.index(ids["prints"]["nami"]) < top10_prints.index(ids["prints"]["nami's resolve at sea"])
         if query == "law":
             assert top_titles.index("law") < top_titles.index("law & bepo")
 
@@ -248,7 +278,7 @@ def test_card_detail_prints_variant_order_prefers_default_then_r_then_parallel(c
     assert response.status_code == 200, response.get_json()
     payload = response.get_json()
     variants = [row.get("variant") for row in payload.get("prints") or []]
-    assert variants[:3] == ["default", "r1", "parallel"]
+    assert variants[:3] == ["default", "parallel", "r1"]
 
 def _seed_onepiece_legacy_vs_official_prints() -> dict[str, int]:
     with db.SessionLocal() as session:

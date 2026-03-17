@@ -243,6 +243,59 @@ def _looks_like_set_prefix_query(raw_query: str) -> bool:
     return 3 <= len(normalized) <= 3
 
 
+
+def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
+    print_ids = [
+        int(dict(row).get("id"))
+        for row in rows
+        if dict(row).get("game") == "onepiece" and dict(row).get("type") == "print" and dict(row).get("id") is not None
+    ]
+    if len(print_ids) < 2:
+        return rows
+
+    info_rows = session.execute(
+        text(
+            """
+            SELECT p.id AS print_id, lower(COALESCE(c.name, '')) AS card_name, lower(COALESCE(p.variant, 'default')) AS variant
+            FROM prints p
+            JOIN cards c ON c.id = p.card_id
+            WHERE p.id IN :print_ids
+            """
+        ).bindparams(bindparam("print_ids", expanding=True)),
+        {"print_ids": print_ids},
+    ).mappings().all()
+    by_id = {int(row["print_id"]): row for row in info_rows}
+
+    def _variant_bucket(value: str) -> int:
+        if value in {"", "default", "base"}:
+            return 0
+        if "parallel" in value:
+            return 1
+        if value.startswith("r"):
+            return 2
+        return 3
+
+    def _print_rank(row: dict) -> tuple[int, int, int, int, int]:
+        meta = by_id.get(int(row.get("id")))
+        name = str(meta.get("card_name") if meta else "")
+        variant = str(meta.get("variant") if meta else "default")
+        canonical = 0 if (name == q_norm or name.endswith(f" {q_norm}") or name.endswith(f".{q_norm}")) else 1
+        hyphen_partial = 1 if name.startswith(f"{q_norm}-") else 0
+        return (canonical, hyphen_partial, _variant_bucket(variant), len(name), int(row.get("id") or 0))
+
+    normalized_rows = [dict(row) for row in rows]
+    print_rows = [row for row in normalized_rows if row.get("game") == "onepiece" and row.get("type") == "print"]
+    ordered_prints = sorted(print_rows, key=_print_rank)
+    ordered_iter = iter(ordered_prints)
+
+    output = []
+    for row in normalized_rows:
+        if row.get("game") == "onepiece" and row.get("type") == "print":
+            output.append(next(ordered_iter))
+        else:
+            output.append(row)
+    return output
+
 def _short_query_search_rows(
     session,
     *,
@@ -700,6 +753,28 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
               CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(s.code, '')) LIKE :contains THEN 300.0 ELSE 0.0 END +
               CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(s.code, '')) LIKE :prefix THEN (120.0 / (1 + abs(length(lower(COALESCE(s.code, ''))) - length(:q)))) ELSE 0.0 END +
               CASE WHEN :is_code_like_query = 1 AND lower(COALESCE(p.collector_number, '')) LIKE :prefix THEN (90.0 / (1 + abs(length(lower(COALESCE(p.collector_number, ''))) - length(:q)))) ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'card' AND (
+                lower(sd.title) = :q
+                OR lower(sd.title) LIKE '% ' || :q
+                OR lower(sd.title) LIKE '%.' || :q
+              ) AND length(sd.title) <= 20 THEN 20000.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q || '-%' THEN -700.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :contains AND length(sd.title) >= 24 THEN -1800.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND (
+                  lower(c2.name) = :q
+                  OR lower(c2.name) LIKE '% ' || :q
+                  OR lower(c2.name) LIKE '%.' || :q
+                )
+              ) THEN 10000.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND (lower(sd.title) LIKE '% ' || :q OR lower(sd.title) LIKE '%.' || :q) THEN 5000.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) LIKE :q || '-%' THEN -3000.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q || '-%') THEN -5000.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, 'default')) IN ('default', 'base', '') THEN 700.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE '%parallel%' THEN 350.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE 'r%' THEN 120.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'card' THEN 900.0 ELSE 0.0 END +
+              CASE WHEN g.slug = 'onepiece' AND :is_text_query = 1 AND sd.doc_type = 'print' THEN -300.0 ELSE 0.0 END +
               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'card' THEN 260.0 ELSE 0.0 END +
               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'print' THEN -140.0 ELSE 0.0 END +
               CASE WHEN :is_text_query = 1 AND sd.doc_type = 'set' THEN -180.0 ELSE 0.0 END +
@@ -827,12 +902,34 @@ def search():
                                CASE WHEN :is_code_like_query = 1 AND lower(coalesce(s.code, '')) LIKE :q_norm || '%' THEN 760.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND (
+                                   lower(sd.title) = :q_norm
+                                   OR lower(sd.title) LIKE '% ' || :q_norm
+                                   OR lower(sd.title) LIKE '%.' || :q_norm
+                               ) AND length(sd.title) <= 20 THEN 20000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '-%' THEN -1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 THEN -1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
                                ) THEN 1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
                                ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND (
+                                       lower(c2.name) = :q_norm
+                                       OR lower(c2.name) LIKE '% ' || :q_norm
+                                       OR lower(c2.name) LIKE '%.' || :q_norm
+                                   )
+                               ) THEN 10000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND (lower(sd.title) LIKE '% ' || :q_norm OR lower(sd.title) LIKE '%.' || :q_norm) THEN 5000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) LIKE :q_norm || '-%' THEN -3000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '-%') THEN -5000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, 'default')) IN ('default', 'base', '') THEN 700.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE '%parallel%' THEN 350.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE 'r%' THEN 120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' THEN 900.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' THEN -300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
                                    SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
                                ) THEN -1300.0 ELSE 0.0 END +
@@ -937,12 +1034,34 @@ def search():
                                CASE WHEN :is_code_like_query = 1 AND sd.doc_type = 'card' THEN -120.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) = :q_norm THEN 5200.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '%' THEN 2400.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND (
+                                   lower(sd.title) = :q_norm
+                                   OR lower(sd.title) LIKE '% ' || :q_norm
+                                   OR lower(sd.title) LIKE '%.' || :q_norm
+                               ) AND length(sd.title) <= 20 THEN 20000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '-%' THEN -1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 THEN -1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
                                ) THEN 1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
                                ) THEN 850.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND (
+                                       lower(c2.name) = :q_norm
+                                       OR lower(c2.name) LIKE '% ' || :q_norm
+                                       OR lower(c2.name) LIKE '%.' || :q_norm
+                                   )
+                               ) THEN 10000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND (lower(sd.title) LIKE '% ' || :q_norm OR lower(sd.title) LIKE '%.' || :q_norm) THEN 5000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(sd.title) LIKE :q_norm || '-%' THEN -3000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '-%') THEN -5000.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, 'default')) IN ('default', 'base', '') THEN 700.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE '%parallel%' THEN 350.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND lower(COALESCE(p.variant, '')) LIKE 'r%' THEN 120.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' THEN 900.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' THEN -300.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type <> 'print' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 AND EXISTS (
                                    SELECT 1 FROM cards c3 WHERE c3.game_id = sd.game_id AND lower(c3.name) = :q_norm
                                ) THEN -1300.0 ELSE 0.0 END +
@@ -1044,11 +1163,15 @@ def search():
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
 
         rows = _apply_onepiece_search_policy(rows, session=session)
+        if game == 'onepiece' and is_simple_name_query == 1 and is_text_query == 1:
+            rows = _reorder_onepiece_simple_name_prints(rows, session=session, q_norm=q_normalized)
 
         if not rows:
             like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
             rows = _fallback_search_rows(session, like=like, game=game, result_type=result_type, limit=limit, offset=offset)
             rows = _apply_onepiece_search_policy(rows, session=session)
+            if game == 'onepiece' and is_simple_name_query == 1 and is_text_query == 1:
+                rows = _reorder_onepiece_simple_name_prints(rows, session=session, q_norm=q_normalized)
 
     return jsonify([_to_public_search_row(dict(row)) for row in rows])
 
