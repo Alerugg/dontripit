@@ -29,8 +29,8 @@ def _variant_order_sql(column: str) -> str:
     return f"""
     CASE
       WHEN lower(COALESCE({column}, '')) IN ('default', 'base', '') THEN 0
-      WHEN lower(COALESCE({column}, '')) LIKE 'r%' THEN 1
-      WHEN lower(COALESCE({column}, '')) LIKE '%parallel%' THEN 2
+      WHEN lower(COALESCE({column}, '')) LIKE '%parallel%' THEN 1
+      WHEN lower(COALESCE({column}, '')) LIKE 'r%' THEN 2
       ELSE 3
     END
     """
