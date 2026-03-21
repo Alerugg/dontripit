@@ -29,7 +29,7 @@ INTERNAL_API_BASE_URL=http://localhost:5000
 INTERNAL_API_KEY=tu_api_key_interna
 
 # Público (opcionales)
-NEXT_PUBLIC_SITE_NAME=TCG Nexus
+NEXT_PUBLIC_SITE_NAME=Don´tRipIt
 NEXT_PUBLIC_DEFAULT_GAME=
 
 # Protección admin
