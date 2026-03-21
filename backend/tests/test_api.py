@@ -252,6 +252,38 @@ def test_search_onepiece_simple_names_prioritize_main_cards_and_direct_prints(cl
             assert top_titles.index("law") < top_titles.index("law & bepo")
 
 
+def test_search_onepiece_punctuation_normalization_keeps_luffy_ranked_first(client):
+    ids = _seed_onepiece_natural_name_ranking_fixture()
+    headers = _auth_headers("onepiece-natural-normalized", ["read:catalog"])
+
+    payloads: dict[str, list[dict]] = {}
+    for query in ("monkey.d.luffy", "monkey d luffy", "monkey-d-luffy"):
+        response = client.get(f"/api/v1/search?q={query}&game=onepiece&limit=10", headers=headers)
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload
+        payloads[query] = payload
+
+        first = payload[0]
+        assert first["type"] == "card"
+        assert str(first["title"]).lower() == "monkey.d.luffy"
+
+        top_print_ids = [item["id"] for item in payload[:6] if item.get("type") == "print"]
+        assert ids["prints"]["luffy"] in top_print_ids
+
+    for query, payload in payloads.items():
+        top_titles = [str(item.get("title", "")).lower() for item in payload[:5]]
+        assert top_titles[0] == "monkey.d.luffy", query
+        assert "ace & sabo & luffy" not in top_titles[:2], query
+        assert "luffy is the man who will be king of the pirates!!!" not in top_titles[:2], query
+
+    dotted_top = [(item.get("type"), item.get("id")) for item in payloads["monkey.d.luffy"][:4]]
+    spaced_top = [(item.get("type"), item.get("id")) for item in payloads["monkey d luffy"][:4]]
+    hyphen_top = [(item.get("type"), item.get("id")) for item in payloads["monkey-d-luffy"][:4]]
+    assert spaced_top == dotted_top
+    assert hyphen_top == dotted_top
+
+
 def test_card_detail_prints_variant_order_prefers_default_then_r_then_parallel(client):
     with db.SessionLocal() as session:
         game = Game(slug="onepiece", name="One Piece")
