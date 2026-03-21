@@ -2,15 +2,28 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 
-test('home page delegates to the React homepage shell', async () => {
+test('home page composes the new modular Home V2 experience', async () => {
   const page = await fs.readFile(new URL('../app/page.js', import.meta.url), 'utf8')
-  const shell = await fs.readFile(new URL('../components/home/HomePageShell.js', import.meta.url), 'utf8')
+  const hero = await fs.readFile(new URL('../components/home/HomeHero.js', import.meta.url), 'utf8')
+  const metrics = await fs.readFile(new URL('../components/home/HomeMetrics.js', import.meta.url), 'utf8')
+  const gameGrid = await fs.readFile(new URL('../components/home/HomeGameGrid.js', import.meta.url), 'utf8')
+  const blueprint = await fs.readFile(new URL('../components/home/HomeBlueprint.js', import.meta.url), 'utf8')
+  const why = await fs.readFile(new URL('../components/home/HomeWhySection.js', import.meta.url), 'utf8')
+  const finalCta = await fs.readFile(new URL('../components/home/HomeFinalCta.js', import.meta.url), 'utf8')
 
-  assert.match(page, /HomePageShell/)
+  assert.match(page, /<HomeHero \/>/)
+  assert.match(page, /<HomeMetrics \/>/)
+  assert.match(page, /<HomeGameGrid \/>/)
+  assert.match(page, /<HomeBlueprint \/>/)
+  assert.match(page, /<HomeWhySection \/>/)
+  assert.match(page, /<HomeFinalCta \/>/)
   assert.doesNotMatch(page, /CatalogExplorer/)
-  assert.match(shell, /<HomeHero \/>/)
-  assert.match(shell, /<GameSpotlightGrid \/>/)
-  assert.match(shell, /<CatalogBlueprint \/>/)
+  assert.match(hero, /HOME V2 REAL/)
+  assert.match(metrics, /home-metrics-band/)
+  assert.match(gameGrid, /home-game-grid/)
+  assert.match(blueprint, /home-blueprint-grid/)
+  assert.match(why, /home-why-cards/)
+  assert.match(finalCta, /home-final-actions/)
 })
 
 test('global explorer delegates search behavior to reusable catalog explorer', async () => {
@@ -49,6 +62,7 @@ test('catalog client keeps BFF routes while game catalog is defined separately',
   assert.doesNotMatch(apiClient, /NEXT_PUBLIC_API_KEY/)
   assert.match(games, /slug: 'riftbound'/)
   assert.match(games, /GAME_OPTIONS = \[/)
+  assert.match(games, /slug === 'one-piece' \? 'onepiece' : slug/)
 })
 
 test('legacy tcg and play entry points redirect to the scoped games explorer', async () => {
