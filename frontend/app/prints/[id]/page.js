@@ -66,9 +66,17 @@ export default function PrintDetailPage({ params }) {
             </div>
 
             <div className="detail-content">
-              <p className="kicker">Print detail</p>
+              <nav className="detail-breadcrumbs" aria-label="breadcrumb">
+                <Link href={printDetail.game ? `/tcg/${printDetail.game}` : '/explorer'}>{printDetail.game || printDetail.card?.game || 'TCG'}</Link>
+                <span>→</span>
+                <span>{printDetail.set_name || printDetail.set_code || 'Colección'}</span>
+                <span>→</span>
+                <Link href={`/cards/${printDetail.card?.id || ''}`}>Carta</Link>
+              </nav>
+
+              <p className="kicker">Variante</p>
               <h1>{printDetail.card?.name || 'Carta'}</h1>
-              <p className="meta-game">{printDetail.game || printDetail.card?.game}</p>
+              <p className="meta-subtitle detail-intro">{[printDetail.set_code, printDetail.collector_number ? `#${printDetail.collector_number}` : null, printDetail.language, printDetail.variant || printDetail.rarity].filter(Boolean).join(' · ')}</p>
 
               <section className="meta-grid panel-soft">
                 <MetaLine label="Set" value={printDetail.set_name} />

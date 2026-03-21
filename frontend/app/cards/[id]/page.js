@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import TopNav from '../../../components/layout/TopNav'
 import FallbackImage from '../../../components/common/FallbackImage'
 import StatePanel from '../../../components/catalog/StatePanel'
+import VariantPicker from '../../../components/catalog/VariantPicker'
 import { fetchCardById } from '../../../lib/catalog/client'
 
 function MetaItem({ label, value }) {
@@ -43,18 +44,20 @@ export default function CardDetailPage({ params }) {
     }
   }, [params.id])
 
+  const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
+
   return (
     <main>
       <TopNav />
 
       <section className="detail-shell">
-        <Link href="/" className="back-link">← Volver al explorer</Link>
+        <Link href={card?.game ? `/tcg/${card.game}` : '/explorer'} className="back-link">← Volver al explorer</Link>
 
-        {loading && <StatePanel title="Cargando carta" description="Preparando ficha maestra y variantes." />}
+        {loading && <StatePanel title="Cargando carta" description="Preparando carta, colecciones y variantes." />}
         {!loading && error && <StatePanel title="No pudimos cargar la carta" description={error} error />}
 
         {!loading && !error && card && (
-          <article className="panel detail-page">
+          <article className="panel detail-page detail-card-page">
             <div className="detail-media">
               <FallbackImage
                 src={card.primary_image_url}
@@ -66,9 +69,17 @@ export default function CardDetailPage({ params }) {
             </div>
 
             <div className="detail-content">
-              <p className="kicker">Ficha maestra</p>
+              <nav className="detail-breadcrumbs" aria-label="breadcrumb">
+                <Link href={card.game ? `/tcg/${card.game}` : '/explorer'}>{card.game || 'TCG'}</Link>
+                <span>→</span>
+                <span>{primarySet?.name || primarySet?.code || card.language || 'Colección'}</span>
+                <span>→</span>
+                <strong>Carta</strong>
+              </nav>
+
+              <p className="kicker">Carta</p>
               <h1>{card.name}</h1>
-              <p className="meta-game">{card.game}</p>
+              <p className="meta-subtitle detail-intro">{primarySet?.name || 'Colección principal'}{card.language ? ` · ${card.language}` : ''}</p>
 
               <section className="meta-grid panel-soft">
                 <MetaItem label="Card ID" value={card.id} />
@@ -78,7 +89,7 @@ export default function CardDetailPage({ params }) {
               </section>
 
               <section>
-                <h2>Sets relacionados</h2>
+                <h2>Colecciones</h2>
                 <div className="chip-list">
                   {(card.sets || []).map((setItem) => (
                     <span className="chip" key={setItem.id || setItem.code}>{setItem.code} · {setItem.name}</span>
@@ -87,18 +98,13 @@ export default function CardDetailPage({ params }) {
               </section>
 
               <section>
-                <h2>Prints / Variantes</h2>
-                <div className="prints-grid">
-                  {(card.prints || []).map((print) => (
-                    <Link key={print.id} href={`/prints/${print.id}`} className="print-row">
-                      <div>
-                        <strong>{print.set_code || 'SET'} #{print.collector_number || '-'}</strong>
-                        <p>{print.variant || 'Standard'} · {print.rarity || 'Sin rarity'}</p>
-                      </div>
-                      <span>{print.language || 'N/A'}</span>
-                    </Link>
-                  ))}
+                <div className="section-head">
+                  <div>
+                    <h2>Variantes</h2>
+                    <p>Miniaturas de cada print para comparar collector number, rareza, variante e idioma.</p>
+                  </div>
                 </div>
+                <VariantPicker prints={card.prints || []} />
               </section>
             </div>
           </article>

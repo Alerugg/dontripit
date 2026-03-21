@@ -6,11 +6,17 @@ function resolveHref(item) {
   return `/cards/${item.card_id || item.id}`
 }
 
+function buildSubtitle(item) {
+  return [
+    item.set_name || item.set_code,
+    item.collector_number ? `#${item.collector_number}` : null,
+    item.language,
+    item.variant || item.rarity,
+  ].filter(Boolean).join(' · ')
+}
+
 export default function CatalogCard({ item, view = 'grid' }) {
   const title = item.name || item.title || 'Elemento sin título'
-  const subtitle = [item.set_name || item.set_code, item.collector_number ? `#${item.collector_number}` : null]
-    .filter(Boolean)
-    .join(' · ')
 
   return (
     <Link href={resolveHref(item)} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
@@ -26,12 +32,14 @@ export default function CatalogCard({ item, view = 'grid' }) {
 
       <div className="catalog-card-content">
         <div className="catalog-card-head">
-          <h3>{title}</h3>
+          <div>
+            <p className="meta-game">{item.game || 'TCG'}</p>
+            <h3>{title}</h3>
+          </div>
           <span className={`badge badge-${item.type || 'card'}`}>{item.type || 'card'}</span>
         </div>
 
-        <p className="meta-game">{item.game || 'TCG'}</p>
-        <p className="meta-subtitle">{subtitle || item.variant || 'Ficha de catálogo'}</p>
+        <p className="meta-subtitle">{buildSubtitle(item) || 'Ficha de catálogo'}</p>
       </div>
     </Link>
   )
