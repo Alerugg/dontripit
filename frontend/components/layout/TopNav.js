@@ -13,7 +13,7 @@ export default function TopNav() {
 
         <nav className="top-links">
           <Link href="/" className="top-link">Home</Link>
-          <Link href="/tcg/pokemon" className="top-link">TCGs</Link>
+          <Link href="/games/pokemon" className="top-link">Juegos</Link>
           <Link href="/explorer" className="top-link">Explorar todo</Link>
           <span className="top-link disabled">Colección</span>
           <span className="top-link disabled">Wishlist</span>

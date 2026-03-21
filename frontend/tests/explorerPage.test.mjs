@@ -2,14 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 
-test('home page is a landing with scoped tcg navigation and secondary global explorer', async () => {
+test('home page delegates to the React homepage shell', async () => {
   const page = await fs.readFile(new URL('../app/page.js', import.meta.url), 'utf8')
+  const shell = await fs.readFile(new URL('../components/home/HomePageShell.js', import.meta.url), 'utf8')
 
-  assert.match(page, /TCG scoped explorers/)
-  assert.match(page, /href="\/tcg\/pokemon"/)
-  assert.match(page, /Explorar todo/)
-  assert.match(page, /\/tcg\/\[slug\]/)
+  assert.match(page, /HomePageShell/)
   assert.doesNotMatch(page, /CatalogExplorer/)
+  assert.match(shell, /<HomeHero \/>/)
+  assert.match(shell, /<GameSpotlightGrid \/>/)
+  assert.match(shell, /<CatalogBlueprint \/>/)
 })
 
 test('global explorer delegates search behavior to reusable catalog explorer', async () => {
@@ -25,12 +26,12 @@ test('global explorer delegates search behavior to reusable catalog explorer', a
   assert.match(explorerComponent, /searchCatalog\(\{ q: submittedQuery, game: scopedGame \|\| game, type, limit: 36, offset: 0 \}\)/)
 })
 
-test('top nav keeps branding, tcg entry point, and critical navigation links', async () => {
+test('top nav keeps branding, games entry point, and critical navigation links', async () => {
   const topNav = await fs.readFile(new URL('../components/layout/TopNav.js', import.meta.url), 'utf8')
 
   assert.match(topNav, /Don’tRipIt/)
   assert.match(topNav, /<Link href="\/" className="top-link">Home<\/Link>/)
-  assert.match(topNav, /<Link href="\/tcg\/pokemon" className="top-link">TCGs<\/Link>/)
+  assert.match(topNav, /<Link href="\/games\/pokemon" className="top-link">Juegos<\/Link>/)
   assert.match(topNav, /<Link href="\/explorer" className="top-link">Explorar todo<\/Link>/)
   assert.match(topNav, /<span className="top-link disabled">Colección<\/span>/)
   assert.match(topNav, /<span className="top-link disabled">Wishlist<\/span>/)
@@ -50,13 +51,20 @@ test('catalog client keeps BFF routes while game catalog is defined separately',
   assert.match(games, /GAME_OPTIONS = \[/)
 })
 
+test('legacy tcg and play entry points redirect to the scoped games explorer', async () => {
+  const tcgRoute = await fs.readFile(new URL('../app/tcg/[slug]/page.js', import.meta.url), 'utf8')
+  const playRoute = await fs.readFile(new URL('../app/play/[slug]/page.js', import.meta.url), 'utf8')
+
+  assert.match(tcgRoute, /redirect\(`\/games\/\$\{params\.slug\}\/explorer`\)/)
+  assert.match(playRoute, /redirect\(`\/games\/\$\{params\.slug\}\/explorer`\)/)
+})
+
 test('BFF helper reads internal server-side env vars', async () => {
   const internalApi = await fs.readFile(new URL('../lib/catalog/internalApi.js', import.meta.url), 'utf8')
 
   assert.match(internalApi, /INTERNAL_API_BASE_URL/)
   assert.match(internalApi, /INTERNAL_API_KEY/)
 })
-
 
 test("layout metadata uses Don’tRipIt branding", async () => {
   const layout = await fs.readFile(new URL('../app/layout.js', import.meta.url), 'utf8')
