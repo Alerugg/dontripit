@@ -641,3 +641,277 @@ button { cursor: pointer; }
   .catalog-card.list .catalog-image-wrap { min-height: 220px; }
   .variant-card { grid-template-columns: 60px minmax(0, 1fr); }
 }
+
+.landing-v3 {
+  display: grid;
+  gap: 24px;
+}
+
+.home-hero {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 24px;
+  padding: 34px;
+}
+
+.home-hero-copy,
+.home-hero-visual,
+.game-hub-copy,
+.game-hub-highlights,
+.hero-stats-grid,
+.blueprint-grid,
+.detail-media-column,
+.detail-stats-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.home-hero-copy h1,
+.game-hub-copy h1 {
+  font-size: clamp(2.4rem, 5vw, 4.6rem);
+  max-width: 11ch;
+}
+
+.home-hero-visual {
+  position: relative;
+  min-height: 420px;
+  align-content: center;
+}
+
+.hero-energy {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(10px);
+  opacity: 0.7;
+}
+
+.hero-energy-a {
+  inset: 26px 12% auto auto;
+  width: 210px;
+  height: 210px;
+  background: radial-gradient(circle, rgba(255, 125, 44, 0.42), transparent 70%);
+}
+
+.hero-energy-b {
+  inset: auto auto 34px 10%;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle, rgba(105, 183, 255, 0.34), transparent 68%);
+}
+
+.hero-energy-c {
+  inset: 80px auto auto 16%;
+  width: 140px;
+  height: 140px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.hero-showcase-card {
+  position: absolute;
+  width: min(290px, 72%);
+}
+
+.hero-showcase-card span,
+.game-hub-highlights span,
+.blueprint-step,
+.detail-stat span {
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.hero-showcase-card strong,
+.blueprint-card h3 {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.08rem;
+}
+
+.showcase-primary { top: 24px; left: 6%; }
+.showcase-secondary { top: 36%; right: 4%; }
+.showcase-tertiary { bottom: 22px; left: 18%; }
+
+.hero-stat-card span { color: var(--muted); }
+.section-copy-wide { max-width: 760px; }
+
+.tcg-card-actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.catalog-blueprint {
+  display: grid;
+  gap: 18px;
+}
+
+.blueprint-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.blueprint-card {
+  padding: 20px;
+}
+
+.blueprint-card p { color: var(--muted); }
+
+.game-hub-shell { gap: 18px; }
+
+.game-hub-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 22px;
+}
+
+.game-hub-hero::before {
+  content: '';
+  position: absolute;
+  inset: auto -60px -60px auto;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  opacity: 0.24;
+  background: var(--game-accent);
+  filter: blur(24px);
+}
+
+.game-hub-highlights {
+  align-content: start;
+}
+
+.game-hub-highlights > div {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+
+.game-hub-highlights strong {
+  display: block;
+  margin: 6px 0;
+}
+
+.explorer-layout-compact {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.search-combobox {
+  overflow: visible;
+}
+
+.search-combobox-inputs {
+  grid-template-columns: minmax(0, 1fr) 120px;
+}
+
+.search-submit {
+  width: 120px;
+  justify-self: stretch;
+}
+
+.suggestions-popover {
+  right: auto;
+  width: min(100%, calc(100vw - 64px));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+}
+
+.suggestion-row {
+  align-items: center;
+}
+
+.detail-card-page-v2 {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.detail-media-column {
+  align-content: start;
+}
+
+.detail-media-card {
+  min-height: 480px;
+}
+
+.detail-summary-stack strong,
+.detail-stat strong {
+  font-size: 1.05rem;
+}
+
+.detail-title-block {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-stats-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.detail-stat {
+  min-height: 110px;
+  align-content: start;
+}
+
+.detail-stat strong {
+  margin-top: 6px;
+  word-break: break-word;
+}
+
+.detail-section-block {
+  display: grid;
+  gap: 14px;
+}
+
+.meta-grid-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+
+.set-landing-page {
+  grid-template-columns: 1fr;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero-energy-c { animation: slow-spin 12s linear infinite; }
+  .showcase-primary { animation: floaty 8s ease-in-out infinite; }
+  .showcase-secondary { animation: floaty 9s ease-in-out infinite reverse; }
+  .showcase-tertiary { animation: floaty 10s ease-in-out infinite; }
+}
+
+@media (max-width: 1200px) {
+  .blueprint-grid,
+  .detail-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 960px) {
+  .home-hero,
+  .game-hub-hero,
+  .detail-card-page-v2 { grid-template-columns: 1fr; }
+
+  .search-combobox-inputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .search-submit {
+    width: 100%;
+  }
+
+  .suggestions-popover {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .home-hero,
+  .game-hub-hero { padding: 18px; }
+
+  .blueprint-grid,
+  .detail-stats-grid,
+  .meta-grid-columns { grid-template-columns: 1fr; }
+}
