@@ -35,6 +35,10 @@ def _normalize_query(raw_query: str) -> str:
     return " ".join(raw_query.lower().split())
 
 
+def _compact_search_text(raw_text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _normalize_query(raw_text))
+
+
 def _is_simple_name_query(raw_query: str) -> bool:
     normalized = " ".join(raw_query.strip().lower().split())
     if len(normalized) < 3 or len(normalized) > 24:
@@ -245,6 +249,7 @@ def _looks_like_set_prefix_query(raw_query: str) -> bool:
 
 
 def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
+    q_compact = _compact_search_text(q_norm)
     print_ids = [
         int(dict(row).get("id"))
         for row in rows
@@ -279,7 +284,13 @@ def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
         meta = by_id.get(int(row.get("id")))
         name = str(meta.get("card_name") if meta else "")
         variant = str(meta.get("variant") if meta else "default")
-        canonical = 0 if (name == q_norm or name.endswith(f" {q_norm}") or name.endswith(f".{q_norm}")) else 1
+        compact_name = _compact_search_text(name)
+        canonical = 0 if (
+            name == q_norm
+            or name.endswith(f" {q_norm}")
+            or name.endswith(f".{q_norm}")
+            or (q_compact and compact_name == q_compact)
+        ) else 1
         hyphen_partial = 1 if name.startswith(f"{q_norm}-") else 0
         return (canonical, hyphen_partial, _variant_bucket(variant), len(name), int(row.get("id") or 0))
 
@@ -861,6 +872,7 @@ def search():
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
 
     q_normalized = _normalize_query(q)
+    q_compact = _compact_search_text(q)
     is_exact_code_query = 1 if _is_exact_code_query(q) else 0
     is_code_like_query = 1 if _looks_like_code_query(q) else 0
     is_text_query = 1 if is_code_like_query == 0 else 0
@@ -895,6 +907,7 @@ def search():
                                CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN 360.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN 210.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '' THEN 900.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(s.code, '')) = :code_prefix THEN 420.0 ELSE 0.0 END +
@@ -906,11 +919,16 @@ def search():
                                    lower(sd.title) = :q_norm
                                    OR lower(sd.title) LIKE '% ' || :q_norm
                                    OR lower(sd.title) LIKE '%.' || :q_norm
+                                   OR (replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '')
                                ) AND length(sd.title) <= 20 THEN 20000.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '-%' THEN -1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 THEN -1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND (lower(sd.title) LIKE '%' || :q_norm || '%' OR replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') LIKE '%' || :q_compact || '%') AND (lower(sd.title) LIKE '% & %' OR lower(sd.title) LIKE '%/%') THEN -2400.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
-                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND (
+                                       lower(c2.name) = :q_norm
+                                       OR (replace(replace(replace(lower(c2.name), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '')
+                                   )
                                ) THEN 1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
@@ -982,10 +1000,13 @@ def search():
                           pi.id
                         LIMIT 1
                     ) primary_img ON true
-                    WHERE to_tsvector(
-                            'simple',
-                            coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
-                          ) @@ query.term
+                    WHERE (
+                            to_tsvector(
+                                'simple',
+                                coalesce(sd.title, '') || ' ' || coalesce(sd.subtitle, '') || ' ' || coalesce(sd.tsv, '')
+                            ) @@ query.term
+                            OR (:q_compact <> '' AND replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') LIKE '%' || :q_compact || '%')
+                          )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
                     ORDER BY score DESC, sd.title ASC
@@ -997,6 +1018,7 @@ def search():
                     {
                         "q": q,
                         "q_norm": q_normalized,
+                        "q_compact": q_compact,
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
@@ -1023,6 +1045,7 @@ def search():
                                CASE WHEN :is_text_query = 1 AND lower(sd.title) LIKE :q_norm || '%' THEN (CASE WHEN :is_prefix_mode = 1 THEN 3200.0 WHEN :is_short_query = 1 THEN 1200.0 ELSE 360.0 END) ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND (' ' || lower(sd.title)) LIKE '% ' || :q_norm || '%' THEN (CASE WHEN :is_prefix_mode = 1 THEN 1400.0 WHEN :is_short_query = 1 THEN 300.0 ELSE 210.0 END) ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND :is_short_query = 0 AND lower(sd.title) LIKE '%' || :q_norm || '%' THEN 140.0 ELSE 0.0 END +
+                               CASE WHEN :is_text_query = 1 AND replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '' THEN 900.0 ELSE 0.0 END +
                                CASE WHEN :is_text_query = 1 AND :is_prefix_mode = 1 AND lower(sd.title) LIKE '%' || :q_norm || '%' AND lower(sd.title) NOT LIKE :q_norm || '%' THEN -850.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'print' AND lower(coalesce(p.collector_number, '')) = :q_norm THEN 2600.0 ELSE 0.0 END +
                                CASE WHEN :is_exact_code_query = 1 AND sd.doc_type = 'set' AND lower(coalesce(s.code, '')) = :q_norm THEN 1700.0 ELSE 0.0 END +
@@ -1038,11 +1061,16 @@ def search():
                                    lower(sd.title) = :q_norm
                                    OR lower(sd.title) LIKE '% ' || :q_norm
                                    OR lower(sd.title) LIKE '%.' || :q_norm
+                                   OR (replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '')
                                ) AND length(sd.title) <= 20 THEN 20000.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE :q_norm || '-%' THEN -1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND lower(sd.title) LIKE '%' || :q_norm || '%' AND length(sd.title) >= 24 THEN -1800.0 ELSE 0.0 END +
+                               CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'card' AND (lower(sd.title) LIKE '%' || :q_norm || '%' OR replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') LIKE '%' || :q_compact || '%') AND (lower(sd.title) LIKE '% & %' OR lower(sd.title) LIKE '%/%') THEN -2400.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
-                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) = :q_norm
+                                   SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND (
+                                       lower(c2.name) = :q_norm
+                                       OR (replace(replace(replace(lower(c2.name), '.', ''), '-', ''), ' ', '') = :q_compact AND :q_compact <> '')
+                                   )
                                ) THEN 1800.0 ELSE 0.0 END +
                                CASE WHEN g.slug = 'onepiece' AND :is_simple_name_query = 1 AND :is_text_query = 1 AND sd.doc_type = 'print' AND EXISTS (
                                    SELECT 1 FROM cards c2 WHERE c2.id = p.card_id AND c2.game_id = sd.game_id AND lower(c2.name) LIKE :q_norm || '%'
@@ -1113,7 +1141,10 @@ def search():
                     JOIN games g ON g.id = sd.game_id
                     LEFT JOIN prints p ON sd.doc_type = 'print' AND p.id = sd.object_id
                     LEFT JOIN sets s ON p.set_id = s.id
-                    WHERE lower(coalesce(sd.tsv, sd.title || ' ' || coalesce(sd.subtitle, ''))) LIKE :like
+                    WHERE (
+                            lower(coalesce(sd.tsv, sd.title || ' ' || coalesce(sd.subtitle, ''))) LIKE :like
+                            OR (:q_compact <> '' AND replace(replace(replace(lower(sd.title), '.', ''), '-', ''), ' ', '') LIKE '%' || :q_compact || '%')
+                          )
                       AND (
                             :is_short_query = 0
                             OR lower(sd.title) LIKE :q_norm || '%'
@@ -1132,6 +1163,7 @@ def search():
                     {
                         "q": q,
                         "q_norm": q_normalized,
+                        "q_compact": q_compact,
                         "is_code_like_query": is_code_like_query,
                         "is_exact_code_query": is_exact_code_query,
                         "is_text_query": is_text_query,
