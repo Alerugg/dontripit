@@ -41,6 +41,11 @@ export const GAME_OPTIONS = [
   ...GAME_CATALOG.map((game) => ({ value: game.slug, label: game.name })),
 ]
 
+function normalizeGameSlug(slug) {
+  return slug === 'one-piece' ? 'onepiece' : slug
+}
+
 export function getGameConfig(slug) {
-  return GAME_CATALOG.find((game) => game.slug === slug) || null
+  const normalizedSlug = normalizeGameSlug(slug)
+  return GAME_CATALOG.find((game) => game.slug === normalizedSlug) || null
 }

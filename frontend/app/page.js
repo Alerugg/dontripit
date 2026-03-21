@@ -1,9 +1,24 @@
-import HomePageShell from '../components/home/HomePageShell'
+import TopNav from '../components/layout/TopNav'
+import HomeBlueprint from '../components/home/HomeBlueprint'
+import HomeFinalCta from '../components/home/HomeFinalCta'
+import HomeGameGrid from '../components/home/HomeGameGrid'
+import HomeHero from '../components/home/HomeHero'
+import HomeMetrics from '../components/home/HomeMetrics'
+import HomeWhySection from '../components/home/HomeWhySection'
 
-// TCG scoped explorers
-// href="/tcg/pokemon"
-// Explorar todo
-// /tcg/[slug]
 export default function HomePage() {
-  return <HomePageShell />
+  return (
+    <main>
+      <TopNav />
+
+      <div className="landing-shell home-v2-shell">
+        <HomeHero />
+        <HomeMetrics />
+        <HomeGameGrid />
+        <HomeBlueprint />
+        <HomeWhySection />
+        <HomeFinalCta />
+      </div>
+    </main>
+  )
 }

@@ -915,3 +915,487 @@ button { cursor: pointer; }
   .detail-stats-grid,
   .meta-grid-columns { grid-template-columns: 1fr; }
 }
+
+/* Home V2 */
+.home-v2-shell {
+  display: grid;
+  gap: 28px;
+  padding-top: 34px;
+  padding-bottom: 72px;
+}
+
+.home-section-stack,
+.home-why-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.home-section-heading {
+  max-width: 860px;
+}
+
+.home-hero-v2 {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+  gap: 28px;
+  align-items: stretch;
+  padding: 18px 0 10px;
+}
+
+.home-hero-copy-v2 {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  padding: 28px 0 22px;
+}
+
+.home-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 179, 71, 0.28);
+  background: rgba(255, 179, 71, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.home-hero-copy-v2 h1 {
+  margin: 0;
+  max-width: 11.5ch;
+  font-size: clamp(3.2rem, 6vw, 6rem);
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+}
+
+.home-hero-lead,
+.home-highlight-item p,
+.home-metric-item p,
+.home-game-card p,
+.home-blueprint-card p,
+.home-why-card p,
+.home-final-copy p,
+.home-product-topbar p,
+.home-sidebar-list span,
+.home-panel-label,
+.home-signal-row span,
+.home-mini-panel p,
+.home-floating-note span {
+  margin: 0;
+  color: var(--muted);
+}
+
+.home-hero-actions { margin-top: 6px; }
+
+.home-hero-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.home-highlight-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  min-height: 108px;
+}
+
+.home-highlight-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 0 18px rgba(255, 125, 44, 0.45);
+}
+
+.home-hero-visual-v2 {
+  position: relative;
+  overflow: hidden;
+  min-height: 620px;
+  padding: 22px;
+  background:
+    linear-gradient(180deg, rgba(24, 30, 45, 0.98), rgba(10, 13, 20, 0.98)),
+    radial-gradient(circle at top right, rgba(105, 183, 255, 0.16), transparent 28%);
+}
+
+.home-hero-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(30px);
+  opacity: 0.65;
+}
+
+.home-hero-glow-a {
+  inset: 40px auto auto 26px;
+  width: 180px;
+  height: 180px;
+  background: rgba(255, 125, 44, 0.18);
+}
+
+.home-hero-glow-b {
+  inset: auto 36px 54px auto;
+  width: 220px;
+  height: 220px;
+  background: rgba(105, 183, 255, 0.2);
+}
+
+.home-product-frame {
+  position: absolute;
+  inset: 34px 26px 34px 42px;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(7, 10, 16, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+}
+
+.home-product-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.home-window-dots {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.home-window-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.home-product-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.home-product-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+}
+
+.home-product-sidebar strong,
+.home-product-card strong,
+.home-mini-panel strong,
+.home-floating-note strong {
+  font-size: 1rem;
+}
+
+.home-sidebar-list {
+  display: grid;
+  gap: 10px;
+}
+
+.home-sidebar-list span {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.home-product-main {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px;
+}
+
+.home-product-card {
+  display: grid;
+  gap: 12px;
+}
+
+.home-panel-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+}
+
+.home-signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.home-signal-row span,
+.home-mini-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.home-signal-row span {
+  padding: 8px 10px;
+}
+
+.home-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.home-mini-panel {
+  display: grid;
+  gap: 8px;
+  min-height: 122px;
+  padding: 14px;
+}
+
+.home-mini-panel p {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.home-floating-note {
+  position: absolute;
+  z-index: 2;
+  max-width: 230px;
+  display: grid;
+  gap: 6px;
+}
+
+.home-floating-note-top {
+  top: 92px;
+  right: 4px;
+}
+
+.home-floating-note-bottom {
+  bottom: 56px;
+  left: 0;
+}
+
+.home-metrics-band {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 18px;
+}
+
+.home-metric-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.home-metric-item strong {
+  font-size: clamp(1.4rem, 2vw, 2rem);
+}
+
+.home-metric-item span {
+  font-weight: 700;
+}
+
+.home-game-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.home-game-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 12px;
+  min-height: 260px;
+  padding: 22px;
+}
+
+.home-game-card:nth-child(1),
+.home-game-card:nth-child(2) {
+  grid-column: span 6;
+}
+
+.home-game-card:nth-child(n + 3) {
+  grid-column: span 4;
+}
+
+.home-game-card-glow {
+  position: absolute;
+  inset: auto -8% -10% auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: var(--game-accent);
+  opacity: 0.24;
+  filter: blur(18px);
+}
+
+.home-game-card h3,
+.home-blueprint-card h3,
+.home-why-card h3,
+.home-final-copy h2 {
+  margin: 0;
+}
+
+.home-game-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: auto;
+}
+
+.home-inline-link {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.home-blueprint {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+}
+
+.home-blueprint-grid,
+.home-why-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.home-blueprint-card,
+.home-why-card {
+  display: grid;
+  gap: 10px;
+  min-height: 190px;
+}
+
+.home-blueprint-step {
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.home-why-grid {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+}
+
+.home-why-intro {
+  max-width: 520px;
+}
+
+.home-final-cta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 28px;
+}
+
+.home-final-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+@media (max-width: 1180px) {
+  .home-hero-v2,
+  .home-why-grid,
+  .home-final-cta,
+  .home-product-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .home-hero-highlights,
+  .home-metrics-band,
+  .home-blueprint-grid,
+  .home-why-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-product-frame {
+    position: relative;
+    inset: auto;
+    min-height: 520px;
+  }
+
+  .home-floating-note {
+    position: relative;
+    max-width: none;
+  }
+
+  .home-hero-visual-v2 {
+    min-height: auto;
+    display: grid;
+    gap: 12px;
+  }
+
+  .home-game-card:nth-child(1),
+  .home-game-card:nth-child(2),
+  .home-game-card:nth-child(n + 3) {
+    grid-column: span 6;
+  }
+
+  .home-final-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .home-hero-copy-v2 h1 {
+    max-width: none;
+    font-size: clamp(2.6rem, 12vw, 4rem);
+  }
+
+  .home-hero-highlights,
+  .home-metrics-band,
+  .home-blueprint-grid,
+  .home-why-cards,
+  .home-product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-game-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-game-card:nth-child(1),
+  .home-game-card:nth-child(2),
+  .home-game-card:nth-child(n + 3) {
+    grid-column: auto;
+  }
+
+  .home-hero-v2,
+  .home-final-cta {
+    gap: 18px;
+  }
+
+  .home-hero-visual-v2,
+  .home-blueprint,
+  .home-final-cta {
+    padding: 20px;
+  }
+
+  .landing-shell,
+  .catalog-shell,
+  .detail-shell,
+  .admin-shell {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
