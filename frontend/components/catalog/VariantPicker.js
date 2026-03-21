@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
+import { getPrintHref } from '../../lib/catalog/routes'
 
 function variantLabel(print) {
   return [
@@ -15,7 +16,7 @@ export default function VariantPicker({ prints }) {
   return (
     <div className="variant-grid">
       {prints.map((print) => (
-        <Link key={print.id} href={`/prints/${print.id}`} className="variant-card">
+        <Link key={print.id} href={getPrintHref(print.id)} className="variant-card">
           <div className="variant-thumb">
             <FallbackImage
               src={print.primary_image_url}

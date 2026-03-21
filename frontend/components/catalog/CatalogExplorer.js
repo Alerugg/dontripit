@@ -8,16 +8,27 @@ import SearchBar from './SearchBar'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { RESULT_TYPE_OPTIONS, searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
+import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
 function resolveSuggestionHref(item) {
-  if (item.type === 'print') return `/prints/${item.id}`
-  if (item.type === 'card') return `/cards/${item.card_id || item.id}`
+  if (item.type === 'print') return getPrintHref(item.id)
+  if (item.type === 'set') return item.game && (item.set_code || item.code)
+    ? getSetHref(item.game, item.set_code || item.code)
+    : ''
+  if (item.type === 'card') return getCardHref(item.game, item.card_id || item.id)
   return ''
 }
 
-export default function CatalogExplorer({ scopedGame = '', heading, description, kicker, allowGameSelect = true }) {
+export default function CatalogExplorer({
+  scopedGame = '',
+  heading,
+  description,
+  kicker,
+  allowGameSelect = true,
+  compactSidebar = false,
+}) {
   const router = useRouter()
-  const gameConfig = getGameConfig(scopedGame)
+  const gameConfig = getGameConfig(scopedGame || '') || getGameConfig(scopedGame)
   const [inputValue, setInputValue] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [game, setGame] = useState(scopedGame)
@@ -94,11 +105,12 @@ export default function CatalogExplorer({ scopedGame = '', heading, description,
   }, [submittedQuery, game, scopedGame, type])
 
   const currentGame = scopedGame || game
+  const currentGameConfig = getGameConfig(currentGame)
   const summaryText = useMemo(() => {
     if (!submittedQuery) return description
     const count = items.length
-    return `${count} resultado${count === 1 ? '' : 's'} para “${submittedQuery}”${currentGame ? ` en ${gameConfig?.name || currentGame}` : ''}.`
-  }, [description, submittedQuery, items.length, currentGame, gameConfig])
+    return `${count} resultado${count === 1 ? '' : 's'} para “${submittedQuery}”${currentGame ? ` en ${currentGameConfig?.name || currentGame}` : ''}.`
+  }, [description, submittedQuery, items.length, currentGame, currentGameConfig])
 
   const handleSuggestionSelect = (item) => {
     const title = item.title || item.name || ''
@@ -117,7 +129,7 @@ export default function CatalogExplorer({ scopedGame = '', heading, description,
   }
 
   return (
-    <section className="catalog-shell explorer-layout">
+    <section className={`catalog-shell explorer-layout ${compactSidebar ? 'explorer-layout-compact' : ''}`}>
       <aside className="catalog-sidebar panel">
         <div className="filter-group">
           <label className="filter-label">Buscar cartas / prints / sets</label>
@@ -128,7 +140,7 @@ export default function CatalogExplorer({ scopedGame = '', heading, description,
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
             onSuggestionSelect={handleSuggestionSelect}
-            placeholder={currentGame ? `Busca dentro de ${gameConfig?.name || currentGame}` : 'Busca por carta, colección, set code...'}
+            placeholder={currentGame ? `Busca dentro de ${currentGameConfig?.name || currentGame}` : 'Busca por carta, colección, set code...'}
           />
         </div>
 
@@ -160,11 +172,11 @@ export default function CatalogExplorer({ scopedGame = '', heading, description,
           </div>
         </div>
 
-        {gameConfig && (
+        {currentGameConfig && (
           <div className="filter-group muted-block panel-soft">
             <p className="filter-label">Scope activo</p>
-            <strong>{gameConfig.name}</strong>
-            <p>{gameConfig.description}</p>
+            <strong>{currentGameConfig.name}</strong>
+            <p>{currentGameConfig.description}</p>
           </div>
         )}
       </aside>
@@ -178,7 +190,7 @@ export default function CatalogExplorer({ scopedGame = '', heading, description,
 
         {!submittedQuery && (
           <StatePanel
-            title={currentGame ? `Empieza a explorar ${gameConfig?.name || currentGame}` : 'Empieza a explorar el catálogo'}
+            title={currentGame ? `Empieza a explorar ${currentGameConfig?.name || currentGame}` : 'Empieza a explorar el catálogo'}
             description="Escribe tu término y pulsa Buscar o Enter para cargar resultados completos sin perder el foco del juego actual."
           />
         )}

@@ -1,14 +1,18 @@
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
+import { getCardHref, getSetHref, getPrintHref } from '../../lib/catalog/routes'
 
 function resolveHref(item) {
-  if (item.type === 'print') return `/prints/${item.id}`
-  return `/cards/${item.card_id || item.id}`
+  if (item.type === 'print') return getPrintHref(item.id)
+  if (item.type === 'set') return item.game && (item.set_code || item.code)
+    ? getSetHref(item.game, item.set_code || item.code)
+    : '/explorer'
+  return getCardHref(item.game, item.card_id || item.id)
 }
 
 function buildSubtitle(item) {
   return [
-    item.set_name || item.set_code,
+    item.set_name || item.set_code || item.code,
     item.collector_number ? `#${item.collector_number}` : null,
     item.language,
     item.variant || item.rarity,

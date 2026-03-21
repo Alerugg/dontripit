@@ -6,6 +6,7 @@ import TopNav from '../../../components/layout/TopNav'
 import FallbackImage from '../../../components/common/FallbackImage'
 import StatePanel from '../../../components/catalog/StatePanel'
 import { fetchPrintById } from '../../../lib/catalog/client'
+import { getCardHref, getGameExplorerHref } from '../../../lib/catalog/routes'
 
 function MetaLine({ label, value }) {
   if (!value && value !== false) return null
@@ -48,7 +49,7 @@ export default function PrintDetailPage({ params }) {
       <TopNav />
 
       <section className="detail-shell">
-        <Link href={`/cards/${printDetail?.card?.id || ''}`} className="back-link">← Volver a la carta</Link>
+        <Link href={getCardHref(printDetail?.game || printDetail?.card?.game, printDetail?.card?.id || '')} className="back-link">← Volver a la carta</Link>
 
         {loading && <StatePanel title="Cargando print" description="Traemos metadata de edición y variantes." />}
         {!loading && error && <StatePanel title="No pudimos cargar el print" description={error} error />}
@@ -67,11 +68,11 @@ export default function PrintDetailPage({ params }) {
 
             <div className="detail-content">
               <nav className="detail-breadcrumbs" aria-label="breadcrumb">
-                <Link href={printDetail.game ? `/tcg/${printDetail.game}` : '/explorer'}>{printDetail.game || printDetail.card?.game || 'TCG'}</Link>
+                <Link href={getGameExplorerHref(printDetail.game || printDetail.card?.game || 'pokemon')}>{printDetail.game || printDetail.card?.game || 'TCG'}</Link>
                 <span>→</span>
                 <span>{printDetail.set_name || printDetail.set_code || 'Colección'}</span>
                 <span>→</span>
-                <Link href={`/cards/${printDetail.card?.id || ''}`}>Carta</Link>
+                <Link href={getCardHref(printDetail.game || printDetail.card?.game, printDetail.card?.id || '')}>Carta</Link>
               </nav>
 
               <p className="kicker">Variante</p>
