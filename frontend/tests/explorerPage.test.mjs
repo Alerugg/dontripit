@@ -2,49 +2,52 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 
-test('home page is a landing and links to explorer', async () => {
+test('home page is a landing with scoped tcg navigation and secondary global explorer', async () => {
   const page = await fs.readFile(new URL('../app/page.js', import.meta.url), 'utf8')
 
-  assert.match(page, /Explorar catálogo/)
-  assert.match(page, /Browse catalog/)
-  assert.match(page, /href="\/explorer"/)
-  assert.doesNotMatch(page, /CatalogSidebar/)
-  assert.doesNotMatch(page, /searchCatalog\(/)
+  assert.match(page, /TCG scoped explorers/)
+  assert.match(page, /href="\/tcg\/pokemon"/)
+  assert.match(page, /Explorar todo/)
+  assert.match(page, /\/tcg\/\[slug\]/)
+  assert.doesNotMatch(page, /CatalogExplorer/)
 })
 
-test('explorer page uses explicit search submit + inline suggestions', async () => {
+test('global explorer delegates search behavior to reusable catalog explorer', async () => {
   const explorerPage = await fs.readFile(new URL('../app/explorer/page.js', import.meta.url), 'utf8')
+  const explorerComponent = await fs.readFile(new URL('../components/catalog/CatalogExplorer.js', import.meta.url), 'utf8')
 
-  assert.match(explorerPage, /const \[inputValue, setInputValue\] = useState\(''\)/)
-  assert.match(explorerPage, /const \[submittedQuery, setSubmittedQuery\] = useState\(''\)/)
-  assert.match(explorerPage, /useDebouncedValue\(inputValue\.trim\(\), 250\)/)
-  assert.match(explorerPage, /suggestCatalog\(\{ q: debouncedInput, game, limit: 8 \}\)/)
-  assert.match(explorerPage, /searchCatalog\(\{ q: submittedQuery, game, type, limit: 36, offset: 0 \}\)/)
-  assert.match(explorerPage, /onSubmitSearch=\{handleSubmitSearch\}/)
+  assert.match(explorerPage, /<CatalogExplorer/)
+  assert.match(explorerPage, /heading="Explorador global"/)
+  assert.match(explorerComponent, /const \[inputValue, setInputValue\] = useState\(''\)/)
+  assert.match(explorerComponent, /const \[submittedQuery, setSubmittedQuery\] = useState\(''\)/)
+  assert.match(explorerComponent, /useDebouncedValue\(inputValue\.trim\(\), 220\)/)
+  assert.match(explorerComponent, /suggestCatalog\(\{ q: debouncedInput, game: scopedGame \|\| game, limit: 8 \}\)/)
+  assert.match(explorerComponent, /searchCatalog\(\{ q: submittedQuery, game: scopedGame \|\| game, type, limit: 36, offset: 0 \}\)/)
 })
 
-test('top nav keeps branding and home + explorer links', async () => {
+test('top nav keeps branding, tcg entry point, and critical navigation links', async () => {
   const topNav = await fs.readFile(new URL('../components/layout/TopNav.js', import.meta.url), 'utf8')
 
   assert.match(topNav, /Don’tRipIt/)
   assert.match(topNav, /<Link href="\/" className="top-link">Home<\/Link>/)
-  assert.match(topNav, /<Link href="\/explorer" className="top-link">Explorer<\/Link>/)
+  assert.match(topNav, /<Link href="\/tcg\/pokemon" className="top-link">TCGs<\/Link>/)
+  assert.match(topNav, /<Link href="\/explorer" className="top-link">Explorar todo<\/Link>/)
   assert.match(topNav, /<span className="top-link disabled">Colección<\/span>/)
   assert.match(topNav, /<span className="top-link disabled">Wishlist<\/span>/)
-  assert.match(topNav, /<span className="top-link disabled">Marketplace<\/span>/)
-
   assert.match(topNav, /<Link href="\/admin\/api-console" className="admin-link">Admin Console<\/Link>/)
 })
 
-test('catalog client consumes internal BFF routes', async () => {
+test('catalog client keeps BFF routes while game catalog is defined separately', async () => {
   const apiClient = await fs.readFile(new URL('../lib/catalog/client.js', import.meta.url), 'utf8')
+  const games = await fs.readFile(new URL('../lib/catalog/games.js', import.meta.url), 'utf8')
 
   assert.match(apiClient, /\/api\/catalog\/search/)
   assert.match(apiClient, /\/api\/catalog\/suggest/)
   assert.match(apiClient, /\/api\/catalog\/cards\//)
   assert.match(apiClient, /\/api\/catalog\/prints\//)
   assert.doesNotMatch(apiClient, /NEXT_PUBLIC_API_KEY/)
-  assert.match(apiClient, /\{ value: 'riftbound', label: 'Riftbound' \}/)
+  assert.match(games, /slug: 'riftbound'/)
+  assert.match(games, /GAME_OPTIONS = \[/)
 })
 
 test('BFF helper reads internal server-side env vars', async () => {
