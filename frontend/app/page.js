@@ -5,9 +5,9 @@ import { GAME_CATALOG } from '../lib/catalog/games'
 
 const metrics = [
   {
-    value: '1 ficha maestra',
-    label: 'por carta',
-    detail: 'La búsqueda muestra cartas maestras y deja las variantes dentro del detalle para reducir ruido.',
+    value: '1 carta',
+    label: 'por resultado',
+    detail: 'La búsqueda prioriza cartas y deja las variantes dentro del detalle.',
   },
   {
     value: '5 TCGs',
@@ -45,7 +45,7 @@ export default function HomePage() {
           <div className="hero-copy">
             <p className="eyebrow">Catálogo premium para TCGs</p>
             <h1>Don’tRipIt</h1>
-            <h2>Explora cartas y sellado por TCG. Una ficha maestra por carta. Variantes dentro.</h2>
+           <h1>Explora cartas y sellado por TCG. Una carta por resultado. Variantes dentro.</h1>
             <p className="hero-text">
               Una home clara, rápida y orientada a juego. Entra por tu TCG, busca sin duplicados y conserva el estado al navegar.
             </p>
@@ -57,7 +57,7 @@ export default function HomePage() {
 
           <div className="hero-visual" aria-hidden="true">
             <div className="hero-card hero-card-a panel-soft">
-              <span>Carta maestra</span>
+              <span>Carta</span>
               <strong>Moltres</strong>
               <small>Variantes, sets y metadata limpia</small>
             </div>

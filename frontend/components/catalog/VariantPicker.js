@@ -18,7 +18,7 @@ export default function VariantPicker({ prints }) {
   if (!prints?.length) return null
 
   return (
-    <div className="variant-grid">
+    <div className={`variant-grid ${prints.length === 1 ? 'variant-grid-single' : ''}`}>
       {prints.map((print) => (
         <Link key={print.id} href={getPrintHref(print.id)} className="variant-card panel-soft">
           <div className="variant-thumb">
@@ -31,7 +31,7 @@ export default function VariantPicker({ prints }) {
             />
           </div>
           <div className="variant-copy">
-            <strong>{print.card?.name || 'Variante'}</strong>
+            <strong>{print.set_name || print.set_code || 'Variante'}</strong>
             <small>{variantLabel(print) || 'Variante disponible'}</small>
           </div>
         </Link>

@@ -37,7 +37,7 @@ export default function CatalogCard({ item, view = 'grid', queryState }) {
           <span className="badge badge-card">Carta</span>
         </div>
 
-        <p className="meta-subtitle">{buildSubtitle(item) || 'Carta maestra'}</p>
+        <p className="meta-subtitle">{buildSubtitle(item) || 'Carta'}</p>
       </div>
     </Link>
   )

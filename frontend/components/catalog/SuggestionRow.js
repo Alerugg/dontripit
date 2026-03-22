@@ -35,7 +35,7 @@ export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect
 
         <span className="suggestion-copy">
           <strong>{title}</strong>
-          <small>{subtitle || 'Carta maestra'}</small>
+          <small>{subtitle || 'Carta'}</small>
         </span>
       </button>
     </li>

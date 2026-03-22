@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import VariantPicker from '../catalog/VariantPicker'
-import { getCardHref, getGameExplorerHref, getSetHref } from '../../lib/catalog/routes'
+import { getGameExplorerHref, getSetHref } from '../../lib/catalog/routes'
 
 function DetailStat({ label, value }) {
   if (!value && value !== false && value !== 0) return null
@@ -19,6 +19,11 @@ function DetailStat({ label, value }) {
 export default function CardDetailLayout({ card, searchState }) {
   const gameSlug = card?.game || ''
   const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
+  const externalIds = [
+    ['Oracle ID', card.external_ids?.oracle_id],
+    ['Konami ID', card.external_ids?.konami_id],
+    ['TCGPlayer', card.external_ids?.tcgplayer_id],
+  ].filter(([, value]) => value)
 
   return (
     <article className="detail-page panel">
@@ -36,7 +41,7 @@ export default function CardDetailLayout({ card, searchState }) {
         <div className="panel-soft detail-summary-stack">
           <p className="eyebrow">Carta</p>
           <strong>{card.name}</strong>
-          <p>{primarySet?.name || 'Set principal pendiente de enriquecer'}</p>
+          <span>{primaryEntityLabel === 'card-game' ? 'Carta' : 'TCG'}</span>
         </div>
       </div>
 
@@ -89,16 +94,16 @@ export default function CardDetailLayout({ card, searchState }) {
 
         <section className="detail-section-block panel-soft">
           <div className="section-heading compact">
-            <p className="eyebrow">Datos clave</p>
-            <h2>Metadatos legibles</h2>
+            <p className="eyebrow">Variantes</p>
+            <h2>Variantes</h2>
           </div>
-          <div className="meta-grid meta-grid-columns">
-            <p><strong>Oracle ID:</strong> {card.external_ids?.oracle_id || '—'}</p>
-            <p><strong>Konami ID:</strong> {card.external_ids?.konami_id || '—'}</p>
-            <p><strong>TCGPlayer:</strong> {card.external_ids?.tcgplayer_id || '—'}</p>
-            <p><strong>Ruta canónica:</strong> <Link href={getCardHref(gameSlug, card.id, searchState)}>Abrir esta carta</Link></p>
-          </div>
-        </section>
+
+          {!!variantSummary && (
+            <p className="detail-meta">
+              {variantSummary}
+            </p>
+          )}
+        </section>    
 
         <section className="detail-section-block">
           <div className="section-heading compact">

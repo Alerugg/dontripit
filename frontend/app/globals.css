@@ -229,20 +229,37 @@ button { cursor: pointer; }
 .tile-link { color: white; font-weight: 700; }
 .section-heading.compact { display: grid; gap: 6px; margin-bottom: 16px; }
 
-.search-input-shell { position: relative; z-index: 6; }
+.search-input-shell {
+  position: relative;
+  z-index: 20;
+  isolation: isolate;
+}
+.search-input-shell {
+  position: relative;
+  z-index: 20;
+}
+
 .search-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
+  align-items: stretch;
 }
 .search-submit { min-width: 120px; }
 .suggestions-popover {
   position: absolute;
-  inset: calc(100% + 10px) 0 auto 0;
-  z-index: 10;
-  max-height: 360px;
-  overflow: auto;
+  top: calc(100% + 12px);
+  left: 0;
+  z-index: 40;
+  max-width: 100%;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overflow-x: hidden;
   pointer-events: auto;
+  padding: 14px;
+  background: rgba(11, 7, 22, 0.98);
+  border: 1px solid rgba(167,139,250,0.2);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(124,58,237,0.18), 0 12px 36px rgba(124,58,237,0.18);
 }
 .suggestions-header {
   display: flex;
@@ -350,9 +367,14 @@ button { cursor: pointer; }
 .detail-shell { display: grid; gap: 16px; }
 .detail-page {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
   gap: 24px;
   padding: 24px;
+}
+.detail-media-column {
+  display: grid;
+  align-content: start;
+  gap: 16px;
 }
 .detail-breadcrumbs, .detail-stats-grid, .meta-grid-columns, .variant-grid {
   display: grid;
@@ -361,8 +383,17 @@ button { cursor: pointer; }
 .detail-breadcrumbs { grid-auto-flow: column; justify-content: start; align-items: center; }
 .detail-stats-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .detail-stat { display: grid; gap: 8px; }
-.variant-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.variant-card { display: grid; gap: 14px; }
+.variant-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 260px));
+  gap: 16px;
+  justify-content: start;
+}
+.variant-grid-single { grid-template-columns: minmax(220px, 260px); }
+.variant-card {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 260px);
+}
 .meta-grid-columns { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .image-fallback {
   width: 100%;
@@ -402,4 +433,6 @@ button { cursor: pointer; }
   .hero, .game-hero { padding: 22px; }
   .hero-card { position: relative; transform: none; width: 100%; }
   .hero-visual { display: grid; gap: 12px; }
+  .variant-card { width: 100%; }
+  .suggestions-popover { width: 100% !important; }
 }

@@ -122,7 +122,7 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
   }, [scrollKey])
 
   const summaryText = submittedQuery
-    ? `${items.length} carta${items.length === 1 ? '' : 's'} maestra${items.length === 1 ? '' : 's'} para “${submittedQuery}” en ${game.name}.`
+    ? `${items.length} carta${items.length === 1 ? '' : 's'} para “${submittedQuery}” en ${game.name}.`
     : game.description
 
   return (
@@ -134,8 +134,11 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
           <p>{summaryText}</p>
         </div>
         <div className="game-hero-meta panel-soft">
-          <strong>Explorador dedicado</strong>
-          <p>Busca cartas maestras, conserva el estado en la URL y deja las variantes dentro del detalle.</p>
+          <article className="hero-card hero-card-b panel-soft">
+            <span>Explorador dedicado</span>
+            <strong>Busca cartas, sellado y colecciones desde una sola ruta.</strong>
+            <small>El estado de búsqueda se conserva al navegar y las variantes viven dentro de cada carta.</small>
+          </article>
         </div>
       </header>
 

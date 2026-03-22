@@ -14,8 +14,10 @@ export default function SearchInput({
 }) {
   const listId = useId()
   const wrapperRef = useRef(null)
+  const inputRowRef = useRef(null)
   const [isOpen, setIsOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [dropdownWidth, setDropdownWidth] = useState(0)
   const hasSuggestions = suggestions.length > 0
 
   useEffect(() => {
@@ -27,6 +29,16 @@ export default function SearchInput({
 
     setIsOpen(hasSuggestions || suggestionsLoading)
   }, [value, hasSuggestions, suggestionsLoading])
+
+  useEffect(() => {
+    function syncDropdownWidth() {
+      setDropdownWidth(inputRowRef.current?.offsetWidth || 0)
+    }
+
+    syncDropdownWidth()
+    window.addEventListener('resize', syncDropdownWidth)
+    return () => window.removeEventListener('resize', syncDropdownWidth)
+  }, [])
 
   useEffect(() => {
     function handlePointerDown(event) {
@@ -85,7 +97,7 @@ export default function SearchInput({
 
   return (
     <div className="search-input-shell" ref={wrapperRef}>
-      <div className="search-input-row">
+      <div className="search-input-row" ref={inputRowRef}>
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -103,7 +115,11 @@ export default function SearchInput({
       </div>
 
       {isOpen && (
-        <div className="suggestions-popover panel-soft" role="presentation">
+        <div
+          className="suggestions-popover panel-soft"
+          role="presentation"
+          style={dropdownWidth ? { width: `${dropdownWidth}px` } : undefined}
+        >
           <div className="suggestions-header">
             <strong>Sugerencias</strong>
             <button type="button" className="suggestions-close" onClick={() => setIsOpen(false)} aria-label="Cerrar sugerencias">
