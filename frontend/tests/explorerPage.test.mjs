@@ -2,75 +2,62 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 
-test('home page composes the new modular Home V2 experience', async () => {
+test('home page uses the new dedicated TCG landing structure', async () => {
   const page = await fs.readFile(new URL('../app/page.js', import.meta.url), 'utf8')
-  const hero = await fs.readFile(new URL('../components/home/HomeHero.js', import.meta.url), 'utf8')
   const metrics = await fs.readFile(new URL('../components/home/HomeMetrics.js', import.meta.url), 'utf8')
-  const gameGrid = await fs.readFile(new URL('../components/home/HomeGameGrid.js', import.meta.url), 'utf8')
-  const blueprint = await fs.readFile(new URL('../components/home/HomeBlueprint.js', import.meta.url), 'utf8')
-  const why = await fs.readFile(new URL('../components/home/HomeWhySection.js', import.meta.url), 'utf8')
-  const finalCta = await fs.readFile(new URL('../components/home/HomeFinalCta.js', import.meta.url), 'utf8')
 
-  assert.match(page, /<HomeHero \/>/)
-  assert.match(page, /<HomeMetrics homeMetrics=\{homeMetrics\} \/>/)
-  assert.match(page, /<HomeGameGrid \/>/)
-  assert.match(page, /<HomeBlueprint \/>/)
-  assert.match(page, /<HomeWhySection \/>/)
-  assert.match(page, /<HomeFinalCta \/>/)
-  assert.doesNotMatch(page, /CatalogExplorer/)
-  assert.match(hero, /HOME V2 REAL/)
-  assert.match(metrics, /home-metrics-band/)
-  assert.match(gameGrid, /home-game-grid/)
-  assert.match(blueprint, /home-blueprint-grid/)
-  assert.match(why, /home-why-cards/)
-  assert.match(finalCta, /home-final-actions/)
+  assert.match(page, /<TopNav \/>/)
+  assert.match(page, /Explora cartas y sellado por TCG\. Una ficha maestra por carta\. Variantes dentro\./)
+  assert.match(page, /<HomeMetrics metrics=\{metrics\} \/>/)
+  assert.match(page, /GAME_CATALOG\.map/)
+  assert.match(page, /href="\/pokemon" className="primary-btn"/)
+  assert.doesNotMatch(page, /href="\/explorer"/)
+  assert.match(metrics, /function HomeMetrics\(\{ metrics = \[\] \}\)/)
 })
 
-test('global explorer delegates search behavior to reusable catalog explorer', async () => {
+test('legacy explorer redirects to home while the game page owns search UX', async () => {
   const explorerPage = await fs.readFile(new URL('../app/explorer/page.js', import.meta.url), 'utf8')
-  const explorerComponent = await fs.readFile(new URL('../components/catalog/CatalogExplorer.js', import.meta.url), 'utf8')
+  const gamePage = await fs.readFile(new URL('../app/games/[slug]/page.js', import.meta.url), 'utf8')
+  const gameExplorer = await fs.readFile(new URL('../components/games/GameExplorerPage.js', import.meta.url), 'utf8')
 
-  assert.match(explorerPage, /<CatalogExplorer/)
-  assert.match(explorerPage, /heading="Explorador global"/)
-  assert.match(explorerComponent, /const \[inputValue, setInputValue\] = useState\(''\)/)
-  assert.match(explorerComponent, /const \[submittedQuery, setSubmittedQuery\] = useState\(''\)/)
-  assert.match(explorerComponent, /useDebouncedValue\(inputValue\.trim\(\), 220\)/)
-  assert.match(explorerComponent, /suggestCatalog\(\{ q: debouncedInput, game: scopedGame \|\| game, limit: 8 \}\)/)
-  assert.match(explorerComponent, /searchCatalog\(\{ q: submittedQuery, game: scopedGame \|\| game, type, limit: 36, offset: 0 \}\)/)
+  assert.match(explorerPage, /redirect\('\/'\)/)
+  assert.match(gamePage, /<GameExplorerPage game=\{game\} \/>/)
+  assert.match(gameExplorer, /searchCatalog\(\{ q: submittedQuery\.trim\(\), game: game\.slug, type: 'card'/)
+  assert.match(gameExplorer, /sessionStorage\.getItem\(`scroll:/)
+  assert.match(gameExplorer, /router\.replace\(nextParams\.toString\(\) \? `\$\{pathname\}\?\$\{nextParams\.toString\(\)\}` : pathname, \{ scroll: false \}\)/)
 })
 
-test('top nav keeps branding, games entry point, and critical navigation links', async () => {
+test('top nav links directly to dedicated TCG routes', async () => {
   const topNav = await fs.readFile(new URL('../components/layout/TopNav.js', import.meta.url), 'utf8')
 
   assert.match(topNav, /Don’tRipIt/)
   assert.match(topNav, /<Link href="\/" className="top-link">Home<\/Link>/)
-  assert.match(topNav, /<Link href="\/games\/pokemon" className="top-link">Juegos<\/Link>/)
-  assert.match(topNav, /<Link href="\/explorer" className="top-link">Explorar todo<\/Link>/)
-  assert.match(topNav, /<span className="top-link disabled">Colección<\/span>/)
-  assert.match(topNav, /<span className="top-link disabled">Wishlist<\/span>/)
+  assert.match(topNav, /\{ href: '\/pokemon', label: 'Pokémon' \}/)
+  assert.match(topNav, /\{ href: '\/magic', label: 'Magic' \}/)
   assert.match(topNav, /<Link href="\/admin\/api-console" className="admin-link">Admin Console<\/Link>/)
+  assert.doesNotMatch(topNav, /\/explorer/)
 })
 
-test('catalog client keeps BFF routes while game catalog is defined separately', async () => {
+test('catalog client keeps BFF routes while game catalog normalizes new slugs', async () => {
   const apiClient = await fs.readFile(new URL('../lib/catalog/client.js', import.meta.url), 'utf8')
   const games = await fs.readFile(new URL('../lib/catalog/games.js', import.meta.url), 'utf8')
+  const routes = await fs.readFile(new URL('../lib/catalog/routes.js', import.meta.url), 'utf8')
 
   assert.match(apiClient, /\/api\/catalog\/search/)
   assert.match(apiClient, /\/api\/catalog\/suggest/)
   assert.match(apiClient, /\/api\/catalog\/cards\//)
   assert.match(apiClient, /\/api\/catalog\/prints\//)
-  assert.doesNotMatch(apiClient, /NEXT_PUBLIC_API_KEY/)
-  assert.match(games, /slug: 'riftbound'/)
-  assert.match(games, /GAME_OPTIONS = \[/)
-  assert.match(games, /slug === 'one-piece' \? 'onepiece' : slug/)
+  assert.match(games, /mtg: 'magic'/)
+  assert.match(games, /'one-piece': 'onepiece'/)
+  assert.match(routes, /getGameExplorerHref\(slug\) \{\n  return getGameHref\(slug\)/)
 })
 
-test('legacy tcg and play entry points redirect to the scoped games explorer', async () => {
+test('legacy tcg and play entry points redirect to the scoped game page', async () => {
   const tcgRoute = await fs.readFile(new URL('../app/tcg/[slug]/page.js', import.meta.url), 'utf8')
   const playRoute = await fs.readFile(new URL('../app/play/[slug]/page.js', import.meta.url), 'utf8')
 
-  assert.match(tcgRoute, /redirect\(`\/games\/\$\{params\.slug\}\/explorer`\)/)
-  assert.match(playRoute, /redirect\(`\/games\/\$\{params\.slug\}\/explorer`\)/)
+  assert.match(tcgRoute, /redirect\(`\/games\/\$\{params\.slug\}`\)/)
+  assert.match(playRoute, /redirect\(`\/games\/\$\{params\.slug\}`\)/)
 })
 
 test('BFF helper reads internal server-side env vars', async () => {

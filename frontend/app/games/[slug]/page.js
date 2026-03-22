@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import TopNav from '../../../components/layout/TopNav'
-import GameHubPage from '../../../components/catalog/GameHubPage'
+import GameExplorerPage from '../../../components/games/GameExplorerPage'
 import { getGameConfig } from '../../../lib/catalog/games'
 
 export default function GamePage({ params }) {
@@ -11,7 +11,7 @@ export default function GamePage({ params }) {
   return (
     <main>
       <TopNav />
-      <GameHubPage game={game} />
+      <GameExplorerPage game={game} />
     </main>
   )
 }

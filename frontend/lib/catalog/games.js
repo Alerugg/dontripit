@@ -2,36 +2,36 @@ export const GAME_CATALOG = [
   {
     slug: 'pokemon',
     name: 'Pokémon',
-    eyebrow: 'Kanto to Paldea',
-    description: 'Explora cartas, variantes y sets de Pokémon con búsqueda rápida por nombre, número y expansión.',
+    eyebrow: 'Kanto → Paldea',
+    description: 'Explora cartas maestras, variantes, sets y producto sellado de Pokémon sin duplicados en la búsqueda.',
     accent: 'var(--game-pokemon)',
   },
   {
-    slug: 'mtg',
+    slug: 'magic',
     name: 'Magic: The Gathering',
-    eyebrow: 'Commander • Modern • Draft',
-    description: 'Encuentra cartas y prints de MTG filtrando por colección, idioma y variantes de impresión.',
-    accent: 'var(--game-mtg)',
-  },
-  {
-    slug: 'yugioh',
-    name: 'Yu-Gi-Oh!',
-    eyebrow: 'TCG + OCG vibes',
-    description: 'Busca monstruos, staples y ediciones especiales sin salir del universo Yu-Gi-Oh!.',
-    accent: 'var(--game-yugioh)',
+    eyebrow: 'Standard • Commander • Modern',
+    description: 'Busca cartas maestras de Magic y abre sus variantes, sets y producto sellado desde una sola ruta.',
+    accent: 'var(--game-magic)',
   },
   {
     slug: 'onepiece',
     name: 'ONE PIECE Card Game',
-    eyebrow: 'Straw Hats ready',
-    description: 'Navega leaders, personajes y rarezas del juego de ONE PIECE con una UI enfocada en descubrimiento.',
+    eyebrow: 'Leaders • Characters • Events',
+    description: 'Navega el catálogo de One Piece con resultados limpios por carta y variantes dentro de cada ficha.',
     accent: 'var(--game-onepiece)',
+  },
+  {
+    slug: 'yugioh',
+    name: 'Yu-Gi-Oh!',
+    eyebrow: 'TCG competitivo',
+    description: 'Encuentra staples, arquetipos y ediciones de Yu-Gi-Oh! con una UX enfocada en claridad y velocidad.',
+    accent: 'var(--game-yugioh)',
   },
   {
     slug: 'riftbound',
     name: 'Riftbound',
     eyebrow: 'League TCG',
-    description: 'Descubre prints, artes y variantes del catálogo Riftbound en un explorador dedicado.',
+    description: 'Explora el catálogo de Riftbound con vistas listas para colecciones, torneos y noticias.',
     accent: 'var(--game-riftbound)',
   },
 ]
@@ -41,8 +41,13 @@ export const GAME_OPTIONS = [
   ...GAME_CATALOG.map((game) => ({ value: game.slug, label: game.name })),
 ]
 
-function normalizeGameSlug(slug) {
-  return slug === 'one-piece' ? 'onepiece' : slug
+const GAME_SLUG_ALIASES = {
+  mtg: 'magic',
+  'one-piece': 'onepiece',
+}
+
+export function normalizeGameSlug(slug = '') {
+  return GAME_SLUG_ALIASES[slug] || slug
 }
 
 export function getGameConfig(slug) {
