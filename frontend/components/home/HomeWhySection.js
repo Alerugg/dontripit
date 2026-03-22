@@ -1,4 +1,17 @@
-import { homeWhyItems } from './homeData'
+const homeWhyItems = [
+  {
+    title: 'Presencia de plataforma real',
+    body: 'La home introduce catálogo, hubs y explorers con una composición editorial más seria y preparada para crecer.',
+  },
+  {
+    title: 'Jerarquía usable',
+    body: 'La lectura del producto deja claro qué pertenece al TCG, al set, a la carta y a cada variante.',
+  },
+  {
+    title: 'Base lista para escalar',
+    body: 'Wishlist, colección y pricing pueden añadirse sobre la misma experiencia sin romper rutas ni navegación.',
+  },
+]
 
 export default function HomeWhySection() {
   return (
