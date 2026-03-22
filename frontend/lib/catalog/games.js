@@ -3,14 +3,14 @@ export const GAME_CATALOG = [
     slug: 'pokemon',
     name: 'Pokémon',
     eyebrow: 'Kanto → Paldea',
-    description: 'Explora cartas, variantes, sets y producto sellado de Pokémon con una navegación clara.',
+    description: 'Explora cartas maestras, variantes, sets y producto sellado de Pokémon sin duplicados en la búsqueda.',
     accent: 'var(--game-pokemon)',
   },
   {
     slug: 'magic',
     name: 'Magic: The Gathering',
     eyebrow: 'Standard • Commander • Modern',
-    description: 'Busca cartas de Magic y abre sus variantes, sets y producto sellado desde una sola ruta.',
+    description: 'Busca cartas maestras de Magic y abre sus variantes, sets y producto sellado desde una sola ruta.',
     accent: 'var(--game-magic)',
   },
   {

@@ -234,6 +234,11 @@ button { cursor: pointer; }
   z-index: 20;
   isolation: isolate;
 }
+.search-input-shell {
+  position: relative;
+  z-index: 20;
+}
+
 .search-input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

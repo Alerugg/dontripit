@@ -7,7 +7,7 @@ test('home page uses the new dedicated TCG landing structure', async () => {
   const metrics = await fs.readFile(new URL('../components/home/HomeMetrics.js', import.meta.url), 'utf8')
 
   assert.match(page, /<TopNav \/>/)
-  assert.match(page, /Explora cartas y sellado por TCG\. Una carta por resultado\. Variantes dentro\./)
+  assert.match(page, /Explora cartas y sellado por TCG\. Una ficha maestra por carta\. Variantes dentro\./)
   assert.match(page, /<HomeMetrics metrics=\{metrics\} \/>/)
   assert.match(page, /GAME_CATALOG\.map/)
   assert.match(page, /href="\/pokemon" className="primary-btn"/)

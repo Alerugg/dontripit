@@ -16,7 +16,7 @@ function DetailStat({ label, value }) {
   )
 }
 
-export default function CardDetailLayout({ card }) {
+export default function CardDetailLayout({ card, searchState }) {
   const gameSlug = card?.game || ''
   const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
   const externalIds = [
@@ -41,7 +41,7 @@ export default function CardDetailLayout({ card }) {
         <div className="panel-soft detail-summary-stack">
           <p className="eyebrow">Carta</p>
           <strong>{card.name}</strong>
-          <p>{primarySet?.name || card.game || 'TCG'}</p>
+          <span>{primaryEntityLabel === 'card-game' ? 'Carta' : 'TCG'}</span>
         </div>
       </div>
 
@@ -61,7 +61,9 @@ export default function CardDetailLayout({ card }) {
         <div className="detail-title-block">
           <p className="eyebrow">Carta</p>
           <h1>{card.name}</h1>
-          {card.text && <p className="detail-intro">{card.text}</p>}
+          <p className="detail-intro">
+            Ficha maestra de la carta con variantes, sets y metadatos legibles para navegar sin ambigüedad.
+          </p>
         </div>
 
         <section className="detail-stats-grid">
@@ -74,7 +76,7 @@ export default function CardDetailLayout({ card }) {
         <section className="detail-section-block panel-soft">
           <div className="section-heading compact">
             <p className="eyebrow">Colecciones</p>
-            <h2>Colecciones</h2>
+            <h2>Sets relacionados</h2>
           </div>
           <div className="chip-row">
             {(card.sets || []).map((setItem) => (
@@ -90,24 +92,24 @@ export default function CardDetailLayout({ card }) {
           </div>
         </section>
 
-        {externalIds.length > 0 && (
-          <section className="detail-section-block panel-soft">
-            <div className="section-heading compact">
-              <p className="eyebrow">Datos clave</p>
-              <h2>Datos clave</h2>
-            </div>
-            <div className="meta-grid meta-grid-columns">
-              {externalIds.map(([label, value]) => (
-                <p key={label}><strong>{label}:</strong> {value}</p>
-              ))}
-            </div>
-          </section>
-        )}
+        <section className="detail-section-block panel-soft">
+          <div className="section-heading compact">
+            <p className="eyebrow">Variantes</p>
+            <h2>Variantes</h2>
+          </div>
+
+          {!!variantSummary && (
+            <p className="detail-meta">
+              {variantSummary}
+            </p>
+          )}
+        </section>    
 
         <section className="detail-section-block">
           <div className="section-heading compact">
             <p className="eyebrow">Variantes</p>
-            <h2>Variantes</h2>
+            <h2>Ediciones, finishes e idiomas</h2>
+            <p>Las variantes viven dentro de la carta para evitar duplicados en búsqueda y mantener contexto completo.</p>
           </div>
           <VariantPicker prints={card.prints || []} gameSlug={gameSlug} />
         </section>

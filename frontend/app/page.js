@@ -6,7 +6,7 @@ import { GAME_CATALOG } from '../lib/catalog/games'
 const metrics = [
   {
     value: '1 carta',
-    label: 'por resultado principal',
+    label: 'por resultado',
     detail: 'La búsqueda prioriza cartas y deja las variantes dentro del detalle.',
   },
   {
@@ -45,7 +45,7 @@ export default function HomePage() {
           <div className="hero-copy">
             <p className="eyebrow">Catálogo premium para TCGs</p>
             <h1>Don’tRipIt</h1>
-            <h2>Explora cartas y sellado por TCG. Una carta por resultado. Variantes dentro.</h2>
+           <h1>Explora cartas y sellado por TCG. Una carta por resultado. Variantes dentro.</h1>
             <p className="hero-text">
               Una home clara, rápida y orientada a juego. Entra por tu TCG, busca sin duplicados y conserva el estado al navegar.
             </p>

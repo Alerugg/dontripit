@@ -134,15 +134,18 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
           <p>{summaryText}</p>
         </div>
         <div className="game-hero-meta panel-soft">
-          <strong>Explorar {game.name}</strong>
-          <p>Búsqueda rápida, colecciones y variantes en una sola vista.</p>
+          <article className="hero-card hero-card-b panel-soft">
+            <span>Explorador dedicado</span>
+            <strong>Busca cartas, sellado y colecciones desde una sola ruta.</strong>
+            <small>El estado de búsqueda se conserva al navegar y las variantes viven dentro de cada carta.</small>
+          </article>
         </div>
       </header>
 
       <section className="game-section panel-soft">
         <div className="section-heading compact">
           <p className="eyebrow">Buscador</p>
-          <h2>Encuentra cartas.</h2>
+          <h2>Encuentra cartas sin duplicados por variante.</h2>
         </div>
         <GameSearchBar
           value={query}
@@ -166,8 +169,8 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
 
       <GameProductTypePicker value={productType} onChange={setProductType} />
 
-      {!submittedQuery && <StatePanel title={`Empieza a explorar ${game.name}`} description="Escribe un término para ver cartas, colecciones y variantes." />}
-      {submittedQuery && loading && <StatePanel title="Cargando resultados" description="Buscando cartas para tu consulta." />}
+      {!submittedQuery && <StatePanel title={`Empieza a explorar ${game.name}`} description="Escribe un término para cargar cartas maestras, luego entra al detalle para ver variantes." />}
+      {submittedQuery && loading && <StatePanel title="Cargando resultados" description="Buscando cartas maestras con estado persistente." />}
       {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={error} error />}
       {submittedQuery && !loading && !error && items.length === 0 && <StatePanel title="Sin resultados" description="Prueba otro nombre, colección o tipo de producto." />}
       {submittedQuery && !loading && !error && items.length > 0 && (
