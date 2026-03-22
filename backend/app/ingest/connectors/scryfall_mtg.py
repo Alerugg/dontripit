@@ -7,6 +7,7 @@ from pathlib import Path
 
 import requests
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.ingest.base import IngestStats, SourceConnector
 from app.ingest.provenance import upsert_field_provenance
@@ -191,6 +192,76 @@ class ScryfallMtgConnector(SourceConnector):
             "card": payload,
         }
 
+    def _pick_single_row(self, rows, *, entity: str, context: str):
+        if not rows:
+            return None
+        if len(rows) > 1:
+            self.logger.warning("ingest scryfall duplicate_%s_resolved count=%s context=%s chosen_id=%s", entity, len(rows), context, rows[0].id)
+        return rows[0]
+
+    def _resolve_card_row(self, session: Session, *, game_id: int, card_name: str, oracle_id: str | None):
+        if oracle_id:
+            rows = session.execute(
+                select(Card).where(Card.game_id == game_id, Card.oracle_id == oracle_id).order_by(Card.id.asc())
+            ).scalars().all()
+            card_row = self._pick_single_row(rows, entity="card_oracle", context=f"game_id={game_id} oracle_id={oracle_id}")
+            if card_row is not None:
+                return card_row
+
+            legacy_rows = session.execute(
+                select(Card).where(Card.game_id == game_id, Card.name == card_name).order_by(Card.id.asc())
+            ).scalars().all()
+            legacy_candidates = [row for row in legacy_rows if not row.oracle_id]
+            return self._pick_single_row(
+                legacy_candidates,
+                entity="card_legacy_name",
+                context=f"game_id={game_id} name={card_name}",
+            )
+
+        legacy_rows = session.execute(
+            select(Card).where(Card.game_id == game_id, Card.name == card_name).order_by(Card.id.asc())
+        ).scalars().all()
+        return self._pick_single_row(legacy_rows, entity="card_name", context=f"game_id={game_id} name={card_name}")
+
+    def _resolve_print_row(
+        self,
+        session: Session,
+        *,
+        set_id: int,
+        card_id: int,
+        collector_number: str,
+        language: str,
+        is_foil: bool,
+        variant: str,
+        scryfall_id: str | None,
+    ):
+        if scryfall_id:
+            rows = session.execute(select(Print).where(Print.scryfall_id == scryfall_id).order_by(Print.id.asc())).scalars().all()
+            print_row = self._pick_single_row(rows, entity="print_scryfall", context=f"scryfall_id={scryfall_id}")
+            if print_row is not None:
+                return print_row
+
+        natural_rows = session.execute(
+            select(Print)
+            .where(
+                Print.set_id == set_id,
+                Print.card_id == card_id,
+                Print.collector_number == collector_number,
+                Print.language == language,
+                Print.is_foil.is_(is_foil),
+                Print.variant == variant,
+            )
+            .order_by(Print.id.asc())
+        ).scalars().all()
+        return self._pick_single_row(
+            natural_rows,
+            entity="print_natural",
+            context=(
+                f"set_id={set_id} card_id={card_id} collector_number={collector_number} "
+                f"language={language} is_foil={is_foil} variant={variant}"
+            ),
+        )
+
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
         game = session.execute(select(Game).where(Game.slug == "mtg")).scalar_one_or_none()
         if game is None:
@@ -202,7 +273,7 @@ class ScryfallMtgConnector(SourceConnector):
         set_payload = payload.get("set") or {}
         set_code = (set_payload.get("code") or "").lower()
         if not set_code:
-            return {"card_id": card_row.id, "set_id": set_row.id, "print_id": print_row.id}
+            return {"card_id": None, "set_id": None, "print_id": None}
 
         release_date = date.fromisoformat(set_payload["released_at"]) if set_payload.get("released_at") else None
         set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
@@ -226,13 +297,10 @@ class ScryfallMtgConnector(SourceConnector):
         card_payload = payload.get("card") or {}
         card_name = (card_payload.get("name") or "").strip()
         if not card_name:
-            return {"card_id": card_row.id, "set_id": set_row.id, "print_id": print_row.id}
+            return {"card_id": None, "set_id": set_row.id, "print_id": None}
 
-        oracle_id = card_payload.get("oracle_id")
-        if oracle_id:
-            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.oracle_id == oracle_id)).scalar_one_or_none()
-        else:
-            card_row = session.execute(select(Card).where(Card.game_id == game.id, Card.name == card_name)).scalar_one_or_none()
+        oracle_id = str(card_payload.get("oracle_id") or "").strip() or None
+        card_row = self._resolve_card_row(session, game_id=game.id, card_name=card_name, oracle_id=oracle_id)
 
         if card_row is None:
             card_row = Card(game_id=game.id, name=card_name, oracle_id=oracle_id)
@@ -250,50 +318,59 @@ class ScryfallMtgConnector(SourceConnector):
             if changed:
                 stats.records_updated += 1
 
-        scryfall_id = card_payload.get("id")
-        if scryfall_id:
-            print_row = session.execute(select(Print).where(Print.scryfall_id == scryfall_id)).scalar_one_or_none()
-        else:
-            print_row = None
-
-        if print_row is None:
-            print_row = session.execute(
-                select(Print).where(
-                    Print.set_id == set_row.id,
-                    Print.card_id == card_row.id,
-                    Print.collector_number == (card_payload.get("collector_number") or ""),
-                    Print.language == self._normalize_language(card_payload.get("lang")),
-                    Print.is_foil.is_(bool(card_payload.get("foil", False))),
-                    Print.variant == "default",
-                )
-            ).scalar_one_or_none()
+        scryfall_id = str(card_payload.get("id") or "").strip() or None
+        collector_number = str(card_payload.get("collector_number") or "")
+        language = self._normalize_language(card_payload.get("lang"))
+        rarity = self._normalize_rarity(card_payload.get("rarity"))
+        is_foil = bool(card_payload.get("foil", False))
+        variant = "default"
+        print_row = self._resolve_print_row(
+            session,
+            set_id=set_row.id,
+            card_id=card_row.id,
+            collector_number=collector_number,
+            language=language,
+            is_foil=is_foil,
+            variant=variant,
+            scryfall_id=scryfall_id,
+        )
 
         if print_row is None:
             print_row = Print(
                 card_id=card_row.id,
                 set_id=set_row.id,
-                collector_number=card_payload.get("collector_number") or "",
-                language=self._normalize_language(card_payload.get("lang")),
-                rarity=self._normalize_rarity(card_payload.get("rarity")),
-                is_foil=bool(card_payload.get("foil", False)),
+                collector_number=collector_number,
+                language=language,
+                rarity=rarity,
+                is_foil=is_foil,
                 scryfall_id=scryfall_id,
-                variant="default",
+                variant=variant,
             )
             session.add(print_row)
             session.flush()
             stats.records_inserted += 1
         else:
             changed = False
-            rarity = self._normalize_rarity(card_payload.get("rarity"))
-            language = self._normalize_language(card_payload.get("lang"))
+            if print_row.card_id != card_row.id:
+                print_row.card_id = card_row.id
+                changed = True
+            if print_row.set_id != set_row.id:
+                print_row.set_id = set_row.id
+                changed = True
+            if print_row.collector_number != collector_number:
+                print_row.collector_number = collector_number
+                changed = True
             if print_row.rarity != rarity:
                 print_row.rarity = rarity
                 changed = True
             if print_row.language != language:
                 print_row.language = language
                 changed = True
-            if print_row.variant != "default":
-                print_row.variant = "default"
+            if print_row.is_foil != is_foil:
+                print_row.is_foil = is_foil
+                changed = True
+            if print_row.variant != variant:
+                print_row.variant = variant
                 changed = True
             if scryfall_id and print_row.scryfall_id != scryfall_id:
                 print_row.scryfall_id = scryfall_id
