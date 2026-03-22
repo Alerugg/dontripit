@@ -12,7 +12,7 @@ test('home page composes the new modular Home V2 experience', async () => {
   const finalCta = await fs.readFile(new URL('../components/home/HomeFinalCta.js', import.meta.url), 'utf8')
 
   assert.match(page, /<HomeHero \/>/)
-  assert.match(page, /<HomeMetrics \/>/)
+  assert.match(page, /<HomeMetrics homeMetrics=\{homeMetrics\} \/>/)
   assert.match(page, /<HomeGameGrid \/>/)
   assert.match(page, /<HomeBlueprint \/>/)
   assert.match(page, /<HomeWhySection \/>/)

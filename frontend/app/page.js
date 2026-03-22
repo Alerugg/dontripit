@@ -7,6 +7,24 @@ import HomeBlueprint from '../components/home/HomeBlueprint'
 import HomeWhySection from '../components/home/HomeWhySection'
 import HomeFinalCta from '../components/home/HomeFinalCta'
 
+const homeMetrics = [
+  {
+    value: '5 TCGs',
+    label: 'hubs activos',
+    detail: 'Entradas reales para Pokémon, MTG, Yu-Gi-Oh!, One Piece Card Game y Riftbound.',
+  },
+  {
+    value: 'Set → Card → Print',
+    label: 'jerarquía clara',
+    detail: 'La home presenta la estructura real del catálogo para navegar variantes con contexto.',
+  },
+  {
+    value: 'Marketplace-ready',
+    label: 'base preparada',
+    detail: 'Wishlist, colección, pricing y sellers pueden crecer sobre la misma UX sin rehacerla.',
+  },
+]
+
 export default function HomePage() {
   return (
     <main className="home-v3">
@@ -14,7 +32,7 @@ export default function HomePage() {
 
       <div className="landing-shell home-v3-shell">
         <HomeHero />
-        <HomeMetrics />
+        <HomeMetrics homeMetrics={homeMetrics} />
         <HomeGameGrid />
         <HomeBlueprint />
         <HomeWhySection />
