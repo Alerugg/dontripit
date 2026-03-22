@@ -1,6 +1,7 @@
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -2245,6 +2246,32 @@ def test_riftbound_fixture_incremental_idempotent_second_run_skips_existing(clie
     assert second.records_updated == 0
     assert second.files_skipped > 0
 
+def _mtg_payload(**overrides):
+    payload = {
+        "set": {"code": "lea", "name": "Limited Edition Alpha", "released_at": "1993-08-05"},
+        "card": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "oracle_id": "00000000-0000-0000-0000-000000000002",
+            "set": "lea",
+            "set_name": "Limited Edition Alpha",
+            "released_at": "1993-08-05",
+            "name": "Black Lotus",
+            "collector_number": "233",
+            "lang": "en",
+            "rarity": "rare",
+            "foil": False,
+            "image_uris": {"normal": "https://example.com/black-lotus.png"},
+        },
+    }
+    merged = deepcopy(payload)
+    for key, value in overrides.items():
+        if key in {"set", "card"}:
+            merged[key].update(value)
+        else:
+            merged["card"][key] = value
+    return merged
+
+
 def test_scryfall_upsert_returns_touched_entity_ids(client):
     connector = get_connector("scryfall_mtg")
     payload = {
@@ -2272,6 +2299,140 @@ def test_scryfall_upsert_returns_touched_entity_ids(client):
     assert touched.get("card_id")
     assert touched.get("set_id")
     assert touched.get("print_id")
+
+
+def test_scryfall_resolve_card_row_handles_duplicate_legacy_name_rows_without_multiple_results(client):
+    connector = get_connector("scryfall_mtg")
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return list(self._rows)
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self, statement):
+            self.calls += 1
+            assert self.calls == 1
+            return FakeResult([
+                SimpleNamespace(id=10, oracle_id=None, name="Lightning Bolt"),
+                SimpleNamespace(id=11, oracle_id=None, name="Lightning Bolt"),
+            ])
+
+    resolved = connector._resolve_card_row(
+        FakeSession(),
+        game_id=1,
+        card_name="Lightning Bolt",
+        oracle_id=None,
+    )
+
+    assert resolved is not None
+    assert resolved.id == 10
+
+
+def test_scryfall_upsert_resolves_existing_card_by_oracle_id_before_name(client):
+    connector = get_connector("scryfall_mtg")
+    payload = _mtg_payload(card={"name": "Black Lotus (Renamed)"})
+
+    with db.SessionLocal() as session:
+        game = Game(slug="mtg", name="Magic: The Gathering")
+        session.add(game)
+        session.flush()
+        existing_card = Card(game_id=game.id, name="Black Lotus", oracle_id=payload["card"]["oracle_id"])
+        session.add(existing_card)
+        session.commit()
+        existing_card_id = existing_card.id
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        touched = connector.upsert(session, payload, stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        cards = session.execute(select(Card).join(Game, Game.id == Card.game_id).where(Game.slug == "mtg")).scalars().all()
+        resolved = session.execute(select(Card).where(Card.id == touched["card_id"])).scalar_one()
+
+    assert touched["card_id"] == existing_card_id
+    assert resolved.name == "Black Lotus (Renamed)"
+    assert len(cards) == 1
+
+
+def test_scryfall_upsert_backfills_legacy_name_only_card_when_oracle_id_arrives(client):
+    connector = get_connector("scryfall_mtg")
+    payload = _mtg_payload()
+
+    with db.SessionLocal() as session:
+        game = Game(slug="mtg", name="Magic: The Gathering")
+        session.add(game)
+        session.flush()
+        legacy_card = Card(game_id=game.id, name="Black Lotus", oracle_id=None)
+        session.add(legacy_card)
+        session.commit()
+        legacy_card_id = legacy_card.id
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        touched = connector.upsert(session, payload, stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        card_row = session.execute(select(Card).where(Card.id == touched["card_id"])).scalar_one()
+
+    assert touched["card_id"] == legacy_card_id
+    assert card_row.oracle_id == payload["card"]["oracle_id"]
+
+
+def test_scryfall_upsert_is_idempotent_for_same_card_and_print_ids(client):
+    connector = get_connector("scryfall_mtg")
+    payload = _mtg_payload()
+
+    with db.SessionLocal() as session:
+        first = connector.upsert(session, payload, IngestStats())
+        session.commit()
+
+    with db.SessionLocal() as session:
+        second_stats = IngestStats()
+        second = connector.upsert(session, payload, second_stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        card_count = session.execute(select(func.count(Card.id))).scalar_one()
+        print_count = session.execute(select(func.count(Print.id))).scalar_one()
+
+    assert first == second
+    assert second_stats.records_inserted == 0
+    assert card_count == 1
+    assert print_count == 1
+
+
+def test_scryfall_upsert_resolves_existing_print_by_scryfall_id(client):
+    connector = get_connector("scryfall_mtg")
+    payload = _mtg_payload(card={"collector_number": "999", "rarity": "mythic"})
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        touched = connector.upsert(session, _mtg_payload(), stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        second_stats = IngestStats()
+        updated = connector.upsert(session, payload, second_stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        print_row = session.execute(select(Print).where(Print.id == updated["print_id"])).scalar_one()
+
+    assert updated["print_id"] == touched["print_id"]
+    assert print_row.scryfall_id == payload["card"]["id"]
+    assert print_row.collector_number == "999"
+    assert print_row.rarity == "mythic"
 
 
 def test_onepiece_fixture_ingest_persists_sets_cards_prints_and_images(client):
