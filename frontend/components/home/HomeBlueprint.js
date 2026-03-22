@@ -2,15 +2,15 @@ import { homeBlueprintSteps } from './homeData'
 
 export default function HomeBlueprint() {
   return (
-    <section className="home-blueprint panel">
-      <div className="section-copy section-copy-wide home-section-heading">
-        <p className="kicker">Workflow del producto</p>
-        <h2>Blueprint modular para pasar de descubrimiento a catálogo profundo sin rehacer la arquitectura visual.</h2>
+    <section className="home-section home-blueprint">
+      <div className="home-section-heading">
+        <p className="home-kicker">Product blueprint</p>
+        <h2>Una arquitectura jerárquica para navegar TCG, set, carta y variante con claridad de producto real.</h2>
       </div>
 
-      <div className="home-blueprint-grid">
+      <div className="home-blueprint-grid home-blueprint-track">
         {homeBlueprintSteps.map((item) => (
-          <article key={item.step} className="home-blueprint-card panel-soft">
+          <article key={item.step} className="home-panel-soft home-blueprint-card">
             <span className="home-blueprint-step">{item.step}</span>
             <h3>{item.title}</h3>
             <p>{item.body}</p>
