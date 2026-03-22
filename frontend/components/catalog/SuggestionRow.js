@@ -4,8 +4,8 @@ import FallbackImage from '../common/FallbackImage'
 
 function buildSubtitle(item) {
   return [
-    item.set_code,
-    item.collector_number ? `#${item.collector_number}` : null,
+    item.set_name || item.set_code,
+    item.year,
     item.language,
     item.variant || item.rarity,
   ].filter(Boolean).join(' · ')
@@ -29,13 +29,13 @@ export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect
             alt={title}
             className="suggestion-thumb-image"
             placeholderClassName="image-fallback suggestion-thumb-fallback"
-            label={item.game || item.type || 'TCG'}
+            label={item.game || 'Carta'}
           />
         </span>
 
         <span className="suggestion-copy">
           <strong>{title}</strong>
-          <small>{subtitle || `${item.type || 'item'}${item.game ? ` · ${item.game}` : ''}`}</small>
+          <small>{subtitle || 'Carta'}</small>
         </span>
       </button>
     </li>

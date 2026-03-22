@@ -1,114 +1,154 @@
 'use client'
 
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import SuggestionRow from '../catalog/SuggestionRow'
 
 export default function SearchInput({
   value,
   onChange,
   onSubmit,
-  suggestions,
-  suggestionsLoading,
+  suggestions = [],
+  suggestionsLoading = false,
   onSuggestionSelect,
   placeholder,
 }) {
-  const [activeIndex, setActiveIndex] = useState(-1)
   const listId = useId()
-  const hintId = useId()
-  const hasSuggestions = suggestionsLoading || suggestions.length > 0
-  const activeDescendant = activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined
+  const wrapperRef = useRef(null)
+  const inputRowRef = useRef(null)
+  const [isOpen, setIsOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const [dropdownWidth, setDropdownWidth] = useState(0)
+  const hasSuggestions = suggestions.length > 0
 
-  const listLabel = useMemo(() => {
-    if (suggestionsLoading) return 'Cargando sugerencias'
-    if (suggestions.length === 0) return 'Sin sugerencias'
-    return `${suggestions.length} sugerencias disponibles`
-  }, [suggestionsLoading, suggestions.length])
+  useEffect(() => {
+    if (!value?.trim()) {
+      setIsOpen(false)
+      setActiveIndex(-1)
+      return
+    }
 
-  const commitSearch = () => {
-    setActiveIndex(-1)
-    onSubmit()
-  }
+    setIsOpen(hasSuggestions || suggestionsLoading)
+  }, [value, hasSuggestions, suggestionsLoading])
 
-  const handleKeyDown = (event) => {
+  useEffect(() => {
+    function syncDropdownWidth() {
+      setDropdownWidth(inputRowRef.current?.offsetWidth || 0)
+    }
+
+    syncDropdownWidth()
+    window.addEventListener('resize', syncDropdownWidth)
+    return () => window.removeEventListener('resize', syncDropdownWidth)
+  }, [])
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!wrapperRef.current?.contains(event.target)) {
+        setIsOpen(false)
+        setActiveIndex(-1)
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+        setActiveIndex(-1)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  function handleKeyDown(event) {
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length === 0) {
+      return
+    }
+
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      if (!suggestions.length) return
+      if (!isOpen) setIsOpen(true)
       setActiveIndex((current) => (current + 1) % suggestions.length)
       return
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      if (!suggestions.length) return
+      if (!isOpen) setIsOpen(true)
       setActiveIndex((current) => (current <= 0 ? suggestions.length - 1 : current - 1))
       return
     }
 
-    if (event.key === 'Escape') {
-      setActiveIndex(-1)
-      return
-    }
-
-    if (event.key === 'Enter' && activeIndex >= 0 && suggestions[activeIndex]) {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      onSuggestionSelect(suggestions[activeIndex])
-      setActiveIndex(-1)
+      if (isOpen && suggestions[activeIndex]) {
+        onSuggestionSelect(suggestions[activeIndex])
+        setIsOpen(false)
+        return
+      }
+
+      onSubmit?.()
+      setIsOpen(false)
     }
   }
 
   return (
-    <form
-      className="search-combobox"
-      onSubmit={(event) => {
-        event.preventDefault()
-        commitSearch()
-      }}
-    >
-      <div className="search-combobox-inputs">
-        <div className="search-field-wrap">
-          <input
-            className="input search-input"
-            value={value}
-            onChange={(event) => {
-              setActiveIndex(-1)
-              onChange(event.target.value)
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            role="combobox"
-            aria-expanded={hasSuggestions}
-            aria-controls={listId}
-            aria-autocomplete="list"
-            aria-activedescendant={activeDescendant}
-            aria-describedby={hintId}
-          />
-          <span id={hintId} className="sr-only">Usa flechas para navegar sugerencias y Enter para buscar o seleccionar.</span>
+    <div className="search-input-shell" ref={wrapperRef}>
+      <div className="search-input-row" ref={inputRowRef}>
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => value?.trim() && setIsOpen(true)}
+          placeholder={placeholder}
+          className="input search-input"
+          aria-expanded={isOpen}
+          aria-controls={listId}
+          aria-autocomplete="list"
+        />
+        <button type="button" className="primary-btn search-submit" onClick={() => { onSubmit?.(); setIsOpen(false) }}>
+          Buscar
+        </button>
+      </div>
 
-          {hasSuggestions && (
-            <div className="suggestions-popover panel" aria-live="polite">
-              <p className="sr-only">{listLabel}</p>
-              <ul className="suggestions-list" role="listbox" id={listId}>
-                {suggestionsLoading && <li className="suggestion-hint">Buscando sugerencias...</li>}
-                {!suggestionsLoading && suggestions.map((item, index) => (
-                  <SuggestionRow
-                    key={`${item.type || 'item'}-${item.id}`}
-                    item={item}
-                    id={`${listId}-${index}`}
-                    active={index === activeIndex}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onSelect={(selectedItem) => {
-                      setActiveIndex(-1)
-                      onSuggestionSelect(selectedItem)
-                    }}
-                  />
-                ))}
-              </ul>
-            </div>
+      {isOpen && (
+        <div
+          className="suggestions-popover panel-soft"
+          role="presentation"
+          style={dropdownWidth ? { width: `${dropdownWidth}px` } : undefined}
+        >
+          <div className="suggestions-header">
+            <strong>Sugerencias</strong>
+            <button type="button" className="suggestions-close" onClick={() => setIsOpen(false)} aria-label="Cerrar sugerencias">
+              ×
+            </button>
+          </div>
+
+          {suggestionsLoading && <p className="suggestions-empty">Buscando coincidencias…</p>}
+          {!suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias para este término.</p>}
+
+          {!suggestionsLoading && hasSuggestions && (
+            <ul id={listId} className="suggestions-list" role="listbox">
+              {suggestions.map((item, index) => (
+                <SuggestionRow
+                  key={`${item.type || 'card'}-${item.id || item.card_id || item.name}-${index}`}
+                  item={item}
+                  id={`${listId}-${index}`}
+                  active={index === activeIndex}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onSelect={(nextItem) => {
+                    onSuggestionSelect(nextItem)
+                    setIsOpen(false)
+                  }}
+                />
+              ))}
+            </ul>
           )}
         </div>
-
-        <button type="submit" className="primary-btn search-submit">Buscar</button>
-      </div>
-    </form>
+      )}
+    </div>
   )
 }
