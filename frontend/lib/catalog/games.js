@@ -46,8 +46,16 @@ const GAME_SLUG_ALIASES = {
   'one-piece': 'onepiece',
 }
 
+const API_GAME_SLUG_ALIASES = {
+  magic: 'mtg',
+}
+
 export function normalizeGameSlug(slug = '') {
   return GAME_SLUG_ALIASES[slug] || slug
+}
+
+export function toApiGameSlug(slug = '') {
+  return API_GAME_SLUG_ALIASES[slug] || slug
 }
 
 export function getGameConfig(slug) {

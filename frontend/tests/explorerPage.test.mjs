@@ -21,10 +21,12 @@ test('legacy explorer redirects to home while the game page owns search UX', asy
   const explorerPage = await fs.readFile(new URL('../app/explorer/page.js', import.meta.url), 'utf8')
   const gamePage = await fs.readFile(new URL('../app/games/[slug]/page.js', import.meta.url), 'utf8')
   const gameExplorer = await fs.readFile(new URL('../components/games/GameExplorerPage.js', import.meta.url), 'utf8')
+  const apiClient = await fs.readFile(new URL('../lib/catalog/client.js', import.meta.url), 'utf8')
 
   assert.match(explorerPage, /redirect\('\/'\)/)
   assert.match(gamePage, /<GameExplorerPage game=\{game\} \/>/)
   assert.match(gameExplorer, /searchCatalog\(\{ q: submittedQuery\.trim\(\), game: game\.slug, type: 'card'/)
+  assert.match(apiClient, /game: toApiGameSlug\(filters\?\.game \|\| ''\)/)
   assert.match(gameExplorer, /sessionStorage\.getItem\(`scroll:/)
   assert.match(gameExplorer, /router\.replace\(nextParams\.toString\(\) \? `\$\{pathname\}\?\$\{nextParams\.toString\(\)\}` : pathname, \{ scroll: false \}\)/)
 })
@@ -36,7 +38,7 @@ test('top nav links directly to dedicated TCG routes', async () => {
   assert.match(topNav, /<Link href="\/" className="top-link">Home<\/Link>/)
   assert.match(topNav, /\{ href: '\/pokemon', label: 'Pokémon' \}/)
   assert.match(topNav, /\{ href: '\/magic', label: 'Magic' \}/)
-  assert.match(topNav, /<Link href="\/admin\/api-console" className="admin-link">Admin Console<\/Link>/)
+  assert.doesNotMatch(topNav, /Admin Console|\/admin|\/console/)
   assert.doesNotMatch(topNav, /\/explorer/)
 })
 
@@ -51,6 +53,7 @@ test('catalog client keeps BFF routes while game catalog normalizes new slugs', 
   assert.match(apiClient, /\/api\/catalog\/prints\//)
   assert.match(games, /mtg: 'magic'/)
   assert.match(games, /'one-piece': 'onepiece'/)
+  assert.match(games, /magic: 'mtg'/)
   assert.match(routes, /getGameExplorerHref\(slug\) \{\n  return getGameHref\(slug\)/)
 })
 

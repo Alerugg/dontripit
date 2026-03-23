@@ -28,8 +28,19 @@ export default function SearchInput({
       return
     }
 
-    setIsOpen(hasSuggestions || suggestionsLoading)
-  }, [value, hasSuggestions, suggestionsLoading])
+    setIsOpen(true)
+  }, [value])
+
+  useEffect(() => {
+    if (!suggestions.length && activeIndex >= 0) {
+      setActiveIndex(-1)
+      return
+    }
+
+    if (activeIndex >= suggestions.length) {
+      setActiveIndex(suggestions.length - 1)
+    }
+  }, [activeIndex, suggestions])
 
   useEffect(() => {
     function syncDropdownWidth() {
@@ -132,7 +143,7 @@ export default function SearchInput({
           </div>
 
           {suggestionsLoading && <p className="suggestions-empty">Buscando coincidencias…</p>}
-          {!suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias para este término.</p>}
+          {!suggestionsLoading && !hasSuggestions && value?.trim() && <p className="suggestions-empty">Sin sugerencias para este término.</p>}
 
           {!suggestionsLoading && hasSuggestions && (
             <ul id={listId} className="suggestions-list" role="listbox">
