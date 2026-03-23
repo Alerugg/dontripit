@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 function initialsFromText(text = '') {
   const chunks = String(text)
@@ -18,9 +18,14 @@ function normalizeSrc(src) {
 
   const trimmed = src.trim()
   if (!trimmed) return ''
-  if (trimmed.startsWith('//')) return `https:${trimmed}`
 
-  return trimmed
+  const normalized = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed
+
+  try {
+    return encodeURI(normalized)
+  } catch {
+    return normalized
+  }
 }
 
 export default function FallbackImage({
@@ -36,6 +41,10 @@ export default function FallbackImage({
   const imageSrc = normalizeSrc(src)
   const placeholderInitials = useMemo(() => initials || initialsFromText(safeLabel), [initials, safeLabel])
 
+  useEffect(() => {
+    setHasError(false)
+  }, [imageSrc])
+
   if (!imageSrc || hasError) {
     return (
       <div className={placeholderClassName || 'image-fallback'} role="img" aria-label={`Placeholder para ${safeLabel}`}>
@@ -47,11 +56,12 @@ export default function FallbackImage({
 
   return (
     <img
+      key={imageSrc}
       src={imageSrc}
       alt={alt || safeLabel}
       className={className}
       loading="lazy"
-      referrerPolicy="no-referrer"
+      decoding="async"
       onError={() => setHasError(true)}
     />
   )
