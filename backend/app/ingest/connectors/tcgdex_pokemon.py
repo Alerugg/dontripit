@@ -9,8 +9,8 @@ import requests
 from sqlalchemy import func, select
 
 from app.ingest.base import IngestStats, SourceConnector
+from app.ingest.normalization import build_pokemon_card_key, trim_or_none
 from app.ingest.provenance import upsert_field_provenance
-from app.ingest.normalization import trim_or_none
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, SourceRecord
 
 
@@ -37,14 +37,16 @@ class TcgdexPokemonConnector(SourceConnector):
         return None
 
     def _find_card(self, session, game_id: int, card_payload: dict) -> Card | None:
-        card_name = (card_payload.get("name") or "").strip()
         tcgdex_card_id = (card_payload.get("id") or "").strip()
+        card_key = (card_payload.get("card_key") or "").strip()
         if tcgdex_card_id:
             row = session.execute(select(Card).where(Card.game_id == game_id, Card.tcgdex_id == tcgdex_card_id)).scalar_one_or_none()
             if row is not None:
                 return row
-        if card_name:
-            return session.execute(select(Card).where(Card.game_id == game_id, Card.name == card_name)).scalar_one_or_none()
+        if card_key:
+            row = session.execute(select(Card).where(Card.game_id == game_id, Card.card_key == card_key)).scalar_one_or_none()
+            if row is not None:
+                return row
         return None
 
     def _find_print(
@@ -316,7 +318,11 @@ class TcgdexPokemonConnector(SourceConnector):
                 break
         return out
 
-    def _build_card_payload(self, set_payload: dict, card_payload: dict) -> dict:
+    def _build_card_payload(self, set_payload: dict, card_payload: dict, *, lang: str = "en") -> dict:
+        card_id = card_payload.get("id")
+        detail_payload = {}
+        if card_id:
+            detail_payload = self._request_json(f"{self.base_url_template.format(lang=lang)}/cards/{card_id}")
         return {
             "set": {
                 "id": set_payload.get("id"),
@@ -324,10 +330,19 @@ class TcgdexPokemonConnector(SourceConnector):
                 "name": set_payload.get("name"),
                 "releaseDate": set_payload.get("releaseDate"),
             },
-            "id": card_payload.get("id"),
-            "localId": card_payload.get("localId"),
-            "name": card_payload.get("name"),
-            "image": card_payload.get("image"),
+            "id": card_id,
+            "localId": detail_payload.get("localId") or card_payload.get("localId"),
+            "name": detail_payload.get("name") or card_payload.get("name"),
+            "image": detail_payload.get("image") or card_payload.get("image"),
+            "hp": detail_payload.get("hp"),
+            "stage": detail_payload.get("stage"),
+            "suffix": detail_payload.get("suffix"),
+            "evolvesFrom": detail_payload.get("evolvesFrom"),
+            "types": detail_payload.get("types"),
+            "abilities": detail_payload.get("abilities"),
+            "attacks": detail_payload.get("attacks"),
+            "rules": detail_payload.get("rules"),
+            "effect": detail_payload.get("effect"),
         }
 
     def _load_remote(self, limit: int | None = None, set_id: str | None = None, lang: str = "en") -> list[dict]:
@@ -372,7 +387,7 @@ class TcgdexPokemonConnector(SourceConnector):
                     continue
                 if dedupe_id:
                     seen_card_ids.add(dedupe_id)
-                out.append(self._build_card_payload(set_payload, card))
+                out.append(self._build_card_payload(set_payload, card, lang=lang))
                 if limit and len(out) >= limit:
                     _log_progress()
                     self.logger.info(
@@ -410,7 +425,7 @@ class TcgdexPokemonConnector(SourceConnector):
                     continue
                 if dedupe_id:
                     seen_card_ids.add(dedupe_id)
-                out.append(self._build_card_payload(set_payload, card))
+                out.append(self._build_card_payload(set_payload, card, lang=lang))
                 if limit and len(out) >= limit:
                     _log_progress()
                     self.logger.info(
@@ -469,6 +484,22 @@ class TcgdexPokemonConnector(SourceConnector):
         set_tcgdex_id = self._as_str(set_payload.get("id")).strip()
         set_code = self._as_str(set_payload.get("abbreviation") or set_payload.get("id")).strip().lower()
         set_name = self._as_str(set_payload.get("name") or set_payload.get("id")).strip()
+        normalized_card_payload = {
+            "id": payload.get("id"),
+            "name": payload.get("name"),
+            "collector_number": payload.get("localId"),
+            "image": payload.get("image"),
+            "hp": payload.get("hp"),
+            "stage": payload.get("stage"),
+            "suffix": payload.get("suffix"),
+            "evolves_from": payload.get("evolvesFrom"),
+            "types": payload.get("types"),
+            "abilities": payload.get("abilities"),
+            "attacks": payload.get("attacks"),
+            "rules": payload.get("rules"),
+            "effect": payload.get("effect"),
+        }
+        normalized_card_payload["card_key"] = build_pokemon_card_key(card_payload=normalized_card_payload)
         return {
             "set": {
                 "tcgdex_id": set_tcgdex_id,
@@ -476,12 +507,7 @@ class TcgdexPokemonConnector(SourceConnector):
                 "name": set_name,
                 "released_at": set_payload.get("releaseDate"),
             },
-            "card": {
-                "id": payload.get("id"),
-                "name": payload.get("name"),
-                "collector_number": payload.get("localId"),
-                "image": payload.get("image"),
-            },
+            "card": normalized_card_payload,
         }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
@@ -550,13 +576,14 @@ class TcgdexPokemonConnector(SourceConnector):
         card_payload = payload.get("card") or {}
         card_name = (card_payload.get("name") or "").strip()
         tcgdex_card_id = card_payload.get("id")
+        card_key = (card_payload.get("card_key") or "").strip()
         if not card_name:
             return {}
 
         card_row = self._find_card(session, game.id, card_payload)
 
         if card_row is None:
-            card_row = Card(game_id=game.id, name=card_name, tcgdex_id=tcgdex_card_id)
+            card_row = Card(game_id=game.id, name=card_name, tcgdex_id=tcgdex_card_id, card_key=card_key or None)
             session.add(card_row)
             session.flush()
             stats.records_inserted += 1
@@ -565,6 +592,9 @@ class TcgdexPokemonConnector(SourceConnector):
             backfilled_card_id = False
             if card_row.name != card_name:
                 card_row.name = card_name
+                changed = True
+            if card_key and card_row.card_key != card_key:
+                card_row.card_key = card_key
                 changed = True
             if tcgdex_card_id and card_row.tcgdex_id != tcgdex_card_id:
                 backfilled_card_id = not (card_row.tcgdex_id or "").strip()

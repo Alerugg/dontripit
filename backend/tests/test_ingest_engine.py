@@ -1820,6 +1820,81 @@ def test_pokemon_prints_default_variant(client):
     assert variants == ["default"]
 
 
+def test_pokemon_card_identity_uses_canonical_gameplay_not_global_name(client):
+    connector = get_connector("tcgdex_pokemon")
+    base_charizard = {
+        "set": {"id": "base1", "abbreviation": "base1", "name": "Base Set", "releaseDate": "1999-01-09"},
+        "id": "base1-4",
+        "localId": "4",
+        "name": "Charizard",
+        "image": "https://assets.tcgdex.net/en/base/base1/4",
+        "hp": "120",
+        "stage": "Stage2",
+        "attacks": [
+            {
+                "cost": ["Fire", "Fire", "Fire", "Fire"],
+                "name": "Fire Spin",
+                "effect": "Discard 2 Energy cards attached to Charizard in order to use this attack.",
+                "damage": "100",
+            }
+        ],
+        "abilities": [
+            {
+                "type": "Pokemon Power",
+                "name": "Energy Burn",
+                "effect": "As often as you like during your turn, you may turn all Energy attached to Charizard into Fire Energy.",
+            }
+        ],
+        "rules": [],
+    }
+    legendary_collection_reprint = deepcopy(base_charizard)
+    legendary_collection_reprint["set"] = {
+        "id": "base6",
+        "abbreviation": "base6",
+        "name": "Legendary Collection",
+        "releaseDate": "2002-05-24",
+    }
+    legendary_collection_reprint["id"] = "base6-3"
+    legendary_collection_reprint["localId"] = "3"
+    legendary_collection_reprint["image"] = "https://assets.tcgdex.net/en/base/base6/3"
+
+    charizard_ex = {
+        "set": {"id": "xy2", "abbreviation": "xy2", "name": "Flashfire", "releaseDate": "2014-05-07"},
+        "id": "xy2-11",
+        "localId": "11",
+        "name": "Charizard",
+        "image": "https://assets.tcgdex.net/en/xy/xy2/11",
+        "hp": "180",
+        "stage": "Basic",
+        "suffix": "EX",
+        "attacks": [
+            {"cost": ["Colorless"], "name": "Stoke", "effect": "Flip a coin. If heads, attach up to 3 basic Energy cards."},
+            {"cost": ["Fire", "Colorless", "Colorless", "Colorless"], "name": "Fire Blast", "effect": "Discard an Energy attached to this Pokémon.", "damage": "120"},
+        ],
+        "abilities": [],
+        "rules": ["Pokémon-EX rule: When a Pokémon-EX has been Knocked Out, your opponent takes 2 Prize cards."],
+    }
+
+    with db.SessionLocal() as session:
+        for raw_payload in (base_charizard, legendary_collection_reprint, charizard_ex):
+            connector.upsert(session, connector.normalize(raw_payload), IngestStats())
+        session.commit()
+
+    with db.SessionLocal() as session:
+        cards = session.execute(
+            select(Card).where(Card.name == "Charizard").order_by(Card.id.asc())
+        ).scalars().all()
+        prints = session.execute(
+            select(Print.id, Print.card_id, Print.tcgdex_id).where(Print.tcgdex_id.in_(["base1-4", "base6-3", "xy2-11"])).order_by(Print.id.asc())
+        ).all()
+
+    assert len(cards) == 2
+    assert len({card.card_key for card in cards}) == 2
+    print_by_tcgdex_id = {row.tcgdex_id: row.card_id for row in prints}
+    assert print_by_tcgdex_id["base1-4"] == print_by_tcgdex_id["base6-3"]
+    assert print_by_tcgdex_id["base1-4"] != print_by_tcgdex_id["xy2-11"]
+
+
 def test_riftbound_fixture_ingest_inserts_sets_cards_prints(client):
     connector = get_connector("riftbound")
     with db.SessionLocal() as session:
