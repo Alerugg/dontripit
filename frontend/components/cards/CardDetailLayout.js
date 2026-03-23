@@ -16,14 +16,23 @@ function DetailStat({ label, value }) {
   )
 }
 
-export default function CardDetailLayout({ card, searchState }) {
+export default function CardDetailLayout({ card }) {
   const gameSlug = card?.game || ''
   const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
-  const externalIds = [
-    ['Oracle ID', card.external_ids?.oracle_id],
-    ['Konami ID', card.external_ids?.konami_id],
-    ['TCGPlayer', card.external_ids?.tcgplayer_id],
-  ].filter(([, value]) => value)
+  const prints = useMemo(() => (Array.isArray(card?.prints) ? card.prints : []), [card])
+  const variantCount = prints.length
+  const variantSummary = useMemo(() => {
+    if (!variantCount) {
+      return 'Todavía no hay variantes registradas para esta carta.'
+    }
+
+    if (variantCount === 1) {
+      return 'Esta carta tiene 1 variante disponible con su set y metadatos asociados.'
+    }
+
+    return `Esta carta tiene ${variantCount} variantes disponibles con su set y metadatos asociados.`
+  }, [variantCount])
+  const contextLabel = card?.game || 'TCG'
 
   return (
     <article className="detail-page panel">
@@ -41,7 +50,7 @@ export default function CardDetailLayout({ card, searchState }) {
         <div className="panel-soft detail-summary-stack">
           <p className="eyebrow">Carta</p>
           <strong>{card.name}</strong>
-          <span>{primaryEntityLabel === 'card-game' ? 'Carta' : 'TCG'}</span>
+          <span>{contextLabel}</span>
         </div>
       </div>
 
@@ -62,7 +71,7 @@ export default function CardDetailLayout({ card, searchState }) {
           <p className="eyebrow">Carta</p>
           <h1>{card.name}</h1>
           <p className="detail-intro">
-            Ficha maestra de la carta con variantes, sets y metadatos legibles para navegar sin ambigüedad.
+            Vista principal de la carta con sus variantes, sets y metadatos listos para navegar con claridad.
           </p>
         </div>
 
@@ -70,7 +79,7 @@ export default function CardDetailLayout({ card, searchState }) {
           <DetailStat label="Card ID" value={card.id} />
           <DetailStat label="Juego" value={card.game} />
           <DetailStat label="Idioma base" value={card.language} />
-          <DetailStat label="Variantes" value={card.prints?.length || 0} />
+          <DetailStat label="Variantes" value={variantCount} />
         </section>
 
         <section className="detail-section-block panel-soft">
@@ -97,21 +106,16 @@ export default function CardDetailLayout({ card, searchState }) {
             <p className="eyebrow">Variantes</p>
             <h2>Variantes</h2>
           </div>
-
-          {!!variantSummary && (
-            <p className="detail-meta">
-              {variantSummary}
-            </p>
-          )}
-        </section>    
+          <p className="detail-meta">{variantSummary}</p>
+        </section>
 
         <section className="detail-section-block">
           <div className="section-heading compact">
             <p className="eyebrow">Variantes</p>
             <h2>Ediciones, finishes e idiomas</h2>
-            <p>Las variantes viven dentro de la carta para evitar duplicados en búsqueda y mantener contexto completo.</p>
+            <p>Las variantes viven dentro de la carta para evitar duplicados en búsqueda y mantener el contexto completo.</p>
           </div>
-          <VariantPicker prints={card.prints || []} gameSlug={gameSlug} />
+          <VariantPicker prints={prints} gameSlug={gameSlug} />
         </section>
       </div>
     </article>
