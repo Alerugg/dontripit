@@ -63,6 +63,20 @@ def test_allows_health_without_key(client):
     assert "revision" in payload
 
 
+def test_openapi_docs_routes_are_public(client):
+    spec_response = client.get("/openapi.json")
+    assert spec_response.status_code == 200
+    spec_payload = spec_response.get_json()
+    assert spec_payload["openapi"] == "3.1.0"
+    assert "/api/v1/search" in spec_payload["paths"]
+
+    docs_response = client.get("/docs/")
+    assert docs_response.status_code == 200
+    body = docs_response.get_data(as_text=True)
+    assert "SwaggerUIBundle" in body
+    assert "/openapi.json" in body
+
+
 def test_db_check(client):
     response = client.get("/api/db-check", headers=_auth_headers())
     assert response.status_code == 200
