@@ -4,7 +4,7 @@ Frontend público y tooling admin construidos con **Next.js App Router**.
 
 ## Estado actual del frontend
 
-La home pública vive en `frontend/app/page.js` y delega la UI en `frontend/components/home/HomePageShell.js`.
+La home pública vive en `frontend/app/page.js` y usa `frontend/components/home/HomePageShell.js` como composición principal ya consolidada, sin depender de una landing legacy.
 
 La navegación principal del catálogo ya está organizada alrededor de rutas por juego bajo `frontend/app/games/[slug]`.
 

@@ -2,17 +2,19 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 
-test('home page uses the new dedicated TCG landing structure', async () => {
+test('home page is consolidated in app/page.js and composes the dedicated home shell', async () => {
   const page = await fs.readFile(new URL('../app/page.js', import.meta.url), 'utf8')
-  const metrics = await fs.readFile(new URL('../components/home/HomeMetrics.js', import.meta.url), 'utf8')
+  const shell = await fs.readFile(new URL('../components/home/HomePageShell.js', import.meta.url), 'utf8')
+  const hero = await fs.readFile(new URL('../components/home/HomeHero.js', import.meta.url), 'utf8')
+  const grid = await fs.readFile(new URL('../components/home/GameSpotlightGrid.js', import.meta.url), 'utf8')
 
-  assert.match(page, /<TopNav \/>/)
-  assert.match(page, /Explora cartas y sellado por TCG\. Una ficha maestra por carta\. Variantes dentro\./)
-  assert.match(page, /<HomeMetrics metrics=\{metrics\} \/>/)
-  assert.match(page, /GAME_CATALOG\.map/)
-  assert.match(page, /href="\/pokemon" className="primary-btn"/)
-  assert.doesNotMatch(page, /href="\/explorer"/)
-  assert.match(metrics, /function HomeMetrics\(\{ metrics = \[\] \}\)/)
+  assert.match(page, /import HomePageShell from '\.\.\/components\/home\/HomePageShell'/)
+  assert.match(page, /return <HomePageShell \/>/)
+  assert.match(shell, /<TopNav \/>/)
+  assert.match(shell, /className="page-shell home-shell home-shell-v2"/)
+  assert.doesNotMatch(shell, /landing-shell|landing-v3/)
+  assert.match(hero, /Explorar Pokémon/)
+  assert.match(grid, /GAME_CATALOG\.map/)
 })
 
 test('legacy explorer redirects to home while the game page owns search UX', async () => {
