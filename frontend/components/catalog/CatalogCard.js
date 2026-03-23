@@ -18,7 +18,7 @@ function buildMetaChips(item) {
   ].filter(Boolean)
 }
 
-export default function CatalogCard({ item, view = 'grid', queryState }) {
+export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
   const href = item.type === 'set'
     ? getSetHref(item.game, item.set_code || item.code)
@@ -33,6 +33,8 @@ export default function CatalogCard({ item, view = 'grid', queryState }) {
           className="catalog-image"
           placeholderClassName="catalog-placeholder image-fallback"
           label={item.game || 'Carta'}
+          debug={debugImage}
+          debugLabel={item.game === 'onepiece' ? 'One Piece probe' : item.game === 'pokemon' ? 'Pokémon probe' : ''}
         />
       </div>
 
