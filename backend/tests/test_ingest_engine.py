@@ -2892,6 +2892,63 @@ def test_onepiece_remote_load_remote_does_not_return_empty_for_valid_pack_direct
     assert len(payload["cards"]) > 0
 
 
+def test_onepiece_remote_load_remote_respects_limit_before_fetching_all_cards(client, monkeypatch):
+    connector = get_connector("onepiece")
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    remote_packs = [{"id": "569006", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"}]
+    tree_listing = {
+        "tree": [
+            {"path": "english/cards/569006/OP01-001.json", "type": "blob"},
+            {"path": "english/cards/569006/OP01-002.json", "type": "blob"},
+            {"path": "english/cards/569006/OP01-003.json", "type": "blob"},
+        ]
+    }
+    fetched_cards: list[str] = []
+
+    def _fake_get(url, timeout=0, headers=None):
+        url = str(url)
+        if "api.github.com/repos/DevTheFrog/punk-records" in url and "git/trees" not in url:
+            return _FakeResponse({"full_name": "DevTheFrog/punk-records"})
+        if url.endswith("/english/packs.json"):
+            return _FakeResponse(remote_packs)
+        if "api.github.com/repos/DevTheFrog/punk-records/git/trees/main?recursive=1" in url:
+            return _FakeResponse(tree_listing)
+        if url.endswith(".json") and "/english/cards/569006/" in url:
+            fetched_cards.append(url.rsplit("/", 1)[-1])
+            collector = url.rsplit("/", 1)[-1].removesuffix(".json")
+            return _FakeResponse(
+                {
+                    "id": collector,
+                    "pack_id": "569006",
+                    "set_code": "op-01",
+                    "name": f"Card {collector}",
+                    "img_full_url": f"https://en.onepiece-cardgame.com/images/{collector.lower()}.png",
+                }
+            )
+        raise AssertionError(f"unexpected url requested: {url}")
+
+    monkeypatch.setenv("ONEPIECE_SOURCE", "remote")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_ROOT_URL", "https://raw.githubusercontent.com/DevTheFrog/punk-records/main")
+    monkeypatch.setenv("ONEPIECE_PUNKRECORDS_LANGUAGE", "english")
+    _patch_onepiece_http(monkeypatch, _fake_get)
+
+    payload = connector._load_remote(limit=2)
+
+    assert len(payload["cards"]) == 2
+    assert fetched_cards == ["OP01-001.json", "OP01-002.json"]
+    assert {card["id"] for card in payload["cards"]} == {"op-01:op01-001", "op-01:op01-002"}
+
+
 def test_onepiece_remote_updates_fake_primary_images_to_real_urls(client, monkeypatch):
     connector = get_connector("onepiece")
 
@@ -3634,6 +3691,45 @@ def test_onepiece_reconcile_preserves_canonical_owner_over_numeric_set_alias(cli
     assert any("strategy=preserve_existing_owner" in str(record.message) for record in caplog.records)
 
 
+def test_onepiece_reconcile_preserve_existing_owner_is_noop_for_existing_owner(client, caplog):
+    connector = get_connector("onepiece")
+    caplog.set_level("INFO")
+
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="ONE PIECE Card Game")
+        session.add(game)
+        session.flush()
+
+        canonical_set = Set(game_id=game.id, code="st-10", name="The Three Captains")
+        numeric_set = Set(game_id=game.id, code="569010", name="Legacy Numeric Pack")
+        card = Card(game_id=game.id, name="Monkey.D.Luffy", card_key="luffy-st10")
+        session.add_all([canonical_set, numeric_set, card])
+        session.flush()
+
+        canonical_print = Print(set_id=canonical_set.id, card_id=card.id, collector_number="ST10-001", language="en", variant="default", print_key="onepiece:st-10:st10-001:en:default")
+        numeric_print = Print(set_id=numeric_set.id, card_id=card.id, collector_number="ST10-001", language="en", variant="default", print_key="onepiece:569010:st10-001:en:default")
+        session.add_all([canonical_print, numeric_print])
+        session.flush()
+        session.add(PrintIdentifier(print_id=canonical_print.id, source="punk_records", external_id="ST10-001"))
+        session.flush()
+
+        stats = IngestStats()
+        returned_print = connector._reconcile_print_identifier(
+            session=session,
+            stats=stats,
+            print_row=numeric_print,
+            external_print_id="ST10-001",
+        )
+        returned_print_id = returned_print.id
+        canonical_print_id = canonical_print.id
+        session.commit()
+
+    assert returned_print_id == canonical_print_id
+    assert stats.records_updated == 0
+    assert not any("strategy=move_identifier" in str(record.message) for record in caplog.records)
+    assert any("strategy=preserve_existing_owner" in str(record.message) for record in caplog.records)
+
+
 def test_onepiece_reconcile_is_stable_across_repeated_calls(client, caplog):
     connector = get_connector("onepiece")
     caplog.set_level("WARNING")
@@ -3663,6 +3759,7 @@ def test_onepiece_reconcile_is_stable_across_repeated_calls(client, caplog):
         session.commit()
 
     assert not any("identifier_reassigned" in str(record.message) for record in caplog.records)
+    assert not any("strategy=move_identifier" in str(record.message) for record in caplog.records)
 
 
 
@@ -3877,3 +3974,67 @@ def test_onepiece_remote_reingest_is_idempotent_without_duplicate_external_ident
         ).scalar_one()
 
     assert duplicate_external_ids == unique_external_ids
+
+
+def test_onepiece_upsert_same_subset_is_idempotent_and_touched_ids_stable(client):
+    connector = get_connector("onepiece")
+    payload = {
+        "source": "punk_records",
+        "language": "english",
+        "sets": [
+            {"id": "569006", "code": "op-01", "name": "Romance Dawn", "release_date": "2022-07-22"},
+        ],
+        "cards": [
+            {
+                "id": "op-01:op01-001",
+                "name": "Monkey.D.Luffy",
+                "prints": [
+                    {
+                        "id": "OP01-001",
+                        "set_code": "op-01",
+                        "collector_number": "OP01-001",
+                        "rarity": "L",
+                        "variant": "default",
+                        "image_url": "https://en.onepiece-cardgame.com/images/op01-001.png",
+                    }
+                ],
+            },
+            {
+                "id": "op-01:op01-002",
+                "name": "Roronoa Zoro",
+                "prints": [
+                    {
+                        "id": "OP01-002",
+                        "set_code": "op-01",
+                        "collector_number": "OP01-002",
+                        "rarity": "SR",
+                        "variant": "default",
+                        "image_url": "https://en.onepiece-cardgame.com/images/op01-002.png",
+                    }
+                ],
+            },
+        ],
+    }
+
+    with db.SessionLocal() as session:
+        first_stats = IngestStats()
+        first_touched = connector.upsert(session, payload, first_stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        second_stats = IngestStats()
+        second_touched = connector.upsert(session, payload, second_stats)
+        session.commit()
+
+        print_identifiers = session.execute(
+            select(PrintIdentifier.external_id, PrintIdentifier.print_id).where(PrintIdentifier.source == "punk_records")
+        ).all()
+
+    assert first_stats.records_inserted > 0
+    assert second_stats.records_inserted == 0
+    assert second_stats.records_updated == 0
+    assert second_touched["set_ids"]
+    assert len(second_touched["card_ids"]) == 2
+    assert len(second_touched["print_ids"]) == 2
+    assert len({row.external_id for row in print_identifiers}) == 2
+    assert len({row.print_id for row in print_identifiers}) == 2

@@ -350,13 +350,42 @@ class OnePieceConnector(SourceConnector):
             session.delete(source_set)
             stats.records_updated += 1
 
-    def _load_remote(self) -> dict:
+    @staticmethod
+    def _coerce_limit(limit: object) -> int | None:
+        if limit in (None, "", False):
+            return None
+        try:
+            parsed = int(limit)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _apply_card_limit(self, payload: dict, *, limit: int | None) -> dict:
+        if limit is None:
+            return payload
+
+        cards = list(payload.get("cards") or [])
+        limited_cards = cards[:limit]
+        used_set_codes = {
+            str(print_row.get("set_code") or "").strip().lower()
+            for card in limited_cards
+            for print_row in card.get("prints") or []
+            if str(print_row.get("set_code") or "").strip()
+        }
+        limited_sets = [
+            set_row
+            for set_row in payload.get("sets") or []
+            if str(set_row.get("code") or "").strip().lower() in used_set_codes
+        ]
+        return payload | {"cards": limited_cards, "sets": limited_sets}
+
+    def _load_remote(self, *, limit: int | None = None) -> dict:
         self._remote_json_cache.clear()
         timeout = self._http_timeout()
         root_url = self._punkrecords_root_url()
         if self._should_attempt_punkrecords_remote(root_url=root_url, timeout=timeout):
             try:
-                return self._load_punkrecords_remote()
+                return self._load_punkrecords_remote(limit=limit)
             except requests.HTTPError as exc:
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if status_code != 404:
@@ -366,9 +395,9 @@ class OnePieceConnector(SourceConnector):
                     status_code,
                 )
 
-        return self._load_official_cardlist_remote()
+        return self._load_official_cardlist_remote(limit=limit)
 
-    def _load_punkrecords_remote(self) -> dict:
+    def _load_punkrecords_remote(self, *, limit: int | None = None) -> dict:
         started_at = time.monotonic()
         root_url = self._punkrecords_root_url()
         language = self._punkrecords_language()
@@ -399,6 +428,7 @@ class OnePieceConnector(SourceConnector):
         if not card_urls_by_pack:
             raise ValueError("One Piece remote ingest tree resolved but found zero card json paths under english/cards")
 
+        card_limit = self._coerce_limit(limit)
         valid_cards_count = 0
         failed_cards_count = 0
         progress_every_packs = 25
@@ -418,7 +448,11 @@ class OnePieceConnector(SourceConnector):
 
             cards_payload_by_pack[pack_id.lower()] = []
             for card_url in card_urls:
+                if card_limit is not None and len(card_jobs) >= card_limit:
+                    break
                 card_jobs.append((pack_id.lower(), card_url))
+            if card_limit is not None and len(card_jobs) >= card_limit:
+                break
 
             if len(cards_payload_by_pack) % progress_every_packs == 0:
                 self.logger.info(
@@ -456,11 +490,14 @@ class OnePieceConnector(SourceConnector):
             cards_payload_by_pack=cards_payload_by_pack,
             language=language,
         )
+        normalized = self._apply_card_limit(normalized, limit=card_limit)
         self.logger.info(
-            "ingest onepiece remote cards_loaded cards=%s cards_failed=%s workers=%s elapsed_s=%.2f total_elapsed_s=%.2f",
+            "ingest onepiece remote cards_loaded cards=%s cards_failed=%s workers=%s requested_limit=%s effective_cards=%s elapsed_s=%.2f total_elapsed_s=%.2f",
             valid_cards_count,
             failed_cards_count,
             workers_used,
+            card_limit,
+            len(normalized.get("cards") or []),
             time.monotonic() - cards_fetch_started,
             time.monotonic() - started_at,
         )
@@ -468,9 +505,10 @@ class OnePieceConnector(SourceConnector):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
 
-    def _load_official_cardlist_remote(self) -> dict:
+    def _load_official_cardlist_remote(self, *, limit: int | None = None) -> dict:
         base_url = self._env("ONEPIECE_OFFICIAL_CARDLIST_URL", self._DEFAULT_OFFICIAL_CARDLIST_URL)
         timeout = self._http_timeout()
+        card_limit = self._coerce_limit(limit)
         index_html = requests.get(base_url, timeout=timeout)
         index_html.raise_for_status()
         index_text = index_html.text
@@ -503,16 +541,23 @@ class OnePieceConnector(SourceConnector):
                         "image_url": entry["image_url"],
                     }
                 )
+                if card_limit is not None and len(cards_by_key) >= card_limit:
+                    break
+            if card_limit is not None and len(cards_by_key) >= card_limit:
+                break
 
         if not cards_by_key:
             raise ValueError("One Piece remote official ingest found zero cards after parsing series pages")
 
-        return {
+        return self._apply_card_limit(
+            {
             "source": "onepiece_official",
             "language": "en",
             "sets": sorted(sets, key=lambda row: row["code"]),
             "cards": list(cards_by_key.values()),
-        }
+            },
+            limit=card_limit,
+        )
 
     @staticmethod
     def _parse_official_series_options(index_html: str) -> list[tuple[str, str]]:
@@ -1088,33 +1133,52 @@ class OnePieceConnector(SourceConnector):
                     identifier_for_print = identifier_by_external
                     self._reconcile_metrics.setdefault("owner_preserved", 0)
                     self._reconcile_metrics["owner_preserved"] += 1
-                requested_is_legacy = self._is_legacy_print_candidate(session=session, print_row=print_row)
-                existing_is_legacy = self._is_legacy_print_candidate(session=session, print_row=existing_print) if existing_print is not None else True
-                if existing_print is not None and requested_is_legacy and not existing_is_legacy:
-                    self.logger.info(
-                        "ingest onepiece identifier_collision_resolved strategy=prefer_canonical_print external_id=%s existing_print_id=%s requested_print_id=%s",
-                        external_print_id,
-                        existing_print.id,
-                        print_row.id,
-                    )
-                    print_row = existing_print
-                    identifier_for_print = identifier_by_external
+                elif existing_print is not None:
+                    requested_is_legacy = self._is_legacy_print_candidate(session=session, print_row=print_row)
+                    existing_is_legacy = self._is_legacy_print_candidate(session=session, print_row=existing_print)
+                    if requested_is_legacy and not existing_is_legacy:
+                        self.logger.info(
+                            "ingest onepiece identifier_collision_resolved strategy=prefer_canonical_print external_id=%s existing_print_id=%s requested_print_id=%s",
+                            external_print_id,
+                            existing_print.id,
+                            print_row.id,
+                        )
+                        print_row = existing_print
+                        identifier_for_print = identifier_by_external
+                        self._reconcile_metrics.setdefault("owner_preserved", 0)
+                        self._reconcile_metrics["owner_preserved"] += 1
+                    elif identifier_by_external.print_id == print_row.id:
+                        self._reconcile_metrics.setdefault("noop_kept", 0)
+                        self._reconcile_metrics["noop_kept"] += 1
+                    else:
+                        self.logger.warning(
+                            "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
+                            external_print_id,
+                            identifier_by_external.print_id,
+                            print_row.id,
+                        )
+                        if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
+                            session.delete(identifier_for_print)
+                            stats.records_updated += 1
+                            identifier_for_print = None
+                        if identifier_by_external.print_id != print_row.id:
+                            identifier_by_external.print_id = print_row.id
+                            stats.records_updated += 1
+                            self._reconcile_metrics.setdefault("owner_moved", 0)
+                            self._reconcile_metrics["owner_moved"] += 1
+                        else:
+                            self._reconcile_metrics.setdefault("noop_kept", 0)
+                            self._reconcile_metrics["noop_kept"] += 1
+                        identifier_for_print = identifier_by_external
                 else:
-                    self.logger.warning(
-                        "ingest onepiece identifier_collision_resolved strategy=move_identifier external_id=%s from_print_id=%s to_print_id=%s",
+                    self.logger.info(
+                        "ingest onepiece identifier_collision_resolved strategy=noop_missing_existing external_id=%s requested_print_id=%s",
                         external_print_id,
-                        identifier_by_external.print_id,
                         print_row.id,
                     )
-                    if identifier_for_print is not None and identifier_for_print.id != identifier_by_external.id:
-                        session.delete(identifier_for_print)
-                        stats.records_updated += 1
-                        identifier_for_print = None
-                    identifier_by_external.print_id = print_row.id
-                    stats.records_updated += 1
                     identifier_for_print = identifier_by_external
-                    self._reconcile_metrics.setdefault("owner_moved", 0)
-                    self._reconcile_metrics["owner_moved"] += 1
+                    self._reconcile_metrics.setdefault("noop_kept", 0)
+                    self._reconcile_metrics["noop_kept"] += 1
 
         if identifier_for_print is None:
             duplicate_pending = next(
@@ -1424,7 +1488,7 @@ class OnePieceConnector(SourceConnector):
             return [(source_path, payload, self.checksum(payload))]
 
         if source_mode == "remote":
-            payload = self._load_remote()
+            payload = self._load_remote(limit=self._coerce_limit(kwargs.get("limit")))
             source_path = Path("onepiece_punkrecords_remote.json")
             return [(source_path, payload, self.checksum(payload))]
 
