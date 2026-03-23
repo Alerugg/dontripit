@@ -1,6 +1,6 @@
-export default function StatePanel({ title, description, error = false }) {
+export default function StatePanel({ title, description, error = false, tone = 'default' }) {
   return (
-    <section className={`state-panel-v2 panel ${error ? 'is-error' : ''}`}>
+    <section className={`state-panel-v2 panel state-panel-${tone} ${error ? 'is-error' : ''}`}>
       <h3>{title}</h3>
       <p>{description}</p>
     </section>

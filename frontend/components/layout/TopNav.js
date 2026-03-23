@@ -13,10 +13,13 @@ const primaryGames = [
 export default function TopNav() {
   return (
     <header className="top-nav">
-      <div className="top-nav-inner">
-        <Link href="/" className="brand-mark">
+      <div className="top-nav-inner app-shell">
+        <Link href="/" className="brand-mark top-brand">
           <span className="brand-dot" />
-          <span>{siteName}</span>
+          <span className="top-brand-copy">
+            <strong>{siteName}</strong>
+            <small>TCG catalog platform</small>
+          </span>
         </Link>
 
         <nav className="top-links" aria-label="Main navigation">
@@ -27,7 +30,7 @@ export default function TopNav() {
         </nav>
 
         <div className="top-nav-actions">
-          <Link href="/pokemon" className="secondary-btn">Abrir Pokémon</Link>
+          <Link href="/pokemon" className="secondary-btn top-nav-cta">Abrir Pokémon</Link>
           <Link href="/admin/api-console" className="admin-link">Admin Console</Link>
         </div>
       </div>
