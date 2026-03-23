@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -54,11 +55,16 @@ class Set(Base):
 class Card(Base):
     __tablename__ = "cards"
     __table_args__ = (
-        UniqueConstraint("game_id", "name", name="uq_cards_game_name"),
         UniqueConstraint("game_id", "oracle_id", name="uq_cards_game_oracle"),
         UniqueConstraint("game_id", "tcgdex_id", name="uq_cards_game_tcgdex"),
         UniqueConstraint("game_id", "yugoprodeck_id", name="uq_cards_game_yugoprodeck"),
         UniqueConstraint("game_id", "riftbound_id", name="uq_cards_game_riftbound"),
+        Index(
+            "uq_cards_game_identity",
+            "game_id",
+            text("coalesce(oracle_id, tcgdex_id, yugoprodeck_id, riftbound_id, card_key, name)"),
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

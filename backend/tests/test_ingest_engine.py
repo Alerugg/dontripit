@@ -2389,6 +2389,90 @@ def test_scryfall_upsert_backfills_legacy_name_only_card_when_oracle_id_arrives(
     assert card_row.oracle_id == payload["card"]["oracle_id"]
 
 
+def test_scryfall_upsert_allows_mtg_same_name_with_distinct_oracle_ids(client):
+    connector = get_connector("scryfall_mtg")
+    first_payload = _mtg_payload()
+    second_payload = _mtg_payload(
+        card={
+            "id": "00000000-0000-0000-0000-000000000003",
+            "oracle_id": "00000000-0000-0000-0000-000000000004",
+            "collector_number": "234",
+        }
+    )
+
+    with db.SessionLocal() as session:
+        first = connector.upsert(session, first_payload, IngestStats())
+        second = connector.upsert(session, second_payload, IngestStats())
+        session.commit()
+
+    with db.SessionLocal() as session:
+        cards = (
+            session.execute(
+                select(Card)
+                .join(Game, Game.id == Card.game_id)
+                .where(Game.slug == "mtg", Card.name == "Black Lotus")
+                .order_by(Card.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    assert first["card_id"] != second["card_id"]
+    assert len(cards) == 2
+    assert {card.oracle_id for card in cards} == {
+        first_payload["card"]["oracle_id"],
+        second_payload["card"]["oracle_id"],
+    }
+
+
+def test_scryfall_full_fixture_allows_duplicate_names_with_distinct_oracle_ids(client, tmp_path):
+    connector = get_connector("scryfall_mtg")
+    fixture_path = tmp_path / "scryfall_duplicate_names.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    _mtg_payload()["card"],
+                    _mtg_payload(
+                        card={
+                            "id": "00000000-0000-0000-0000-000000000005",
+                            "oracle_id": "00000000-0000-0000-0000-000000000006",
+                            "collector_number": "234",
+                        }
+                    )["card"],
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with db.SessionLocal() as session:
+        stats = connector.run(
+            session,
+            fixture_path,
+            fixture=True,
+            incremental=False,
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        cards = (
+            session.execute(
+                select(Card)
+                .join(Game, Game.id == Card.game_id)
+                .where(Game.slug == "mtg", Card.name == "Black Lotus")
+            )
+            .scalars()
+            .all()
+        )
+        prints = session.execute(select(func.count(Print.id))).scalar_one()
+
+    assert stats.records_inserted > 0
+    assert len(cards) == 2
+    assert prints == 2
+
+
 def test_scryfall_upsert_is_idempotent_for_same_card_and_print_ids(client):
     connector = get_connector("scryfall_mtg")
     payload = _mtg_payload()
