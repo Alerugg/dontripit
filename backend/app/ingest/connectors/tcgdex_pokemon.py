@@ -65,7 +65,6 @@ class TcgdexPokemonConnector(SourceConnector):
         return session.execute(
             select(Print).where(
                 Print.set_id == set_id,
-                Print.card_id == card_id,
                 Print.collector_number == collector_number,
                 Print.language == language,
                 Print.is_foil.is_(is_foil),
@@ -582,15 +581,19 @@ class TcgdexPokemonConnector(SourceConnector):
 
         tcgdex_print_id = tcgdex_card_id
         collector_number = card_payload.get("collector_number") or ""
+        print_language = "en"
+        print_is_foil = False
+        print_variant = "default"
+        print_rarity = "unknown"
         print_row = self._find_print(
             session,
             set_row.id,
             card_row.id,
             collector_number,
             tcgdex_print_id,
-            language="en",
-            is_foil=False,
-            variant="default",
+            language=print_language,
+            is_foil=print_is_foil,
+            variant=print_variant,
         )
 
         if print_row is None:
@@ -598,11 +601,11 @@ class TcgdexPokemonConnector(SourceConnector):
                 card_id=card_row.id,
                 set_id=set_row.id,
                 collector_number=collector_number,
-                language="en",
-                rarity="unknown",
-                is_foil=False,
+                language=print_language,
+                rarity=print_rarity,
+                is_foil=print_is_foil,
                 tcgdex_id=tcgdex_print_id,
-                variant="default",
+                variant=print_variant,
             )
             session.add(print_row)
             session.flush()
@@ -610,14 +613,23 @@ class TcgdexPokemonConnector(SourceConnector):
         else:
             changed = False
             backfilled_print_id = False
-            if print_row.language != "en":
-                print_row.language = "en"
+            if print_row.card_id != card_row.id:
+                print_row.card_id = card_row.id
                 changed = True
-            if print_row.rarity != "unknown":
-                print_row.rarity = "unknown"
+            if print_row.set_id != set_row.id:
+                print_row.set_id = set_row.id
                 changed = True
-            if print_row.variant != "default":
-                print_row.variant = "default"
+            if print_row.language != print_language:
+                print_row.language = print_language
+                changed = True
+            if print_row.rarity != print_rarity:
+                print_row.rarity = print_rarity
+                changed = True
+            if print_row.is_foil is not print_is_foil:
+                print_row.is_foil = print_is_foil
+                changed = True
+            if print_row.variant != print_variant:
+                print_row.variant = print_variant
                 changed = True
             if tcgdex_print_id and print_row.tcgdex_id != tcgdex_print_id:
                 backfilled_print_id = not (print_row.tcgdex_id or "").strip()

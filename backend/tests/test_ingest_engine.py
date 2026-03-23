@@ -312,6 +312,207 @@ def test_tcgdex_fixture_incremental_idempotent_has_zero_second_run_changes(clien
     assert run.counts_json["updated"] == 0
 
 
+def test_tcgdex_upsert_resolves_existing_print_by_tcgdex_id(client):
+    connector = get_connector("tcgdex_pokemon")
+    payload = connector.normalize(
+        {
+            "set": {
+                "id": "sv01",
+                "abbreviation": {"official": "SV01"},
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+            },
+            "id": "sv01-001",
+            "localId": "001",
+            "name": "Sprigatito",
+            "image": "https://images.example/sv01-001",
+        }
+    )
+
+    with db.SessionLocal() as session:
+        game = Game(slug="pokemon", name="Pokémon")
+        session.add(game)
+        session.flush()
+        set_row = Set(game_id=game.id, code="sv01", tcgdex_id="sv01", name="Scarlet & Violet")
+        card_row = Card(game_id=game.id, name="Sprigatito")
+        session.add_all([set_row, card_row])
+        session.flush()
+        existing_print = Print(
+            card_id=card_row.id,
+            set_id=set_row.id,
+            collector_number="001",
+            language="en",
+            rarity="rare",
+            is_foil=False,
+            variant="default",
+            tcgdex_id="sv01-001",
+        )
+        session.add(existing_print)
+        session.flush()
+
+        stats = IngestStats()
+        connector.upsert(session, payload, stats)
+        session.commit()
+
+        refreshed_print = session.get(Print, existing_print.id)
+        print_count = session.execute(select(func.count(Print.id))).scalar_one()
+
+    assert print_count == 1
+    assert refreshed_print.id == existing_print.id
+    assert refreshed_print.rarity == "unknown"
+    assert refreshed_print.tcgdex_id == "sv01-001"
+
+
+def test_tcgdex_upsert_falls_back_to_print_natural_key(client):
+    connector = get_connector("tcgdex_pokemon")
+    payload = connector.normalize(
+        {
+            "set": {
+                "id": "sv01",
+                "abbreviation": {"official": "SV01"},
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+            },
+            "id": "sv01-100",
+            "localId": "100",
+            "name": "Special Illustration Card",
+            "image": "https://images.example/sv01-100",
+        }
+    )
+
+    with db.SessionLocal() as session:
+        game = Game(slug="pokemon", name="Pokémon")
+        session.add(game)
+        session.flush()
+        set_row = Set(game_id=game.id, code="sv01", name="Scarlet & Violet")
+        legacy_card = Card(game_id=game.id, name="Special Illustration Card")
+        session.add_all([set_row, legacy_card])
+        session.flush()
+        existing_print = Print(
+            card_id=legacy_card.id,
+            set_id=set_row.id,
+            collector_number="100",
+            language="en",
+            rarity="common",
+            is_foil=False,
+            variant="default",
+        )
+        session.add(existing_print)
+        session.flush()
+
+        stats = IngestStats()
+        connector.upsert(session, payload, stats)
+        session.commit()
+
+        refreshed_print = session.get(Print, existing_print.id)
+        refreshed_card = session.execute(
+            select(Card).where(Card.game_id == game.id, Card.tcgdex_id == "sv01-100")
+        ).scalar_one()
+        print_count = session.execute(select(func.count(Print.id))).scalar_one()
+
+    assert print_count == 1
+    assert refreshed_print.id == existing_print.id
+    assert refreshed_print.card_id == refreshed_card.id
+    assert refreshed_print.tcgdex_id == "sv01-100"
+    assert refreshed_print.variant == "default"
+    assert refreshed_print.is_foil is False
+
+
+def test_tcgdex_upsert_reingest_is_idempotent_for_existing_print(client):
+    connector = get_connector("tcgdex_pokemon")
+    payload = connector.normalize(
+        {
+            "set": {
+                "id": "sv01",
+                "abbreviation": {"official": "SV01"},
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+            },
+            "id": "sv01-025",
+            "localId": "025",
+            "name": "Pikachu",
+            "image": "https://images.example/sv01-025",
+        }
+    )
+
+    with db.SessionLocal() as session:
+        first_stats = IngestStats()
+        connector.upsert(session, deepcopy(payload), first_stats)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        second_stats = IngestStats()
+        connector.upsert(session, deepcopy(payload), second_stats)
+        session.commit()
+
+        pokemon_game_id = session.execute(
+            select(Game.id).where(Game.slug == "pokemon")
+        ).scalar_one()
+        print_count = session.execute(select(func.count(Print.id))).scalar_one()
+        card_count = session.execute(
+            select(func.count(Card.id)).where(Card.game_id == pokemon_game_id)
+        ).scalar_one()
+
+    assert first_stats.records_inserted > 0
+    assert second_stats.records_inserted == 0
+    assert second_stats.records_updated == 0
+    assert print_count == 1
+    assert card_count == 1
+
+
+def test_tcgdex_upsert_handles_sv01_100_natural_key_collision(client):
+    connector = get_connector("tcgdex_pokemon")
+    payload = connector.normalize(
+        {
+            "set": {
+                "id": "sv01",
+                "abbreviation": {"official": "SV01"},
+                "name": "Scarlet & Violet",
+                "releaseDate": "2023-03-31",
+            },
+            "id": "sv01-100",
+            "localId": "100",
+            "name": "Collision Card",
+            "image": "https://images.example/sv01-100",
+        }
+    )
+
+    with db.SessionLocal() as session:
+        game = Game(slug="pokemon", name="Pokémon")
+        session.add(game)
+        session.flush()
+        set_row = Set(game_id=game.id, code="sv01", tcgdex_id="sv01", name="Scarlet & Violet")
+        legacy_card = Card(game_id=game.id, name="Collision Card")
+        session.add_all([set_row, legacy_card])
+        session.flush()
+        session.add(
+            Print(
+                card_id=legacy_card.id,
+                set_id=set_row.id,
+                collector_number="100",
+                language="en",
+                rarity="common",
+                is_foil=False,
+                variant="default",
+            )
+        )
+        session.commit()
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        connector.upsert(session, deepcopy(payload), stats)
+        session.commit()
+
+        prints = session.execute(select(Print).order_by(Print.id)).scalars().all()
+
+    assert len(prints) == 1
+    assert prints[0].collector_number == "100"
+    assert prints[0].language == "en"
+    assert prints[0].is_foil is False
+    assert prints[0].variant == "default"
+    assert prints[0].tcgdex_id == "sv01-100"
+
+
 def test_tcgdex_search_finds_pikachu_after_ingest(client):
     connector = get_connector("tcgdex_pokemon")
     with db.SessionLocal() as session:
