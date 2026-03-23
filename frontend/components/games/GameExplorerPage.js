@@ -9,6 +9,7 @@ import GameCollectionsList from './GameCollectionsList'
 import GameTournamentsByRegion from './GameTournamentsByRegion'
 import GameNewsGrid from './GameNewsGrid'
 import StatePanel from '../catalog/StatePanel'
+import SectionHeader from '../ui/SectionHeader'
 import { buildMasterCards } from '../../lib/catalog/normalizers/search'
 import { searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 
@@ -124,17 +125,34 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
   const summaryText = submittedQuery
     ? `${items.length} carta${items.length === 1 ? '' : 's'} para “${submittedQuery}” en ${game.name}.`
     : game.description
+  const isPokemonPilot = game.slug === 'pokemon'
 
   return (
-    <section className="page-shell game-page">
-      <header className="game-hero panel" style={{ '--game-accent': game.accent }}>
-        <div>
+    <section className={`page-shell game-page ${isPokemonPilot ? 'game-page-pilot' : ''}`}>
+      <header className={`game-hero panel ${isPokemonPilot ? 'game-hero-pilot' : ''}`} style={{ '--game-accent': game.accent }}>
+        <div className="game-hero-copy">
           <p className="eyebrow">{game.eyebrow}</p>
           <h1>{game.name}</h1>
           <p>{summaryText}</p>
+          {isPokemonPilot ? (
+            <div className="game-hero-insights">
+              <div className="hero-insight-chip">
+                <span>Carta</span>
+                <strong>Entidad principal</strong>
+              </div>
+              <div className="hero-insight-chip">
+                <span>Variantes</span>
+                <strong>Incluidas dentro del detalle</strong>
+              </div>
+              <div className="hero-insight-chip">
+                <span>Explorer</span>
+                <strong>Lectura limpia y sin duplicados</strong>
+              </div>
+            </div>
+          ) : null}
         </div>
-        <div className="game-hero-meta panel-soft">
-          <article className="hero-card hero-card-b panel-soft">
+        <div className={`game-hero-meta panel-soft ${isPokemonPilot ? 'game-hero-meta-pilot' : ''}`}>
+          <article className={`hero-card panel-soft ${isPokemonPilot ? 'explorer-preview-card' : 'hero-card-b'}`}>
             <span>Explorador dedicado</span>
             <strong>Busca cartas, sellado y colecciones desde una sola ruta.</strong>
             <small>El estado de búsqueda se conserva al navegar y las variantes viven dentro de cada carta.</small>
@@ -142,11 +160,13 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
         </div>
       </header>
 
-      <section className="game-section panel-soft">
-        <div className="section-heading compact">
-          <p className="eyebrow">Buscador</p>
-          <h2>Encuentra cartas sin duplicados por variante.</h2>
-        </div>
+      <section className={`game-section panel-soft ${isPokemonPilot ? 'explorer-search-panel' : ''}`}>
+        <SectionHeader
+          compact
+          eyebrow="Buscador"
+          title="Encuentra cartas sin duplicados por variante."
+          description={isPokemonPilot ? 'Una barra de búsqueda principal, sugerencias rápidas y resultados pensados para una lectura premium.' : null}
+        />
         <GameSearchBar
           value={query}
           onChange={setQuery}
@@ -158,9 +178,10 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
             setSubmittedQuery(item.name || item.title || '')
           }}
           placeholder={`Busca dentro de ${game.name}`}
+          variant={isPokemonPilot ? 'pilot' : 'default'}
         />
-        <div className="toolbar-row">
-          <div className="segmented">
+        <div className={`toolbar-row ${isPokemonPilot ? 'explorer-toolbar' : ''}`}>
+          <div className={`segmented ${isPokemonPilot ? 'segmented-pilot' : ''}`}>
             <button type="button" className={view === 'grid' ? 'segmented-active' : ''} onClick={() => setView('grid')}>Grid</button>
             <button type="button" className={view === 'list' ? 'segmented-active' : ''} onClick={() => setView('list')}>Lista</button>
           </div>
@@ -169,10 +190,10 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
 
       <GameProductTypePicker value={productType} onChange={setProductType} />
 
-      {!submittedQuery && <StatePanel title={`Empieza a explorar ${game.name}`} description="Escribe un término para cargar cartas maestras, luego entra al detalle para ver variantes." />}
-      {submittedQuery && loading && <StatePanel title="Cargando resultados" description="Buscando cartas maestras con estado persistente." />}
-      {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={error} error />}
-      {submittedQuery && !loading && !error && items.length === 0 && <StatePanel title="Sin resultados" description="Prueba otro nombre, colección o tipo de producto." />}
+      {!submittedQuery && <StatePanel title={`Empieza a explorar ${game.name}`} description="Escribe un término para cargar cartas maestras, luego entra al detalle para ver variantes." tone={isPokemonPilot ? 'default' : undefined} />}
+      {submittedQuery && loading && <StatePanel title="Cargando resultados" description="Buscando cartas maestras con estado persistente." tone={isPokemonPilot ? 'default' : undefined} />}
+      {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={error} error tone={isPokemonPilot ? 'error' : undefined} />}
+      {submittedQuery && !loading && !error && items.length === 0 && <StatePanel title="Sin resultados" description="Prueba otro nombre, colección o tipo de producto." tone={isPokemonPilot ? 'muted' : undefined} />}
       {submittedQuery && !loading && !error && items.length > 0 && (
         <GameResultsGrid items={items} view={view} queryState={{ q: submittedQuery, type: productType }} />
       )}

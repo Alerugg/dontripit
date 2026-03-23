@@ -11,6 +11,13 @@ function buildSubtitle(item) {
   ].filter(Boolean).join(' · ')
 }
 
+function buildMeta(item) {
+  return [
+    item.game || 'Carta',
+    item.variant_count ? `${item.variant_count} variante${item.variant_count === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ')
+}
+
 export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect }) {
   const title = item.title || item.name || 'Sin título'
   const subtitle = buildSubtitle(item)
@@ -36,6 +43,7 @@ export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect
         <span className="suggestion-copy">
           <strong>{title}</strong>
           <small>{subtitle || 'Carta'}</small>
+          <em>{buildMeta(item)}</em>
         </span>
       </button>
     </li>

@@ -11,6 +11,7 @@ export default function SearchInput({
   suggestionsLoading = false,
   onSuggestionSelect,
   placeholder,
+  variant = 'default',
 }) {
   const listId = useId()
   const wrapperRef = useRef(null)
@@ -96,32 +97,35 @@ export default function SearchInput({
   }
 
   return (
-    <div className={`search-input-shell ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
-      <div className="search-input-row" ref={inputRowRef}>
+    <div className={`search-input-shell search-input-shell-${variant} ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
+      <div className={`search-input-row search-input-row-${variant}`} ref={inputRowRef}>
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
           onFocus={() => value?.trim() && setIsOpen(true)}
           placeholder={placeholder}
-          className="input search-input"
+          className={`input search-input search-input-${variant}`}
           aria-expanded={isOpen}
           aria-controls={listId}
           aria-autocomplete="list"
         />
-        <button type="button" className="primary-btn search-submit" onClick={() => { onSubmit?.(); setIsOpen(false) }}>
+        <button type="button" className={`primary-btn search-submit search-submit-${variant}`} onClick={() => { onSubmit?.(); setIsOpen(false) }}>
           Buscar
         </button>
       </div>
 
       {isOpen && (
         <div
-          className="suggestions-popover panel-soft"
+          className={`suggestions-popover panel-soft suggestions-popover-${variant}`}
           role="presentation"
           style={dropdownWidth ? { width: `${dropdownWidth}px` } : undefined}
         >
           <div className="suggestions-header">
-            <strong>Sugerencias</strong>
+            <div className="suggestions-heading">
+              <strong>Sugerencias</strong>
+              {variant === 'pilot' ? <small>Atajo rápido al explorer</small> : null}
+            </div>
             <button type="button" className="suggestions-close" onClick={() => setIsOpen(false)} aria-label="Cerrar sugerencias">
               ×
             </button>
