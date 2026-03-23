@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from hashlib import sha1
 
@@ -113,3 +114,59 @@ def build_print_key(
         f"{card_key}|{canonical_text_slug(set_code)}|{collector_norm}|"
         f"{language_norm}|{finish_norm}|{variant_norm}"
     )
+
+
+def _normalize_text_block(value: object) -> str:
+    text = (trim_or_none(value) or "").lower()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _normalize_pokemon_ability_entry(entry: object) -> dict[str, str]:
+    if not isinstance(entry, dict):
+        return {"type": "", "name": "", "effect": _normalize_text_block(entry)}
+    return {
+        "type": _normalize_text_block(entry.get("type")),
+        "name": _normalize_text_block(entry.get("name")),
+        "effect": _normalize_text_block(entry.get("effect")),
+    }
+
+
+def _normalize_pokemon_attack_entry(entry: object) -> dict[str, object]:
+    if not isinstance(entry, dict):
+        return {"name": _normalize_text_block(entry), "damage": "", "effect": "", "cost": []}
+    raw_cost = entry.get("cost") or []
+    if not isinstance(raw_cost, list):
+        raw_cost = [raw_cost]
+    return {
+        "name": _normalize_text_block(entry.get("name")),
+        "damage": _normalize_text_block(entry.get("damage")),
+        "effect": _normalize_text_block(entry.get("effect")),
+        "cost": sorted(_normalize_text_block(item) for item in raw_cost if _normalize_text_block(item)),
+    }
+
+
+def build_pokemon_card_key(*, card_payload: dict, game_slug: str = "pokemon") -> str:
+    normalized_identity = {
+        "name": _normalize_text_block(card_payload.get("name")),
+        "hp": _normalize_text_block(card_payload.get("hp")),
+        "stage": _normalize_text_block(card_payload.get("stage")),
+        "evolves_from": _normalize_text_block(card_payload.get("evolves_from")),
+        "suffix": _normalize_text_block(card_payload.get("suffix")),
+        "types": sorted(
+            _normalize_text_block(item)
+            for item in (card_payload.get("types") or [])
+            if _normalize_text_block(item)
+        ),
+        "abilities": [_normalize_pokemon_ability_entry(item) for item in (card_payload.get("abilities") or [])],
+        "attacks": [_normalize_pokemon_attack_entry(item) for item in (card_payload.get("attacks") or [])],
+        "rules": sorted(
+            _normalize_text_block(item)
+            for item in (card_payload.get("rules") or [])
+            if _normalize_text_block(item)
+        ),
+        "effect": _normalize_text_block(card_payload.get("effect")),
+    }
+    identity_blob = json.dumps(normalized_identity, sort_keys=True, separators=(",", ":"))
+    hash_suffix = sha1(identity_blob.encode("utf-8")).hexdigest()[:16]
+    return f"{canonical_text_slug(game_slug)}:canonical:{canonical_text_slug(card_payload.get('name'))}:{hash_suffix}"
