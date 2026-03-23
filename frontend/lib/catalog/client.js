@@ -1,3 +1,5 @@
+import { toApiGameSlug } from './games'
+
 function toQuery(params = {}) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -24,12 +26,18 @@ async function request(path, params) {
 }
 
 export async function searchCatalog(filters) {
-  const payload = await request('/api/catalog/search', filters)
+  const payload = await request('/api/catalog/search', {
+    ...filters,
+    game: toApiGameSlug(filters?.game || ''),
+  })
   return payload.items || []
 }
 
 export async function suggestCatalog(filters) {
-  const payload = await request('/api/catalog/suggest', filters)
+  const payload = await request('/api/catalog/suggest', {
+    ...filters,
+    game: toApiGameSlug(filters?.game || ''),
+  })
   return payload.items || []
 }
 

@@ -13,6 +13,16 @@ function initialsFromText(text = '') {
   return chunks.map((chunk) => chunk[0]?.toUpperCase() || '').join('')
 }
 
+function normalizeSrc(src) {
+  if (typeof src !== 'string') return ''
+
+  const trimmed = src.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('//')) return `https:${trimmed}`
+
+  return trimmed
+}
+
 export default function FallbackImage({
   src,
   alt,
@@ -23,7 +33,7 @@ export default function FallbackImage({
 }) {
   const [hasError, setHasError] = useState(false)
   const safeLabel = label || alt || 'Sin imagen'
-  const imageSrc = typeof src === 'string' ? src.trim() : ''
+  const imageSrc = normalizeSrc(src)
   const placeholderInitials = useMemo(() => initials || initialsFromText(safeLabel), [initials, safeLabel])
 
   if (!imageSrc || hasError) {
@@ -35,5 +45,14 @@ export default function FallbackImage({
     )
   }
 
-  return <img src={imageSrc} alt={alt || safeLabel} className={className} loading="lazy" onError={() => setHasError(true)} />
+  return (
+    <img
+      src={imageSrc}
+      alt={alt || safeLabel}
+      className={className}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setHasError(true)}
+    />
+  )
 }

@@ -31,7 +31,6 @@ export default function TopNav() {
 
         <div className="top-nav-actions">
           <Link href="/pokemon" className="secondary-btn top-nav-cta">Abrir Pokémon</Link>
-          <Link href="/admin/api-console" className="admin-link">Admin Console</Link>
         </div>
       </div>
     </header>
