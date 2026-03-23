@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { buildCatalogImageDebugInfo, normalizeCatalogImageSrc } from '../../lib/catalog/image'
 
 function initialsFromText(text = '') {
   const chunks = String(text)
@@ -13,21 +14,6 @@ function initialsFromText(text = '') {
   return chunks.map((chunk) => chunk[0]?.toUpperCase() || '').join('')
 }
 
-function normalizeSrc(src) {
-  if (typeof src !== 'string') return ''
-
-  const trimmed = src.trim()
-  if (!trimmed) return ''
-
-  const normalized = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed
-
-  try {
-    return encodeURI(normalized)
-  } catch {
-    return normalized
-  }
-}
-
 export default function FallbackImage({
   src,
   alt,
@@ -35,21 +21,41 @@ export default function FallbackImage({
   placeholderClassName,
   label,
   initials,
+  debug = false,
+  debugLabel = '',
 }) {
-  const [hasError, setHasError] = useState(false)
+  const [status, setStatus] = useState('idle')
+  const [failureSrc, setFailureSrc] = useState('')
   const safeLabel = label || alt || 'Sin imagen'
-  const imageSrc = normalizeSrc(src)
+  const imageSrc = normalizeCatalogImageSrc(src)
   const placeholderInitials = useMemo(() => initials || initialsFromText(safeLabel), [initials, safeLabel])
 
   useEffect(() => {
-    setHasError(false)
+    setFailureSrc('')
+    setStatus(imageSrc ? 'loading' : 'no-src')
   }, [imageSrc])
 
-  if (!imageSrc || hasError) {
+  const debugInfo = buildCatalogImageDebugInfo({
+    src,
+    normalizedSrc: imageSrc,
+    status: imageSrc && failureSrc ? 'error' : status,
+    reason: imageSrc ? (failureSrc ? 'load-error' : '') : 'missing-src',
+  })
+
+  if (!imageSrc || failureSrc) {
     return (
-      <div className={placeholderClassName || 'image-fallback'} role="img" aria-label={`Placeholder para ${safeLabel}`}>
+      <div
+        className={placeholderClassName || 'image-fallback'}
+        role="img"
+        aria-label={`Placeholder para ${safeLabel}`}
+        data-image-state={debugInfo.status}
+        data-image-original-src={debugInfo.originalSrc}
+        data-image-normalized-src={debugInfo.normalizedSrc}
+        data-image-failure-src={failureSrc}
+      >
         <span className="image-fallback-badge">{placeholderInitials}</span>
         <span className="image-fallback-text">{safeLabel}</span>
+        {debug ? <small>{`${debugLabel || safeLabel} · ${debugInfo.status} · ${debugInfo.normalizedSrc || debugInfo.originalSrc || 'no-src'}`}</small> : null}
       </div>
     )
   }
@@ -62,7 +68,14 @@ export default function FallbackImage({
       className={className}
       loading="lazy"
       decoding="async"
-      onError={() => setHasError(true)}
+      data-image-state={debugInfo.status}
+      data-image-original-src={debugInfo.originalSrc}
+      data-image-normalized-src={debugInfo.normalizedSrc}
+      onLoad={() => setStatus('loaded')}
+      onError={(event) => {
+        setFailureSrc(event.currentTarget.currentSrc || imageSrc)
+        setStatus('error')
+      }}
     />
   )
 }
