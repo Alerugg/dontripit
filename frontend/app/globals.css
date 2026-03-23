@@ -229,14 +229,18 @@ button { cursor: pointer; }
 .tile-link { color: white; font-weight: 700; }
 .section-heading.compact { display: grid; gap: 6px; margin-bottom: 16px; }
 
+.catalog-sidebar,
+.game-section,
+.filter-group,
+.search-input-shell,
+.search-input-shell-open {
+  overflow: visible;
+}
+
 .search-input-shell {
   position: relative;
   z-index: 20;
   isolation: isolate;
-}
-.search-input-shell {
-  position: relative;
-  z-index: 20;
 }
 
 .search-input-row {
@@ -253,13 +257,13 @@ button { cursor: pointer; }
   z-index: 40;
   max-width: 100%;
   max-height: min(420px, 60vh);
-  overflow-y: auto;
-  overflow-x: hidden;
   pointer-events: auto;
   padding: 14px;
   background: rgba(11, 7, 22, 0.98);
   border: 1px solid rgba(167,139,250,0.2);
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(124,58,237,0.18), 0 12px 36px rgba(124,58,237,0.18);
+  display: grid;
+  gap: 12px;
 }
 .suggestions-header {
   display: flex;
@@ -282,6 +286,10 @@ button { cursor: pointer; }
   padding: 0;
   display: grid;
   gap: 8px;
+  max-height: min(320px, 48vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 .suggestion-row {
   width: 100%;

@@ -432,6 +432,76 @@ def test_search_onepiece_excludes_legacy_placeholder_prints_when_official_exists
     assert ids["zoro_official"] in zoro_print_ids
 
 
+def test_search_card_results_expose_card_scoped_variant_count_and_card_id(client):
+    _seed_yugioh_search_fixture()
+
+    response = client.get("/api/v1/search?q=Dark%20Magician&game=yugioh&type=card", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+
+    card_hit = next(item for item in payload if item["type"] == "card" and item["title"] == "Dark Magician")
+    assert card_hit["card_id"] == card_hit["id"]
+    assert card_hit["variant_count"] >= 1
+
+    detail_response = client.get(f"/api/v1/cards/{card_hit['id']}", headers=_auth_headers())
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.get_json()
+    assert card_hit["variant_count"] == len(detail_payload["prints"])
+
+
+def test_card_detail_and_search_use_onepiece_image_even_without_primary_flag(client):
+    with db.SessionLocal() as session:
+        game = Game(slug="onepiece", name="One Piece")
+        session.add(game)
+        session.flush()
+
+        set_row = Set(game_id=game.id, name="Starter Deck", code="ST-06")
+        card = Card(game_id=game.id, name="Tashigi")
+        session.add_all([set_row, card])
+        session.flush()
+
+        base_print = Print(set_id=set_row.id, card_id=card.id, collector_number="ST06-011", language="en", variant="default")
+        alt_print = Print(set_id=set_row.id, card_id=card.id, collector_number="ST06-011", language="jp", variant="parallel")
+        session.add_all([base_print, alt_print])
+        session.flush()
+
+        session.add_all(
+            [
+                PrintImage(
+                    print_id=base_print.id,
+                    url="https://en.onepiece-cardgame.com/images/cardlist/card/ST06-011.png?251017",
+                    is_primary=False,
+                    source="remote",
+                ),
+                PrintImage(
+                    print_id=alt_print.id,
+                    url="https://en.onepiece-cardgame.com/images/cardlist/card/ST06-011_p1.png?251017",
+                    is_primary=False,
+                    source="remote",
+                ),
+            ]
+        )
+
+        rebuild_search_documents(session)
+        session.commit()
+        card_id = card.id
+
+    detail_response = client.get(f"/api/v1/cards/{card_id}", headers=_auth_headers())
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.get_json()
+    assert detail_payload["primary_image_url"] == "https://en.onepiece-cardgame.com/images/cardlist/card/ST06-011.png?251017"
+    assert len(detail_payload["prints"]) == 2
+    assert all(print_row["card_id"] == card_id for print_row in detail_payload["prints"])
+
+    search_response = client.get("/api/v1/search?q=Tashigi&game=onepiece&type=card", headers=_auth_headers())
+    assert search_response.status_code == 200
+    payload = search_response.get_json()
+    card_hit = next(item for item in payload if item["id"] == card_id)
+    assert card_hit["primary_image_url"] == detail_payload["primary_image_url"]
+    assert card_hit["variant_count"] == 2
+
+
 
 
 def test_search_onepiece_policy_does_not_affect_other_games(client):
