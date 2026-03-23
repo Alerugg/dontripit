@@ -17,12 +17,16 @@ logger = logging.getLogger(__name__)
 _PUBLIC_SEARCH_KEYS = (
     "type",
     "id",
+    "card_id",
     "title",
     "subtitle",
     "game",
     "set_code",
+    "set_name",
     "collector_number",
+    "language",
     "variant",
+    "variant_count",
     "primary_image_url",
 )
 
@@ -49,6 +53,24 @@ def _is_simple_name_query(raw_query: str) -> bool:
 
 def _onepiece_image_signals(primary_image_url: str | None) -> tuple[bool, bool]:
     return is_onepiece_official_image(primary_image_url), is_onepiece_placeholder_or_fake_image(primary_image_url)
+
+
+def _print_image_sql(print_alias: str, *, require_primary: bool = False) -> str:
+    primary_clause = " AND pi.is_primary IS TRUE" if require_primary else ""
+    return f"""
+        SELECT pi.url
+        FROM print_images pi
+        WHERE pi.print_id = {print_alias}.id{primary_clause}
+        ORDER BY
+          CASE
+            WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+            WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+            ELSE 1
+          END,
+          CASE WHEN pi.is_primary IS TRUE THEN 0 ELSE 1 END,
+          pi.id
+        LIMIT 1
+    """
 
 
 def _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids: list[int]) -> set[int]:
@@ -344,27 +366,19 @@ def _short_query_search_rows(
           SELECT
             sd.doc_type AS type,
             sd.object_id AS id,
+            COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END) AS card_id,
             sd.title,
             COALESCE(sd.subtitle, '') AS subtitle,
             g.slug AS game,
             s.code AS set_code,
+            s.name AS set_name,
             p.collector_number,
+            p.language,
             p.variant,
             COALESCE(cpc.print_count, 0.0) AS card_print_count,
+            COALESCE(cpc.print_count, 0.0) AS variant_count,
             COALESCE(
-              (
-                SELECT pi.url
-                FROM print_images pi
-                WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
-                ORDER BY
-                  CASE
-                    WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
-                    WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
-                    ELSE 1
-                  END,
-                  pi.id
-                LIMIT 1
-              ),
+              ({_print_image_sql('p')}),
               (
                 SELECT pi2.url
                 FROM print_images pi2
@@ -574,7 +588,7 @@ def _short_query_search_rows(
             OR (:enable_contains = 1 AND set_code_l LIKE :contains)
           )
         )
-        SELECT type, id, title, subtitle, game, set_code, collector_number, variant, primary_image_url
+        SELECT type, id, card_id, title, subtitle, game, set_code, set_name, collector_number, language, variant, variant_count, primary_image_url
         FROM ranked
         WHERE rank_bucket < 9
           AND title_dedupe_rank <= 2
@@ -612,8 +626,9 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
     fallback = text(
         """
         SELECT * FROM (
-          SELECT 'card' AS type, c.id, c.name AS title, '' AS subtitle, g.slug AS game,
-                 NULL AS set_code, NULL AS collector_number, NULL AS variant,
+          SELECT 'card' AS type, c.id, c.id AS card_id, c.name AS title, '' AS subtitle, g.slug AS game,
+                 NULL AS set_code, NULL AS set_name, NULL AS collector_number, NULL AS language, NULL AS variant,
+                 CAST((SELECT COUNT(*) FROM prints p WHERE p.card_id = c.id) AS FLOAT) AS variant_count,
                  (
                    SELECT pi.url
                    FROM print_images pi
@@ -631,8 +646,9 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
                  ) AS primary_image_url
           FROM cards c JOIN games g ON g.id = c.game_id WHERE lower(c.name) LIKE :like
           UNION ALL
-          SELECT 'set', s.id, s.name, s.code, g.slug,
-                 NULL, NULL, NULL,
+          SELECT 'set', s.id, NULL AS card_id, s.name, s.code, g.slug,
+                 NULL, NULL, NULL, NULL, NULL,
+                 0.0 AS variant_count,
                  CASE
                    WHEN g.slug = 'riftbound' THEN CASE lower(s.code)
                      WHEN 'rb1' THEN '/images/riftbound/rb1-placeholder.svg'
@@ -644,21 +660,10 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
                  END
           FROM sets s JOIN games g ON g.id = s.game_id WHERE lower(s.name) LIKE :like OR lower(s.code) LIKE :like
           UNION ALL
-          SELECT 'print', p.id, c.name, (s.code || ' #' || p.collector_number), g.slug,
-                 s.code, p.collector_number, p.variant,
-                 (
-                   SELECT pi.url
-                   FROM print_images pi
-                   WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
-                   ORDER BY
-                     CASE
-                       WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
-                       WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
-                       ELSE 1
-                     END,
-                     pi.id
-                   LIMIT 1
-                 )
+          SELECT 'print', p.id, p.card_id, c.name, (s.code || ' #' || p.collector_number), g.slug,
+                 s.code, s.name, p.collector_number, p.language, p.variant,
+                 CAST((SELECT COUNT(*) FROM prints p2 WHERE p2.card_id = p.card_id) AS FLOAT) AS variant_count,
+                 ({_print_image_sql('p')})
           FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=s.game_id
           WHERE lower(c.name) LIKE :like OR lower(p.collector_number) LIKE :like OR lower(s.code) LIKE :like
         ) t WHERE (:game = '' OR t.game = :game)
@@ -703,37 +708,30 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
           SELECT
             sd.doc_type AS type,
             sd.object_id AS id,
+            COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END) AS card_id,
             sd.title,
             COALESCE(sd.subtitle, '') AS subtitle,
             g.slug AS game,
             s.code AS set_code,
+            s.name AS set_name,
             p.collector_number,
+            p.language,
             p.variant,
+            COALESCE(cpc.print_count, 0.0) AS variant_count,
             COALESCE(
-              (
-                SELECT pi.url
-                FROM print_images pi
-                WHERE pi.print_id = p.id AND pi.is_primary IS TRUE
-                ORDER BY
-                  CASE
-                    WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
-                    WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
-                    ELSE 1
-                  END,
-                  pi.id
-                LIMIT 1
-              ),
+              ({_print_image_sql('p')}),
               (
                 SELECT pi2.url
                 FROM print_images pi2
                 JOIN prints p2 ON p2.id = pi2.print_id
-                WHERE p2.card_id = p.card_id AND pi2.is_primary IS TRUE
+                WHERE p2.card_id = p.card_id
                 ORDER BY
                   CASE
                     WHEN lower(pi2.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
                     WHEN lower(pi2.url) LIKE '%example.cdn.onepiece%' THEN 2
                     ELSE 1
                   END,
+                  pi2.is_primary DESC,
                   pi2.id
                 LIMIT 1
               ),
@@ -833,9 +831,27 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             OR (sd.doc_type = 'set' AND s.id = sd.object_id)
           )
           LEFT JOIN (
-            SELECT pi.print_id, pi.url
-            FROM print_images pi
-            WHERE pi.is_primary IS TRUE
+            SELECT
+              ranked_images.print_id,
+              ranked_images.url
+            FROM (
+              SELECT
+                pi.print_id,
+                pi.url,
+                ROW_NUMBER() OVER (
+                  PARTITION BY pi.print_id
+                  ORDER BY
+                    CASE
+                      WHEN lower(pi.url) LIKE '%en.onepiece-cardgame.com%' THEN 0
+                      WHEN lower(pi.url) LIKE '%example.cdn.onepiece%' THEN 2
+                      ELSE 1
+                    END,
+                    CASE WHEN pi.is_primary IS TRUE THEN 0 ELSE 1 END,
+                    pi.id ASC
+                ) AS image_rank
+              FROM print_images pi
+            ) ranked_images
+            WHERE ranked_images.image_rank = 1
           ) primary_img ON primary_img.print_id = p.id
           WHERE (
             lower(sd.title) LIKE :contains
@@ -845,7 +861,7 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
           )
           AND (:game = '' OR g.slug = :game)
         )
-        SELECT *
+        SELECT type, id, card_id, title, subtitle, game, set_code, set_name, collector_number, language, variant, variant_count, primary_image_url, score, title_rank
         FROM scored
         WHERE title_rank <= 2
         ORDER BY score DESC, (CASE WHEN type = 'card' THEN 0 WHEN type = 'print' THEN 1 ELSE 2 END), game ASC, title ASC, id ASC
@@ -964,7 +980,20 @@ def search():
                                    query.term
                                )
                            ) AS score,
-                           s.code AS set_code, p.collector_number, p.variant,
+                           COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END) AS card_id,
+                           s.code AS set_code,
+                           s.name AS set_name,
+                           p.collector_number,
+                           p.language,
+                           p.variant,
+                           COALESCE(
+                               CAST((
+                                   SELECT COUNT(*)
+                                   FROM prints p_count
+                                   WHERE p_count.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
+                               ) AS FLOAT),
+                               0.0
+                           ) AS variant_count,
                            COALESCE(primary_img.url,
                                (
                                    SELECT pi2.url
@@ -1097,7 +1126,20 @@ def search():
                                CASE WHEN :is_prefix_mode = 1 AND :game = '' AND g.slug <> 'pokemon' THEN -220.0 ELSE 0.0 END +
                                1.0
                            ) AS score,
-                           s.code AS set_code, p.collector_number, p.variant,
+                           COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END) AS card_id,
+                           s.code AS set_code,
+                           s.name AS set_name,
+                           p.collector_number,
+                           p.language,
+                           p.variant,
+                           COALESCE(
+                               CAST((
+                                   SELECT COUNT(*)
+                                   FROM prints p_count
+                                   WHERE p_count.card_id = COALESCE(p.card_id, CASE WHEN sd.doc_type = 'card' THEN sd.object_id ELSE NULL END)
+                               ) AS FLOAT),
+                               0.0
+                           ) AS variant_count,
                            COALESCE(
                                (
                                    SELECT pi.url

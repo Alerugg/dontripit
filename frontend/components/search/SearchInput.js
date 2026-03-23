@@ -96,7 +96,7 @@ export default function SearchInput({
   }
 
   return (
-    <div className="search-input-shell" ref={wrapperRef}>
+    <div className={`search-input-shell ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
       <div className="search-input-row" ref={inputRowRef}>
         <input
           value={value}
