@@ -12,26 +12,23 @@ const primaryGames = [
 
 export default function TopNav() {
   return (
-    <header className="top-nav">
+    <header className="top-nav top-nav-v2">
       <div className="top-nav-inner app-shell">
-        <Link href="/" className="brand-mark top-brand">
-          <span className="brand-dot" />
-          <span className="top-brand-copy">
-            <strong>{siteName}</strong>
-            <small>TCG catalog platform</small>
-          </span>
+        <Link href="/" className="top-brand-logo-wrap" aria-label={siteName}>
+          <img
+            src="/branding/dontripit_logo.png"
+            alt={siteName}
+            className="top-brand-logo"
+          />
         </Link>
 
-        <nav className="top-links" aria-label="Main navigation">
-          <Link href="/" className="top-link">Home</Link>
+        <nav className="top-links top-links-v2" aria-label="Main navigation">
           {primaryGames.map((game) => (
-            <Link key={game.href} href={game.href} className="top-link">{game.label}</Link>
+            <Link key={game.href} href={game.href} className="top-link top-link-v2">
+              {game.label}
+            </Link>
           ))}
         </nav>
-
-        <div className="top-nav-actions">
-          <Link href="/pokemon" className="secondary-btn top-nav-cta">Abrir Pokémon</Link>
-        </div>
       </div>
     </header>
   )
