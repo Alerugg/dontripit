@@ -73,6 +73,19 @@ def _print_image_sql(print_alias: str, *, require_primary: bool = False) -> str:
     """
 
 
+def _searchable_card_clause(doc_type_expr: str, card_object_expr: str) -> str:
+    return f"""
+        (
+          {doc_type_expr} <> 'card'
+          OR EXISTS (
+            SELECT 1
+            FROM prints p_exists
+            WHERE p_exists.card_id = {card_object_expr}
+          )
+        )
+    """
+
+
 def _legacy_onepiece_placeholder_prints_with_official_alternatives(session, placeholder_print_ids: list[int]) -> set[int]:
     if not placeholder_print_ids:
         return set()
@@ -263,11 +276,7 @@ def _looks_like_set_prefix_query(raw_query: str) -> bool:
     if normalized.isalpha() is False:
         return False
 
-    # Keep short alpha-only prefixes (e.g. LOB) eligible for set intent, but
-    # avoid broad activation on longer natural-language fragments like
-    # "cha"/"char" that should stay in name-intent mode.
     return 3 <= len(normalized) <= 3
-
 
 
 def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
@@ -328,6 +337,7 @@ def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
         else:
             output.append(row)
     return output
+
 
 def _short_query_search_rows(
     session,
@@ -417,6 +427,7 @@ def _short_query_search_rows(
           )
           WHERE (:game = '' OR g.slug = :game)
             AND (:type IS NULL OR sd.doc_type = :type)
+            AND {_searchable_card_clause('sd.doc_type', 'sd.object_id')}
         ),
         intent AS (
           SELECT CASE
@@ -624,7 +635,7 @@ def _short_query_search_rows(
 
 def _fallback_search_rows(session, *, like: str, game: str, result_type: str | None, limit: int, offset: int):
     fallback = text(
-        """
+        f"""
         SELECT * FROM (
           SELECT 'card' AS type, c.id, c.id AS card_id, c.name AS title, '' AS subtitle, g.slug AS game,
                  NULL AS set_code, NULL AS set_name, NULL AS collector_number, NULL AS language, NULL AS variant,
@@ -644,8 +655,17 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
                      pi.id ASC
                    LIMIT 1
                  ) AS primary_image_url
-          FROM cards c JOIN games g ON g.id = c.game_id WHERE lower(c.name) LIKE :like
+          FROM cards c
+          JOIN games g ON g.id = c.game_id
+          WHERE lower(c.name) LIKE :like
+            AND EXISTS (
+              SELECT 1
+              FROM prints p_exists
+              WHERE p_exists.card_id = c.id
+            )
+
           UNION ALL
+
           SELECT 'set', s.id, NULL AS card_id, s.name, s.code, g.slug,
                  NULL, NULL, NULL, NULL, NULL,
                  0.0 AS variant_count,
@@ -659,7 +679,9 @@ def _fallback_search_rows(session, *, like: str, game: str, result_type: str | N
                    ELSE NULL
                  END
           FROM sets s JOIN games g ON g.id = s.game_id WHERE lower(s.name) LIKE :like OR lower(s.code) LIKE :like
+
           UNION ALL
+
           SELECT 'print', p.id, p.card_id, c.name, (s.code || ' #' || p.collector_number), g.slug,
                  s.code, s.name, p.collector_number, p.language, p.variant,
                  CAST((SELECT COUNT(*) FROM prints p2 WHERE p2.card_id = p.card_id) AS FLOAT) AS variant_count,
@@ -698,7 +720,7 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
         "limit": limit,
     }
     sql = text(
-        """
+        f"""
         WITH card_print_counts AS (
           SELECT p.card_id, CAST(COUNT(*) AS FLOAT) AS print_count
           FROM prints p
@@ -860,6 +882,7 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
             OR lower(COALESCE(s.code, '')) LIKE :contains
           )
           AND (:game = '' OR g.slug = :game)
+          AND {_searchable_card_clause('sd.doc_type', 'sd.object_id')}
         )
         SELECT type, id, card_id, title, subtitle, game, set_code, set_name, collector_number, language, variant, variant_count, primary_image_url, score, title_rank
         FROM scored
@@ -913,7 +936,7 @@ def search():
                 )
             elif session.bind.dialect.name == "postgresql":
                 sql = text(
-                    """
+                    f"""
                     WITH query AS (SELECT plainto_tsquery('simple', :q) AS term)
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, sd.subtitle,
                            g.slug AS game,
@@ -1038,6 +1061,7 @@ def search():
                           )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
+                      AND {_searchable_card_clause('sd.doc_type', 'sd.object_id')}
                     ORDER BY score DESC, sd.title ASC
                     LIMIT :limit OFFSET :offset
                     """
@@ -1065,7 +1089,7 @@ def search():
             else:
                 like = f"{q.lower()}%" if query_length <= 2 else f"%{q.lower()}%"
                 sql = text(
-                    """
+                    f"""
                     SELECT sd.doc_type AS type, sd.object_id AS id, sd.title, coalesce(sd.subtitle, '') AS subtitle,
                            g.slug AS game,
                            (
@@ -1196,6 +1220,7 @@ def search():
                           )
                       AND (:game = '' OR g.slug = :game)
                       AND (:type IS NULL OR sd.doc_type = :type)
+                      AND {_searchable_card_clause('sd.doc_type', 'sd.object_id')}
                     ORDER BY score DESC, sd.title ASC
                     LIMIT :limit OFFSET :offset
                     """

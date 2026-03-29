@@ -1,0 +1,32 @@
+.game-collections-directory-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.game-collections-directory-hero {
+  display: flex;
+  align-items: center;
+  min-height: 180px;
+  background:
+    radial-gradient(circle at top left, rgba(145, 88, 255, 0.24), transparent 32%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
+    rgba(18, 16, 35, 0.82);
+}
+
+.game-collections-directory-copy {
+  max-width: 760px;
+}
+
+.game-collections-directory-copy h1 {
+  margin: 0.2rem 0 0.75rem;
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.05;
+}
+
+.game-collections-directory-copy p:last-child {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.55;
+  font-size: 1rem;
+}

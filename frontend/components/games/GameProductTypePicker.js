@@ -1,4 +1,4 @@
-'use client'
+import './GameProductTypePicker.css'
 
 const PRODUCT_OPTIONS = [
   { value: 'singles', label: 'Cartas sueltas' },
@@ -12,12 +12,13 @@ const PRODUCT_OPTIONS = [
 
 export default function GameProductTypePicker({ value, onChange }) {
   return (
-    <section className="game-section panel-soft">
+    <section className="game-product-picker panel-soft">
       <div className="section-heading compact">
         <p className="eyebrow">Tipo de producto</p>
-        <h2>Explora por formato de producto.</h2>
+        <h2>Explora por formato</h2>
       </div>
-      <div className="chip-row">
+
+      <div className="game-product-picker-chips">
         {PRODUCT_OPTIONS.map((option) => (
           <button
             key={option.value}

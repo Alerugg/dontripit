@@ -1,0 +1,88 @@
+.game-tournaments-block {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 24px;
+}
+
+.game-tournaments-block-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.game-tournaments-block-head h2 {
+  margin: 0;
+  font-size: clamp(1.2rem, 1.8vw, 1.55rem);
+  line-height: 1.15;
+}
+
+.game-tournaments-block-copy {
+  margin: 0;
+  max-width: 44ch;
+  color: var(--muted);
+  line-height: 1.62;
+  text-align: right;
+}
+
+.game-tournaments-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.game-tournaments-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+}
+
+.game-tournaments-card strong {
+  line-height: 1.28;
+}
+
+.game-tournaments-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.58;
+}
+
+.game-tournaments-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(167,139,250,0.22);
+  background: rgba(124,58,237,0.12);
+  font-size: 0.74rem;
+  color: var(--accent-3);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 980px) {
+  .game-tournaments-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .game-tournaments-block-head {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .game-tournaments-block-copy {
+    text-align: left;
+  }
+
+  .game-tournaments-grid {
+    grid-template-columns: 1fr;
+  }
+}
