@@ -30,25 +30,8 @@ def _variant_order_sql(column: str) -> str:
     CASE
       WHEN lower(COALESCE({column}, '')) IN ('default', 'base', '') THEN 0
       WHEN lower(COALESCE({column}, '')) LIKE '%parallel%' THEN 1
-      WHEN lower(COALESCE({column}, '')) LIKE '%reverse%' THEN 2
-      WHEN lower(COALESCE({column}, '')) LIKE '%full art%' THEN 3
-      WHEN lower(COALESCE({column}, '')) LIKE '%alt art%' THEN 4
-      WHEN lower(COALESCE({column}, '')) LIKE '%illustration%' THEN 5
-      WHEN lower(COALESCE({column}, '')) LIKE '%holo%' THEN 6
-      WHEN lower(COALESCE({column}, '')) LIKE '%foil%' THEN 7
-      ELSE 8
-    END
-    """
-
-
-def _collector_number_order_sql(column: str) -> str:
-    return f"""
-    CASE
-      WHEN substring(COALESCE({column}, '') FROM '([0-9]+)$') IS NOT NULL
-        THEN substring(COALESCE({column}, '') FROM '([0-9]+)$')::int
-      WHEN substring(COALESCE({column}, '') FROM '([0-9]+)') IS NOT NULL
-        THEN substring(COALESCE({column}, '') FROM '([0-9]+)')::int
-      ELSE 2147483647
+      WHEN lower(COALESCE({column}, '')) LIKE 'r%' THEN 2
+      ELSE 3
     END
     """
 
@@ -144,7 +127,6 @@ def get_card_detail(card_id: int):
         SELECT p.id,
                s.code AS set_code,
                s.name AS set_name,
-               EXTRACT(YEAR FROM s.release_date)::int AS year,
                p.card_id,
                p.collector_number,
                p.language,
@@ -181,23 +163,21 @@ def get_card_detail(card_id: int):
         FROM prints p
         JOIN sets s ON s.id = p.set_id
         WHERE p.card_id = :card_id
-        ORDER BY s.release_date ASC NULLS LAST,
-                 s.code ASC,
-                 {_collector_number_order_sql('p.collector_number')} ASC,
-                 lower(COALESCE(p.collector_number, '')) ASC,
+        ORDER BY s.code ASC,
+                 p.collector_number ASC,
                  {_variant_order_sql('p.variant')} ASC,
                  lower(COALESCE(p.variant, 'default')) ASC,
                  p.id ASC
-        LIMIT 500
+        LIMIT 50
         """
     )
     sets_sql = text(
         """
-        SELECT DISTINCT s.id, s.code, s.name, s.release_date
+        SELECT DISTINCT s.id, s.code, s.name
         FROM sets s
         JOIN prints p ON p.set_id = s.id
         WHERE p.card_id = :card_id
-        ORDER BY s.release_date ASC NULLS LAST, s.name ASC, s.id ASC
+        ORDER BY s.name ASC, s.id ASC
         """
     )
 
@@ -240,7 +220,7 @@ def get_card_detail(card_id: int):
 @catalog_bp.get("/api/v1/sets")
 def list_sets():
     q = request.args.get("q", "").strip()
-    limit, offset = _pagination(default_limit=500, max_limit=1000)
+    limit, offset = _pagination()
     game, error = _get_game_slug(required=_request_requires_game())
     if error:
         return error
@@ -256,38 +236,20 @@ def list_sets():
         params["q"] = f"%{q.lower()}%"
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-
     sql = text(
         f"""
-        SELECT
-            s.id,
-            s.code,
-            s.name,
-            g.slug AS game_slug,
-            g.slug AS game,
-            s.tcgdex_id,
-            NULL AS scryfall_id,
-            s.yugioh_id,
-            s.riftbound_id,
-            s.release_date,
-            COUNT(DISTINCT p.card_id) AS card_count
+        SELECT s.id,
+               s.code,
+               s.name,
+               g.slug AS game_slug,
+               s.tcgdex_id,
+               NULL AS scryfall_id,
+               s.yugioh_id,
+               s.riftbound_id
         FROM sets s
         JOIN games g ON g.id = s.game_id
-        LEFT JOIN prints p ON p.set_id = s.id
         {where_sql}
-        GROUP BY
-            s.id,
-            s.code,
-            s.name,
-            g.slug,
-            s.tcgdex_id,
-            s.yugioh_id,
-            s.riftbound_id,
-            s.release_date
-        ORDER BY
-            s.release_date ASC NULLS LAST,
-            LOWER(s.name) ASC,
-            s.id ASC
+        ORDER BY s.name ASC, s.id ASC
         LIMIT :limit OFFSET :offset
         """
     )
@@ -301,106 +263,9 @@ def list_sets():
     return jsonify([dict(row) for row in rows])
 
 
-@catalog_bp.get("/api/set-detail")
-@catalog_bp.get("/api/v1/set-detail")
-def get_set_detail():
-    game, error = _get_game_slug(required=_request_requires_game())
-    if error:
-        return error
-
-    set_code = request.args.get("set_code", "").strip()
-    if not set_code:
-        return _json_error("invalid_params", "set_code is required", 400)
-
-    set_sql = text(
-        f"""
-        SELECT
-            s.id,
-            s.code,
-            s.name,
-            s.release_date,
-            g.slug AS game,
-            g.slug AS game_slug,
-            COUNT(DISTINCT p.card_id) AS card_count,
-            COUNT(DISTINCT p.id) AS print_count,
-            MAX({_collector_number_order_sql('p.collector_number')}) AS collector_total
-        FROM sets s
-        JOIN games g ON g.id = s.game_id
-        LEFT JOIN prints p ON p.set_id = s.id
-        WHERE g.slug = :game
-          AND LOWER(s.code) = LOWER(:set_code)
-        GROUP BY s.id, s.code, s.name, s.release_date, g.slug
-        """
-    )
-
-    prints_sql = text(
-        f"""
-        SELECT
-            p.id,
-            'print' AS type,
-            p.id AS print_id,
-            c.id AS card_id,
-            c.name,
-            c.name AS title,
-            g.slug AS game,
-            g.slug AS game_slug,
-            s.code AS set_code,
-            s.name AS set_name,
-            EXTRACT(YEAR FROM s.release_date)::int AS year,
-            p.collector_number,
-            p.language,
-            p.rarity,
-            p.is_foil,
-            p.variant,
-            COALESCE(
-              (
-                SELECT pi.url
-                FROM print_images pi
-                WHERE pi.print_id = p.id
-                ORDER BY pi.is_primary DESC, pi.id ASC
-                LIMIT 1
-              ),
-              NULL
-            ) AS primary_image_url
-        FROM prints p
-        JOIN cards c ON c.id = p.card_id
-        JOIN sets s ON s.id = p.set_id
-        JOIN games g ON g.id = s.game_id
-        WHERE g.slug = :game
-          AND LOWER(s.code) = LOWER(:set_code)
-        ORDER BY
-            {_collector_number_order_sql('p.collector_number')} ASC,
-            LOWER(COALESCE(p.collector_number, '')) ASC,
-            {_variant_order_sql('p.variant')} ASC,
-            LOWER(COALESCE(p.variant, 'default')) ASC,
-            LOWER(c.name) ASC,
-            p.id ASC
-        LIMIT 2000
-        """
-    )
-
-    try:
-        with db.SessionLocal() as session:
-            set_row = session.execute(set_sql, {"game": game, "set_code": set_code}).mappings().first()
-            if set_row is None:
-                return _json_error("not_found", f"set '{set_code}' not found in game '{game}'", 404)
-
-            prints = session.execute(prints_sql, {"game": game, "set_code": set_code}).mappings().all()
-    except SQLAlchemyError as error:
-        return _json_error("set_detail_failed", str(error), 500)
-
-    return jsonify(
-        {
-            "set": dict(set_row),
-            "cards": [dict(row) for row in prints],
-        }
-    )
-
-
 @catalog_bp.get("/api/prints")
 @catalog_bp.get("/api/v1/prints")
 def list_prints():
-    q = request.args.get("q", "").strip()
     set_code = request.args.get("set_code", "").strip()
     card_id = request.args.get("card_id", type=int)
     limit, offset = _pagination()
@@ -408,126 +273,65 @@ def list_prints():
     if error:
         return error
 
-    q_norm = q.lower()
     where = []
-    params = {
-        "limit": limit,
-        "offset": offset,
-    }
-
+    params = {"limit": limit, "offset": offset}
     if game:
         where.append("g.slug = :game")
         params["game"] = game
-
     if set_code:
         where.append("LOWER(s.code) = :set_code")
         params["set_code"] = set_code.lower()
-
     if card_id is not None:
         where.append("p.card_id = :card_id")
         params["card_id"] = card_id
 
-    if q:
-        where.append("LOWER(c.name) LIKE :q_contains")
-        params["q_contains"] = f"%{q_norm}%"
-        params["q_exact"] = q_norm
-        params["q_prefix"] = f"{q_norm}%"
-
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-
     sql = text(
         f"""
-        SELECT
-            p.id,
-            p.card_id,
-            c.name AS title,
-            c.name AS name,
-            g.slug AS game,
-            s.id AS set_id,
-            s.code AS set_code,
-            s.name AS set_name,
-            s.release_date,
-            p.collector_number,
-            p.language,
-            p.rarity,
-            p.is_foil,
-            p.variant,
-            CASE
-                WHEN p.variant IS NOT NULL AND lower(p.variant) NOT IN ('', 'default', 'base') THEN p.variant
-                WHEN p.is_foil IS TRUE THEN 'Holo'
-                ELSE 'Normal'
-            END AS finish_label,
-            (
-                SELECT pi.url
-                FROM print_images pi
-                WHERE pi.print_id = p.id
-                ORDER BY pi.is_primary DESC, pi.id ASC
-                LIMIT 1
-            ) AS image_url,
-            COALESCE(
-                (
-                    SELECT pi.url
-                    FROM print_images pi
-                    WHERE pi.print_id = p.id
-                    ORDER BY pi.is_primary DESC, pi.id ASC
-                    LIMIT 1
-                ),
-                (
-                    SELECT pi2.url
-                    FROM print_images pi2
-                    JOIN prints p2 ON p2.id = pi2.print_id
-                    WHERE p2.card_id = p.card_id
-                    ORDER BY pi2.is_primary DESC, pi2.id ASC
-                    LIMIT 1
-                )
-            ) AS primary_image_url
+        SELECT p.id,
+               s.code AS set_code,
+               p.card_id,
+               p.collector_number,
+               p.language,
+               p.rarity,
+               p.is_foil,
+               p.variant,
+               (
+                 SELECT pi.url
+                 FROM print_images pi
+                 WHERE pi.print_id = p.id
+                 ORDER BY pi.is_primary DESC, pi.id ASC
+                 LIMIT 1
+               ) AS image_url,
+               COALESCE(
+                 (
+                   SELECT pi.url
+                   FROM print_images pi
+                   WHERE pi.print_id = p.id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+                 ),
+                 (
+                   SELECT pi2.url
+                   FROM print_images pi2
+                   JOIN prints p2 ON p2.id = pi2.print_id
+                   WHERE p2.card_id = p.card_id
+                   ORDER BY pi2.is_primary DESC, pi2.id ASC
+                   LIMIT 1
+                 )
+               ) AS primary_image_url
         FROM prints p
-        JOIN cards c ON c.id = p.card_id
         JOIN sets s ON s.id = p.set_id
         JOIN games g ON g.id = s.game_id
         {where_sql}
-        ORDER BY
-            CASE
-                WHEN :q_exact IS NOT NULL AND LOWER(c.name) = :q_exact THEN 0
-                WHEN :q_prefix IS NOT NULL AND LOWER(c.name) LIKE :q_prefix THEN 1
-                WHEN :q_contains IS NOT NULL AND LOWER(c.name) LIKE :q_contains THEN 2
-                ELSE 3
-            END,
-            s.release_date DESC NULLS LAST,
-            lower(s.name) ASC,
-            CASE
-                WHEN regexp_replace(COALESCE(p.collector_number, ''), '[^0-9]', '', 'g') <> ''
-                THEN CAST(regexp_replace(p.collector_number, '[^0-9]', '', 'g') AS INTEGER)
-                ELSE 999999
-            END ASC,
-            lower(COALESCE(p.collector_number, '')) ASC,
-            p.id ASC
+        ORDER BY s.code ASC, p.collector_number ASC, p.id ASC
         LIMIT :limit OFFSET :offset
         """
     )
 
-    try:
-        with db.SessionLocal() as session:
-            rows = session.execute(
-                sql,
-                {
-                    **params,
-                    "q_exact": q_norm if q else None,
-                    "q_prefix": f"{q_norm}%" if q else None,
-                    "q_contains": f"%{q_norm}%" if q else None,
-                },
-            ).mappings().all()
-    except SQLAlchemyError as error:
-        return _json_error("prints_query_failed", str(error), 500)
-
-    items = []
-    for row in rows:
-        item = dict(row)
-        if hasattr(item.get("release_date"), "isoformat"):
-            item["release_date"] = item["release_date"].isoformat()
-        items.append(item)
-
-    return jsonify(items)
+    with db.SessionLocal() as session:
+        rows = session.execute(sql, params).mappings().all()
+    return jsonify([dict(row) for row in rows])
 
 
 @catalog_bp.get("/api/products")
@@ -726,7 +530,6 @@ def get_print_detail(print_id: int):
                s.id AS set_id,
                s.code AS set_code,
                s.name AS set_name,
-               EXTRACT(YEAR FROM s.release_date)::int AS year,
                (
                  SELECT pi.url
                  FROM print_images pi
@@ -792,7 +595,6 @@ def get_print_detail(print_id: int):
         "title": row["title"],
         "set_code": row["set_code"],
         "set_name": row["set_name"],
-        "year": row["year"],
         "collector_number": row["collector_number"],
         "language": row["language"],
         "rarity": row["rarity"],

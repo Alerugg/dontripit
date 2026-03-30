@@ -1,5 +1,4 @@
 from __future__ import annotations
-from urllib.parse import quote
 
 import json
 import time
@@ -10,7 +9,7 @@ import requests
 from sqlalchemy import func, select
 
 from app.ingest.base import IngestStats, SourceConnector
-from app.ingest.normalization import build_pokemon_card_key, build_print_key, trim_or_none
+from app.ingest.normalization import build_pokemon_card_key, trim_or_none
 from app.ingest.provenance import upsert_field_provenance
 from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, SourceRecord
 
@@ -38,16 +37,17 @@ class TcgdexPokemonConnector(SourceConnector):
         return None
 
     def _find_card(self, session, game_id: int, card_payload: dict) -> Card | None:
+        tcgdex_card_id = (card_payload.get("id") or "").strip()
         card_key = (card_payload.get("card_key") or "").strip()
-        if not card_key:
-            return None
-
-        return session.execute(
-        select(Card).where(
-            Card.game_id == game_id,
-            Card.card_key == card_key,
-        )
-     ).scalar_one_or_none()
+        if tcgdex_card_id:
+            row = session.execute(select(Card).where(Card.game_id == game_id, Card.tcgdex_id == tcgdex_card_id)).scalar_one_or_none()
+            if row is not None:
+                return row
+        if card_key:
+            row = session.execute(select(Card).where(Card.game_id == game_id, Card.card_key == card_key)).scalar_one_or_none()
+            if row is not None:
+                return row
+        return None
 
     def _find_print(
         self,
@@ -59,31 +59,20 @@ class TcgdexPokemonConnector(SourceConnector):
         language: str = "en",
         is_foil: bool = False,
         variant: str = "default",
-        print_key: str | None = None,
     ) -> Print | None:
         if tcgdex_print_id:
-            row = session.execute(
-                select(Print).where(Print.tcgdex_id == tcgdex_print_id)
-            ).scalar_one_or_none()
-        if row is not None:
-            return row
-
-        if print_key:
-            row = session.execute(
-            select(Print).where(Print.print_key == print_key)
-        ).scalar_one_or_none()
-        if row is not None:
-            return row
-
+            row = session.execute(select(Print).where(Print.tcgdex_id == tcgdex_print_id)).scalar_one_or_none()
+            if row is not None:
+                return row
         return session.execute(
-        select(Print).where(
-            Print.set_id == set_id,
-            Print.collector_number == collector_number,
-            Print.language == language,
-            Print.is_foil.is_(is_foil),
-            Print.variant == variant,
-        )
-    ).scalar_one_or_none()
+            select(Print).where(
+                Print.set_id == set_id,
+                Print.collector_number == collector_number,
+                Print.language == language,
+                Print.is_foil.is_(is_foil),
+                Print.variant == variant,
+            )
+        ).scalar_one_or_none()
 
     def _can_backfill_tcgdex_ids(self, session, normalized_payload: dict) -> bool:
         game = self._find_pokemon_game(session)
@@ -329,68 +318,32 @@ class TcgdexPokemonConnector(SourceConnector):
                 break
         return out
 
-    def _build_card_payload(self, set_payload: dict, card: dict, lang: str = "en") -> dict:
-        set_id = self._as_str(set_payload.get("id")).strip()
-        card_id = self._as_str(card.get("id")).strip()
-        local_id = self._as_str(card.get("localId")).strip()
-
-        base_url = self.base_url_template.format(lang=lang)
-        detail_payload = None
-
-        if set_id and local_id:
-            detail_payload = self._request_json(
-                f"{base_url}/sets/{quote(set_id, safe='')}/{quote(local_id, safe='')}",
-                allow_404=True,
-            )
-
-        if detail_payload is None and card_id:
-            detail_payload = self._request_json(
-                f"{base_url}/cards/{quote(card_id, safe='')}",
-                allow_404=True,
-            )
-
-        if detail_payload is None:
-            self.logger.warning(
-                "ingest tcgdex fallback_to_summary set_id=%s local_id=%s card_id=%s name=%s",
-                set_id,
-                local_id,
-                card_id,
-                self._as_str(card.get("name")).strip(),
-            )
-            detail_payload = dict(card)
-
-        detail_payload["set"] = set_payload
-
-        if not detail_payload.get("id"):
-            detail_payload["id"] = card_id or (f"{set_id}-{local_id}" if set_id and local_id else "")
-        if not detail_payload.get("localId"):
-            detail_payload["localId"] = local_id
-        if not detail_payload.get("name"):
-            detail_payload["name"] = card.get("name")
-        if not detail_payload.get("image"):
-            detail_payload["image"] = card.get("image")
-        if not detail_payload.get("rarity"):
-            detail_payload["rarity"] = card.get("rarity")
-        if not detail_payload.get("hp"):
-            detail_payload["hp"] = card.get("hp")
-        if not detail_payload.get("stage"):
-            detail_payload["stage"] = card.get("stage")
-        if not detail_payload.get("suffix"):
-            detail_payload["suffix"] = card.get("suffix")
-        if not detail_payload.get("evolvesFrom"):
-            detail_payload["evolvesFrom"] = card.get("evolvesFrom")
-        if not detail_payload.get("types"):
-            detail_payload["types"] = card.get("types")
-        if not detail_payload.get("abilities"):
-            detail_payload["abilities"] = card.get("abilities")
-        if not detail_payload.get("attacks"):
-            detail_payload["attacks"] = card.get("attacks")
-        if not detail_payload.get("rules"):
-            detail_payload["rules"] = card.get("rules")
-        if not detail_payload.get("effect"):
-            detail_payload["effect"] = card.get("effect")
-
-        return detail_payload
+    def _build_card_payload(self, set_payload: dict, card_payload: dict, *, lang: str = "en") -> dict:
+        card_id = card_payload.get("id")
+        detail_payload = {}
+        if card_id:
+            detail_payload = self._request_json(f"{self.base_url_template.format(lang=lang)}/cards/{card_id}")
+        return {
+            "set": {
+                "id": set_payload.get("id"),
+                "abbreviation": set_payload.get("abbreviation"),
+                "name": set_payload.get("name"),
+                "releaseDate": set_payload.get("releaseDate"),
+            },
+            "id": card_id,
+            "localId": detail_payload.get("localId") or card_payload.get("localId"),
+            "name": detail_payload.get("name") or card_payload.get("name"),
+            "image": detail_payload.get("image") or card_payload.get("image"),
+            "hp": detail_payload.get("hp"),
+            "stage": detail_payload.get("stage"),
+            "suffix": detail_payload.get("suffix"),
+            "evolvesFrom": detail_payload.get("evolvesFrom"),
+            "types": detail_payload.get("types"),
+            "abilities": detail_payload.get("abilities"),
+            "attacks": detail_payload.get("attacks"),
+            "rules": detail_payload.get("rules"),
+            "effect": detail_payload.get("effect"),
+        }
 
     def _load_remote(self, limit: int | None = None, set_id: str | None = None, lang: str = "en") -> list[dict]:
         base_url = self.base_url_template.format(lang=lang)
@@ -496,86 +449,34 @@ class TcgdexPokemonConnector(SourceConnector):
         )
         return out
 
-    def _request_json(self, url: str, *, max_attempts: int = 4, allow_404: bool = False):
-        last_error = None
-
-        for attempt in range(1, max_attempts + 1):
-            started_at = time.monotonic()
-
-            try:
-                response = requests.get(url, timeout=30)
-                elapsed_ms = int((time.monotonic() - started_at) * 1000)
-
-                if allow_404 and response.status_code == 404:
-                    self.logger.warning(
-                        "ingest tcgdex request_not_found url=%s status=%s attempt=%s elapsed_ms=%s",
-                        url,
-                        response.status_code,
-                        attempt,
-                        elapsed_ms,
-                    )
-                    return None
-
-                response.raise_for_status()
-
-                self.logger.info(
-                    "ingest tcgdex request_done url=%s status=%s attempt=%s elapsed_ms=%s",
+    def _request_json(self, url: str, params: dict | None = None):
+        wait_seconds = 0.3
+        for attempt in range(1, 7):
+            started_at = time.perf_counter()
+            response = requests.get(url, params=params, timeout=30)
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+            if response.status_code in (429, 500, 502, 503, 504):
+                self.logger.warning(
+                    "ingest tcgdex request_retry url=%s status=%s attempt=%s elapsed_ms=%s wait_seconds=%s",
                     url,
                     response.status_code,
                     attempt,
                     elapsed_ms,
+                    wait_seconds,
                 )
-                time.sleep(0.1)
-                return response.json()
-
-            except requests.HTTPError as error:
-                last_error = error
-                status_code = error.response.status_code if error.response is not None else None
-                elapsed_ms = int((time.monotonic() - started_at) * 1000)
-
-                if allow_404 and status_code == 404:
-                    self.logger.warning(
-                        "ingest tcgdex request_not_found url=%s status=%s attempt=%s elapsed_ms=%s",
-                        url,
-                        status_code,
-                        attempt,
-                        elapsed_ms,
-                    )
-                    return None
-
-                self.logger.warning(
-                    "ingest tcgdex request_failed url=%s status=%s attempt=%s elapsed_ms=%s",
-                    url,
-                    status_code,
-                    attempt,
-                    elapsed_ms,
-                )
-
-                if attempt == max_attempts:
-                    raise
-
-                time.sleep(min(0.5 * attempt, 2.0))
-
-            except requests.RequestException as error:
-                last_error = error
-                elapsed_ms = int((time.monotonic() - started_at) * 1000)
-
-                self.logger.warning(
-                    "ingest tcgdex request_failed url=%s error=%s attempt=%s elapsed_ms=%s",
-                    url,
-                    str(error),
-                    attempt,
-                    elapsed_ms,
-                )
-
-                if attempt == max_attempts:
-                    raise
-
-                time.sleep(min(0.5 * attempt, 2.0))
-
-        if last_error:
-            raise last_error
-
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
+            response.raise_for_status()
+            self.logger.info(
+                "ingest tcgdex request_done url=%s status=%s attempt=%s elapsed_ms=%s",
+                url,
+                response.status_code,
+                attempt,
+                elapsed_ms,
+            )
+            time.sleep(0.1)
+            return response.json()
         raise RuntimeError(f"TCGdex request failed after retries: {url}")
 
     def normalize(self, payload: dict, **kwargs) -> dict:
@@ -583,7 +484,6 @@ class TcgdexPokemonConnector(SourceConnector):
         set_tcgdex_id = self._as_str(set_payload.get("id")).strip()
         set_code = self._as_str(set_payload.get("abbreviation") or set_payload.get("id")).strip().lower()
         set_name = self._as_str(set_payload.get("name") or set_payload.get("id")).strip()
-
         normalized_card_payload = {
             "id": payload.get("id"),
             "name": payload.get("name"),
@@ -598,19 +498,17 @@ class TcgdexPokemonConnector(SourceConnector):
             "attacks": payload.get("attacks"),
             "rules": payload.get("rules"),
             "effect": payload.get("effect"),
-            "rarity": payload.get("rarity"),
         }
         normalized_card_payload["card_key"] = build_pokemon_card_key(card_payload=normalized_card_payload)
-
         return {
-        "set": {
-            "tcgdex_id": set_tcgdex_id,
-            "code": set_code,
-            "name": set_name,
-            "released_at": set_payload.get("releaseDate"),
-        },
-        "card": normalized_card_payload,
-    }
+            "set": {
+                "tcgdex_id": set_tcgdex_id,
+                "code": set_code,
+                "name": set_name,
+                "released_at": set_payload.get("releaseDate"),
+            },
+            "card": normalized_card_payload,
+        }
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
         game = self._find_pokemon_game(session)
@@ -677,67 +575,55 @@ class TcgdexPokemonConnector(SourceConnector):
 
         card_payload = payload.get("card") or {}
         card_name = (card_payload.get("name") or "").strip()
-        tcgdex_print_id = self._as_str(card_payload.get("id")).strip()
+        tcgdex_card_id = card_payload.get("id")
         card_key = (card_payload.get("card_key") or "").strip()
-
-        if not card_name or not card_key:
+        if not card_name:
             return {}
 
         card_row = self._find_card(session, game.id, card_payload)
 
         if card_row is None:
-            card_row = Card(
-                game_id=game.id,
-                name=card_name,
-                tcgdex_id=None,
-                card_key=card_key,
-            )
+            card_row = Card(game_id=game.id, name=card_name, tcgdex_id=tcgdex_card_id, card_key=card_key or None)
             session.add(card_row)
             session.flush()
             stats.records_inserted += 1
         else:
             changed = False
+            backfilled_card_id = False
             if card_row.name != card_name:
                 card_row.name = card_name
                 changed = True
-            if card_row.card_key != card_key:
+            if card_key and card_row.card_key != card_key:
                 card_row.card_key = card_key
                 changed = True
-
+            if tcgdex_card_id and card_row.tcgdex_id != tcgdex_card_id:
+                backfilled_card_id = not (card_row.tcgdex_id or "").strip()
+                card_row.tcgdex_id = tcgdex_card_id
+                changed = True
             if changed:
                 stats.records_updated += 1
-                self.logger.info(
-                    "ingest update pokemon card card_id=%s card_name=%s card_key=%s",
-                    card_row.id,
-                    card_row.name,
-                    card_row.card_key,
-                )
+                if backfilled_card_id:
+                    self.logger.info("ingest backfill card tcgdex_id card_name=%s tcgdex_id=%s", card_row.name, tcgdex_card_id)
+                else:
+                    self.logger.info("ingest update card card_name=%s tcgdex_id=%s", card_row.name, card_row.tcgdex_id)
+            else:
+                self.logger.info("ingest skip card already has tcgdex_id card_name=%s tcgdex_id=%s", card_row.name, card_row.tcgdex_id)
 
-        collector_number = self._as_str(card_payload.get("collector_number")).strip()
+        tcgdex_print_id = tcgdex_card_id
+        collector_number = card_payload.get("collector_number") or ""
         print_language = "en"
         print_is_foil = False
         print_variant = "default"
-        print_rarity = self._as_str(card_payload.get("rarity")).strip() or "unknown"
-
-        print_key = build_print_key(
-            card_key=card_key,
-            set_code=set_row.code,
-            collector_number=collector_number,
-            language=print_language,
-            finish="foil" if print_is_foil else "nonfoil",
-            variant=print_variant,
-        )
-
+        print_rarity = "unknown"
         print_row = self._find_print(
             session,
             set_row.id,
             card_row.id,
             collector_number,
-            tcgdex_print_id or None,
+            tcgdex_print_id,
             language=print_language,
             is_foil=print_is_foil,
             variant=print_variant,
-            print_key=print_key,
         )
 
         if print_row is None:
@@ -748,9 +634,8 @@ class TcgdexPokemonConnector(SourceConnector):
                 language=print_language,
                 rarity=print_rarity,
                 is_foil=print_is_foil,
-                tcgdex_id=tcgdex_print_id or None,
+                tcgdex_id=tcgdex_print_id,
                 variant=print_variant,
-                print_key=print_key,
             )
             session.add(print_row)
             session.flush()
@@ -758,7 +643,6 @@ class TcgdexPokemonConnector(SourceConnector):
         else:
             changed = False
             backfilled_print_id = False
-
             if print_row.card_id != card_row.id:
                 print_row.card_id = card_row.id
                 changed = True
@@ -777,41 +661,35 @@ class TcgdexPokemonConnector(SourceConnector):
             if print_row.variant != print_variant:
                 print_row.variant = print_variant
                 changed = True
-            if print_row.collector_number != collector_number:
-                print_row.collector_number = collector_number
-                changed = True
-            if print_key and print_row.print_key != print_key:
-                print_row.print_key = print_key
-                changed = True
             if tcgdex_print_id and print_row.tcgdex_id != tcgdex_print_id:
                 backfilled_print_id = not (print_row.tcgdex_id or "").strip()
                 print_row.tcgdex_id = tcgdex_print_id
                 changed = True
-
+            if print_row.collector_number != collector_number:
+                print_row.collector_number = collector_number
+                changed = True
             if changed:
                 stats.records_updated += 1
                 if backfilled_print_id:
                     self.logger.info(
-                        "ingest backfill pokemon print tcgdex_id print_id=%s collector_number=%s tcgdex_id=%s",
+                        "ingest backfill print tcgdex_id print_id=%s collector_number=%s tcgdex_id=%s",
                         print_row.id,
                         collector_number,
                         tcgdex_print_id,
                     )
                 else:
                     self.logger.info(
-                        "ingest update pokemon print print_id=%s collector_number=%s tcgdex_id=%s print_key=%s",
+                        "ingest update print print_id=%s collector_number=%s tcgdex_id=%s",
                         print_row.id,
                         print_row.collector_number,
                         print_row.tcgdex_id,
-                        print_row.print_key,
                     )
             else:
                 self.logger.info(
-                    "ingest skip pokemon print already current print_id=%s collector_number=%s tcgdex_id=%s print_key=%s",
+                    "ingest skip print already has tcgdex_id print_id=%s collector_number=%s tcgdex_id=%s",
                     print_row.id,
                     print_row.collector_number,
                     print_row.tcgdex_id,
-                    print_row.print_key,
                 )
 
         if tcgdex_print_id:
