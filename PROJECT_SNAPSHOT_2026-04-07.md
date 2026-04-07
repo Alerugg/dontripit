@@ -159,3 +159,26 @@
   - `pytest -q backend/tests/test_catalog_endpoints.py` => `14 passed`.
   - `pytest -q` => `239 passed, 3 failed` (pre-existing Riftbound fixture files missing under `data/fixtures`).
   - Docker/compose and live curl validations remain blocked in this environment (`docker: command not found`).
+
+## One Piece legacy set evidence sweep (IDs 1188-1191) — 2026-04-07
+
+Scope reviewed:
+- `backend/app/routes/catalog.py` (`/api/v1/sets` One Piece legacy name promotion path).
+- `backend/app/ingest/connectors/onepiece.py` (remote normalization, pack-id/commercial parsing).
+- `backend/app/models.py` (`sets`, `prints`, `print_identifiers` available source fields).
+
+Findings from backend logic (safe-mapping constraints):
+- Canonical promotion for numeric-like One Piece set labels is intentionally gated behind **full collector evidence**:
+  - all non-empty collectors in a legacy set must parse as `OP/ST/EB` commercial prefixes,
+  - all parsed collectors must agree on one single commercial code,
+  - and that commercial code must exist exactly once as a canonical One Piece `sets.code` row.
+- If any collector is non-parseable, mixed across multiple families, or canonical target is not unique, response stays neutral (`Set #<id>`).
+- `sets.code` identity is preserved; no cross-id collapse is performed.
+
+Set IDs requested (`1188`, `1189`, `1190`, `1191`):
+- In this workspace there is no running local API/database snapshot exposing those concrete rows, so per-id collector lists cannot be extracted here.
+- Given current production-safe policy, these IDs should remain neutral unless their own `prints.collector_number` evidence is unanimous + canonical-target-unique as above.
+
+Action taken in backend code:
+- No mapping changes implemented (no inequívoca per-id evidence available in this environment).
+- Existing safe neutral fallback behavior is preserved.
