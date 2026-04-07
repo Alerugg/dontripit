@@ -624,7 +624,7 @@ def _short_query_search_rows(
 
 def _fallback_search_rows(session, *, like: str, game: str, result_type: str | None, limit: int, offset: int):
     fallback = text(
-        """
+        f"""
         SELECT * FROM (
           SELECT 'card' AS type, c.id, c.id AS card_id, c.name AS title, '' AS subtitle, g.slug AS game,
                  NULL AS set_code, NULL AS set_name, NULL AS collector_number, NULL AS language, NULL AS variant,
@@ -698,7 +698,7 @@ def _fallback_suggest_rows(session, *, q: str, game: str, limit: int):
         "limit": limit,
     }
     sql = text(
-        """
+        f"""
         WITH card_print_counts AS (
           SELECT p.card_id, CAST(COUNT(*) AS FLOAT) AS print_count
           FROM prints p
