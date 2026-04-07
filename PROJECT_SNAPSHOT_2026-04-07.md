@@ -17,13 +17,10 @@
 ## Current working branch
 - feat/catalog-frontend-recovery
 
-## Strategy now
-1. Freeze healthy backend baseline
-2. Rebuild frontend recovery from clean branch
-3. Recover in this order:
-   - game explorer
-   - sets directory
-   - set detail page
+## Frontend recovery progress
+- Slice 1 recovered: game explorer
+- Slice 2 recovered: sets directory
+- Next slice: set detail page
 
 ## Rules
 - Do not merge old broken WIP frontend branches blindly
