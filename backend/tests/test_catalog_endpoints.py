@@ -189,6 +189,101 @@ def test_v1_sets_onepiece_keeps_neutral_name_when_safe_mapping_is_not_available(
     assert top["name"] == f"Set #{top['id']}"
 
 
+def test_v1_sets_onepiece_keeps_neutral_name_when_collectors_are_ambiguous(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        session.add_all(
+            [
+                Set(game_id=game.id, code="op-01", name="Romance Dawn"),
+                Set(game_id=game.id, code="eb-01", name="Memorial Collection"),
+            ]
+        )
+        legacy_set = Set(game_id=game.id, code="569777", name="569777")
+        card_a = Card(game_id=game.id, name="A", card_key="legacy-a")
+        card_b = Card(game_id=game.id, name="B", card_key="legacy-b")
+        session.add_all([legacy_set, card_a, card_b])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_a.id,
+                    collector_number="OP01-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569777:op01-001:en:default",
+                ),
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_b.id,
+                    collector_number="EB01-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569777:eb01-001:en:default",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece&q=569777", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert payload[0]["name"] == f"Set #{payload[0]['id']}"
+
+
+def test_v1_sets_onepiece_keeps_neutral_name_when_some_collectors_lack_prefix_evidence(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        session.add(Set(game_id=game.id, code="op-01", name="Romance Dawn"))
+        legacy_set = Set(game_id=game.id, code="569778", name="569778")
+        card_a = Card(game_id=game.id, name="C", card_key="legacy-c")
+        card_b = Card(game_id=game.id, name="D", card_key="legacy-d")
+        session.add_all([legacy_set, card_a, card_b])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_a.id,
+                    collector_number="OP01-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569778:op01-001:en:default",
+                ),
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_b.id,
+                    collector_number="001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569778:001:en:default",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece&q=569778", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    assert payload[0]["name"] == f"Set #{payload[0]['id']}"
+
+
 def test_v1_cards_with_query_returns_200(client):
     _seed_fixture_catalog()
     response = client.get("/api/v1/cards?game=pokemon&q=pika", headers=_auth_headers())

@@ -142,3 +142,20 @@
   - preserves distinct legacy numeric codes (no collapse into one canonical code),
   - keeps neutral label when no safe mapping exists,
   - existing Pokemon set endpoint coverage remains green.
+
+## One Piece legacy source-mapping hardening (2026-04-07, branch `work`)
+- Root cause in backend `/api/v1/sets` One Piece mapper:
+  - canonical label promotion could happen when only *some* collectors in a legacy set exposed a commercial prefix, because non-parseable collectors were ignored as missing evidence.
+  - canonical correspondence lookup also assumed any returned `sets.code` match was safe, without forcing a unique canonical row per commercial code.
+- Minimal backend safety hardening in `backend/app/routes/catalog.py`:
+  - canonical promotion now requires **full collector evidence**: every non-empty collector in that legacy set must parse to a commercial prefix (`OP/ST/EB`) and all must agree on one code.
+  - canonical correspondence is accepted only when there is exactly one One Piece canonical row for that commercial `sets.code`.
+  - fallback remains neutral and stable (`Set #<id>`) when evidence is ambiguous or incomplete.
+  - legacy `set.code` identity remains unchanged to prevent cross-id collapse.
+- Added focused tests in `backend/tests/test_catalog_endpoints.py`:
+  - ambiguous collectors (`OP` + `EB`) stay neutral,
+  - mixed evidence (one parseable + one non-parseable collector) stays neutral.
+- Validation in this container:
+  - `pytest -q backend/tests/test_catalog_endpoints.py` => `14 passed`.
+  - `pytest -q` => `239 passed, 3 failed` (pre-existing Riftbound fixture files missing under `data/fixtures`).
+  - Docker/compose and live curl validations remain blocked in this environment (`docker: command not found`).
