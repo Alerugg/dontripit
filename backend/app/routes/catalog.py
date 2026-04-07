@@ -56,11 +56,15 @@ def _apply_onepiece_set_name_mapping(rows: list[dict]) -> list[dict]:
     ).bindparams(bindparam("set_ids", expanding=True))
     canonical_sets_sql = text(
         """
-        SELECT s.code, s.name
+        SELECT lower(s.code) AS code,
+               COUNT(*) AS code_rows,
+               MAX(trim(COALESCE(s.name, ''))) AS canonical_name
         FROM sets s
         JOIN games g ON g.id = s.game_id
         WHERE g.slug = 'onepiece'
           AND lower(s.code) IN :codes
+        GROUP BY lower(s.code)
+        HAVING COUNT(*) = 1
         """
     ).bindparams(bindparam("codes", expanding=True))
 
@@ -68,16 +72,22 @@ def _apply_onepiece_set_name_mapping(rows: list[dict]) -> list[dict]:
         collector_rows = session.execute(collectors_sql, {"set_ids": set_ids}).mappings().all()
 
         inferred_codes_by_set_id: dict[int, set[str]] = {}
+        inferred_collectors_by_set_id: dict[int, int] = {}
+        non_empty_collectors_by_set_id: dict[int, int] = {}
         for collector_row in collector_rows:
+            set_id = int(collector_row["set_id"])
+            non_empty_collectors_by_set_id[set_id] = non_empty_collectors_by_set_id.get(set_id, 0) + 1
             inferred = _extract_onepiece_commercial_code_from_collector(collector_row.get("collector_number"))
             if not inferred:
                 continue
-            inferred_codes_by_set_id.setdefault(int(collector_row["set_id"]), set()).add(inferred)
+            inferred_collectors_by_set_id[set_id] = inferred_collectors_by_set_id.get(set_id, 0) + 1
+            inferred_codes_by_set_id.setdefault(set_id, set()).add(inferred)
 
         unique_inferred_by_set_id = {
             set_id: next(iter(codes))
             for set_id, codes in inferred_codes_by_set_id.items()
             if len(codes) == 1
+            and inferred_collectors_by_set_id.get(set_id, 0) == non_empty_collectors_by_set_id.get(set_id, 0)
         }
 
         inferred_codes = sorted(set(unique_inferred_by_set_id.values()))
@@ -88,7 +98,7 @@ def _apply_onepiece_set_name_mapping(rows: list[dict]) -> list[dict]:
                 code = str(canonical_row.get("code") or "").strip().lower()
                 if not code:
                     continue
-                name = str(canonical_row.get("name") or "").strip()
+                name = str(canonical_row.get("canonical_name") or "").strip()
                 canonical_by_code[code] = name or code.upper()
 
     mapped_rows: list[dict] = []
