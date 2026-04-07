@@ -336,7 +336,7 @@ class TcgdexPokemonConnector(SourceConnector):
                 "releaseDate": set_payload.get("releaseDate"),
             },
             "id": card_id,
-            "localId": detail_payload.get("localId") or card_payload.get("localId"),
+            "localId": detail_payload.get("localId") or card_payload.get("localId") or detail_payload.get("number") or card_payload.get("number"),
             "name": detail_payload.get("name") or card_payload.get("name"),
             "image": detail_payload.get("image") or card_payload.get("image"),
             "hp": detail_payload.get("hp"),
