@@ -80,6 +80,28 @@ function buildSearchMaps(searchItems = []) {
   return { byCode, byId }
 }
 
+function selectBestSearchFallback(item = {}, results = []) {
+  const itemId = String(item?.id || '').trim()
+  const itemCode = normalizeSetCode(item?.code || item?.set_code)
+  const itemName = String(item?.name || item?.title || item?.set_name || '').trim()
+
+  const exactMatch = results.find((result) => {
+    const resultId = String(result?.id || '').trim()
+    const resultCode = normalizeSetCode(result?.set_code || result?.code)
+    return (itemId && resultId === itemId) || (itemCode && resultCode === itemCode)
+  })
+  if (exactMatch) return exactMatch
+
+  const itemLooksDegraded = isNumericLike(itemCode) || isNumericLike(itemName)
+  if (!itemLooksDegraded) return null
+
+  return results.find((result) => {
+    const displayName = pickDisplayName(result?.title, result?.name, result?.set_name)
+    const displayCode = pickSetCode(result)
+    return !isNumericLike(displayName) || !isNumericLike(displayCode)
+  }) || results[0] || null
+}
+
 async function fetchItemFallbacks(game, candidates = []) {
   const fallbackById = new Map()
 
@@ -101,13 +123,8 @@ async function fetchItemFallbacks(game, candidates = []) {
 
     const results = Array.isArray(response.payload) ? response.payload : response.payload?.items || []
     const itemId = String(item?.id || '').trim()
-    const itemCode = normalizeSetCode(item?.code || item?.set_code)
 
-    const matched = results.find((result) => {
-      const resultId = String(result?.id || '').trim()
-      const resultCode = normalizeSetCode(result?.set_code || result?.code)
-      return (itemId && resultId === itemId) || (itemCode && resultCode === itemCode)
-    })
+    const matched = selectBestSearchFallback(item, results)
 
     if (matched && itemId) {
       fallbackById.set(itemId, matched)

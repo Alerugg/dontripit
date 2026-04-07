@@ -71,3 +71,11 @@
 - `/api/catalog/news` now returns a safe default item for unknown/unsupported slugs instead of `items: []`, so hubs keep a non-dead news block while dynamic provider work is pending.
 - `/api/catalog/cards/[id]` now falls back to the first filtered print image when the card-level image is missing, preserving detail-page binding after strict print filtering by `card_id`.
 - Session limitation: Docker CLI is not installed in this environment, so compose build/test and live `curl` verifications against `localhost:3000` could not be executed here.
+
+## Data-quality verification follow-up (2026-04-07, branch `work`)
+- Frontend BFF `/api/catalog/sets` now applies a stronger fallback match strategy when upstream `/api/v1/sets` rows are degraded (numeric-only names/codes or `card_count=0`):
+  - keeps exact id/code matches as first priority,
+  - but if no exact match exists and source row looks degraded, it selects the best `/api/v1/search` set candidate that exposes non-numeric display metadata.
+- This specifically hardens One Piece set-label recovery for legacy numeric pack ids (for example `569301`) so the BFF can promote canonical set labels/codes when search has better metadata.
+- Backend test run in this session: `pytest -q` => `237 passed`.
+- Session limitation unchanged: Docker CLI unavailable (`docker: command not found`), so required compose + localhost:3000 curl smoke checks could not be executed in this container.
