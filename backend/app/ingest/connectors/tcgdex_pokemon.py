@@ -27,7 +27,9 @@ class TcgdexPokemonConnector(SourceConnector):
             if row is not None:
                 return row
         if set_code:
-            row = session.execute(select(Set).where(Set.game_id == game_id, Set.code == set_code)).scalar_one_or_none()
+            row = session.execute(
+                select(Set).where(Set.game_id == game_id, func.lower(Set.code) == set_code)
+            ).scalar_one_or_none()
             if row is not None:
                 return row
 
@@ -47,6 +49,11 @@ class TcgdexPokemonConnector(SourceConnector):
             row = session.execute(select(Card).where(Card.game_id == game_id, Card.card_key == card_key)).scalar_one_or_none()
             if row is not None:
                 return row
+        card_name = (card_payload.get("name") or "").strip()
+        if card_name and not card_key:
+            matches = session.execute(select(Card).where(Card.game_id == game_id, Card.name == card_name)).scalars().all()
+            if len(matches) == 1:
+                return matches[0]
         return None
 
     def _find_print(
@@ -320,9 +327,7 @@ class TcgdexPokemonConnector(SourceConnector):
 
     def _build_card_payload(self, set_payload: dict, card_payload: dict, *, lang: str = "en") -> dict:
         card_id = card_payload.get("id")
-        detail_payload = {}
-        if card_id:
-            detail_payload = self._request_json(f"{self.base_url_template.format(lang=lang)}/cards/{card_id}")
+        detail_payload = card_payload if isinstance(card_payload, dict) else {}
         return {
             "set": {
                 "id": set_payload.get("id"),
@@ -525,13 +530,7 @@ class TcgdexPokemonConnector(SourceConnector):
             return {}
 
         release_date = date.fromisoformat(set_payload["released_at"]) if set_payload.get("released_at") else None
-        set_row = None
-        if set_tcgdex_id:
-            set_row = session.execute(
-                select(Set).where(Set.game_id == game.id, Set.tcgdex_id == set_tcgdex_id)
-            ).scalar_one_or_none()
-        if set_row is None and set_code:
-            set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == set_code)).scalar_one_or_none()
+        set_row = self._find_set(session, game.id, set_payload)
 
         if set_row is None:
             if set_tcgdex_id:
