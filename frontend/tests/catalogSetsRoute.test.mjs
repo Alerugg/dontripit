@@ -3,13 +3,13 @@ import assert from 'node:assert/strict'
 
 const setsNormalizerModule = () => import(`../lib/catalog/normalizers/sets.js?ts=${Date.now()}`)
 
-test('One Piece canonical mapping uses a unique, non-numeric fallback when mapping is unequivocal', async () => {
+test('One Piece canonical mapping uses canonical labels only on unequivocal matches', async () => {
   const sets = await setsNormalizerModule()
 
   const fallback = sets.selectBestSearchFallback(
     { id: 1188, code: '1188', name: '1188' },
     [
-      { id: 9001, set_code: 'EB-02', title: 'Extra Booster Memorial Collection' },
+      { id: 1188, set_code: 'EB-02', title: 'Extra Booster Memorial Collection' },
     ],
   )
 
@@ -44,9 +44,9 @@ test('One Piece normalization keeps distinct ids from sharing a heuristic canoni
   const sets = await setsNormalizerModule()
 
   const degradedItems = [
-    { id: 1188, code: '1188', name: '1188', game_slug: 'onepiece' },
-    { id: 1189, code: '1189', name: '1189', game_slug: 'onepiece' },
-    { id: 1191, code: '1191', name: '1191', game_slug: 'onepiece' },
+    { id: 1188, code: '1188', name: '1188', game_slug: 'onepiece', card_count: 14 },
+    { id: 1189, code: '1189', name: '1189', game_slug: 'onepiece', card_count: 17 },
+    { id: 1191, code: '1191', name: '1191', game_slug: 'onepiece', card_count: 9 },
   ]
 
   const ambiguousResults = [
@@ -63,4 +63,36 @@ test('One Piece normalization keeps distinct ids from sharing a heuristic canoni
   assert.equal(distinctCodes.size, degradedItems.length)
   assert.deepEqual(normalized.map((item) => item.code), ['1188', '1189', '1191'])
   assert.deepEqual(normalized.map((item) => item.title), ['Set #1188', 'Set #1189', 'Set #1191'])
+  assert.deepEqual(normalized.map((item) => item.card_count), [14, 17, 9])
+})
+
+test('normalizeSet preserves required payload fields', async () => {
+  const sets = await setsNormalizerModule()
+
+  const normalized = sets.normalizeSet({
+    id: 1195,
+    code: '1195',
+    name: '1195',
+    game_slug: 'onepiece',
+    card_count: 32,
+  })
+
+  assert.deepEqual(Object.keys(normalized).sort(), [
+    'card_count',
+    'code',
+    'game',
+    'game_slug',
+    'id',
+    'name',
+    'set_code',
+    'title',
+  ])
+  assert.equal(normalized.id, 1195)
+  assert.equal(normalized.code, '1195')
+  assert.equal(normalized.set_code, '1195')
+  assert.equal(normalized.name, 'Set #1195')
+  assert.equal(normalized.title, 'Set #1195')
+  assert.equal(normalized.game, 'onepiece')
+  assert.equal(normalized.game_slug, 'onepiece')
+  assert.equal(normalized.card_count, 32)
 })
