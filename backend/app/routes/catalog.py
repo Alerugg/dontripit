@@ -1,7 +1,7 @@
 import re
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
@@ -10,6 +10,7 @@ catalog_bp = Blueprint("catalog", __name__)
 
 _RATE_LIMIT_BUCKETS = {}
 _CACHE = {}
+_ONEPIECE_COLLECTOR_SET_CODE_RE = re.compile(r"\b(OP|ST|EB)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
 def _is_numeric_like(value: str | None) -> bool:
     return bool(re.fullmatch(r"\d+", str(value or "").strip()))
 
@@ -24,6 +25,84 @@ def _normalize_onepiece_set_row(row: dict) -> dict:
         row["name"] = f"Set #{row.get('id')}"
 
     return row
+
+
+def _extract_onepiece_commercial_code_from_collector(collector_number: str | None) -> str:
+    raw = str(collector_number or "").strip()
+    if not raw:
+        return ""
+    match = _ONEPIECE_COLLECTOR_SET_CODE_RE.search(raw)
+    if not match:
+        return ""
+    prefix, number = match.groups()
+    return f"{prefix.lower()}-{int(number):02d}"
+
+
+def _apply_onepiece_set_name_mapping(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return rows
+
+    set_ids = [int(row["id"]) for row in rows if row.get("id") is not None]
+    if not set_ids:
+        return rows
+
+    collectors_sql = text(
+        """
+        SELECT p.set_id, p.collector_number
+        FROM prints p
+        WHERE p.set_id IN :set_ids
+          AND trim(COALESCE(p.collector_number, '')) <> ''
+        """
+    ).bindparams(bindparam("set_ids", expanding=True))
+    canonical_sets_sql = text(
+        """
+        SELECT s.code, s.name
+        FROM sets s
+        JOIN games g ON g.id = s.game_id
+        WHERE g.slug = 'onepiece'
+          AND lower(s.code) IN :codes
+        """
+    ).bindparams(bindparam("codes", expanding=True))
+
+    with db.SessionLocal() as session:
+        collector_rows = session.execute(collectors_sql, {"set_ids": set_ids}).mappings().all()
+
+        inferred_codes_by_set_id: dict[int, set[str]] = {}
+        for collector_row in collector_rows:
+            inferred = _extract_onepiece_commercial_code_from_collector(collector_row.get("collector_number"))
+            if not inferred:
+                continue
+            inferred_codes_by_set_id.setdefault(int(collector_row["set_id"]), set()).add(inferred)
+
+        unique_inferred_by_set_id = {
+            set_id: next(iter(codes))
+            for set_id, codes in inferred_codes_by_set_id.items()
+            if len(codes) == 1
+        }
+
+        inferred_codes = sorted(set(unique_inferred_by_set_id.values()))
+        canonical_by_code: dict[str, str] = {}
+        if inferred_codes:
+            canonical_rows = session.execute(canonical_sets_sql, {"codes": inferred_codes}).mappings().all()
+            for canonical_row in canonical_rows:
+                code = str(canonical_row.get("code") or "").strip().lower()
+                if not code:
+                    continue
+                name = str(canonical_row.get("name") or "").strip()
+                canonical_by_code[code] = name or code.upper()
+
+    mapped_rows: list[dict] = []
+    for row in rows:
+        original_name = str(row.get("name") or "").strip()
+        original_code = str(row.get("code") or "").strip()
+        is_degraded_numeric = _is_numeric_like(original_code) and (not original_name or _is_numeric_like(original_name))
+        normalized = _normalize_onepiece_set_row(dict(row))
+        set_id = int(normalized["id"])
+        inferred_code = unique_inferred_by_set_id.get(set_id)
+        if inferred_code and inferred_code in canonical_by_code and is_degraded_numeric:
+            normalized["name"] = canonical_by_code[inferred_code]
+        mapped_rows.append(normalized)
+    return mapped_rows
 
 
 def _int_param(name: str, default: int, maximum: int) -> int:
@@ -293,13 +372,14 @@ def list_sets():
     except SQLAlchemyError as error:
         return _json_error("sets_query_failed", str(error), 500)
 
+    normalized_rows = [dict(row) for row in rows]
+    if game == "onepiece":
+        normalized_rows = _apply_onepiece_set_name_mapping(normalized_rows)
+
     payload = []
-    for row in rows:
-        item = dict(row)
-        if game == "onepiece":
-            item = _normalize_onepiece_set_row(item)
-        item.pop("sample_collector_number", None)
-        payload.append(item)
+    for row in normalized_rows:
+        row.pop("sample_collector_number", None)
+        payload.append(row)
 
     return jsonify(payload)
 

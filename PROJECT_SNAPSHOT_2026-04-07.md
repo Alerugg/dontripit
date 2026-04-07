@@ -128,3 +128,17 @@
   - frontend normalizer tests passed (`4` tests),
   - full local `pytest -q` in this container reports `235 passed, 3 failed` due pre-existing missing Riftbound fixture files under `data/fixtures`.
   - required docker compose + localhost curl validation remains blocked here because Docker CLI is unavailable (`docker: command not found`) and no local server is running on `localhost:3000`.
+
+## One Piece source set-name mapping follow-up (2026-04-07, branch `work`)
+- Root cause confirmed in backend `/api/v1/sets`:
+  - legacy One Piece set rows with numeric code/name were only receiving neutral fallback (`Set #<id>`),
+  - endpoint had no safe bridge from those legacy ids to canonical set labels even when print collector numbers clearly identified a commercial set family/code.
+- Minimal backend fix in `backend/app/routes/catalog.py`:
+  - added a safe collector-prefix extractor (`OPxx`, `STxx`, `EBxx`) and set-level inference,
+  - applies canonical One Piece **name** mapping only when all available collectors in that set imply exactly one commercial code and an existing canonical set row exists for that code,
+  - preserves original set `code` to avoid collapsing distinct legacy set identities.
+- Regression tests added in `backend/tests/test_catalog_endpoints.py`:
+  - maps neutral numeric One Piece set name to canonical label when mapping is unequivocal,
+  - preserves distinct legacy numeric codes (no collapse into one canonical code),
+  - keeps neutral label when no safe mapping exists,
+  - existing Pokemon set endpoint coverage remains green.
