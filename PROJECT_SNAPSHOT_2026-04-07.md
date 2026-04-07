@@ -111,3 +111,20 @@
   - `backend pytest -q` => `238 passed`;
   - `node --test frontend/tests/catalogSetsRoute.test.mjs` => `3 passed`;
   - docker-compose and live localhost curl checks could not be executed because Docker CLI is unavailable in this container (`docker: command not found`).
+
+## One Piece set identity anti-collapse patch (2026-04-07, branch `work`)
+- Root cause confirmed in two layers:
+  - Backend `/api/v1/sets` One Piece normalization was deriving canonical commercial codes from a single sample collector number (`ST10-001` => `st-10` style), which can over-assign canon for legacy numeric set ids that are not proven equivalent.
+  - Frontend `/api/catalog/sets` fallback matcher could accept heuristic search candidates for degraded numeric rows, which risks collapsing distinct set ids to repeated canonical codes.
+- Fix implemented with minimal/localized scope:
+  - Backend now **preserves original set `code` identity** for One Piece and only applies a neutral display fallback (`Set #<id>`) when both code/name are numeric-like.
+  - Frontend set fallback now only applies canonical mapping on **unequivocal** matches (exact id, or exact non-numeric code); degraded numeric sets no longer get heuristic canonical assignment.
+  - Frontend normalization guarantees neutral non-numeric title/name fallback (`Set #<id>`) when display label is numeric-like.
+- Added/updated regression coverage:
+  - backend: `test_v1_sets_onepiece_keeps_unique_numeric_codes_and_uses_neutral_name_fallback`
+  - frontend: strengthened `catalogSetsRoute` tests for unequivocal-only canonical mapping, ambiguity handling, distinct-id preservation, and payload shape.
+- Validation executed in this session:
+  - targeted backend test passed,
+  - frontend normalizer tests passed (`4` tests),
+  - full local `pytest -q` in this container reports `235 passed, 3 failed` due pre-existing missing Riftbound fixture files under `data/fixtures`.
+  - required docker compose + localhost curl validation remains blocked here because Docker CLI is unavailable (`docker: command not found`) and no local server is running on `localhost:3000`.

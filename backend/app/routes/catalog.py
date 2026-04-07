@@ -10,33 +10,19 @@ catalog_bp = Blueprint("catalog", __name__)
 
 _RATE_LIMIT_BUCKETS = {}
 _CACHE = {}
-_ONEPIECE_COLLECTOR_SET_RE = re.compile(r"^\s*([a-z]{1,3})[-\s]?(\d{2})[-\s]?\d+", re.IGNORECASE)
-
-
 def _is_numeric_like(value: str | None) -> bool:
     return bool(re.fullmatch(r"\d+", str(value or "").strip()))
 
 
-def _derive_onepiece_commercial_code(value: str | None) -> str:
-    match = _ONEPIECE_COLLECTOR_SET_RE.match(str(value or "").strip())
-    if not match:
-        return ""
-    family = match.group(1).lower()
-    number = match.group(2)
-    return f"{family}-{number}"
-
-
 def _normalize_onepiece_set_row(row: dict) -> dict:
-    code = str(row.get("code") or "").strip().lower()
-    name = str(row.get("name") or "").strip()
-    if not _is_numeric_like(code) and not _is_numeric_like(name):
-        return row
+    """Normalize degraded legacy One Piece labels without collapsing set identities."""
 
-    canonical_code = _derive_onepiece_commercial_code(row.get("sample_collector_number"))
-    if canonical_code:
-        row["code"] = canonical_code
-        if not name or _is_numeric_like(name):
-            row["name"] = canonical_code.upper()
+    code = str(row.get("code") or "").strip()
+    name = str(row.get("name") or "").strip()
+
+    if _is_numeric_like(code) and (not name or _is_numeric_like(name)):
+        row["name"] = f"Set #{row.get('id')}"
+
     return row
 
 

@@ -69,7 +69,7 @@ def test_v1_sets_includes_non_zero_card_count_when_prints_exist(client):
     assert any(int(item.get("card_count", 0)) > 0 for item in payload)
 
 
-def test_v1_sets_onepiece_derives_commercial_set_code_from_collectors_for_numeric_legacy_sets(client):
+def test_v1_sets_onepiece_keeps_unique_numeric_codes_and_uses_neutral_name_fallback(client):
     run_seed()
     with db.SessionLocal() as session:
         game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
@@ -100,8 +100,9 @@ def test_v1_sets_onepiece_derives_commercial_set_code_from_collectors_for_numeri
     payload = response.get_json()
     assert payload
     top = payload[0]
-    assert top["code"] == "st-10"
-    assert top["name"] == "ST-10"
+    assert top["code"] == "569010"
+    assert top["name"] == f"Set #{top['id']}"
+    assert int(top["card_count"]) > 0
 
 
 def test_v1_cards_with_query_returns_200(client):

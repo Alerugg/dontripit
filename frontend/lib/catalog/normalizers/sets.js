@@ -37,7 +37,7 @@ export function pickSetCode(item = {}, searchFallback = null) {
 
 export function normalizeSet(item = {}, searchFallback = null) {
   const code = pickSetCode(item, searchFallback)
-  const displayName = pickDisplayName(
+  let displayName = pickDisplayName(
     item.name,
     item.title,
     item.set_name,
@@ -47,6 +47,10 @@ export function normalizeSet(item = {}, searchFallback = null) {
     code,
     `Set #${item.id || searchFallback?.id || ''}`.trim(),
   )
+  if (isNumericLike(displayName)) {
+    displayName = `Set #${item.id || searchFallback?.id || ''}`.trim()
+  }
+
   const baseCount = toCount(item.card_count ?? item.count ?? item.total_cards, 0)
   const searchCount = toCount(searchFallback?.variant_count ?? searchFallback?.card_count, 0)
 
@@ -87,25 +91,12 @@ export function selectBestSearchFallback(item = {}, results = []) {
   const exactMatch = results.find((result) => {
     const resultId = String(result?.id || '').trim()
     const resultCode = normalizeSetCode(result?.set_code || result?.code)
-    return (itemId && resultId === itemId) || (itemCode && resultCode === itemCode)
+    return (itemId && resultId === itemId) || (itemCode && !isNumericLike(itemCode) && resultCode === itemCode)
   })
   if (exactMatch) return exactMatch
 
   const itemLooksDegraded = isNumericLike(itemCode) || isNumericLike(itemName)
-  if (!itemLooksDegraded) return null
+  if (itemLooksDegraded) return null
 
-  const qualified = results
-    .map((result) => {
-      const canonicalCode = pickSetCode(result)
-      const canonicalName = pickDisplayName(result?.title, result?.name, result?.set_name, canonicalCode)
-      return {
-        result,
-        canonicalCode,
-        canonicalName,
-      }
-    })
-    .filter(({ canonicalCode, canonicalName }) => canonicalCode && !isNumericLike(canonicalCode) && !isNumericLike(canonicalName))
-
-  if (qualified.length !== 1) return null
-  return qualified[0].result
+  return null
 }
