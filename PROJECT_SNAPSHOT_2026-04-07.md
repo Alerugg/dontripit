@@ -92,3 +92,22 @@
 - Validation in this session:
   - targeted local pytest passed,
   - docker/compose and localhost curl checks remain blocked because Docker CLI is unavailable in this environment.
+
+## One Piece canonical disambiguation hotfix (2026-04-07, branch `work`)
+- Root cause identified in frontend BFF `/api/catalog/sets` fallback heuristics:
+  - when `/api/v1/sets` returned degraded numeric-only One Piece labels/codes, the fallback selector accepted the first non-numeric `/api/v1/search` candidate whenever exact id/code match was missing;
+  - this could over-canonicalize multiple distinct set ids into the same label/code (for example repeated `EB-01`).
+- Minimal/localized fix:
+  - extracted set-normalization helpers to `frontend/lib/catalog/normalizers/sets.js` (logic-only module);
+  - tightened `selectBestSearchFallback` to apply canonical fallback only when it is **unequivocal**:
+    - exact id/code match still wins;
+    - degraded numeric source rows now accept heuristic fallback only if there is exactly one qualified non-numeric candidate;
+    - ambiguous candidates return `null` so route falls back to neutral label (`Set #<id>`) instead of collapsing to one canonical code.
+- Added focused tests in `frontend/tests/catalogSetsRoute.test.mjs`:
+  - unique canonical fallback is applied when unambiguous;
+  - ambiguous fallback does not force one canonical code;
+  - multiple degraded ids remain distinct instead of collapsing to a shared code.
+- Verification in this session:
+  - `backend pytest -q` => `238 passed`;
+  - `node --test frontend/tests/catalogSetsRoute.test.mjs` => `3 passed`;
+  - docker-compose and live localhost curl checks could not be executed because Docker CLI is unavailable in this container (`docker: command not found`).
