@@ -1,17 +1,19 @@
 import { notFound } from 'next/navigation'
 import TopNav from '../../../../../components/layout/TopNav'
-import SetLandingPage from '../../../../../components/catalog/SetLandingPage'
+import GameSetPage from '../../../../../components/games/GameSetPage'
 import { getGameConfig } from '../../../../../lib/catalog/games'
 
-export default function GameSetPage({ params }) {
+export default function SetPage({ params }) {
   const game = getGameConfig(params.slug)
 
-  if (!game) notFound()
+  if (!game || !params.setCode) {
+    notFound()
+  }
 
   return (
     <main>
       <TopNav />
-      <SetLandingPage game={game} setCode={decodeURIComponent(params.setCode)} />
+      <GameSetPage gameSlug={params.slug} setCode={params.setCode} />
     </main>
   )
 }

@@ -1,0 +1,201 @@
+.game-set-page {
+  display: grid;
+  gap: 24px;
+}
+
+.game-set-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  padding: 24px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(103,215,255,0.08), transparent 22%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
+}
+
+.game-set-hero-copy {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+}
+
+.game-set-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+
+.game-set-hero-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.game-set-hero-meta-line {
+  color: var(--muted-2);
+  font-size: 1rem;
+}
+
+.game-set-hero-visual {
+  display: grid;
+  align-content: center;
+}
+
+.game-set-hero-art {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
+}
+
+.game-set-hero-media {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    radial-gradient(circle at center, rgba(167,139,250,0.14), transparent 52%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
+  overflow: hidden;
+  padding: 18px;
+}
+
+.game-set-hero-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.28));
+}
+
+.game-set-hero-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.game-set-hero-placeholder span {
+  color: var(--accent-3);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-set-hero-art-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.game-set-hero-art-copy strong {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.game-set-hero-art-copy small {
+  color: var(--muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 920px) {
+  .game-set-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+.game-set-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+
+.game-set-hero-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.game-set-hero-meta-line {
+  color: var(--muted-2);
+  font-size: 1rem;
+}
+
+.game-set-hero-visual {
+  display: grid;
+  align-content: center;
+}
+
+.game-set-hero-art {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
+}
+
+.game-set-hero-media {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    radial-gradient(circle at center, rgba(167,139,250,0.14), transparent 52%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
+  overflow: hidden;
+  padding: 18px;
+}
+
+.game-set-hero-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.28));
+}
+
+.game-set-hero-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.game-set-hero-placeholder span {
+  color: var(--accent-3);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-set-hero-art-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.game-set-hero-art-copy strong {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.game-set-hero-art-copy small {
+  color: var(--muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 920px) {
+  .game-set-hero {
+    grid-template-columns: 1fr;
+  }
+}
