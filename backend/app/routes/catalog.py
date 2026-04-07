@@ -240,14 +240,23 @@ def list_sets():
         f"""
         SELECT s.id,
                s.code,
-               s.name,
+               CASE
+                 WHEN trim(COALESCE(s.name, '')) = '' THEN s.code
+                 ELSE s.name
+               END AS name,
                g.slug AS game_slug,
                s.tcgdex_id,
                NULL AS scryfall_id,
                s.yugioh_id,
-               s.riftbound_id
+               s.riftbound_id,
+               COALESCE(set_card_counts.card_count, 0) AS card_count
         FROM sets s
         JOIN games g ON g.id = s.game_id
+        LEFT JOIN (
+            SELECT p.set_id, COUNT(DISTINCT p.card_id) AS card_count
+            FROM prints p
+            GROUP BY p.set_id
+        ) set_card_counts ON set_card_counts.set_id = s.id
         {where_sql}
         ORDER BY s.name ASC, s.id ASC
         LIMIT :limit OFFSET :offset

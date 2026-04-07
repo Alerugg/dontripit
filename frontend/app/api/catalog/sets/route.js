@@ -2,12 +2,18 @@ import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
 
 function normalizeSet(item = {}) {
+  const code = String(item.code || item.set_code || '').trim()
+  const rawName = String(item.name || item.title || item.set_name || '').trim()
+  const isNumericName = /^\d+$/.test(rawName)
+  const fallbackName = code || `Set #${item.id || ''}`.trim()
+  const displayName = rawName && !(isNumericName && code) ? rawName : fallbackName
+
   return {
     id: item.id,
-    code: item.code,
-    set_code: item.code,
-    name: item.name,
-    title: item.name,
+    code,
+    set_code: code,
+    name: displayName,
+    title: displayName,
     game: item.game_slug || '',
     game_slug: item.game_slug || '',
     card_count: Number(item.card_count || item.count || item.total_cards || 0),
