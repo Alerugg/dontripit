@@ -53,3 +53,7 @@
 ## Post-recovery integration fix (2026-04-07)
 - Added missing frontend catalog adapter routes for `news`, `sets`, and `set-detail` under `frontend/app/api/catalog/*` so recovered game hub and set views no longer depend on missing internal endpoints.
 - Hardened catalog card linking to avoid routing print-only entities to `/cards/[cardId]` when `card_id` is absent.
+
+## Post-recovery integration fix check
+- Merged remote branch: origin/codex/fix-post-recovery-integration-bugs
+- Goal: restore missing Next internal adapters for catalog news/sets and fix card detail binding after frontend recovery
