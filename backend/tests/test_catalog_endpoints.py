@@ -284,6 +284,102 @@ def test_v1_sets_onepiece_keeps_neutral_name_when_some_collectors_lack_prefix_ev
     assert payload[0]["name"] == f"Set #{payload[0]['id']}"
 
 
+def test_v1_sets_onepiece_default_listing_excludes_legacy_mixed_ambiguous_sets(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        canonical_set = Set(game_id=game.id, code="op-01", name="Romance Dawn")
+        legacy_set = Set(game_id=game.id, code="1188", name="1188")
+        card_a = Card(game_id=game.id, name="A", card_key="legacy-op")
+        card_b = Card(game_id=game.id, name="B", card_key="legacy-eb")
+        session.add_all([canonical_set, legacy_set, card_a, card_b])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_a.id,
+                    collector_number="OP01-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:1188:op01-001:en:default",
+                ),
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_b.id,
+                    collector_number="EB01-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:1188:eb01-001:en:default",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    codes = {item["code"] for item in payload}
+    assert "op-01" in codes
+    assert "1188" not in codes
+
+
+def test_v1_sets_onepiece_can_include_legacy_mixed_ambiguous_sets_when_requested(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        legacy_set = Set(game_id=game.id, code="1189", name="1189")
+        card_a = Card(game_id=game.id, name="A", card_key="legacy-st")
+        card_b = Card(game_id=game.id, name="B", card_key="legacy-op")
+        session.add_all([legacy_set, card_a, card_b])
+        session.flush()
+        session.add_all(
+            [
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_a.id,
+                    collector_number="ST10-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:1189:st10-001:en:default",
+                ),
+                Print(
+                    set_id=legacy_set.id,
+                    card_id=card_b.id,
+                    collector_number="OP01-002",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:1189:op01-002:en:default",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get(
+        "/api/v1/sets?game=onepiece&include_legacy_ambiguous=true&q=1189",
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    target = next(item for item in payload if item["code"] == "1189")
+    assert target["name"] == f"Set #{target['id']}"
+    assert target["onepiece_set_classification"] == "legacy_mixed_ambiguous"
+    assert int(target["card_count"]) == 2
+
+
 def test_v1_cards_with_query_returns_200(client):
     _seed_fixture_catalog()
     response = client.get("/api/v1/cards?game=pokemon&q=pika", headers=_auth_headers())

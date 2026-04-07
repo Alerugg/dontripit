@@ -182,3 +182,23 @@ Set IDs requested (`1188`, `1189`, `1190`, `1191`):
 Action taken in backend code:
 - No mapping changes implemented (no inequívoca per-id evidence available in this environment).
 - Existing safe neutral fallback behavior is preserved.
+
+## One Piece canonical vs legacy-mixed classification patch (2026-04-07, branch `work`)
+- Root cause:
+  - `/api/v1/sets` correctly avoided aggressive canonical remapping for numeric One Piece legacy rows, but still exposed mixed/ambiguous legacy containers in the main listing with neutral labels, which polluted the default set directory surface.
+- Minimal backend change:
+  - Added explicit One Piece set classification in `/api/v1/sets`:
+    - `canonical` for safe canonical identities (native canonical code or unequivocal numeric->canonical inference),
+    - `legacy_mixed_ambiguous` for legacy numeric/mixed containers that are not safe to canonize.
+  - Default `/api/v1/sets?game=onepiece` now excludes `legacy_mixed_ambiguous` rows unless explicitly requested with `include_legacy_ambiguous=true` (or when directly searched via `q`), preventing ids like `1188-1191` from contaminating principal listing behavior.
+  - Kept existing safety guarantees:
+    - no invented mappings,
+    - no forced canonical code collapse,
+    - `card_count` query untouched.
+- Tests added:
+  - onepiece default listing excludes mixed ambiguous legacy rows,
+  - onepiece explicit include path returns legacy mixed row marked as `legacy_mixed_ambiguous`,
+  - canonical onepiece mapping and ambiguity-neutral behavior remain validated by existing tests.
+- Validation in this container:
+  - targeted backend tests pass;
+  - required Docker compose + backend-in-container pytest + localhost curl checks cannot run here because Docker CLI is unavailable (`docker: command not found`).
