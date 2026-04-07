@@ -53,3 +53,13 @@
 ## Post-recovery integration fix (2026-04-07)
 - Added missing frontend catalog adapter routes for `news`, `sets`, and `set-detail` under `frontend/app/api/catalog/*` so recovered game hub and set views no longer depend on missing internal endpoints.
 - Hardened catalog card linking to avoid routing print-only entities to `/cards/[cardId]` when `card_id` is absent.
+
+## Post-recovery catalog hardening (2026-04-07, branch `work`)
+- Backend `/api/v1/sets` now returns `card_count` using `COUNT(DISTINCT prints.card_id)` per set, and falls back to set code when set name is blank.
+- Frontend BFF `/api/catalog/sets` now normalizes display names safely:
+  - preserves canonical names when valid,
+  - avoids exposing pure numeric names as final display labels when a better set code exists,
+  - preserves payload shape (`id`, `code`, `set_code`, `name`, `title`, `game`, `game_slug`, `card_count`).
+- Card detail page (`/games/[slug]/cards/[cardId]`) now validates route game slug against fetched card game slug before rendering, preventing cross-game mismatches in card ↔ variants binding.
+- Regression test added: `backend/tests/test_catalog_endpoints.py::test_v1_sets_includes_non_zero_card_count_when_prints_exist`.
+- Local environment limitation in this session: Docker CLI unavailable (`docker: command not found`), so compose-based smoke checks/curls could not be completed against a running stack.

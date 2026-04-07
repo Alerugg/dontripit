@@ -60,6 +60,15 @@ def test_v1_sets_with_game_returns_200_and_list(client):
     assert isinstance(response.get_json(), list)
 
 
+def test_v1_sets_includes_non_zero_card_count_when_prints_exist(client):
+    _seed_fixture_catalog()
+    response = client.get("/api/v1/sets?game=pokemon", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload, list)
+    assert any(int(item.get("card_count", 0)) > 0 for item in payload)
+
+
 def test_v1_cards_with_query_returns_200(client):
     _seed_fixture_catalog()
     response = client.get("/api/v1/cards?game=pokemon&q=pika", headers=_auth_headers())

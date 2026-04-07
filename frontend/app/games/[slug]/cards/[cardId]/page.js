@@ -7,6 +7,7 @@ import TopNav from '../../../../../components/layout/TopNav'
 import StatePanel from '../../../../../components/catalog/StatePanel'
 import CardDetailLayout from '../../../../../components/cards/CardDetailLayout'
 import { fetchCardById } from '../../../../../lib/catalog/client'
+import { normalizeGameSlug } from '../../../../../lib/catalog/games'
 import { getGameExplorerHref } from '../../../../../lib/catalog/routes'
 
 export default function GameCardDetailPage({ params }) {
@@ -27,6 +28,13 @@ export default function GameCardDetailPage({ params }) {
       try {
         if (!resolvedCardId) throw new Error('No se recibió cardId en la ruta.')
         const payload = await fetchCardById(resolvedCardId)
+        const resolvedRouteSlug = normalizeGameSlug(params.slug || '')
+        const payloadGameSlug = normalizeGameSlug(payload?.game || payload?.game_slug || '')
+
+        if (resolvedRouteSlug && payloadGameSlug && resolvedRouteSlug !== payloadGameSlug) {
+          throw new Error(`La carta ${resolvedCardId} pertenece a ${payloadGameSlug}, no a ${resolvedRouteSlug}.`)
+        }
+
         if (!cancelled) setCard(payload)
       } catch (requestError) {
         if (!cancelled) {
