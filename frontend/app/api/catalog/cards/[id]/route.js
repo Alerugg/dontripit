@@ -16,5 +16,19 @@ export async function GET(_, { params }) {
     )
   }
 
-  return NextResponse.json(upstream.payload)
+  const payload = upstream.payload || {}
+  const requestedCardId = String(params.id || '')
+  const normalizedPrints = Array.isArray(payload?.prints)
+    ? payload.prints.filter((print) => String(print?.card_id || '') === requestedCardId)
+    : []
+  const normalizedSets = Array.isArray(payload?.sets)
+    ? payload.sets.filter((setItem) => normalizedPrints.some((print) => String(print?.set_code || '').toLowerCase() === String(setItem?.code || '').toLowerCase()))
+    : []
+
+  return NextResponse.json({
+    ...payload,
+    id: payload?.id ?? Number(params.id),
+    prints: normalizedPrints,
+    sets: normalizedSets,
+  })
 }
