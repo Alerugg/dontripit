@@ -69,7 +69,7 @@ def test_v1_sets_includes_non_zero_card_count_when_prints_exist(client):
     assert any(int(item.get("card_count", 0)) > 0 for item in payload)
 
 
-def test_v1_sets_onepiece_keeps_unique_numeric_codes_and_uses_neutral_name_fallback(client):
+def test_v1_sets_onepiece_maps_neutral_numeric_set_to_canonical_name_when_mapping_is_unequivocal(client):
     run_seed()
     with db.SessionLocal() as session:
         game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
@@ -78,9 +78,10 @@ def test_v1_sets_onepiece_keeps_unique_numeric_codes_and_uses_neutral_name_fallb
             session.add(game)
             session.flush()
 
+        canonical_set = Set(game_id=game.id, code="st-10", name="The Three Captains")
         legacy_set = Set(game_id=game.id, code="569010", name="569010")
         card = Card(game_id=game.id, name="Monkey.D.Luffy", card_key="legacy-luffy-st10")
-        session.add_all([legacy_set, card])
+        session.add_all([canonical_set, legacy_set, card])
         session.flush()
 
         session.add(
@@ -101,8 +102,91 @@ def test_v1_sets_onepiece_keeps_unique_numeric_codes_and_uses_neutral_name_fallb
     assert payload
     top = payload[0]
     assert top["code"] == "569010"
-    assert top["name"] == f"Set #{top['id']}"
+    assert top["name"] == "The Three Captains"
     assert int(top["card_count"]) > 0
+
+
+def test_v1_sets_onepiece_does_not_collapse_distinct_numeric_set_codes_into_same_canonical_code(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        canonical_set = Set(game_id=game.id, code="st-10", name="The Three Captains")
+        legacy_set_a = Set(game_id=game.id, code="569010", name="569010")
+        legacy_set_b = Set(game_id=game.id, code="569011", name="569011")
+        card_a = Card(game_id=game.id, name="Monkey.D.Luffy", card_key="legacy-luffy-st10-a")
+        card_b = Card(game_id=game.id, name="Roronoa Zoro", card_key="legacy-zoro-st10-b")
+        session.add_all([canonical_set, legacy_set_a, legacy_set_b, card_a, card_b])
+        session.flush()
+
+        session.add_all(
+            [
+                Print(
+                    set_id=legacy_set_a.id,
+                    card_id=card_a.id,
+                    collector_number="ST10-001",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569010:st10-001:en:default",
+                ),
+                Print(
+                    set_id=legacy_set_b.id,
+                    card_id=card_b.id,
+                    collector_number="ST10-002",
+                    language="en",
+                    variant="default",
+                    print_key="onepiece:569011:st10-002:en:default",
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece&q=5690", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload) >= 2
+
+    legacy_codes = {item["code"] for item in payload if item["code"] in {"569010", "569011"}}
+    assert legacy_codes == {"569010", "569011"}
+
+
+def test_v1_sets_onepiece_keeps_neutral_name_when_safe_mapping_is_not_available(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        legacy_set = Set(game_id=game.id, code="569999", name="569999")
+        card = Card(game_id=game.id, name="Nami", card_key="legacy-nami-unknown")
+        session.add_all([legacy_set, card])
+        session.flush()
+
+        session.add(
+            Print(
+                set_id=legacy_set.id,
+                card_id=card.id,
+                collector_number="P-001",
+                language="en",
+                variant="default",
+                print_key="onepiece:569999:p-001:en:default",
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece&q=569999", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    top = payload[0]
+    assert top["code"] == "569999"
+    assert top["name"] == f"Set #{top['id']}"
 
 
 def test_v1_cards_with_query_returns_200(client):
