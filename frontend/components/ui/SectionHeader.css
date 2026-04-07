@@ -1,0 +1,47 @@
+.section-header-v2 {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.section-header-v2.is-compact {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.section-header-v2.is-between {
+  align-items: center;
+}
+
+.section-header-v2-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.section-header-v2-copy h2 {
+  margin: 0;
+  font-size: clamp(1.3rem, 2vw, 1.8rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.section-header-v2-copy p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.section-header-v2-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .section-header-v2 {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

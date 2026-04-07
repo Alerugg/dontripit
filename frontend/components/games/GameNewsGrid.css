@@ -1,0 +1,145 @@
+.game-news-block {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(103,215,255,0.08), transparent 22%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
+}
+
+.game-news-block-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.game-news-block-head h2 {
+  margin: 0;
+  font-size: clamp(1.42rem, 2vw, 1.95rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.game-news-block-copy {
+  margin: 0;
+  max-width: 44ch;
+  color: var(--muted);
+  line-height: 1.65;
+  text-align: right;
+}
+
+.game-news-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.game-news-card {
+  display: grid;
+  gap: 16px;
+  min-height: 220px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.022));
+  box-shadow: var(--shadow-soft);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.game-news-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-2);
+  box-shadow:
+    0 18px 38px rgba(124,58,237,0.14),
+    0 0 22px rgba(103,215,255,0.05);
+}
+
+.game-news-card-top {
+  display: grid;
+  gap: 10px;
+}
+
+.game-news-card-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-news-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(124,58,237,0.12);
+  border: 1px solid rgba(167,139,250,0.22);
+  color: var(--accent-3);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.game-news-source {
+  color: var(--muted-2);
+  font-size: 0.84rem;
+}
+
+.game-news-date {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 0.84rem;
+}
+
+.game-news-card-body {
+  display: grid;
+  gap: 10px;
+}
+
+.game-news-card-body h3 {
+  margin: 0;
+  font-size: 1.04rem;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.game-news-card-body p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.game-news-card-cta {
+  margin-top: auto;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.94rem;
+}
+
+@media (max-width: 980px) {
+  .game-news-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .game-news-block {
+    padding: 20px;
+  }
+
+  .game-news-block-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .game-news-block-copy {
+    text-align: left;
+  }
+
+  .game-news-grid {
+    grid-template-columns: 1fr;
+  }
+}
