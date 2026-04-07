@@ -505,6 +505,11 @@ class OnePieceConnector(SourceConnector):
             raise ValueError("One Piece remote ingest resolved packs.json but found zero cards across all packs")
         return normalized
 
+    @staticmethod
+    def _official_name_card_key(name: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", ".", str(name or "").strip().lower()).strip(".")
+        return f"onepiece:{normalized}" if normalized else ""
+
     def _load_official_cardlist_remote(self, *, limit: int | None = None) -> dict:
         base_url = self._env("ONEPIECE_OFFICIAL_CARDLIST_URL", self._DEFAULT_OFFICIAL_CARDLIST_URL)
         timeout = self._http_timeout()
@@ -529,7 +534,7 @@ class OnePieceConnector(SourceConnector):
                 if not any(row["code"] == set_code for row in sets):
                     sets.append({"id": series_id, "code": set_code, "name": label})
 
-                card_id = str(entry["card_id"] or "").strip() or entry["collector_number"]
+                card_id = self._official_name_card_key(entry["name"]) or (str(entry["card_id"] or "").strip() or entry["collector_number"])
                 card_row = cards_by_key.setdefault(card_id, {"id": card_id, "name": entry["name"], "prints": []})
                 card_row["prints"].append(
                     {
@@ -1261,12 +1266,20 @@ class OnePieceConnector(SourceConnector):
 
     @staticmethod
     def _github_api_repo_context(root_url: str) -> tuple[str, str, str, str] | None:
-        pattern = r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)(?:/(.*))?$"
-        match = re.match(pattern, root_url.strip().rstrip("/"))
-        if not match:
-            return None
-        owner, repo, ref, suffix = match.groups()
-        return owner, repo, ref, (suffix or "").strip("/")
+        normalized = root_url.strip().rstrip("/")
+        raw_pattern = r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)(?:/(.*))?$"
+        raw_match = re.match(raw_pattern, normalized)
+        if raw_match:
+            owner, repo, ref, suffix = raw_match.groups()
+            return owner, repo, ref, (suffix or "").strip("/")
+
+        web_pattern = r"^https://github\.com/([^/]+)/([^/]+)(?:/tree/([^/]+)(?:/(.*))?)?$"
+        web_match = re.match(web_pattern, normalized)
+        if web_match:
+            owner, repo, ref, suffix = web_match.groups()
+            return owner, repo, (ref or "main"), (suffix or "").strip("/")
+
+        return None
 
     def _github_http(self) -> requests.Session:
         if self._github_http_session is None:

@@ -302,7 +302,7 @@ def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
             return 2
         return 3
 
-    def _print_rank(row: dict) -> tuple[int, int, int, int, int]:
+    def _print_rank(row: dict) -> tuple[int, int, int, int, int, int]:
         meta = by_id.get(int(row.get("id")))
         name = str(meta.get("card_name") if meta else "")
         variant = str(meta.get("variant") if meta else "default")
@@ -314,7 +314,8 @@ def _reorder_onepiece_simple_name_prints(rows, *, session, q_norm: str):
             or (q_compact and compact_name == q_compact)
         ) else 1
         hyphen_partial = 1 if name.startswith(f"{q_norm}-") else 0
-        return (canonical, hyphen_partial, _variant_bucket(variant), len(name), int(row.get("id") or 0))
+        compound_match = 0 if (q_norm in name and (" & " in name or "/" in name)) else 1
+        return (canonical, hyphen_partial, compound_match, _variant_bucket(variant), len(name), int(row.get("id") or 0))
 
     normalized_rows = [dict(row) for row in rows]
     print_rows = [row for row in normalized_rows if row.get("game") == "onepiece" and row.get("type") == "print"]
