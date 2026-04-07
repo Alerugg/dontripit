@@ -33,8 +33,8 @@ const FALLBACK_NEWS = {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
-  const game = normalizeGameSlug(searchParams.get('game') || '')
-  const limit = Math.max(1, Number(searchParams.get('limit') || 6))
+  const game = normalizeGameSlug((searchParams.get('game') || '').trim().toLowerCase())
+  const limit = Math.min(12, Math.max(1, Number(searchParams.get('limit') || 6)))
   const items = (FALLBACK_NEWS[game] || []).slice(0, limit)
 
   return NextResponse.json({
