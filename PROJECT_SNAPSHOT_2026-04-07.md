@@ -63,3 +63,11 @@
 - Card detail page (`/games/[slug]/cards/[cardId]`) now validates route game slug against fetched card game slug before rendering, preventing cross-game mismatches in card ↔ variants binding.
 - Regression test added: `backend/tests/test_catalog_endpoints.py::test_v1_sets_includes_non_zero_card_count_when_prints_exist`.
 - Local environment limitation in this session: Docker CLI unavailable (`docker: command not found`), so compose-based smoke checks/curls could not be completed against a running stack.
+
+## Data-quality patch (2026-04-07, branch `fix/catalog-data-quality`)
+- `/api/catalog/sets` fallback no longer depends only on a non-empty free-text query:
+  - when `q` is empty and set rows look degraded (`card_count=0`, numeric-only labels/codes), the BFF now does targeted per-set `/api/v1/search` lookups using code/id and merges the best matched set metadata.
+  - this keeps response compatibility (`id`, `code`, `set_code`, `name`, `title`, `game`, `game_slug`, `card_count`) while reducing raw numeric labels in One Piece when a better label exists upstream.
+- `/api/catalog/news` now returns a safe default item for unknown/unsupported slugs instead of `items: []`, so hubs keep a non-dead news block while dynamic provider work is pending.
+- `/api/catalog/cards/[id]` now falls back to the first filtered print image when the card-level image is missing, preserving detail-page binding after strict print filtering by `card_id`.
+- Session limitation: Docker CLI is not installed in this environment, so compose build/test and live `curl` verifications against `localhost:3000` could not be executed here.

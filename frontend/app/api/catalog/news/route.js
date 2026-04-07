@@ -31,11 +31,21 @@ const FALLBACK_NEWS = {
   ],
 }
 
+const DEFAULT_NEWS = [
+  {
+    title: 'Novedades del catálogo TCG',
+    excerpt: 'Mientras se conecta un proveedor dinámico, revisa las fuentes oficiales por juego.',
+    source: 'Dontripit Hub',
+    tag: 'Fallback',
+    href: '/hubs',
+  },
+]
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
   const game = normalizeGameSlug((searchParams.get('game') || '').trim().toLowerCase())
   const limit = Math.min(12, Math.max(1, Number(searchParams.get('limit') || 6)))
-  const items = (FALLBACK_NEWS[game] || []).slice(0, limit)
+  const items = (FALLBACK_NEWS[game] || DEFAULT_NEWS).slice(0, limit)
 
   return NextResponse.json({
     items,

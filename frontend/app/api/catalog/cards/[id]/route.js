@@ -28,6 +28,7 @@ export async function GET(_, { params }) {
   return NextResponse.json({
     ...payload,
     id: payload?.id ?? Number(params.id),
+    primary_image_url: payload?.primary_image_url || normalizedPrints[0]?.primary_image_url || null,
     prints: normalizedPrints,
     sets: normalizedSets,
   })
