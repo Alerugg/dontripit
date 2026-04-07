@@ -11,6 +11,7 @@ catalog_bp = Blueprint("catalog", __name__)
 _RATE_LIMIT_BUCKETS = {}
 _CACHE = {}
 _ONEPIECE_COLLECTOR_SET_CODE_RE = re.compile(r"\b(OP|ST|EB)[\s\-_]?(\d{1,2})\b", re.IGNORECASE)
+_ONEPIECE_CANONICAL_CODE_RE = re.compile(r"^(?:op|st|eb|prb|p)-\d{1,3}$", re.IGNORECASE)
 def _is_numeric_like(value: str | None) -> bool:
     return bool(re.fullmatch(r"\d+", str(value or "").strip()))
 
@@ -25,6 +26,10 @@ def _normalize_onepiece_set_row(row: dict) -> dict:
         row["name"] = f"Set #{row.get('id')}"
 
     return row
+
+
+def _is_onepiece_canonical_set_code(code: str | None) -> bool:
+    return bool(_ONEPIECE_CANONICAL_CODE_RE.fullmatch(str(code or "").strip()))
 
 
 def _extract_onepiece_commercial_code_from_collector(collector_number: str | None) -> str:
@@ -109,8 +114,10 @@ def _apply_onepiece_set_name_mapping(rows: list[dict]) -> list[dict]:
         normalized = _normalize_onepiece_set_row(dict(row))
         set_id = int(normalized["id"])
         inferred_code = unique_inferred_by_set_id.get(set_id)
+        normalized["onepiece_set_classification"] = "canonical" if _is_onepiece_canonical_set_code(original_code) else "legacy_mixed_ambiguous"
         if inferred_code and inferred_code in canonical_by_code and is_degraded_numeric:
             normalized["name"] = canonical_by_code[inferred_code]
+            normalized["onepiece_set_classification"] = "canonical"
         mapped_rows.append(normalized)
     return mapped_rows
 
@@ -325,6 +332,7 @@ def get_card_detail(card_id: int):
 @catalog_bp.get("/api/v1/sets")
 def list_sets():
     q = request.args.get("q", "").strip()
+    include_legacy_ambiguous = str(request.args.get("include_legacy_ambiguous", "")).strip().lower() in {"1", "true", "yes"}
     limit, offset = _pagination()
     game, error = _get_game_slug(required=_request_requires_game())
     if error:
@@ -385,6 +393,10 @@ def list_sets():
     normalized_rows = [dict(row) for row in rows]
     if game == "onepiece":
         normalized_rows = _apply_onepiece_set_name_mapping(normalized_rows)
+        if not q and not include_legacy_ambiguous:
+            normalized_rows = [
+                row for row in normalized_rows if row.get("onepiece_set_classification") != "legacy_mixed_ambiguous"
+            ]
 
     payload = []
     for row in normalized_rows:
