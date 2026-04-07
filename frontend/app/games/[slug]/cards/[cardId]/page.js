@@ -22,8 +22,11 @@ export default function GameCardDetailPage({ params }) {
       setLoading(true)
       setError('')
 
+      const resolvedCardId = String(params.cardId || '').trim()
+
       try {
-        const payload = await fetchCardById(params.cardId)
+        if (!resolvedCardId) throw new Error('No se recibió cardId en la ruta.')
+        const payload = await fetchCardById(resolvedCardId)
         if (!cancelled) setCard(payload)
       } catch (requestError) {
         if (!cancelled) {

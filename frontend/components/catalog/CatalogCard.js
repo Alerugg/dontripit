@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
-import { getCardHref, getSetHref } from '../../lib/catalog/routes'
+import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
 function buildSubtitle(item) {
   return [
@@ -20,9 +20,12 @@ function buildMetaChips(item) {
 
 export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
+  const resolvedCardId = item.card_id || (item.type === 'card' ? item.id : null)
   const href = item.type === 'set'
     ? getSetHref(item.game, item.set_code || item.code)
-    : getCardHref(item.game, item.card_id || item.id, queryState)
+    : resolvedCardId
+      ? getCardHref(item.game, resolvedCardId, queryState)
+      : getPrintHref(item.id)
 
   return (
     <Link href={href} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
