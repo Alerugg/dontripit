@@ -10,24 +10,43 @@ function toCount(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function isNumericLike(value) {
+  return /^\d+$/.test(String(value || '').trim())
+}
+
 function pickDisplayName(...candidates) {
   const values = candidates
     .map((value) => String(value || '').trim())
     .filter(Boolean)
 
-  const firstNonNumeric = values.find((value) => !/^\d+$/.test(value))
+  const firstNonNumeric = values.find((value) => !isNumericLike(value))
   return firstNonNumeric || values[0] || ''
 }
 
+function pickSetCode(item = {}, searchFallback = null) {
+  const candidates = [
+    item.code,
+    item.set_code,
+    searchFallback?.set_code,
+    searchFallback?.code,
+    searchFallback?.subtitle,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+
+  const firstUseful = candidates.find((value) => !isNumericLike(value))
+  return firstUseful || candidates[0] || ''
+}
+
 function normalizeSet(item = {}, searchFallback = null) {
-  const code = String(item.code || item.set_code || searchFallback?.set_code || '').trim()
+  const code = pickSetCode(item, searchFallback)
   const displayName = pickDisplayName(
     item.name,
     item.title,
     item.set_name,
     searchFallback?.title,
+    searchFallback?.name,
     searchFallback?.set_name,
-    searchFallback?.subtitle,
     code,
     `Set #${item.id || searchFallback?.id || ''}`.trim(),
   )
@@ -44,6 +63,21 @@ function normalizeSet(item = {}, searchFallback = null) {
     game_slug: item.game_slug || searchFallback?.game || '',
     card_count: Math.max(baseCount, searchCount),
   }
+}
+
+function buildSearchMaps(searchItems = []) {
+  const byCode = new Map()
+  const byId = new Map()
+
+  searchItems.forEach((item) => {
+    const codeKey = normalizeSetCode(item?.set_code || item?.code)
+    if (codeKey && !byCode.has(codeKey)) byCode.set(codeKey, item)
+
+    const idKey = String(item?.id || '').trim()
+    if (idKey && !byId.has(idKey)) byId.set(idKey, item)
+  })
+
+  return { byCode, byId }
 }
 
 export async function GET(request) {
@@ -80,7 +114,8 @@ export async function GET(request) {
   const needsSearchFallback = baseItems.some((item) => {
     const count = toCount(item?.card_count ?? item?.count ?? item?.total_cards, 0)
     const candidateName = pickDisplayName(item?.name, item?.title, item?.set_name)
-    return count <= 0 || /^\d+$/.test(candidateName)
+    const candidateCode = pickSetCode(item)
+    return count <= 0 || isNumericLike(candidateName) || isNumericLike(candidateCode)
   })
 
   let searchItems = []
@@ -93,8 +128,13 @@ export async function GET(request) {
     }
   }
 
-  const searchByCode = new Map(searchItems.map((item) => [normalizeSetCode(item.set_code), item]))
-  const items = baseItems.map((item) => normalizeSet(item, searchByCode.get(normalizeSetCode(item?.code || item?.set_code)) || null))
+  const searchMaps = buildSearchMaps(searchItems)
+  const items = baseItems.map((item) => {
+    const codeKey = normalizeSetCode(item?.code || item?.set_code)
+    const idKey = String(item?.id || '').trim()
+    const searchFallback = searchMaps.byCode.get(codeKey) || searchMaps.byId.get(idKey) || null
+    return normalizeSet(item, searchFallback)
+  })
 
   return NextResponse.json({ items })
 }
