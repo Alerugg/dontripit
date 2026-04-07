@@ -1,3 +1,5 @@
+import re
+
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -8,6 +10,34 @@ catalog_bp = Blueprint("catalog", __name__)
 
 _RATE_LIMIT_BUCKETS = {}
 _CACHE = {}
+_ONEPIECE_COLLECTOR_SET_RE = re.compile(r"^\s*([a-z]{1,3})[-\s]?(\d{2})[-\s]?\d+", re.IGNORECASE)
+
+
+def _is_numeric_like(value: str | None) -> bool:
+    return bool(re.fullmatch(r"\d+", str(value or "").strip()))
+
+
+def _derive_onepiece_commercial_code(value: str | None) -> str:
+    match = _ONEPIECE_COLLECTOR_SET_RE.match(str(value or "").strip())
+    if not match:
+        return ""
+    family = match.group(1).lower()
+    number = match.group(2)
+    return f"{family}-{number}"
+
+
+def _normalize_onepiece_set_row(row: dict) -> dict:
+    code = str(row.get("code") or "").strip().lower()
+    name = str(row.get("name") or "").strip()
+    if not _is_numeric_like(code) and not _is_numeric_like(name):
+        return row
+
+    canonical_code = _derive_onepiece_commercial_code(row.get("sample_collector_number"))
+    if canonical_code:
+        row["code"] = canonical_code
+        if not name or _is_numeric_like(name):
+            row["name"] = canonical_code.upper()
+    return row
 
 
 def _int_param(name: str, default: int, maximum: int) -> int:
@@ -249,6 +279,14 @@ def list_sets():
                NULL AS scryfall_id,
                s.yugioh_id,
                s.riftbound_id,
+               (
+                 SELECT p.collector_number
+                 FROM prints p
+                 WHERE p.set_id = s.id
+                   AND trim(COALESCE(p.collector_number, '')) <> ''
+                 ORDER BY p.id ASC
+                 LIMIT 1
+               ) AS sample_collector_number,
                COALESCE(set_card_counts.card_count, 0) AS card_count
         FROM sets s
         JOIN games g ON g.id = s.game_id
@@ -269,7 +307,15 @@ def list_sets():
     except SQLAlchemyError as error:
         return _json_error("sets_query_failed", str(error), 500)
 
-    return jsonify([dict(row) for row in rows])
+    payload = []
+    for row in rows:
+        item = dict(row)
+        if game == "onepiece":
+            item = _normalize_onepiece_set_row(item)
+        item.pop("sample_collector_number", None)
+        payload.append(item)
+
+    return jsonify(payload)
 
 
 @catalog_bp.get("/api/prints")

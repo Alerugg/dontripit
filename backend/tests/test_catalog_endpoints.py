@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, Game, Print, PrintImage
+from app.models import ApiKey, ApiPlan, Card, Game, Print, PrintImage, Set
 from app.scripts.seed import run_seed
 
 
@@ -67,6 +67,41 @@ def test_v1_sets_includes_non_zero_card_count_when_prints_exist(client):
     payload = response.get_json()
     assert isinstance(payload, list)
     assert any(int(item.get("card_count", 0)) > 0 for item in payload)
+
+
+def test_v1_sets_onepiece_derives_commercial_set_code_from_collectors_for_numeric_legacy_sets(client):
+    run_seed()
+    with db.SessionLocal() as session:
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            game = Game(slug="onepiece", name="ONE PIECE Card Game")
+            session.add(game)
+            session.flush()
+
+        legacy_set = Set(game_id=game.id, code="569010", name="569010")
+        card = Card(game_id=game.id, name="Monkey.D.Luffy", card_key="legacy-luffy-st10")
+        session.add_all([legacy_set, card])
+        session.flush()
+
+        session.add(
+            Print(
+                set_id=legacy_set.id,
+                card_id=card.id,
+                collector_number="ST10-001",
+                language="en",
+                variant="default",
+                print_key="onepiece:569010:st10-001:en:default",
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/v1/sets?game=onepiece&q=569010", headers=_auth_headers())
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload
+    top = payload[0]
+    assert top["code"] == "st-10"
+    assert top["name"] == "ST-10"
 
 
 def test_v1_cards_with_query_returns_200(client):

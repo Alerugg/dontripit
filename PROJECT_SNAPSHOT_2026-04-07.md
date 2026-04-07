@@ -79,3 +79,16 @@
 - This specifically hardens One Piece set-label recovery for legacy numeric pack ids (for example `569301`) so the BFF can promote canonical set labels/codes when search has better metadata.
 - Backend test run in this session: `pytest -q` => `237 passed`.
 - Session limitation unchanged: Docker CLI unavailable (`docker: command not found`), so required compose + localhost:3000 curl smoke checks could not be executed in this container.
+
+## One Piece canonical set-label patch (2026-04-07, branch `work`)
+- Root cause found: backend `/api/v1/sets` could still emit legacy One Piece numeric pack ids (for example `569010`) in both `code` and `name`; when that reached frontend `/api/catalog/sets`, UI fallback logic still degraded to labels like `Set #1188`.
+- Minimal backend fix in `list_sets`:
+  - include a per-set `sample_collector_number` from `prints`,
+  - for `game=onepiece`, if set `code`/`name` is numeric-only, derive canonical commercial code from collector prefix (`OP01-*`, `EB01-*`, `ST10-*` → `op-01`, `eb-01`, `st-10`),
+  - normalize response row to expose canonical `code` and non-numeric `name` (`ST-10` style) before returning payload.
+- Targeted regression test added:
+  - `backend/tests/test_catalog_endpoints.py::test_v1_sets_onepiece_derives_commercial_set_code_from_collectors_for_numeric_legacy_sets`
+  - verifies `/api/v1/sets?game=onepiece&q=569010` returns canonicalized `code=st-10` and `name=ST-10` instead of numeric legacy metadata.
+- Validation in this session:
+  - targeted local pytest passed,
+  - docker/compose and localhost curl checks remain blocked because Docker CLI is unavailable in this environment.
