@@ -20,7 +20,7 @@ function buildMetaChips(item) {
 
 export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
-  const resolvedCardId = item.card_id || (item.type === 'card' ? item.id : null)
+  const resolvedCardId = item.type === 'card' ? item.id : (item.card_id || null)
   const href = item.type === 'set'
     ? getSetHref(item.game, item.set_code || item.code)
     : resolvedCardId
