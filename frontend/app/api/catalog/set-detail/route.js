@@ -84,6 +84,9 @@ export async function GET(request) {
           code: set.code,
           name: set.name,
           game_slug: set.game_slug || game,
+          release_date: set.release_date || set.released_at || null,
+          series: set.series || set.block || '',
+          card_count: set.card_count ?? set.total_cards ?? null,
           print_count: cards.length,
           collector_total: cards.length,
         }
