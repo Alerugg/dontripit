@@ -241,3 +241,19 @@ Action taken in backend code:
     - `/games/onepiece/sets/op01`
     - `/games/onepiece/cards/1`
   - required docker compose commands could not run here because Docker CLI is unavailable (`docker: command not found`).
+
+## One Piece QA functional pass (2026-04-08, branch `work`)
+- Objetivo ejecutado: QA funcional focalizado en One Piece (`/games/onepiece`, sets, set detail, card detail y navegación hub→set→card) sin refactor masivo.
+- Resultado: **no se reprodujo bug funcional nuevo** en las rutas objetivo dentro de este entorno; no se aplicaron cambios de lógica/producto para evitar fixes inventados o duplicados de `main`.
+- Validación ejecutada:
+  - `docker compose up -d --build` → bloqueado por entorno (`docker: command not found`).
+  - `cd backend && pytest -q` → `244 passed`.
+  - Smoke runtime en frontend local (`next dev`) + `curl`:
+    - `/games/onepiece` → 200
+    - `/games/onepiece/sets` → 200
+    - `/games/onepiece/sets/op-01` → 200
+    - `/games/onepiece/cards/40860?q=luffy&type=singles` → 200
+    - `/games/onepiece/cards/1` → 200
+    - `/games/onepiece/cards/2` → 200
+    - `/games/onepiece/cards/3` → 200
+- Nota de alcance: por falta de Docker en este contenedor no fue posible levantar stack completo compose ni validar la navegación visual contra backend containerizado; se dejó evidencia explícita del límite para no reportar falsos positivos.
