@@ -941,6 +941,17 @@ button {
   color: var(--accent-3);
 }
 
+
+.badge-set {
+  border-color: rgba(103,215,255,0.35);
+  background: rgba(103,215,255,0.14);
+}
+
+.badge-print {
+  border-color: rgba(244,201,93,0.38);
+  background: rgba(244,201,93,0.14);
+}
+
 .state-panel-v2 {
   padding: 24px;
   background:

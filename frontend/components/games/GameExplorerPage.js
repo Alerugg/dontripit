@@ -28,6 +28,27 @@ function queryStateFromParams(searchParams) {
   }
 }
 
+const PRODUCT_COPY = {
+  singles: {
+    resultLabel: 'prints',
+    resultLabelPlural: 'prints',
+    loadingDescription: 'Buscando prints para que abras la carta y revises sus variantes en contexto.',
+    emptyDescription: 'Prueba con nombre de carta, número de colección o código de set (ej: OP-01).',
+  },
+  sealed: {
+    resultLabel: 'resultado',
+    resultLabelPlural: 'resultados',
+    loadingDescription: 'Buscando producto sellado y resultados relacionados en el catálogo.',
+    emptyDescription: 'Prueba con nombre de producto, set o expansión.',
+  },
+  all: {
+    resultLabel: 'resultado',
+    resultLabelPlural: 'resultados',
+    loadingDescription: 'Buscando cartas, sets y producto sellado de forma unificada.',
+    emptyDescription: 'Prueba otro nombre o combina carta + set para obtener mejores coincidencias.',
+  },
+}
+
 export default function GameExplorerPage({ game, collections = [], tournaments = [], news = [] }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -54,6 +75,7 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
   const [newsError, setNewsError] = useState('')
 
   const scrollKey = `${game.slug}:${submittedQuery || query}:${productType}`
+  const selectedProductCopy = PRODUCT_COPY[productType] || PRODUCT_COPY.all
 
   useEffect(() => {
     setQuery(initialState.q)
@@ -241,7 +263,7 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
   }, [scrollKey])
 
   const summaryText = submittedQuery
-    ? `${items.length} carta${items.length === 1 ? '' : 's'} para “${submittedQuery}” en ${game.name}.`
+    ? `${items.length} ${items.length === 1 ? selectedProductCopy.resultLabel : selectedProductCopy.resultLabelPlural} para “${submittedQuery}” en ${game.name}.`
     : `Explora cartas maestras, variantes, sets y producto sellado de ${game.name} sin duplicados en la búsqueda.`
 
   const isPokemonPilot = game.slug === 'pokemon'
@@ -331,7 +353,7 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
       {submittedQuery && loading && (
         <StatePanel
           title="Cargando resultados"
-          description="Buscando cartas maestras con estado persistente."
+          description={selectedProductCopy.loadingDescription}
           tone={isPokemonPilot ? 'default' : undefined}
         />
       )}
@@ -348,7 +370,7 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
       {submittedQuery && !loading && !error && items.length === 0 && (
         <StatePanel
           title="Sin resultados"
-          description="Prueba otro nombre, colección o tipo de producto."
+          description={selectedProductCopy.emptyDescription}
           tone={isPokemonPilot ? 'muted' : undefined}
         />
       )}
