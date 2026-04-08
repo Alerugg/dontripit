@@ -35,6 +35,17 @@ function getReleaseDate(collection) {
   return Number.isNaN(parsed) ? null : parsed
 }
 
+function formatReleaseLabel(collection) {
+  const timestamp = getReleaseDate(collection)
+  if (timestamp === null) return ''
+
+  return new Intl.DateTimeFormat('es', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  }).format(new Date(timestamp))
+}
+
 function isBlockedCollection(collection, gameSlug) {
   const code = normalizeCode(collection.code || collection.set_code)
   const blocked = BLOCKED_CODES_BY_GAME[gameSlug]
@@ -195,6 +206,7 @@ export default function GameCollectionsList({
               const code = normalizeCode(collection.code || collection.set_code)
               const name = normalizeName(collection.name || collection.title)
               const cardCount = getCardCount(collection)
+              const releaseLabel = formatReleaseLabel(collection)
 
               return (
                 <Link
@@ -209,6 +221,11 @@ export default function GameCollectionsList({
                     <p className="game-collection-meta">
                       {code} · {cardCount} cartas
                     </p>
+                    {releaseLabel ? (
+                      <p className="game-collection-submeta">
+                        Lanzamiento: {releaseLabel}
+                      </p>
+                    ) : null}
                     <span className="game-collection-cta">Ver colección</span>
                   </div>
                 </Link>

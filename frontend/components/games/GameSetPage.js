@@ -44,6 +44,18 @@ function sortCardsByCollectorNumber(cards = []) {
   })
 }
 
+function formatSetReleaseDate(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+
+  return new Intl.DateTimeFormat('es', {
+    year: 'numeric',
+    month: 'long',
+    day: '2-digit',
+  }).format(parsed)
+}
+
 function SetHeroVisual({ gameSlug, setCode, setName }) {
   const candidates = useMemo(
     () => getLocalSetImageCandidates(gameSlug, setCode),
@@ -160,16 +172,33 @@ export default function GameSetPage({ gameSlug, setCode }) {
   }
 
   const collection = setDetail.set
+  const releaseLabel = formatSetReleaseDate(collection.release_date)
+  const totalCards = Number(collection.card_count || 0)
 
   return (
     <section className="page-shell game-page game-set-page">
       <header className="panel game-set-hero">
         <div className="game-set-hero-copy">
+          <nav className="game-set-breadcrumbs" aria-label="Breadcrumb">
+            <Link href={getGameHref(game.slug)}>Hub</Link>
+            <span>/</span>
+            <Link href={`/games/${game.slug}/sets`}>Sets</Link>
+            <span>/</span>
+            <span aria-current="page">{collection.code}</span>
+          </nav>
+
           <p className="eyebrow">Colección</p>
           <h1>{collection.name}</h1>
           <p className="game-set-hero-meta-line">
             {collection.code} · {collection.print_count || orderedCards.length} prints
           </p>
+
+          <div className="game-set-meta-chips">
+            {releaseLabel ? <span>Lanzamiento: {releaseLabel}</span> : null}
+            {totalCards > 0 ? <span>Cartas del set: {totalCards}</span> : null}
+            {collection.series ? <span>Serie: {collection.series}</span> : null}
+          </div>
+
           <p>
             Explora esta colección print por print. Esta vista ya no agrupa por carta maestra:
             muestra el checklist real del set en orden de colección.
@@ -178,6 +207,9 @@ export default function GameSetPage({ gameSlug, setCode }) {
           <div className="toolbar-row">
             <Link href={getGameHref(game.slug)} className="secondary-btn">
               Volver al hub
+            </Link>
+            <Link href={`/games/${game.slug}/sets`} className="secondary-btn">
+              Ver todos los sets
             </Link>
           </div>
         </div>

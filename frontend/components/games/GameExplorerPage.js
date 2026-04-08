@@ -361,6 +361,14 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
         />
       )}
 
+      {collectionsLoading && (
+        <StatePanel
+          title="Cargando colecciones"
+          description="Preparando los sets disponibles para este juego."
+          tone="muted"
+        />
+      )}
+
       {!collectionsLoading && collectionsError && (
         <StatePanel
           title="No pudimos cargar las colecciones"
@@ -370,7 +378,9 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
         />
       )}
 
-      <GameCollectionsList collections={collectionsData} gameSlug={game.slug} />
+      {!collectionsLoading && (
+        <GameCollectionsList collections={collectionsData} gameSlug={game.slug} />
+      )}
 
       {!newsLoading && newsError && (
         <StatePanel
