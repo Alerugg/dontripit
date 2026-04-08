@@ -3,6 +3,7 @@
 import './GameCollectionsList.css'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { getLocalSetImageCandidates } from '../../lib/catalog/setImages'
 
 const BLOCKED_CODES_BY_GAME = {
   pokemon: new Set(['base', 'meta', 'promos']),
@@ -97,9 +98,27 @@ function buildSetImageSrc(gameSlug, setCode) {
   return `/sets/${gameSlug}/${code}.png`
 }
 
-function CollectionLogo({ gameSlug, code, name }) {
+function CollectionLogo({ gameSlug, setCode, code, name }) {
+  const candidates = useMemo(
+    () => getLocalSetImageCandidates(gameSlug, setCode),
+    [gameSlug, setCode],
+  )
+  const [candidateIndex, setCandidateIndex] = useState(0)
   const [broken, setBroken] = useState(false)
-  const src = buildSetImageSrc(gameSlug, code)
+  const src = candidates[candidateIndex] || buildSetImageSrc(gameSlug, setCode)
+
+  useEffect(() => {
+    setCandidateIndex(0)
+    setBroken(false)
+  }, [gameSlug, setCode])
+
+  function handleImageError() {
+    if (candidateIndex < candidates.length - 1) {
+      setCandidateIndex((current) => current + 1)
+      return
+    }
+    setBroken(true)
+  }
 
   return (
     <div className="game-collection-media">
@@ -109,7 +128,7 @@ function CollectionLogo({ gameSlug, code, name }) {
           alt={name}
           className="game-collection-logo"
           loading="lazy"
-          onError={() => setBroken(true)}
+          onError={handleImageError}
         />
       ) : null}
 
@@ -203,6 +222,7 @@ export default function GameCollectionsList({
         <>
           <div className={`game-collections-grid ${safeMode === 'full' ? 'is-full' : 'is-hub'}`}>
             {visibleCollections.map((collection) => {
+              const rawCode = String(collection.code || collection.set_code || '').trim()
               const code = normalizeCode(collection.code || collection.set_code)
               const name = normalizeName(collection.name || collection.title)
               const cardCount = getCardCount(collection)
@@ -214,7 +234,7 @@ export default function GameCollectionsList({
                   href={buildSetHref(safeGameSlug, code)}
                   className="game-collection-card"
                 >
-                  <CollectionLogo gameSlug={safeGameSlug} code={code} name={name} />
+                  <CollectionLogo gameSlug={safeGameSlug} setCode={rawCode} code={code} name={name} />
 
                   <div className="game-collection-body">
                     <h3>{name}</h3>
