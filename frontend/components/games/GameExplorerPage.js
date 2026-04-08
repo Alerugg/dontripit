@@ -268,6 +268,27 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
 
   const isPokemonPilot = game.slug === 'pokemon'
 
+  function navigateFromSuggestion(item) {
+    const nextQuery = (item.name || item.title || '').trim()
+    if (!nextQuery) return false
+
+    if (item.type === 'set' && item.set_code) {
+      router.push(`/games/${game.slug}/sets/${String(item.set_code).toLowerCase()}`)
+      return true
+    }
+
+    const targetCardId = item.card_id || (item.type === 'card' ? item.id : null)
+    if ((item.type === 'card' || item.type === 'print') && targetCardId) {
+      const nextParams = new URLSearchParams()
+      nextParams.set('q', nextQuery)
+      nextParams.set('type', 'singles')
+      router.push(`/games/${game.slug}/cards/${targetCardId}?${nextParams.toString()}`)
+      return true
+    }
+
+    return false
+  }
+
   return (
     <section className={`page-shell game-page ${isPokemonPilot ? 'game-page-pilot' : ''}`}>
       <header
@@ -321,8 +342,11 @@ export default function GameExplorerPage({ game, collections = [], tournaments =
           suggestions={suggestions}
           suggestionsLoading={suggestionsLoading}
           onSuggestionSelect={(item) => {
-            setQuery(item.name || item.title || '')
-            setSubmittedQuery(item.name || item.title || '')
+            const nextQuery = item.name || item.title || ''
+            setQuery(nextQuery)
+            if (!navigateFromSuggestion(item)) {
+              setSubmittedQuery(nextQuery)
+            }
           }}
           placeholder={`Busca dentro de ${game.name}`}
           variant={isPokemonPilot ? 'pilot' : 'default'}
