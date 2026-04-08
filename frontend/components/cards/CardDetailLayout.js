@@ -5,6 +5,7 @@ import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import VariantPicker from '../catalog/VariantPicker'
 import { getGameExplorerHref, getSetHref } from '../../lib/catalog/routes'
+import { getGameConfig, normalizeGameSlug } from '../../lib/catalog/games'
 
 function DetailStat({ label, value }) {
   if (!value && value !== false && value !== 0) return null
@@ -16,8 +17,10 @@ function DetailStat({ label, value }) {
   )
 }
 
-export default function CardDetailLayout({ card }) {
-  const gameSlug = card?.game || ''
+export default function CardDetailLayout({ card, routeGameSlug = '' }) {
+  const gameSlug = normalizeGameSlug(routeGameSlug || card?.game_slug || card?.game || '')
+  const gameConfig = getGameConfig(gameSlug)
+  const gameLabel = gameConfig?.name || card?.game || 'TCG'
   const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
   const prints = useMemo(() => (Array.isArray(card?.prints) ? card.prints : []), [card])
   const variantCount = prints.length
@@ -32,7 +35,7 @@ export default function CardDetailLayout({ card }) {
 
     return `Esta carta tiene ${variantCount} variantes disponibles con su set y metadatos asociados.`
   }, [variantCount])
-  const contextLabel = card?.game || 'TCG'
+  const contextLabel = gameLabel
 
   return (
     <article className="detail-page panel">
@@ -56,7 +59,7 @@ export default function CardDetailLayout({ card }) {
 
       <div className="detail-content">
         <nav className="detail-breadcrumbs" aria-label="breadcrumb">
-          <Link href={getGameExplorerHref(gameSlug)}>{card.game || 'TCG'}</Link>
+          <Link href={getGameExplorerHref(gameSlug)}>{gameLabel}</Link>
           <span>→</span>
           {primarySet?.code ? (
             <Link href={getSetHref(gameSlug, primarySet.code)}>{primarySet.name || primarySet.code}</Link>
@@ -77,7 +80,7 @@ export default function CardDetailLayout({ card }) {
 
         <section className="detail-stats-grid">
           <DetailStat label="Card ID" value={card.id} />
-          <DetailStat label="Juego" value={card.game} />
+          <DetailStat label="Juego" value={gameLabel} />
           <DetailStat label="Idioma base" value={card.language} />
           <DetailStat label="Variantes" value={variantCount} />
         </section>
