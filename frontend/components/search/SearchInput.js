@@ -20,6 +20,7 @@ export default function SearchInput({
   const [activeIndex, setActiveIndex] = useState(-1)
   const [dropdownWidth, setDropdownWidth] = useState(0)
   const hasSuggestions = suggestions.length > 0
+  const hasMeaningfulQuery = (value || '').trim().length >= 2
 
   useEffect(() => {
     if (!value?.trim()) {
@@ -142,10 +143,11 @@ export default function SearchInput({
             </button>
           </div>
 
-          {suggestionsLoading && <p className="suggestions-empty">Buscando coincidencias…</p>}
-          {!suggestionsLoading && !hasSuggestions && value?.trim() && <p className="suggestions-empty">Sin sugerencias para este término.</p>}
+          {!hasMeaningfulQuery && <p className="suggestions-empty">Escribe al menos 2 caracteres para sugerencias más precisas.</p>}
+          {hasMeaningfulQuery && suggestionsLoading && <p className="suggestions-empty">Buscando cartas, sets y prints…</p>}
+          {hasMeaningfulQuery && !suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias. Prueba con otro nombre o código (ej: OP-01).</p>}
 
-          {!suggestionsLoading && hasSuggestions && (
+          {hasMeaningfulQuery && !suggestionsLoading && hasSuggestions && (
             <ul id={listId} className="suggestions-list" role="listbox">
               {suggestions.map((item, index) => (
                 <SuggestionRow

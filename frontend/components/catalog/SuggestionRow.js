@@ -18,6 +18,18 @@ function buildMeta(item) {
   ].filter(Boolean).join(' · ')
 }
 
+function typeLabel(type) {
+  if (type === 'set') return 'Set'
+  if (type === 'print') return 'Print'
+  return 'Carta'
+}
+
+function actionLabel(item) {
+  if (item.type === 'set') return 'Abrir set'
+  if (item.type === 'print' || item.type === 'card') return 'Abrir carta'
+  return 'Buscar'
+}
+
 export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect }) {
   const title = item.title || item.name || 'Sin título'
   const subtitle = buildSubtitle(item)
@@ -43,7 +55,11 @@ export default function SuggestionRow({ item, active, id, onMouseEnter, onSelect
         <span className="suggestion-copy">
           <strong>{title}</strong>
           <small>{subtitle || 'Carta'}</small>
-          <em>{buildMeta(item)}</em>
+          <em>
+            <span className="suggestion-kind">{typeLabel(item.type)}</span>
+            <span>{buildMeta(item)}</span>
+            <span>{actionLabel(item)}</span>
+          </em>
         </span>
       </button>
     </li>
