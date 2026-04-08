@@ -257,3 +257,31 @@ Action taken in backend code:
     - `/games/onepiece/cards/2` → 200
     - `/games/onepiece/cards/3` → 200
 - Nota de alcance: por falta de Docker en este contenedor no fue posible levantar stack completo compose ni validar la navegación visual contra backend containerizado; se dejó evidencia explícita del límite para no reportar falsos positivos.
+
+## Catalog explorer UX polish (2026-04-08, branch `fix/catalog-search-ux-polish`)
+- Need detected (real/small): resultados en explorer mezclaban etiquetas y estados demasiado genéricos según el tipo de búsqueda (`singles`/`all`/`sealed`), y las cards no diferenciaban visualmente `print` vs `card` vs `set`, reduciendo claridad de jerarquía y destino de navegación.
+- Cambios mínimos/localizados:
+  - `frontend/components/games/GameExplorerPage.js`
+    - copy dinámico para resumen, loading y empty state por tipo de producto;
+    - sin cambios de arquitectura ni flujos de datos.
+  - `frontend/components/games/GameResultsGrid.js` + `frontend/components/games/GameResultsGrid.css`
+    - título y helper contextual por tipo de resultado para reforzar navegación (p.ej. singles → abrir carta para variantes/set);
+    - ajuste visual mínimo para metadata del encabezado.
+  - `frontend/components/catalog/CatalogCard.js` + `frontend/app/globals.css`
+    - badge semántico por entidad (`Carta` / `Print` / `Set`);
+    - subtítulo de print enriquecido con `#collector_number` y `variant_label` cuando existe.
+- Qué quedó mejor:
+  - lectura más clara de qué tipo de resultado se está viendo;
+  - estados de carga/vacío más accionables para búsquedas reales (`luffy`, `op-01`, `charizard`, `base1`/`mew`);
+  - jerarquía visual explícita card/print/set sin tocar detalle/set estable.
+- Validación ejecutada:
+  - `docker compose up -d --build` y `docker compose exec -T backend pytest -q` bloqueados por entorno (`docker: command not found`).
+  - `cd backend && pytest -q` => `244 passed`.
+  - smoke manual con `next dev` + `curl` (HTTP 200):
+    - `/games/onepiece`
+    - `/games/pokemon`
+    - `/games/onepiece?q=luffy&type=singles`
+    - `/games/onepiece?q=op-01&type=singles`
+    - `/games/pokemon?q=charizard&type=singles`
+    - `/games/pokemon?q=base1&type=all`
+    - `/games/pokemon?q=mew&type=singles`

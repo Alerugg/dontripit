@@ -3,9 +3,13 @@ import FallbackImage from '../common/FallbackImage'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
 function buildSubtitle(item) {
+  const collectorLabel = item.collector_number ? `#${item.collector_number}` : null
+
   return [
     item.set_name || item.summary_label,
+    collectorLabel,
     item.language,
+    item.variant_label,
     item.variant_count ? `${item.variant_count} variante${item.variant_count === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ')
 }
@@ -18,6 +22,12 @@ function buildMetaChips(item) {
   ].filter(Boolean)
 }
 
+function resolveItemType(item) {
+  if (item.type === 'set') return { label: 'Set', className: 'badge-set' }
+  if (item.type === 'print') return { label: 'Print', className: 'badge-print' }
+  return { label: 'Carta', className: 'badge-card' }
+}
+
 export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
   const resolvedCardId = item.type === 'card' ? item.id : (item.card_id || null)
@@ -26,6 +36,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
     : resolvedCardId
       ? getCardHref(item.game, resolvedCardId, queryState)
       : getPrintHref(item.id)
+  const itemType = resolveItemType(item)
 
   return (
     <Link href={href} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
@@ -47,7 +58,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
             <p className="meta-game">{item.game || 'TCG'}</p>
             <h3>{title}</h3>
           </div>
-          <span className="badge badge-card">{item.type === 'set' ? 'Set' : 'Carta'}</span>
+          <span className={`badge ${itemType.className}`}>{itemType.label}</span>
         </div>
 
         <p className="meta-subtitle">{buildSubtitle(item) || 'Carta'}</p>

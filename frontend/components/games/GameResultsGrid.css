@@ -21,6 +21,17 @@
   font-size: 0.95rem;
 }
 
+.game-results-meta {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.game-results-meta small {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.8rem;
+}
+
 .game-results-grid {
   gap: 1rem;
 }
@@ -49,6 +60,10 @@
   .game-results-head {
     flex-direction: column;
     align-items: start;
+  }
+
+  .game-results-meta {
+    justify-items: start;
   }
 }
 
