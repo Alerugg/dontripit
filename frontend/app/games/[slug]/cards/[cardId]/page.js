@@ -80,7 +80,13 @@ export default function GameCardDetailPage({ params }) {
         </div>
         {loading && <StatePanel title="Cargando carta" description="Preparando carta, sets y variantes." />}
         {!loading && error && <StatePanel title="No pudimos cargar la carta" description={error} error />}
-        {!loading && !error && card && <CardDetailLayout card={card} searchState={{ q: searchParams.get('q') || '', type: searchParams.get('type') || '' }} />}
+        {!loading && !error && card && (
+          <CardDetailLayout
+            card={card}
+            routeGameSlug={params.slug}
+            searchState={{ q: searchParams.get('q') || '', type: searchParams.get('type') || '' }}
+          />
+        )}
       </section>
     </main>
   )

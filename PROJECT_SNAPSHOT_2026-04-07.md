@@ -218,3 +218,26 @@ Action taken in backend code:
 - Validation in this container:
   - `node --test frontend/tests/cardDetailBinding.test.mjs frontend/tests/bffRoutesSyntax.test.mjs` passed.
   - required docker compose / backend pytest-in-container / localhost curl checks are blocked in this environment (`docker: command not found`, no local server on `localhost:3000`).
+
+## One Piece manual smoke hardening follow-up (2026-04-08, branch `work`)
+- Root cause found in real navigation/detail glue:
+  - `/games/[slug]/cards/[cardId]` rendered card detail labels/links from payload `card.game` directly, so UI labels could show inconsistent slug-like text and links were vulnerable when payload game fields were incomplete.
+  - card detail variants were filtered correctly but not deterministically ordered, leading to unstable/mixed variant presentation in detail.
+- Minimal fixes applied:
+  - `frontend/components/cards/CardDetailLayout.js`
+    - now resolves game context from route slug fallback first (`routeGameSlug`), then payload (`game_slug`/`game`), normalizes it, and renders canonical game label from `getGameConfig`.
+  - `frontend/app/games/[slug]/cards/[cardId]/page.js`
+    - now passes `routeGameSlug={params.slug}` into `CardDetailLayout`.
+  - `frontend/app/api/catalog/cards/[id]/route.js`
+    - keeps existing strict `card_id` filtering and adds stable variant ordering by collector number/set/finish/variant/id.
+  - `frontend/tests/cardDetailBinding.test.mjs`
+    - adds targeted assertions for the new detail hardening (`routeGameSlug` fallback + canonical label) and print sort hook.
+- Validation in this container:
+  - `cd backend && pytest -q` => `244 passed`.
+  - `cd frontend && node --test tests/cardDetailBinding.test.mjs` => `3 passed`.
+  - lightweight route smoke via `next dev` + curl (HTTP 200):
+    - `/games/onepiece`
+    - `/games/onepiece/sets`
+    - `/games/onepiece/sets/op01`
+    - `/games/onepiece/cards/1`
+  - required docker compose commands could not run here because Docker CLI is unavailable (`docker: command not found`).
