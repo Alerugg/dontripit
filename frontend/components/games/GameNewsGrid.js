@@ -13,6 +13,14 @@ function formatDate(value) {
   }
 }
 
+function getNewsSummary(item = {}) {
+  return item.summary || item.excerpt || item.description || 'Contenido editorial del juego.'
+}
+
+function getNewsHref(item = {}) {
+  return item.href || item.url || item.link || ''
+}
+
 export default function GameNewsGrid({ news = [] }) {
   const items = news.length
     ? news
@@ -41,6 +49,7 @@ export default function GameNewsGrid({ news = [] }) {
 
       <div className="game-news-grid">
         {items.map((item, index) => {
+          const href = getNewsHref(item)
           const content = (
             <>
               <div className="game-news-card-top">
@@ -56,17 +65,17 @@ export default function GameNewsGrid({ news = [] }) {
 
               <div className="game-news-card-body">
                 <h3>{item.title}</h3>
-                <p>{item.summary || 'Contenido editorial del juego.'}</p>
+                <p>{getNewsSummary(item)}</p>
               </div>
 
-              {item.href ? <span className="game-news-card-cta">Leer noticia</span> : null}
+              {href ? <span className="game-news-card-cta">Leer noticia</span> : null}
             </>
           )
 
-          return item.href ? (
+          return href ? (
             <a
-              key={`${item.href}-${index}`}
-              href={item.href}
+              key={`${href}-${index}`}
+              href={href}
               target="_blank"
               rel="noopener noreferrer"
               className="game-news-card"

@@ -285,3 +285,17 @@ Action taken in backend code:
     - `/games/pokemon?q=charizard&type=singles`
     - `/games/pokemon?q=base1&type=all`
     - `/games/pokemon?q=mew&type=singles`
+
+## Frontend regressions patch: news + Pokémon collection images (2026-04-08, branch `work`)
+- Root cause (news): `GameNewsGrid` rendered only `summary`, but `/api/catalog/news` currently returns fallback body text in `excerpt`; cards therefore showed generic placeholder copy instead of the real fallback/external summary.
+- Root cause (Pokémon collection images): `GameCollectionsList` built only one lowercased image path (`/sets/<game>/<code>.png`), so collections with existing assets under alternate code casing/format stopped resolving.
+- Fix scope (minimal/localized):
+  - `frontend/components/games/GameNewsGrid.js`: added safe field fallback mapping (`summary || excerpt || description`) and robust external-link mapping (`href || url || link`).
+  - `frontend/components/games/GameCollectionsList.js`: switched logo resolution to `getLocalSetImageCandidates(...)` and added sequential candidate fallback on image error.
+- Validation in this session:
+  - backend tests: `pytest -q` => `244 passed`.
+  - Next.js manual smoke via `npm run dev` + curl:
+    - pages 200: `/games/pokemon`, `/games/pokemon/sets`, `/games/pokemon/sets/base1`, `/games/onepiece`.
+    - news endpoints 200 with fallback payload using `excerpt` for One Piece/Pokémon.
+    - `/api/catalog/sets?game=pokemon&limit=20&offset=0` returned 503 in this container due missing `INTERNAL_API_BASE_URL` without Docker backend wiring.
+  - Docker limitation remains: `docker compose up -d --build` cannot run here (`docker: command not found`).
