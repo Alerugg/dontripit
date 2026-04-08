@@ -17,9 +17,34 @@ export async function GET(_, { params }) {
   }
 
   const payload = upstream.payload || {}
-  const requestedCardId = String(params.id || '')
+  const requestedCardId = String(params.id || '').trim()
+  const requestedCardIdAsNumber = Number(requestedCardId)
+  const payloadCardIdAsNumber = Number(payload?.id)
+  const canCompareAsNumber = Number.isFinite(requestedCardIdAsNumber) && Number.isFinite(payloadCardIdAsNumber)
+
+  if ((payload?.id !== undefined && payload?.id !== null) && (
+    canCompareAsNumber
+      ? payloadCardIdAsNumber !== requestedCardIdAsNumber
+      : String(payload.id || '').trim() !== requestedCardId
+  )) {
+    return NextResponse.json(
+      {
+        error: 'catalog_card_not_found',
+        message: 'No encontramos la carta solicitada.',
+      },
+      { status: 404 },
+    )
+  }
+
   const normalizedPrints = Array.isArray(payload?.prints)
-    ? payload.prints.filter((print) => String(print?.card_id || '') === requestedCardId)
+    ? payload.prints.filter((print) => {
+      const printCardId = String(print?.card_id ?? '').trim()
+      const printCardIdAsNumber = Number(printCardId)
+      if (canCompareAsNumber && Number.isFinite(printCardIdAsNumber)) {
+        return printCardIdAsNumber === requestedCardIdAsNumber
+      }
+      return printCardId === requestedCardId
+    })
     : []
   const normalizedSets = Array.isArray(payload?.sets)
     ? payload.sets.filter((setItem) => normalizedPrints.some((print) => String(print?.set_code || '').toLowerCase() === String(setItem?.code || '').toLowerCase()))

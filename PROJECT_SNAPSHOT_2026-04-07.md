@@ -202,3 +202,19 @@ Action taken in backend code:
 - Validation in this container:
   - targeted backend tests pass;
   - required Docker compose + backend-in-container pytest + localhost curl checks cannot run here because Docker CLI is unavailable (`docker: command not found`).
+
+## One Piece card detail variant-binding hardening (2026-04-08, branch `fix/onepiece-card-variant-binding`)
+- Root cause observed in frontend binding layer:
+  - card detail BFF (`/api/catalog/cards/[id]`) trusted upstream card identity and only filtered variants by string-equal `card_id`, which allowed edge mismatches when id formats differ (string/number), and did not explicitly fail when upstream card id diverged from requested route id.
+  - catalog card link resolution could prioritize `item.card_id` even for `type='card'`, making master-card navigation vulnerable when payloads include residual `card_id` metadata.
+- Minimal/localized fixes:
+  - `frontend/app/api/catalog/cards/[id]/route.js`
+    - enforce requested card identity (`payload.id` must match route `id`, with numeric-safe comparison) and return 404 on mismatch;
+    - keep payload shape compatible while filtering `prints` with numeric-safe `card_id` matching;
+    - keep `sets` constrained to filtered prints only.
+  - `frontend/components/catalog/CatalogCard.js`
+    - card links now use `item.id` for `type='card'` (master identity), using `item.card_id` only for non-card entities.
+  - Added targeted regression tests (`frontend/tests/cardDetailBinding.test.mjs`) to lock both safeguards.
+- Validation in this container:
+  - `node --test frontend/tests/cardDetailBinding.test.mjs frontend/tests/bffRoutesSyntax.test.mjs` passed.
+  - required docker compose / backend pytest-in-container / localhost curl checks are blocked in this environment (`docker: command not found`, no local server on `localhost:3000`).
