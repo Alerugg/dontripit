@@ -328,6 +328,234 @@ def get_card_detail(card_id: int):
     )
 
 
+def _catalog_print_resolve_values() -> tuple[list[str] | None, tuple | None]:
+    payload = request.get_json(silent=True) or {}
+
+    if not isinstance(payload, dict):
+        return None, _json_error("invalid_request", "request body must be a JSON object", 400)
+
+    raw_values = []
+
+    if "print_id" in payload:
+        raw_values.append(payload.get("print_id"))
+
+    if "print_ids" in payload:
+        if not isinstance(payload.get("print_ids"), list):
+            return None, _json_error("invalid_request", "print_ids must be a list", 400)
+        raw_values.extend(payload.get("print_ids") or [])
+
+    values = []
+    seen = set()
+
+    for raw_value in raw_values:
+        value = str(raw_value or "").strip()
+        if not value or value in seen:
+            continue
+        values.append(value)
+        seen.add(value)
+
+    if not values:
+        return None, _json_error("invalid_request", "print_id or print_ids is required", 400)
+
+    if len(values) > 100:
+        return None, _json_error("invalid_request", "a maximum of 100 print ids can be resolved at once", 400)
+
+    return values, None
+
+
+def _catalog_print_payload(row: dict, identifiers_by_print_id: dict[int, dict[str, str]]) -> dict:
+    print_id = int(row["print_id"])
+    external_ids = {
+        "scryfall_id": row["scryfall_id"],
+        "tcgdex_id": row["tcgdex_id"],
+        "yugioh_id": row["yugioh_id"],
+        "riftbound_id": row["riftbound_id"],
+    }
+
+    identifiers = identifiers_by_print_id.get(print_id) or {}
+    if identifiers:
+        external_ids["identifiers"] = identifiers
+
+    return {
+        "print_id": str(print_id),
+        "id": print_id,
+        "game": row["game_slug"],
+        "game_slug": row["game_slug"],
+        "game_name": row["game_name"],
+        "card_id": row["card_id"],
+        "card_name": row["card_name"],
+        "set_id": row["set_id"],
+        "set_code": row["set_code"],
+        "set_name": row["set_name"],
+        "collector_number": row["collector_number"],
+        "language": row["language"],
+        "rarity": row["rarity"],
+        "is_foil": row["is_foil"],
+        "variant": row["variant"],
+        "image_url": row["primary_image_url"],
+        "primary_image_url": row["primary_image_url"],
+        "print_key": row["print_key"],
+        "external_ids": external_ids,
+    }
+
+
+@catalog_bp.post("/api/prints/resolve")
+@catalog_bp.post("/api/catalog/prints/resolve")
+@catalog_bp.post("/api/v1/prints/resolve")
+def resolve_catalog_prints():
+    values, error = _catalog_print_resolve_values()
+    if error:
+        return error
+
+    numeric_ids = [int(value) for value in values if re.fullmatch(r"\d+", value)]
+    if not numeric_ids:
+        numeric_ids = [-1]
+
+    text_values = values or ["__never_match__"]
+
+    prints_sql = text(
+        """
+        SELECT p.id AS print_id,
+               p.print_key,
+               p.collector_number,
+               p.language,
+               p.rarity,
+               p.is_foil,
+               p.variant,
+               p.scryfall_id,
+               p.tcgdex_id,
+               p.yugioh_id,
+               p.riftbound_id,
+               c.id AS card_id,
+               c.name AS card_name,
+               s.id AS set_id,
+               s.code AS set_code,
+               s.name AS set_name,
+               g.slug AS game_slug,
+               g.name AS game_name,
+               (
+                 SELECT pi.url
+                 FROM print_images pi
+                 WHERE pi.print_id = p.id
+                 ORDER BY pi.is_primary DESC, pi.id ASC
+                 LIMIT 1
+               ) AS primary_image_url
+        FROM prints p
+        JOIN cards c ON c.id = p.card_id
+        JOIN sets s ON s.id = p.set_id
+        JOIN games g ON g.id = c.game_id
+        WHERE p.id IN :numeric_ids
+           OR p.print_key IN :text_values
+           OR p.scryfall_id IN :text_values
+           OR p.tcgdex_id IN :text_values
+           OR p.yugioh_id IN :text_values
+           OR p.riftbound_id IN :text_values
+           OR EXISTS (
+             SELECT 1
+             FROM print_identifiers pi
+             WHERE pi.print_id = p.id
+               AND pi.external_id IN :text_values
+           )
+        ORDER BY p.id ASC
+        """
+    ).bindparams(
+        bindparam("numeric_ids", expanding=True),
+        bindparam("text_values", expanding=True),
+    )
+
+    identifiers_sql = text(
+        """
+        SELECT print_id, source, external_id
+        FROM print_identifiers
+        WHERE print_id IN :print_ids
+        ORDER BY source ASC, id ASC
+        """
+    ).bindparams(bindparam("print_ids", expanding=True))
+
+    try:
+        with db.SessionLocal() as session:
+            rows = session.execute(
+                prints_sql,
+                {
+                    "numeric_ids": numeric_ids,
+                    "text_values": text_values,
+                },
+            ).mappings().all()
+
+            print_ids = [int(row["print_id"]) for row in rows]
+            identifier_rows = []
+            if print_ids:
+                identifier_rows = session.execute(
+                    identifiers_sql,
+                    {"print_ids": print_ids},
+                ).mappings().all()
+    except SQLAlchemyError as error:
+        return _json_error("print_resolve_failed", str(error), 500)
+
+    identifiers_by_print_id: dict[int, dict[str, str]] = {}
+    for identifier_row in identifier_rows:
+        print_id = int(identifier_row["print_id"])
+        source = str(identifier_row["source"] or "").strip()
+        external_id = str(identifier_row["external_id"] or "").strip()
+        if source and external_id:
+            identifiers_by_print_id.setdefault(print_id, {})[source] = external_id
+
+    row_by_value: dict[str, dict] = {}
+    for row in rows:
+        row_dict = dict(row)
+        candidate_values = [
+            str(row_dict.get("print_id") or "").strip(),
+            str(row_dict.get("print_key") or "").strip(),
+            str(row_dict.get("scryfall_id") or "").strip(),
+            str(row_dict.get("tcgdex_id") or "").strip(),
+            str(row_dict.get("yugioh_id") or "").strip(),
+            str(row_dict.get("riftbound_id") or "").strip(),
+        ]
+
+        for candidate_value in candidate_values:
+            if candidate_value:
+                row_by_value.setdefault(candidate_value, row_dict)
+
+    for identifier_row in identifier_rows:
+        external_id = str(identifier_row["external_id"] or "").strip()
+        if not external_id:
+            continue
+
+        matching_row = next(
+            (dict(row) for row in rows if int(row["print_id"]) == int(identifier_row["print_id"])),
+            None,
+        )
+        if matching_row:
+            row_by_value.setdefault(external_id, matching_row)
+
+    resolved = []
+    for value in values:
+        row = row_by_value.get(value)
+
+        if not row:
+            resolved.append(
+                {
+                    "query": value,
+                    "found": False,
+                    "print_id": value,
+                    "catalog": None,
+                }
+            )
+            continue
+
+        catalog = _catalog_print_payload(row, identifiers_by_print_id)
+        resolved.append(
+            {
+                "query": value,
+                "found": True,
+                "print_id": catalog["print_id"],
+                "catalog": catalog,
+            }
+        )
+
+    return jsonify({"prints": resolved})
+
+
 @catalog_bp.get("/api/sets")
 @catalog_bp.get("/api/v1/sets")
 def list_sets():
