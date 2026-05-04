@@ -3,7 +3,7 @@ from sqlalchemy import select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.registry import get_connector
-from app.models import ApiKey, ApiPlan, Card, Game, Print, PrintImage, Set
+from app.models import ApiKey, ApiPlan, Card, Game, Print, PrintIdentifier, PrintImage, Set
 from app.scripts.seed import run_seed
 
 
@@ -392,6 +392,89 @@ def test_v1_prints_with_limit_returns_200(client):
     response = client.get("/api/v1/prints?game=pokemon&limit=5", headers=_auth_headers())
     assert response.status_code == 200
     assert isinstance(response.get_json(), list)
+
+
+def test_v1_print_resolve_returns_catalog_payload_for_ids_and_identifiers(client):
+    run_seed()
+
+    with db.SessionLocal() as session:
+        game = Game(slug="resolve-test", name="Resolve Test Game")
+        set_row = Set(game_id=0, code="RSLV", name="Resolve Set")
+        card = Card(game_id=0, name="Resolve Pikachu", card_key="resolve-pikachu")
+        session.add(game)
+        session.flush()
+
+        set_row.game_id = game.id
+        card.game_id = game.id
+        session.add_all([set_row, card])
+        session.flush()
+
+        print_row = Print(
+            set_id=set_row.id,
+            card_id=card.id,
+            collector_number="001",
+            language="en",
+            rarity="rare",
+            is_foil=False,
+            variant="default",
+            print_key="resolve:test-print-key",
+        )
+        session.add(print_row)
+        session.flush()
+
+        session.add_all(
+            [
+                PrintImage(
+                    print_id=print_row.id,
+                    url="https://example.com/resolve-print.jpg",
+                    is_primary=True,
+                    source="catalog_test",
+                ),
+                PrintIdentifier(
+                    print_id=print_row.id,
+                    source="catalog_test",
+                    external_id="resolve-external-001",
+                ),
+            ]
+        )
+        session.commit()
+        print_id = print_row.id
+
+    response = client.post(
+        "/api/v1/prints/resolve",
+        headers=_auth_headers(),
+        json={
+            "print_ids": [
+                str(print_id),
+                "resolve:test-print-key",
+                "resolve-external-001",
+                "missing-print",
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert isinstance(payload["prints"], list)
+    assert len(payload["prints"]) == 4
+
+    by_query = {item["query"]: item for item in payload["prints"]}
+
+    resolved_by_id = by_query[str(print_id)]
+    assert resolved_by_id["found"] is True
+    assert resolved_by_id["print_id"] == str(print_id)
+    assert resolved_by_id["catalog"]["card_name"] == "Resolve Pikachu"
+    assert resolved_by_id["catalog"]["game_slug"] == "resolve-test"
+    assert resolved_by_id["catalog"]["set_code"] == "RSLV"
+    assert resolved_by_id["catalog"]["collector_number"] == "001"
+    assert resolved_by_id["catalog"]["rarity"] == "rare"
+    assert resolved_by_id["catalog"]["primary_image_url"] == "https://example.com/resolve-print.jpg"
+    assert resolved_by_id["catalog"]["external_ids"]["identifiers"]["catalog_test"] == "resolve-external-001"
+
+    assert by_query["resolve:test-print-key"]["found"] is True
+    assert by_query["resolve-external-001"]["found"] is True
+    assert by_query["missing-print"]["found"] is False
+    assert by_query["missing-print"]["catalog"] is None
 
 
 def test_v1_card_detail_returns_200_with_prints_array(client):
