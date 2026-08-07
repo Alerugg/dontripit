@@ -46,14 +46,41 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         raise RuntimeError(f"Scryfall request failed after retries: {url}")
 
     def _bulk_metadata(self) -> dict:
+        # Prefer the typed endpoint. It is less coupled to the representation of
+        # the general bulk-data listing and returns the default_cards object itself.
+        try:
+            direct = self._request_json(f"{self.base_url}/bulk-data/default_cards")
+            if isinstance(direct, dict) and direct.get("download_uri"):
+                return direct
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status not in {404, 405}:
+                raise
+
+        # Compatibility fallback for older Scryfall responses.
         bulk_list = self._request_json(f"{self.base_url}/bulk-data")
-        default_bulk = next(
-            (item for item in bulk_list.get("data") or [] if item.get("type") == "default_cards"),
-            None,
+        candidates = bulk_list.get("data") if isinstance(bulk_list, dict) else None
+        if isinstance(candidates, list):
+            default_bulk = next(
+                (
+                    item
+                    for item in candidates
+                    if isinstance(item, dict)
+                    and str(item.get("type") or "").strip().lower() == "default_cards"
+                ),
+                None,
+            )
+            if default_bulk and default_bulk.get("download_uri"):
+                return default_bulk
+
+        # Some transitional responses may wrap the requested object under data.
+        if isinstance(candidates, dict) and candidates.get("download_uri"):
+            return candidates
+
+        raise RuntimeError(
+            "Scryfall default_cards bulk endpoint unavailable "
+            f"(top_level_keys={sorted(bulk_list.keys()) if isinstance(bulk_list, dict) else []})"
         )
-        if default_bulk is None or not default_bulk.get("download_uri"):
-            raise RuntimeError("Scryfall default_cards bulk endpoint unavailable")
-        return default_bulk
 
     def _download_default_cards(self, *, stop_after: int | None = None) -> list[dict]:
         default_bulk = self._bulk_metadata()
