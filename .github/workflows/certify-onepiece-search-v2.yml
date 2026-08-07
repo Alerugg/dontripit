@@ -154,7 +154,9 @@ jobs:
               image_source = (typo_items[0].get('matched_print') or {}).get('primary_image_url')
           assert image_source, 'No One Piece image source returned by Search V2'
 
-          proxy_url = 'http://127.0.0.1:3000/api/catalog/image?url=' + urllib.parse.quote(image_source, safe='')
+          # Match the production frontend contract exactly: the image BFF accepts
+          # the remote source in the `src` query parameter.
+          proxy_url = 'http://127.0.0.1:3000/api/catalog/image?src=' + urllib.parse.quote(image_source, safe='')
           request = urllib.request.Request(proxy_url, headers={'User-Agent': 'onepiece-search-v2-certification/1.0'})
           with urllib.request.urlopen(request, timeout=20) as response:
               content_type = response.headers.get('content-type', '')
@@ -242,7 +244,7 @@ jobs:
 
           ## Scope
 
-          This certification covers the `catalog-v2` One Piece catalog/search stack and Neon data. It does **not** by itself certify any specific external deployment host; Railway should be fingerprinted separately through `/api/build-info` when its public URL is available to the automation environment.
+          This certification covers the `catalog-v2` One Piece catalog/search stack, its production build contract and Neon data. Railway deploys the connected branch automatically and is treated as the deployment target; no manual Railway step is required for this repository gate.
           '''
           content = '\n'.join(line.strip() if line.startswith('          ') else line for line in content.splitlines()).strip() + '\n'
           path = Path('docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md')
@@ -274,7 +276,7 @@ jobs:
             /tmp/cert-build-info.json
             docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md
           if-no-files-found: warn
-          retention-days: 180
+          retention-days: 90
 
       - name: Disable temporary API key
         if: always() && env.TEMP_API_PREFIX != ''
