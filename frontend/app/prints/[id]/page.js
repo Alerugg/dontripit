@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import TopNav from '../../../components/layout/TopNav'
 import FallbackImage from '../../../components/common/FallbackImage'
@@ -14,6 +14,7 @@ function MetaLine({ label, value }) {
 }
 
 export default function PrintDetailPage({ params }) {
+  const { id } = use(params)
   const [printDetail, setPrintDetail] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -26,7 +27,7 @@ export default function PrintDetailPage({ params }) {
       setError('')
 
       try {
-        const payload = await fetchPrintById(params.id)
+        const payload = await fetchPrintById(id)
         if (!cancelled) setPrintDetail(payload)
       } catch (requestError) {
         if (!cancelled) {
@@ -42,7 +43,7 @@ export default function PrintDetailPage({ params }) {
     return () => {
       cancelled = true
     }
-  }, [params.id])
+  }, [id])
 
   return (
     <main>
