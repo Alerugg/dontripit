@@ -23,7 +23,7 @@ on:
       - 'frontend/app/api/build-info/**'
       - 'frontend/lib/searchV2/**'
       - 'frontend/lib/news/**'
-      - 'frontend/tests/explorerPage.test.mjs'
+      - 'frontend/tests/**'
       - '.github/workflows/search-v2-frontend-ci.yml'
   workflow_dispatch:
 
