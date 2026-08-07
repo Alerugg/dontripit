@@ -297,7 +297,11 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
 
     sql = text(
         f"""
-        WITH scored AS (
+        WITH variant_counts AS (
+          SELECT card_id, COUNT(*) AS variant_count
+          FROM print_search_profiles
+          GROUP BY card_id
+        ), scored AS (
           SELECT
             psp.card_id,
             c.card_key,
@@ -312,6 +316,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
             psp.exact_variant,
             psp.variant_family,
             psp.attributes_json,
+            vc.variant_count,
             (
               CASE WHEN :q_collector <> '' AND psp.normalized_collector_number = :q_collector THEN 5000.0 ELSE 0.0 END +
               CASE WHEN psp.normalized_name = :q_name_norm THEN 3600.0 ELSE 0.0 END +
@@ -336,17 +341,13 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
               CASE WHEN :q_counter >= 0 AND ({counter_match}) THEN 1500.0 ELSE 0.0 END +
               CASE WHEN :has_structured AND ({all_structured_sql}) THEN 2500.0 ELSE 0.0 END +
               CASE WHEN psp.exact_variant = 'default' THEN 25.0 ELSE 0.0 END
-            ) AS score,
-            (
-              SELECT COUNT(*)
-              FROM print_search_profiles all_psp
-              WHERE all_psp.card_id = psp.card_id
-            ) AS variant_count
+            ) AS score
           FROM print_search_profiles psp
           JOIN prints p ON p.id = psp.print_id
           JOIN cards c ON c.id = psp.card_id
           JOIN sets s ON s.id = p.set_id
           JOIN games g ON g.id = psp.game_id
+          JOIN variant_counts vc ON vc.card_id = psp.card_id
           WHERE (:game = '' OR g.slug = :game)
             AND (
               (:collector_only = TRUE AND psp.normalized_collector_number = :q_collector)
