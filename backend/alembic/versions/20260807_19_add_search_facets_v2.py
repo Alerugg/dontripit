@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "20260807_19"
@@ -20,6 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # PostgreSQL pg_trgm gives fast contains/fuzzy matching for human card names.
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    jsonb = postgresql.JSONB(astext_type=sa.Text())
 
     op.create_table(
         "card_search_profiles",
@@ -27,9 +29,9 @@ def upgrade() -> None:
         sa.Column("card_id", sa.Integer(), nullable=False),
         sa.Column("game_id", sa.Integer(), nullable=False),
         sa.Column("normalized_name", sa.Text(), nullable=False),
-        sa.Column("aliases_json", sa.JSON(), nullable=True),
-        sa.Column("keywords_json", sa.JSON(), nullable=True),
-        sa.Column("attributes_json", sa.JSON(), nullable=True),
+        sa.Column("aliases_json", jsonb, nullable=True),
+        sa.Column("keywords_json", jsonb, nullable=True),
+        sa.Column("attributes_json", jsonb, nullable=True),
         sa.Column("search_text", sa.Text(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["card_id"], ["cards.id"], ondelete="CASCADE"),
@@ -65,10 +67,10 @@ def upgrade() -> None:
         sa.Column("rarity", sa.String(length=100), nullable=True),
         sa.Column("exact_variant", sa.String(length=100), nullable=True),
         sa.Column("variant_family", sa.String(length=100), nullable=True),
-        sa.Column("release_names_json", sa.JSON(), nullable=True),
-        sa.Column("aliases_json", sa.JSON(), nullable=True),
-        sa.Column("keywords_json", sa.JSON(), nullable=True),
-        sa.Column("attributes_json", sa.JSON(), nullable=True),
+        sa.Column("release_names_json", jsonb, nullable=True),
+        sa.Column("aliases_json", jsonb, nullable=True),
+        sa.Column("keywords_json", jsonb, nullable=True),
+        sa.Column("attributes_json", jsonb, nullable=True),
         sa.Column("search_text", sa.Text(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["print_id"], ["prints.id"], ondelete="CASCADE"),
@@ -119,7 +121,7 @@ def upgrade() -> None:
         sa.Column("searchable", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("quick_filter", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("display_order", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("options_json", sa.JSON(), nullable=True),
+        sa.Column("options_json", jsonb, nullable=True),
         sa.Column("active", sa.Boolean(), server_default="true", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
