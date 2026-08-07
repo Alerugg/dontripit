@@ -32,9 +32,24 @@ jobs:
           node-version: '20.19.0'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Resolve secure stable Next and React
-        run: npm install next@16.2.9 react@latest react-dom@latest --save-exact
-      - name: Verify resolved versions
+      - name: Reclassify build-only packages as dev dependencies
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+          pkg.dependencies ||= {}
+          pkg.devDependencies ||= {}
+          for (const name of ['autoprefixer', 'eslint', 'eslint-config-next', 'postcss', 'tailwindcss']) {
+            if (pkg.dependencies[name]) {
+              pkg.devDependencies[name] = pkg.dependencies[name]
+              delete pkg.dependencies[name]
+            }
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          NODE
+      - name: Resolve patched Next and compatible React
+        run: npm install next@16.3.0 react@19.2.8 react-dom@19.2.8 --save-exact
+      - name: Verify resolved runtime versions
         run: |
           node - <<'NODE'
           const pkg=require('./package.json')
@@ -46,9 +61,10 @@ jobs:
               react:lock.packages?.['node_modules/react']?.version,
               reactDom:lock.packages?.['node_modules/react-dom']?.version,
             },
+            devDependencies:Object.keys(pkg.devDependencies||{}).sort(),
           }
           console.log(JSON.stringify(resolved,null,2))
-          if (resolved.package.next !== '16.2.9' || resolved.lock.next !== '16.2.9') process.exit(2)
+          if (resolved.package.next !== '16.3.0' || resolved.lock.next !== '16.3.0') process.exit(2)
           NODE
       - name: Block high or critical production vulnerabilities
         run: |
@@ -73,7 +89,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No package changes to commit"
           else
-            git commit -m "Upgrade frontend to secure Next.js 16.2.9"
+            git commit -m "Upgrade frontend runtime to patched Next.js 16.3.0"
             git push origin HEAD:catalog-v2
           fi
       - name: Upload security evidence
