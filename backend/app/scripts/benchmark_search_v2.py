@@ -135,7 +135,9 @@ CASES: tuple[BenchmarkCase, ...] = (
     BenchmarkCase("lufi", "typo", expected_name="Luffy", max_rank=5),
     BenchmarkCase("zolo", "typo", expected_name="Zoro", max_rank=5),
     BenchmarkCase("Straw Hat Crew", "semantic_trait", expected_trait="Straw Hat Crew", max_rank=5),
-    BenchmarkCase("red leader", "natural_properties", expected_color="Red", expected_card_type="Leader", max_rank=10),
+    BenchmarkCase("red leader", "natural_properties", hard_gate=True, expected_color="Red", expected_card_type="Leader", max_rank=1),
+    BenchmarkCase("purple leader", "natural_properties", expected_color="Purple", expected_card_type="Leader", max_rank=1),
+    BenchmarkCase("blue character", "natural_properties", expected_color="Blue", expected_card_type="Character", max_rank=1),
 )
 
 
@@ -146,8 +148,6 @@ def run() -> dict:
     elapsed_values: list[float] = []
 
     with db.SessionLocal() as session:
-        # Warm the connection/index path so the benchmark mostly measures query
-        # behavior rather than the first TLS/database handshake.
         normal_search(session, query="Luffy", game_slug="onepiece", limit=5)
 
         for case in CASES:
