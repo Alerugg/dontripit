@@ -6,8 +6,10 @@ on:
       - catalog-v2
     paths:
       - 'backend/app/scripts/source_probe.py'
+      - 'backend/app/ingest/registry.py'
       - 'backend/app/ingest/connectors/onepiece.py'
       - 'backend/app/ingest/connectors/scryfall_mtg.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon.py'
       - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
       - 'backend/app/ingest/connectors/riftbound.py'
@@ -42,7 +44,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Probe remote catalog sources without database writes
-        run: python -u -m app.scripts.source_probe | tee source-probe.json
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.source_probe | tee source-probe.json
 
       - name: Upload source probe result
         if: always()
