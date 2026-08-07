@@ -26,6 +26,8 @@ test('legacy explorer redirects home while game routes choose the correct search
   const apiClient = await fs.readFile(new URL('../lib/catalog/client.js', import.meta.url), 'utf8')
 
   assert.match(explorerPage, /redirect\('\/'\)/)
+  assert.match(gamePage, /export default async function GamePage/)
+  assert.match(gamePage, /const \{ slug \} = await params/)
   assert.match(gamePage, /import OnePieceExplorerV2Page/)
   assert.match(gamePage, /game\.slug === 'onepiece'/)
   assert.match(gamePage, /<OnePieceExplorerV2Page game=\{game\} \/>/)
@@ -98,12 +100,53 @@ test('One Piece V2 exposes both normal and advanced search UX without changing o
   assert.match(results, /Exact print/)
 })
 
-test('legacy tcg and play entry points redirect to the scoped game page', async () => {
+test('Next 16 dynamic routes resolve async params instead of reading Promise properties', async () => {
+  const serverRoutes = [
+    '../app/games/[slug]/page.js',
+    '../app/games/[slug]/sets/page.js',
+    '../app/games/[slug]/sets/[setCode]/page.js',
+    '../app/games/[slug]/explorer/page.js',
+    '../app/tcg/[slug]/page.js',
+    '../app/play/[slug]/page.js',
+    '../app/explorer/[type]/[id]/page.js',
+    '../app/api/catalog/cards/[id]/route.js',
+    '../app/api/catalog/prints/[id]/route.js',
+  ]
+
+  for (const route of serverRoutes) {
+    const source = await fs.readFile(new URL(route, import.meta.url), 'utf8')
+    assert.match(source, /await params/, `${route} must await params on Next 16`)
+    assert.doesNotMatch(source, /params\.(slug|id|type|cardId|setCode)/, `${route} reads params synchronously`)
+  }
+
+  const clientRoutes = [
+    '../app/cards/[id]/page.js',
+    '../app/prints/[id]/page.js',
+    '../app/games/[slug]/cards/[cardId]/page.js',
+  ]
+
+  for (const route of clientRoutes) {
+    const source = await fs.readFile(new URL(route, import.meta.url), 'utf8')
+    assert.match(source, /use\(params\)/, `${route} must unwrap params with React.use`)
+    assert.doesNotMatch(source, /params\.(slug|id|cardId)/, `${route} reads params synchronously`)
+  }
+})
+
+test('deployment fingerprint exposes only safe build metadata', async () => {
+  const buildInfo = await fs.readFile(new URL('../app/api/build-info/route.js', import.meta.url), 'utf8')
+  assert.match(buildInfo, /RAILWAY_GIT_COMMIT_SHA/)
+  assert.match(buildInfo, /catalog-v2-search-v2/)
+  assert.doesNotMatch(buildInfo, /INTERNAL_API_KEY|DATABASE_URL/)
+})
+
+test('legacy tcg and play entry points redirect to the scoped game page after resolving params', async () => {
   const tcgRoute = await fs.readFile(new URL('../app/tcg/[slug]/page.js', import.meta.url), 'utf8')
   const playRoute = await fs.readFile(new URL('../app/play/[slug]/page.js', import.meta.url), 'utf8')
 
-  assert.match(tcgRoute, /redirect\(`\/games\/\$\{params\.slug\}`\)/)
-  assert.match(playRoute, /redirect\(`\/games\/\$\{params\.slug\}`\)/)
+  assert.match(tcgRoute, /const \{ slug \} = await params/)
+  assert.match(playRoute, /const \{ slug \} = await params/)
+  assert.match(tcgRoute, /redirect\(`\/games\/\$\{slug\}`\)/)
+  assert.match(playRoute, /redirect\(`\/games\/\$\{slug\}`\)/)
 })
 
 test('BFF helper reads internal server-side env vars', async () => {
