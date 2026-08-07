@@ -13,7 +13,8 @@ test('home page is consolidated in app/page.js and composes the current home she
   assert.match(shell, /<TopNav \/>/)
   assert.match(shell, /className="page-shell home-shell home-shell-v3"/)
   assert.doesNotMatch(shell, /landing-shell|landing-v3/)
-  assert.match(hero, /Explorar Pokémon/)
+  assert.match(hero, /Explora cartas, sets y variantes/)
+  assert.match(hero, /Pokémon, Magic, Yu-Gi-Oh!, One Piece y Riftbound/)
   assert.match(grid, /GAME_CATALOG\.map/)
 })
 
