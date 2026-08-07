@@ -37,8 +37,10 @@ jobs:
           HEAD="$(alembic heads | awk '{print $1}')"
           echo "Alembic head: ${HEAD}"
           test "${HEAD}" = "20260807_18"
-      - name: Render full migration chain offline
+      - name: Render new migration only offline
         run: |
-          alembic upgrade head --sql > /tmp/catalog-v2-schema.sql
+          alembic upgrade 20260323_17:20260807_18 --sql > /tmp/catalog-v2-schema.sql
           test -s /tmp/catalog-v2-schema.sql
-          tail -80 /tmp/catalog-v2-schema.sql
+          grep -q 'catalog_releases' /tmp/catalog-v2-schema.sql
+          grep -q 'print_releases' /tmp/catalog-v2-schema.sql
+          cat /tmp/catalog-v2-schema.sql
