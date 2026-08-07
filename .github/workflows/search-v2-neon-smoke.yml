@@ -1,0 +1,46 @@
+name: Search V2 Neon Smoke
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/search-v2-neon-smoke.yml'
+      - 'backend/app/scripts/smoke_search_v2.py'
+      - 'backend/app/search_v2/query.py'
+      - 'backend/app/search_v2/advanced.py'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify database secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Run real Search V2 quality smoke
+        run: |
+          set -o pipefail
+          python -m app.scripts.smoke_search_v2 | tee /tmp/search-v2-smoke.json
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-neon-smoke-${{ github.sha }}
+          path: /tmp/search-v2-smoke.json
+          if-no-files-found: warn
+          retention-days: 30
