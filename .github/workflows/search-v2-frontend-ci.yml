@@ -10,6 +10,7 @@ on:
       - 'frontend/app/games/[slug]/page.js'
       - 'frontend/app/api/search-v2/**'
       - 'frontend/lib/searchV2/**'
+      - 'frontend/tests/explorerPage.test.mjs'
       - '.github/workflows/search-v2-frontend-ci.yml'
   workflow_dispatch:
 
