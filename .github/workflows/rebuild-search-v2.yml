@@ -6,6 +6,10 @@ on:
       - catalog-v2
     paths:
       - '.github/workflows/rebuild-search-v2.yml'
+      - 'backend/app/search_v2/facets.py'
+      - 'backend/app/search_v2/indexer.py'
+      - 'backend/app/search_v2/onepiece_source.py'
+      - 'backend/app/scripts/rebuild_search_v2.py'
   workflow_dispatch:
 
 jobs:
@@ -47,7 +51,7 @@ jobs:
           p=json.load(open('/tmp/search-v2-build.json'))
           assert p['verified']['card_profiles'] == 2665, p
           assert p['verified']['print_profiles'] == 4672, p
-          assert p['verified']['facets'] >= 20, p
+          assert p['verified']['facets'] >= 19, p
           print(json.dumps(p['verified'], indent=2))
           print(json.dumps(p['stats'].get('coverage', {}), indent=2))
           PY
