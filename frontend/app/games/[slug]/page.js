@@ -4,8 +4,9 @@ import GameExplorerPage from '../../../components/games/GameExplorerPage'
 import OnePieceExplorerV2Page from '../../../components/games/OnePieceExplorerV2Page'
 import { getGameConfig } from '../../../lib/catalog/games'
 
-export default function GamePage({ params }) {
-  const game = getGameConfig(params.slug)
+export default async function GamePage({ params }) {
+  const { slug } = await params
+  const game = getGameConfig(slug)
 
   if (!game) notFound()
 
