@@ -59,7 +59,7 @@ def run_probe() -> dict:
     results.append(
         _probe(
             "mtg",
-            lambda: len(ScryfallMtgV2Connector()._load_incremental(limit=5, last_run_at=None)),
+            lambda: len(ScryfallMtgV2Connector().probe_remote(limit=5)),
         )
     )
     results.append(
