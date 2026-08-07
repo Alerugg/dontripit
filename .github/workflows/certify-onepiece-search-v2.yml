@@ -1,0 +1,282 @@
+name: Certify One Piece Search V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/certify-onepiece-search-v2.yml'
+      - 'backend/app/scripts/onepiece_search_v2_certification.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PUBLIC_API_ENABLED: 'false'
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Certify Neon counts and 30-case ranking benchmark
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m app.scripts.onepiece_search_v2_certification | tee /tmp/onepiece-search-v2-certification.json
+
+      - name: Run complete frontend regression suite
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ci-placeholder-key
+        run: npm test
+
+      - name: Build production frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ci-placeholder-key
+        run: npm run build
+
+      - name: Create temporary read-only catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "cert-onepiece-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "TEMP_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+
+      - name: Start Neon-backed backend
+        working-directory: backend
+        run: |
+          nohup flask --app app.main:app run --host 127.0.0.1 --port 5000 > /tmp/cert-backend.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5000/api/health >/tmp/cert-backend-health.json; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/cert-backend.log
+          exit 1
+
+      - name: Start production frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
+        run: |
+          nohup npm start > /tmp/cert-frontend.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:3000/api/build-info >/tmp/cert-build-info.json; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/cert-frontend.log
+          exit 1
+
+      - name: Certify full HTTP BFF behavior and image proxy
+        run: |
+          set -euo pipefail
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=OP05-119&limit=10' > /tmp/cert-exact.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=monky%20lufi&limit=10' > /tmp/cert-typo.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=power%20%3E%3D%2010000&limit=10' > /tmp/cert-power-range.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=Luffy%20power%20%3E%3D%2010000&limit=10' > /tmp/cert-luffy-power.json
+          curl -fsS -X POST 'http://127.0.0.1:3000/api/search-v2/advanced' \
+            -H 'Content-Type: application/json' \
+            --data '{"game":"onepiece","q":"Luffy","filters":{"set":"op-05","language":"en","rarity":"SEC"},"limit":24,"offset":0}' \
+            > /tmp/cert-advanced.json
+
+          python - <<'PY'
+          import json, urllib.parse, urllib.request
+
+          def load(path):
+              return json.load(open(path, encoding='utf-8'))
+
+          exact = load('/tmp/cert-exact.json')
+          typo = load('/tmp/cert-typo.json')
+          power = load('/tmp/cert-power-range.json')
+          luffy_power = load('/tmp/cert-luffy-power.json')
+          advanced = load('/tmp/cert-advanced.json')
+          build = load('/tmp/cert-build-info.json')
+
+          exact_items = exact.get('items') or []
+          assert len(exact_items) == 1 and exact_items[0].get('card_key') == 'onepiece:op05-119', exact_items
+
+          typo_items = typo.get('items') or []
+          assert typo_items and 'luffy' in str(typo_items[0].get('name') or '').lower(), typo_items[:5]
+
+          power_items = power.get('items') or []
+          assert power_items and int((power_items[0].get('attributes') or {}).get('power') or -1) >= 10000, power_items[:3]
+
+          luffy_items = luffy_power.get('items') or []
+          assert luffy_items and 'luffy' in str(luffy_items[0].get('name') or '').lower(), luffy_items[:3]
+          assert int((luffy_items[0].get('attributes') or {}).get('power') or -1) >= 10000, luffy_items[:3]
+
+          adv_items = advanced.get('items') or []
+          assert adv_items, advanced
+          for row in adv_items[:10]:
+              assert row.get('set_code') == 'op-05', row
+              assert row.get('language') == 'en', row
+              assert str(row.get('rarity') or '').upper() == 'SEC', row
+
+          assert build.get('build_contract') == 'catalog-v2-search-v2', build
+
+          image_source = (exact_items[0].get('matched_print') or {}).get('primary_image_url')
+          if not image_source:
+              image_source = (typo_items[0].get('matched_print') or {}).get('primary_image_url')
+          assert image_source, 'No One Piece image source returned by Search V2'
+
+          proxy_url = 'http://127.0.0.1:3000/api/catalog/image?url=' + urllib.parse.quote(image_source, safe='')
+          request = urllib.request.Request(proxy_url, headers={'User-Agent': 'onepiece-search-v2-certification/1.0'})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              content_type = response.headers.get('content-type', '')
+              body = response.read(64)
+              proxy_status = response.status
+          assert proxy_status == 200, proxy_status
+          assert content_type.lower().startswith('image/'), content_type
+          assert body, 'Image proxy returned an empty body'
+
+          evidence = {
+              'status': 'pass',
+              'exact_collector_singleton': True,
+              'typo_top': typo_items[0].get('name'),
+              'power_range_top': {'name': power_items[0].get('name'), 'power': (power_items[0].get('attributes') or {}).get('power')},
+              'compound_range_top': {'name': luffy_items[0].get('name'), 'power': (luffy_items[0].get('attributes') or {}).get('power')},
+              'advanced_total': advanced.get('total'),
+              'build_contract': build.get('build_contract'),
+              'image_proxy': {'status': proxy_status, 'content_type': content_type},
+          }
+          json.dump(evidence, open('/tmp/onepiece-search-v2-http-evidence.json', 'w', encoding='utf-8'), indent=2)
+          print(json.dumps(evidence, indent=2))
+          PY
+
+      - name: Write certification document
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          cert = json.load(open('/tmp/onepiece-search-v2-certification.json', encoding='utf-8'))
+          http = json.load(open('/tmp/onepiece-search-v2-http-evidence.json', encoding='utf-8'))
+          actual = cert['actual']
+          bench = cert['benchmark']
+          latency = bench['latency_ms']
+
+          content = f'''# One Piece Search V2 Certification
+
+          **Status: CERTIFIED**
+
+          Generated by the reproducible `Certify One Piece Search V2` GitHub Actions gate against Neon.
+
+          ## Canonical catalog/search evidence
+
+          - Logical Cards: **{actual['cards']}**
+          - Physical Prints: **{actual['prints']}**
+          - Card Search Profiles: **{actual['card_profiles']}**
+          - Print Search Profiles: **{actual['print_profiles']}**
+          - Active facets: **{actual['active_facets']}**
+          - Duplicate print keys: **{actual['duplicate_print_keys']}**
+          - Prints without a recorded image row: **{actual['missing_print_images']}**
+
+          ## Search quality gate
+
+          - Benchmark cases: **{bench['case_count']}**
+          - Hard gates: **{bench['hard_gate']['passed']}/{bench['hard_gate']['total']}**
+          - Soft quality: **{bench['soft_quality']['passed']}/{bench['soft_quality']['total']}**
+          - Median query latency (GitHub runner → Neon): **{latency['median']} ms**
+          - P95: **{latency['p95']} ms**
+          - Maximum: **{latency['max']} ms**
+
+          Covered behavior includes canonical names, exact collectors, compound queries, typo tolerance, structured color/type/language/rarity intent, exact numeric stats, ranges and comparators.
+
+          ## Full-stack HTTP gate
+
+          - Exact collector singleton: **PASS**
+          - Typo ranking: **PASS** (`{http['typo_top']}`)
+          - Natural numeric range: **PASS**
+          - Compound name + numeric range: **PASS**
+          - Advanced Print search: **PASS**
+          - Build contract: **{http['build_contract']}**
+          - Image proxy: **HTTP {http['image_proxy']['status']} / {http['image_proxy']['content_type']}**
+
+          ## UX contract
+
+          - Normal Search groups physical variants into logical Cards.
+          - Normal Search starts with 24 relevance-ranked Cards and can progressively load up to 96.
+          - Advanced Search is exhaustive at Print level and paginated 24 per page.
+          - Advanced filters are shareable/restorable through URL state.
+          - Quick Filters expose Color, Card Type, Promo, SP and Treasure Rare without opening the full panel.
+          - Full Advanced Search is ordered Identity → Card → Collecting.
+
+          ## Intentionally deferred facets
+
+          `Manga` and `Illustration Type` remain hidden until their print-level classification is sufficiently trustworthy. They are not part of the certified filter surface yet.
+
+          ## Scope
+
+          This certification covers the `catalog-v2` One Piece catalog/search stack and Neon data. It does **not** by itself certify any specific external deployment host; Railway should be fingerprinted separately through `/api/build-info` when its public URL is available to the automation environment.
+          '''
+          content = '\n'.join(line.strip() if line.startswith('          ') else line for line in content.splitlines()).strip() + '\n'
+          path = Path('docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(content, encoding='utf-8')
+          PY
+
+      - name: Commit certification only after every gate passes
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md; then
+            echo 'Certification document already matches current evidence.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md
+          git commit -m 'Certify One Piece Search V2'
+          git push origin HEAD:catalog-v2
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-search-v2-certification-${{ github.sha }}
+          path: |
+            /tmp/onepiece-search-v2-certification.json
+            /tmp/onepiece-search-v2-http-evidence.json
+            /tmp/cert-build-info.json
+            docs/qa/ONEPIECE_SEARCH_V2_CERTIFICATION.md
+          if-no-files-found: warn
+          retention-days: 180
+
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true
