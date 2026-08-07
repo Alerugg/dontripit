@@ -1,14 +1,11 @@
 name: Rebuild One Piece V2
 
 on:
-  push:
-    branches:
-      - catalog-v2
-    paths:
-      - '.github/workflows/rebuild-onepiece-v2.yml'
-      - 'backend/app/db.py'
-      - 'backend/app/scripts/rebuild_onepiece_v2.py'
   workflow_dispatch:
+
+concurrency:
+  group: onepiece-catalog-write-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   rebuild:
@@ -25,7 +22,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses:
+          actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install dependencies
