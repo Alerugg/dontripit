@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import time
 from datetime import date
@@ -10,15 +12,11 @@ from app.ingest.connectors.scryfall_mtg import ScryfallMtgConnector
 
 
 class ScryfallMtgV2Connector(ScryfallMtgConnector):
-    """Scryfall connector using current bulk-data conventions.
+    """Scryfall connector using the current JSONL bulk-data contract.
 
-    Scryfall rejects poorly identified HTTP clients with 400/403 responses and,
-    as of July 20 2026, bulk exports are JSONL-only. This connector therefore
-    sends explicit application headers and parses JSON Lines rather than assuming
-    the legacy top-level JSON array format.
-
-    The source name intentionally stays ``scryfall_mtg`` so existing sync state,
-    source records and ingest history remain continuous.
+    Current Scryfall behavior requires an identified HTTP client and exposes
+    ``jsonl_download_uri`` for compressed JSONL exports. The source name remains
+    ``scryfall_mtg`` so all existing sync state and provenance stay continuous.
     """
 
     name = "scryfall_mtg"
@@ -46,6 +44,16 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         raise RuntimeError(f"Scryfall request failed after retries: {url}")
 
     @staticmethod
+    def _bulk_download_url(item: object) -> str | None:
+        if not isinstance(item, dict):
+            return None
+        for key in ("jsonl_download_uri", "download_uri"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                return value
+        return None
+
+    @staticmethod
     def _is_default_bulk_item(item: object) -> bool:
         if not isinstance(item, dict):
             return False
@@ -58,13 +66,12 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         if not isinstance(payload, dict):
             return None
 
-        # A detailed bulk object may be returned directly.
-        if cls._is_default_bulk_item(payload) or payload.get("download_uri"):
+        if cls._is_default_bulk_item(payload) or cls._bulk_download_url(payload):
             return payload
 
         data = payload.get("data")
         if isinstance(data, dict):
-            if cls._is_default_bulk_item(data) or data.get("download_uri"):
+            if cls._is_default_bulk_item(data) or cls._bulk_download_url(data):
                 return data
             return None
         if not isinstance(data, list):
@@ -76,43 +83,31 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         return None
 
     def _resolve_bulk_detail(self, candidate: dict) -> dict | None:
-        if candidate.get("download_uri"):
+        if self._bulk_download_url(candidate):
             return candidate
 
         detail_uri = str(candidate.get("uri") or "").strip()
         if detail_uri:
             detail = self._request_json(detail_uri)
-            if isinstance(detail, dict) and detail.get("download_uri"):
+            if isinstance(detail, dict) and self._bulk_download_url(detail):
                 return detail
             nested = self._find_default_bulk(detail)
-            if nested and nested.get("download_uri"):
+            if nested and self._bulk_download_url(nested):
                 return nested
 
         bulk_id = str(candidate.get("id") or "").strip()
         if bulk_id:
             detail = self._request_json(f"{self.base_url}/bulk-data/{bulk_id}")
-            if isinstance(detail, dict) and detail.get("download_uri"):
+            if isinstance(detail, dict) and self._bulk_download_url(detail):
                 return detail
             nested = self._find_default_bulk(detail)
-            if nested and nested.get("download_uri"):
+            if nested and self._bulk_download_url(nested):
                 return nested
         return None
 
     def _bulk_metadata(self) -> dict:
-        # Prefer the typed endpoint. Current Scryfall deployments can return a
-        # summary object/list here, so follow uri/id when download_uri is omitted.
-        try:
-            direct = self._request_json(f"{self.base_url}/bulk-data/default_cards")
-            direct_match = self._find_default_bulk(direct)
-            if direct_match is not None:
-                resolved = self._resolve_bulk_detail(direct_match)
-                if resolved is not None:
-                    return resolved
-        except requests.HTTPError as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            if status not in {404, 405}:
-                raise
-
+        # Try the stable listing first because current responses already include
+        # jsonl_download_uri on the default_cards summary record.
         bulk_list = self._request_json(f"{self.base_url}/bulk-data")
         default_bulk = self._find_default_bulk(bulk_list)
         if default_bulk is not None:
@@ -120,73 +115,70 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
             if resolved is not None:
                 return resolved
 
-        candidates = bulk_list.get("data") if isinstance(bulk_list, dict) else None
-        sample = []
-        if isinstance(candidates, list):
-            sample = [
-                {
-                    "id": item.get("id"),
-                    "type": item.get("type"),
-                    "name": item.get("name"),
-                    "uri": item.get("uri"),
-                    "content_type": item.get("content_type"),
-                    "has_download_uri": bool(item.get("download_uri")),
-                }
-                for item in candidates[:10]
-                if isinstance(item, dict)
-            ]
-        raise RuntimeError(
-            "Scryfall default_cards bulk endpoint unavailable "
-            f"(top_level_keys={sorted(bulk_list.keys()) if isinstance(bulk_list, dict) else []}, sample={sample})"
-        )
+        raise RuntimeError("Scryfall default_cards JSONL bulk endpoint unavailable")
+
+    @staticmethod
+    def _parse_jsonl_lines(lines, *, stop_after: int | None = None) -> list[dict]:
+        output: list[dict] = []
+        for raw_line in lines:
+            if isinstance(raw_line, bytes):
+                line = raw_line.decode("utf-8").strip()
+            else:
+                line = str(raw_line or "").strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Scryfall default_cards bulk payload is not valid JSONL") from exc
+            if isinstance(item, dict):
+                output.append(item)
+                if stop_after and len(output) >= int(stop_after):
+                    break
+        return output
 
     def _download_default_cards(self, *, stop_after: int | None = None) -> list[dict]:
         default_bulk = self._bulk_metadata()
+        download_url = self._bulk_download_url(default_bulk)
+        if not download_url:
+            raise RuntimeError("Scryfall default_cards metadata has no JSONL download URL")
+
         download_headers = {
             "User-Agent": self._SCRYFALL_HEADERS["User-Agent"],
-            "Accept": "application/jsonl,application/x-ndjson,application/json,*/*;q=0.8",
+            "Accept": "application/gzip,application/jsonl,application/x-ndjson,*/*;q=0.8",
         }
 
-        output: list[dict] = []
         with requests.get(
-            default_bulk["download_uri"],
+            download_url,
             headers=download_headers,
             stream=True,
             timeout=180,
         ) as response:
             response.raise_for_status()
-            response.encoding = "utf-8"
+            response.raw.decode_content = False
 
-            # Current Scryfall bulk exports are JSONL: one complete card object per
-            # line. Parsing line-by-line avoids holding the raw compressed file plus
-            # a second decoded JSON representation in memory.
-            for raw_line in response.iter_lines(decode_unicode=True):
-                line = str(raw_line or "").strip()
-                if not line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError("Scryfall default_cards bulk payload is not valid JSONL") from exc
-                if isinstance(item, dict):
-                    output.append(item)
-                    if stop_after and len(output) >= int(stop_after):
-                        break
+            if download_url.lower().endswith(".gz"):
+                with gzip.GzipFile(fileobj=response.raw, mode="rb") as compressed:
+                    with io.TextIOWrapper(compressed, encoding="utf-8") as text_stream:
+                        output = self._parse_jsonl_lines(text_stream, stop_after=stop_after)
+            else:
+                output = self._parse_jsonl_lines(
+                    response.iter_lines(decode_unicode=True),
+                    stop_after=stop_after,
+                )
 
         if not output:
             raise RuntimeError("Scryfall default_cards bulk payload contained no card rows")
         return output
 
     def probe_remote(self, *, limit: int = 5) -> list[dict]:
-        """Read only a few JSONL rows to validate metadata + CDN access."""
+        """Validate metadata + CDN + gzip/JSONL parsing without loading the DB."""
         return self._download_default_cards(stop_after=max(int(limit), 1))
 
     @staticmethod
     def _is_paper_card(card: dict) -> bool:
         games = card.get("games")
         if not isinstance(games, list):
-            # Older/partial fixture payloads may omit games. Do not discard them
-            # solely because the field is absent; live Scryfall bulk data includes it.
             return True
         return "paper" in {str(item).strip().lower() for item in games}
 
