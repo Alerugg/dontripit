@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
+from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.query import facet_definitions, normal_search
 
 
@@ -43,6 +44,7 @@ def run() -> dict:
         "normal": {},
         "advanced": {},
         "facets": {},
+        "facet_values": {},
     }
 
     with db.SessionLocal() as session:
@@ -163,6 +165,23 @@ def run() -> dict:
             raise AssertionError(f"Too few active facets: {facet_keys}")
         if "manga" in facet_keys or "illustration_type" in facet_keys:
             raise AssertionError(f"Unclassified facets must remain hidden: {facet_keys}")
+
+        facet_cases = {
+            "set:op05": ("set", "op05", "op-05"),
+            "collector:op05-119": ("collector_number", "op05-119", "OP05-119"),
+            "release:awakening": ("release", "awakening", "OP-05"),
+            "traits:straw hat": ("traits", "straw hat", "Straw Hat Crew"),
+            "rarity:sec": ("rarity", "sec", "SEC"),
+        }
+        for label, (facet_key, facet_query, expected) in facet_cases.items():
+            values = onepiece_facet_values(session, key=facet_key, query=facet_query, limit=20)
+            report["facet_values"][label] = values[:10]
+            if not values:
+                raise AssertionError(f"Facet values returned zero choices for {label}")
+            if not any(expected.lower() in str(row.get("value") or row.get("label") or "").lower() for row in values):
+                raise AssertionError(f"Facet values missing {expected!r} for {label}: {values[:10]}")
+            if any(int(row.get("count") or 0) <= 0 for row in values):
+                raise AssertionError(f"Facet values contain non-positive counts for {label}: {values[:10]}")
 
     report["status"] = "pass"
     return report
