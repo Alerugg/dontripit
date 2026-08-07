@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from app.search_v2.normalization import normalize_search_text
+from app.search_v2.normalization import compact_search_text, normalize_search_text
 
 
 MAX_FACET_VALUES = 100
@@ -25,16 +25,21 @@ def onepiece_facet_values(
 ) -> list[dict]:
     """Return source-backed One Piece facet choices ordered by print coverage.
 
-    Counts are exact physical Print counts, which is the useful unit for an
-    advanced Print-level filter. A future Card-level UI may request grouped Card
-    counts separately without changing this API contract.
+    Counts are exact physical Print counts. Human code input is normalized so
+    ``op05``, ``OP-05`` and ``op 05`` resolve to the same facet choice.
     """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Facet values require PostgreSQL")
 
     key = str(key or "").strip().lower()
     q = normalize_search_text(query or "")
-    params: dict[str, object] = {"game": "onepiece", "limit": _limit(limit), "q": f"%{q}%"}
+    q_compact = compact_search_text(query or "")
+    params: dict[str, object] = {
+        "game": "onepiece",
+        "limit": _limit(limit),
+        "q": f"%{q}%",
+        "q_compact": f"%{q_compact}%",
+    }
 
     scalar_columns = {
         "set": ("s.code", "s.name"),
@@ -55,7 +60,12 @@ def onepiece_facet_values(
                 JOIN games g ON g.id = psp.game_id
                 WHERE g.slug = :game
                   AND {value_expr} IS NOT NULL
-                  AND (:q = '%%' OR lower(CAST({label_expr} AS text)) LIKE :q OR lower(CAST({value_expr} AS text)) LIKE :q)
+                  AND (
+                    :q = '%%'
+                    OR lower(CAST({label_expr} AS text)) LIKE :q
+                    OR lower(CAST({value_expr} AS text)) LIKE :q
+                    OR regexp_replace(lower(CAST({value_expr} AS text)), '[^a-z0-9]', '', 'g') LIKE :q_compact
+                  )
                 GROUP BY {value_expr}, {label_expr}
                 ORDER BY count DESC, label ASC
                 LIMIT :limit
@@ -79,7 +89,12 @@ def onepiece_facet_values(
                 JOIN cards c ON c.id = psp.card_id
                 JOIN games g ON g.id = psp.game_id
                 WHERE g.slug = :game
-                  AND (:q = '%%' OR lower(p.collector_number) LIKE :q OR lower(c.name) LIKE :q)
+                  AND (
+                    :q = '%%'
+                    OR lower(p.collector_number) LIKE :q
+                    OR lower(c.name) LIKE :q
+                    OR regexp_replace(lower(p.collector_number), '[^a-z0-9]', '', 'g') LIKE :q_compact
+                  )
                 GROUP BY p.collector_number, c.name
                 ORDER BY count DESC, p.collector_number ASC, c.name ASC
                 LIMIT :limit
