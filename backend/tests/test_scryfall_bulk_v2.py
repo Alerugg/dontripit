@@ -9,6 +9,47 @@ def test_registry_uses_scryfall_v2_connector():
     assert isinstance(connector, ScryfallMtgV2Connector)
 
 
+def test_bulk_download_url_prefers_current_jsonl_field():
+    connector = ScryfallMtgV2Connector()
+    assert connector._bulk_download_url(
+        {
+            "download_uri": "https://example.test/legacy.json",
+            "jsonl_download_uri": "https://example.test/current.jsonl.gz",
+        }
+    ) == "https://example.test/current.jsonl.gz"
+
+
+def test_find_default_bulk_accepts_summary_with_jsonl_download_uri():
+    connector = ScryfallMtgV2Connector()
+    payload = {
+        "object": "list",
+        "data": [
+            {"type": "oracle_cards", "name": "Oracle Cards"},
+            {
+                "type": "default_cards",
+                "name": "Default Cards",
+                "jsonl_download_uri": "https://example.test/default.jsonl.gz",
+            },
+        ],
+    }
+    match = connector._find_default_bulk(payload)
+    assert match is not None
+    assert match["type"] == "default_cards"
+    assert connector._bulk_download_url(match).endswith(".jsonl.gz")
+
+
+def test_parse_jsonl_lines_supports_bytes_and_limit():
+    connector = ScryfallMtgV2Connector()
+    rows = connector._parse_jsonl_lines(
+        [
+            b'{"id":"a","games":["paper"]}\n',
+            b'{"id":"b","games":["paper"]}\n',
+        ],
+        stop_after=1,
+    )
+    assert [row["id"] for row in rows] == ["a"]
+
+
 def test_bulk_incremental_filters_paper_cutoff_dedupes_and_sorts(monkeypatch):
     connector = ScryfallMtgV2Connector()
     payload = [
