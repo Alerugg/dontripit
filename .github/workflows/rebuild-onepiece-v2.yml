@@ -1,0 +1,77 @@
+name: Rebuild One Piece V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/rebuild-onepiece-v2.yml'
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      ONEPIECE_SOURCE: remote
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify database secrets
+        run: |
+          test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Apply catalog schema migrations
+        run: alembic upgrade head
+      - name: Pre-rebuild dependency audit
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_onepiece_dependencies | tee /tmp/onepiece-v2-dependencies.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/onepiece-v2-dependencies.json'))
+          assert p.get('safe_for_rebuild') is True, p
+          PY
+      - name: Rebuild One Piece canonical V2
+        run: |
+          set -o pipefail
+          python -m app.scripts.rebuild_onepiece_v2 | tee /tmp/onepiece-v2-rebuild.json
+      - name: Post-rebuild Catalog Health
+        run: |
+          set -o pipefail
+          python -m app.scripts.catalog_health --json | tee /tmp/catalog-health-after-onepiece-v2.json
+      - name: Verify One Piece V2 counts
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/onepiece-v2-rebuild.json'))
+          assert p['verified'] == {
+              'sets': 59,
+              'cards': 2665,
+              'prints': 4672,
+              'releases': 59,
+              'release_links': 4673,
+          }, p['verified']
+          assert p['search']['ok'] is True, p['search']
+          PY
+      - name: Upload rebuild evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-v2-rebuild-${{ github.sha }}
+          path: |
+            /tmp/onepiece-v2-dependencies.json
+            /tmp/onepiece-v2-rebuild.json
+            /tmp/catalog-health-after-onepiece-v2.json
+          if-no-files-found: warn
+          retention-days: 30
