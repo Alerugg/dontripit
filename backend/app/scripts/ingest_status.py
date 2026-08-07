@@ -25,17 +25,35 @@ def get_ingest_status(session, runs_limit: int = 20) -> dict:
         prints = session.execute(select(func.count(Print.id)).join(Set, Set.id == Print.set_id).where(Set.game_id == game_id)).scalar_one()
         games.append({"slug": slug, "cards": cards, "sets": sets, "prints": prints})
 
-    connector_rows = session.execute(
+    source_record_stats = (
         select(
-            Source.name,
+            SourceRecord.source_id.label("source_id"),
             func.count(SourceRecord.id).label("source_records_total"),
             func.max(SourceRecord.ingested_at).label("newest_source_record_at"),
+        )
+        .group_by(SourceRecord.source_id)
+        .subquery()
+    )
+    ingest_run_stats = (
+        select(
+            IngestRun.source_id.label("source_id"),
             func.max(IngestRun.started_at).label("newest_ingest_started_at"),
             func.max(IngestRun.finished_at).label("newest_ingest_finished_at"),
         )
-        .outerjoin(SourceRecord, SourceRecord.source_id == Source.id)
-        .outerjoin(IngestRun, IngestRun.source_id == Source.id)
-        .group_by(Source.id, Source.name)
+        .group_by(IngestRun.source_id)
+        .subquery()
+    )
+
+    connector_rows = session.execute(
+        select(
+            Source.name,
+            func.coalesce(source_record_stats.c.source_records_total, 0),
+            source_record_stats.c.newest_source_record_at,
+            ingest_run_stats.c.newest_ingest_started_at,
+            ingest_run_stats.c.newest_ingest_finished_at,
+        )
+        .outerjoin(source_record_stats, source_record_stats.c.source_id == Source.id)
+        .outerjoin(ingest_run_stats, ingest_run_stats.c.source_id == Source.id)
         .order_by(Source.name.asc())
     ).all()
 
@@ -63,7 +81,7 @@ def get_ingest_status(session, runs_limit: int = 20) -> dict:
         "connectors": [
             {
                 "name": source_name,
-                "source_records_total": source_records_total,
+                "source_records_total": int(source_records_total or 0),
                 "newest_source_record_at": newest_source_record_at.isoformat() if newest_source_record_at else None,
                 "newest_ingest_started_at": newest_ingest_started_at.isoformat() if newest_ingest_started_at else None,
                 "newest_ingest_finished_at": newest_ingest_finished_at.isoformat() if newest_ingest_finished_at else None,
