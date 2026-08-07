@@ -13,6 +13,19 @@ function isEmpty(value) {
   return false
 }
 
+function formatActiveValue(value) {
+  if (value === true) return 'Sí'
+  if (Array.isArray(value)) return value.join(', ')
+  if (typeof value === 'object' && value) {
+    const hasMin = value.min !== undefined && value.min !== null && value.min !== ''
+    const hasMax = value.max !== undefined && value.max !== null && value.max !== ''
+    if (hasMin && hasMax) return `${value.min}–${value.max}`
+    if (hasMin) return `≥ ${value.min}`
+    if (hasMax) return `≤ ${value.max}`
+  }
+  return String(value)
+}
+
 function DynamicFacetPicker({ gameSlug, facet, value, onChange }) {
   const [input, setInput] = useState('')
   const [options, setOptions] = useState([])
@@ -216,6 +229,11 @@ export default function AdvancedSearchPanel({
   open = false,
   onToggle,
 }) {
+  const facetByKey = useMemo(() => {
+    const entries = Object.values(groups).flat().map((facet) => [facet.key, facet])
+    return Object.fromEntries(entries)
+  }, [groups])
+
   const activeEntries = Object.entries(values).filter(([, value]) => !isEmpty(value))
   const quickFacets = useMemo(
     () => Object.values(groups)
@@ -224,6 +242,11 @@ export default function AdvancedSearchPanel({
       .sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0)),
     [groups],
   )
+  const fullGroups = useMemo(() => Object.fromEntries(
+    Object.entries(groups)
+      .map(([groupName, facets]) => [groupName, facets.filter((facet) => !QUICK_FILTER_KEYS.has(facet.key))])
+      .filter(([, facets]) => facets.length > 0),
+  ), [groups])
 
   return (
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
@@ -271,7 +294,7 @@ export default function AdvancedSearchPanel({
           <span className="sv2-active-label">Activos</span>
           {activeEntries.map(([key, value]) => (
             <button key={key} type="button" className="sv2-active-filter" onClick={() => onChange(key, undefined)}>
-              {key}: {typeof value === 'object' ? JSON.stringify(value) : Array.isArray(value) ? value.join(', ') : String(value)} ×
+              {facetByKey[key]?.label || key}: {formatActiveValue(value)} ×
             </button>
           ))}
         </div>
@@ -280,7 +303,7 @@ export default function AdvancedSearchPanel({
       {open && (
         <>
           <div className="sv2-facet-groups">
-            {Object.entries(groups).map(([groupName, facets]) => (
+            {Object.entries(fullGroups).map(([groupName, facets]) => (
               <fieldset key={groupName} className="sv2-facet-group">
                 <legend>{groupName}</legend>
                 <div className="sv2-facet-grid">
@@ -289,7 +312,6 @@ export default function AdvancedSearchPanel({
                       {facet.ui_type !== 'toggle' && (
                         <span className="sv2-facet-label">
                           {facet.label}
-                          {facet.quick_filter ? <small>Quick</small> : null}
                         </span>
                       )}
                       <FacetControl
