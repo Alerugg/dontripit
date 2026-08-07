@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import and_, func, select, text
 
 from app.models import Card, Game, Print, PrintImage, Set
@@ -80,30 +82,99 @@ def _find_onepiece_set(tokens: list[str], full_query: str) -> str | None:
     return None
 
 
-def _parse_onepiece_intent(tokens: list[str], set_code: str | None) -> tuple[dict[str, object], list[str]]:
-    """Split natural One Piece properties from free-text identity terms.
+def _set_numeric_bounds(intent: dict[str, object], stat: str, minimum: int | None, maximum: int | None) -> None:
+    if minimum is not None:
+        intent[f"{stat}_min"] = max(0, int(minimum))
+    if maximum is not None:
+        intent[f"{stat}_max"] = max(0, int(maximum))
 
-    Supported natural intent includes color, card type, language, rarity, set
-    and exact numeric stats such as ``leader life 5``, ``purple 10000 power``
-    and ``2000 counter``. Normal Search still ranks rather than behaving like
-    Advanced Search when a name/identity term is present.
+
+def _parse_onepiece_numeric_bounds(query: str) -> dict[str, object]:
+    """Parse exact/range/comparator numeric intent from the raw user query.
+
+    Supported forms include:
+    - ``life 5`` / ``5 life``
+    - ``life 4-5``
+    - ``power >= 10000`` / ``cost <= 3``
+    - ``power 10000+`` / ``10000+ power``
+
+    Stats are integer-valued, so strict comparisons become inclusive integer
+    bounds (``> 5000`` -> minimum 5001).
     """
+    source = str(query or "").lower()
     intent: dict[str, object] = {}
+
+    for stat in _ONEPIECE_NUMERIC_STATS:
+        range_match = re.search(rf"\b{stat}\s*(\d+)\s*-\s*(\d+)\b", source)
+        if range_match:
+            low, high = sorted((int(range_match.group(1)), int(range_match.group(2))))
+            _set_numeric_bounds(intent, stat, low, high)
+            continue
+
+        comparator_match = re.search(rf"\b{stat}\s*(>=|<=|>|<|=)\s*(\d+)\b", source)
+        if comparator_match:
+            operator, raw_value = comparator_match.groups()
+            value = int(raw_value)
+            if operator == ">=":
+                _set_numeric_bounds(intent, stat, value, None)
+            elif operator == ">":
+                _set_numeric_bounds(intent, stat, value + 1, None)
+            elif operator == "<=":
+                _set_numeric_bounds(intent, stat, None, value)
+            elif operator == "<":
+                _set_numeric_bounds(intent, stat, None, max(0, value - 1))
+            else:
+                _set_numeric_bounds(intent, stat, value, value)
+            continue
+
+        plus_after_match = re.search(rf"\b{stat}\s*(\d+)\s*\+", source)
+        if plus_after_match:
+            _set_numeric_bounds(intent, stat, int(plus_after_match.group(1)), None)
+            continue
+
+        plus_before_match = re.search(rf"\b(\d+)\s*\+\s*{stat}\b", source)
+        if plus_before_match:
+            _set_numeric_bounds(intent, stat, int(plus_before_match.group(1)), None)
+            continue
+
+        exact_after_match = re.search(rf"\b{stat}\s+(\d+)\b", source)
+        if exact_after_match:
+            value = int(exact_after_match.group(1))
+            _set_numeric_bounds(intent, stat, value, value)
+            continue
+
+        exact_before_match = re.search(rf"\b(\d+)\s+{stat}\b", source)
+        if exact_before_match:
+            value = int(exact_before_match.group(1))
+            _set_numeric_bounds(intent, stat, value, value)
+
+    return intent
+
+
+def _parse_onepiece_intent(
+    tokens: list[str],
+    set_code: str | None,
+    numeric_bounds: dict[str, object] | None = None,
+) -> tuple[dict[str, object], list[str]]:
+    """Split natural One Piece properties from free-text identity terms."""
+    intent: dict[str, object] = dict(numeric_bounds or {})
     residual: list[str] = []
     consumed: set[int] = set()
 
-    # Numeric intent may be written either ``power 10000`` or ``10000 power``.
+    # Raw-query parsing already understood numeric syntax. Remove the stat token
+    # and its adjacent numeric tokens from the free-text identity terms.
     for index, token in enumerate(tokens):
-        if token not in _ONEPIECE_NUMERIC_STATS or token in intent:
+        if token not in _ONEPIECE_NUMERIC_STATS:
             continue
-        for number_index in (index + 1, index - 1):
-            if number_index < 0 or number_index >= len(tokens) or number_index in consumed:
-                continue
-            candidate = tokens[number_index]
-            if candidate.isdigit():
-                intent[token] = int(candidate)
-                consumed.update({index, number_index})
-                break
+        if not any(f"{token}_{suffix}" in intent for suffix in ("min", "max")):
+            continue
+        consumed.add(index)
+        if index - 1 >= 0 and tokens[index - 1].isdigit():
+            consumed.add(index - 1)
+        if index + 1 < len(tokens) and tokens[index + 1].isdigit():
+            consumed.add(index + 1)
+            if index + 2 < len(tokens) and tokens[index + 2].isdigit():
+                consumed.add(index + 2)
 
     for index, token in enumerate(tokens):
         if index in consumed:
@@ -155,17 +226,7 @@ def _public_card_row(row: dict) -> dict:
 
 
 def normal_search(session, *, query: str, game_slug: str | None = None, limit: int = 24) -> list[dict]:
-    """Google-like logical-Card search with exact Print evidence.
-
-    Human queries may mix name, set, color, type, language, rarity and numeric
-    gameplay stats in any order. Physical variants are grouped into one Card
-    result, while the best matching Print remains attached.
-
-    Exact One Piece collector numbers are identity lookups. Single-word fuzzy
-    searches compare against the final canonical name token so ``lufi`` can
-    recover ``Monkey.D.Luffy`` and ``zolo`` can recover ``Roronoa Zoro`` without
-    hardcoded character aliases.
-    """
+    """Google-like logical-Card search with exact Print evidence."""
     q = str(query or "").strip()
     if not q:
         return []
@@ -180,7 +241,8 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     q_set = None if collector_only else (_find_onepiece_set(all_tokens, q) if is_onepiece else None)
 
     if is_onepiece and not collector_only:
-        intent, tokens = _parse_onepiece_intent(all_tokens, q_set)
+        numeric_bounds = _parse_onepiece_numeric_bounds(q)
+        intent, tokens = _parse_onepiece_intent(all_tokens, q_set, numeric_bounds)
     else:
         intent, tokens = ({}, all_tokens)
 
@@ -268,10 +330,20 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     language_match = "lower(COALESCE(psp.language, '')) = :q_language"
     rarity_match = "upper(COALESCE(psp.rarity, '')) = :q_rarity"
     set_match = "psp.normalized_set_code = :q_set"
-    cost_match = "COALESCE(psp.attributes_json ->> 'cost', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'cost')::int = :q_cost"
-    life_match = "COALESCE(psp.attributes_json ->> 'life', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'life')::int = :q_life"
-    power_match = "COALESCE(psp.attributes_json ->> 'power', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'power')::int = :q_power"
-    counter_match = "COALESCE(psp.attributes_json ->> 'counter', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'counter')::int = :q_counter"
+
+    def numeric_match(stat: str) -> str:
+        value = f"(psp.attributes_json ->> '{stat}')::int"
+        valid = f"COALESCE(psp.attributes_json ->> '{stat}', '') ~ '^[0-9]+$'"
+        return (
+            f"{valid} "
+            f"AND (:q_{stat}_min < 0 OR {value} >= :q_{stat}_min) "
+            f"AND (:q_{stat}_max < 0 OR {value} <= :q_{stat}_max)"
+        )
+
+    cost_match = numeric_match("cost")
+    life_match = numeric_match("life")
+    power_match = numeric_match("power")
+    counter_match = numeric_match("counter")
 
     structured_conditions = [
         "(:q_color = '' OR " + color_match + ")",
@@ -279,10 +351,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "(:q_language = '' OR " + language_match + ")",
         "(:q_rarity = '' OR " + rarity_match + ")",
         "(:q_set = '' OR " + set_match + ")",
-        "(:q_cost < 0 OR (" + cost_match + "))",
-        "(:q_life < 0 OR (" + life_match + "))",
-        "(:q_power < 0 OR (" + power_match + "))",
-        "(:q_counter < 0 OR (" + counter_match + "))",
+        "((:q_cost_min < 0 AND :q_cost_max < 0) OR (" + cost_match + "))",
+        "((:q_life_min < 0 AND :q_life_max < 0) OR (" + life_match + "))",
+        "((:q_power_min < 0 AND :q_power_max < 0) OR (" + power_match + "))",
+        "((:q_counter_min < 0 AND :q_counter_max < 0) OR (" + counter_match + "))",
     ]
     all_structured_sql = " AND ".join(structured_conditions)
 
@@ -335,10 +407,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
               CASE WHEN :q_language <> '' AND {language_match} THEN 1000.0 ELSE 0.0 END +
               CASE WHEN :q_rarity <> '' AND {rarity_match} THEN 1300.0 ELSE 0.0 END +
               CASE WHEN :q_set <> '' AND {set_match} THEN 1200.0 ELSE 0.0 END +
-              CASE WHEN :q_cost >= 0 AND ({cost_match}) THEN 1500.0 ELSE 0.0 END +
-              CASE WHEN :q_life >= 0 AND ({life_match}) THEN 1700.0 ELSE 0.0 END +
-              CASE WHEN :q_power >= 0 AND ({power_match}) THEN 1600.0 ELSE 0.0 END +
-              CASE WHEN :q_counter >= 0 AND ({counter_match}) THEN 1500.0 ELSE 0.0 END +
+              CASE WHEN (:q_cost_min >= 0 OR :q_cost_max >= 0) AND ({cost_match}) THEN 1500.0 ELSE 0.0 END +
+              CASE WHEN (:q_life_min >= 0 OR :q_life_max >= 0) AND ({life_match}) THEN 1700.0 ELSE 0.0 END +
+              CASE WHEN (:q_power_min >= 0 OR :q_power_max >= 0) AND ({power_match}) THEN 1600.0 ELSE 0.0 END +
+              CASE WHEN (:q_counter_min >= 0 OR :q_counter_max >= 0) AND ({counter_match}) THEN 1500.0 ELSE 0.0 END +
               CASE WHEN :has_structured AND ({all_structured_sql}) THEN 2500.0 ELSE 0.0 END +
               CASE WHEN psp.exact_variant = 'default' THEN 25.0 ELSE 0.0 END
             ) AS score
@@ -390,6 +462,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         LIMIT :limit
         """
     )
+
+    def bound(stat: str, side: str) -> int:
+        return int(intent.get(f"{stat}_{side}", -1))
+
     params = {
         "q_norm": q_norm,
         "q_name_norm": name_query_norm,
@@ -400,10 +476,14 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "q_card_type": str(intent.get("card_type") or ""),
         "q_language": str(intent.get("language") or ""),
         "q_rarity": str(intent.get("rarity") or ""),
-        "q_cost": int(intent.get("cost", -1)),
-        "q_life": int(intent.get("life", -1)),
-        "q_power": int(intent.get("power", -1)),
-        "q_counter": int(intent.get("counter", -1)),
+        "q_cost_min": bound("cost", "min"),
+        "q_cost_max": bound("cost", "max"),
+        "q_life_min": bound("life", "min"),
+        "q_life_max": bound("life", "max"),
+        "q_power_min": bound("power", "min"),
+        "q_power_max": bound("power", "max"),
+        "q_counter_min": bound("counter", "min"),
+        "q_counter_max": bound("counter", "max"),
         "collector_only": collector_only,
         "single_token": single_token_query,
         "has_residual": has_residual,
