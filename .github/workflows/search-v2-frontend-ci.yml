@@ -5,6 +5,8 @@ on:
     branches:
       - catalog-v2
     paths:
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
       - 'frontend/components/searchV2/**'
       - 'frontend/components/games/OnePieceExplorerV2Page.js'
       - 'frontend/app/games/[slug]/page.js'
