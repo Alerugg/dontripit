@@ -13,7 +13,7 @@ on:
 jobs:
   rebuild:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: backend
@@ -31,8 +31,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Verify database secrets
-        run: |
-          test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
       - name: Apply catalog schema migrations
         run: alembic upgrade head
       - name: Pre-rebuild dependency audit
@@ -48,6 +47,18 @@ jobs:
         run: |
           set -o pipefail
           python -m app.scripts.rebuild_onepiece_v2 | tee /tmp/onepiece-v2-rebuild.json
+      - name: Repair canonical set names
+        run: |
+          set -o pipefail
+          python -m app.scripts.repair_onepiece_set_names | tee /tmp/onepiece-set-name-repair.json
+      - name: Restore Search V2 profiles and facets
+        run: |
+          set -o pipefail
+          python -m app.scripts.rebuild_search_v2 | tee /tmp/search-v2-after-onepiece-rebuild.json
+      - name: Run real Search V2 smoke
+        run: |
+          set -o pipefail
+          python -m app.scripts.smoke_search_v2 | tee /tmp/search-v2-smoke-after-onepiece-rebuild.json
       - name: Post-rebuild Catalog Health
         run: |
           set -o pipefail
@@ -65,6 +76,11 @@ jobs:
               'release_links': 4673,
           }, p['verified']
           assert p['search']['ok'] is True, p['search']
+          search=json.load(open('/tmp/search-v2-after-onepiece-rebuild.json'))
+          assert search['verified']['card_profiles'] == 2665, search
+          assert search['verified']['print_profiles'] == 4672, search
+          smoke=json.load(open('/tmp/search-v2-smoke-after-onepiece-rebuild.json'))
+          assert smoke['status'] == 'pass', smoke
           PY
       - name: Upload rebuild evidence
         if: always()
@@ -74,6 +90,9 @@ jobs:
           path: |
             /tmp/onepiece-v2-dependencies.json
             /tmp/onepiece-v2-rebuild.json
+            /tmp/onepiece-set-name-repair.json
+            /tmp/search-v2-after-onepiece-rebuild.json
+            /tmp/search-v2-smoke-after-onepiece-rebuild.json
             /tmp/catalog-health-after-onepiece-v2.json
           if-no-files-found: warn
           retention-days: 30
