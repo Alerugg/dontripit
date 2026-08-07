@@ -23,6 +23,8 @@ from app.scripts.preflight_pokemon_bootstrap_v2 import (
 
 GAME_SLUG = "pokemon"
 SOURCE_NAME = "tcgdex"
+EXPECTED_PHYSICAL_SETS = 203
+EXPECTED_PHYSICAL_CARDS = 20964
 
 
 def _release_date(value: object) -> date | None:
@@ -33,6 +35,15 @@ def _release_date(value: object) -> date | None:
         return date.fromisoformat(clean[:10])
     except ValueError:
         return None
+
+
+def _primary_image_url(image_base: object) -> str | None:
+    clean = str(image_base or "").strip().rstrip("/")
+    if not clean:
+        return None
+    if clean.lower().endswith((".webp", ".png", ".jpg", ".jpeg")):
+        return clean
+    return f"{clean}/high.webp"
 
 
 def _write_json(path: Path | None, payload: dict) -> None:
@@ -68,9 +79,32 @@ def _before_state(session, game_id: int) -> dict:
     }
 
 
+def _physical_source_counts(session, game_id: int, set_ids: list[str], card_ids: list[str]) -> dict:
+    return {
+        "sets": int(session.execute(text(
+            "SELECT COUNT(*) FROM sets WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
+        ), {"game": game_id, "ids": set_ids}).scalar_one()),
+        "cards": int(session.execute(text(
+            "SELECT COUNT(*) FROM cards WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
+        ), {"game": game_id, "ids": card_ids}).scalar_one()),
+        "prints": int(session.execute(text(
+            "SELECT COUNT(*) FROM prints WHERE tcgdex_id = ANY(:ids)"
+        ), {"ids": card_ids}).scalar_one()),
+        "print_card_identity_mismatches": int(session.execute(text(
+            """
+            SELECT COUNT(*)
+            FROM prints p
+            JOIN cards c ON c.id=p.card_id
+            WHERE p.tcgdex_id = ANY(:ids)
+              AND c.tcgdex_id IS DISTINCT FROM p.tcgdex_id
+            """
+        ), {"ids": card_ids}).scalar_one()),
+    }
+
+
 def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> dict:
     # Mandatory read-only gate. Any ambiguous identity collision aborts before a
-    # write transaction is even opened.
+    # write transaction is opened.
     preflight = run_preflight()
     if preflight.get("status") != "pass" or (preflight.get("conflicts") or {}).get("count"):
         raise AssertionError("Pokémon V2 bootstrap refused: preflight is not clean")
@@ -78,12 +112,14 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
     inventory = load_inventory()
     physical_sets = {row["set_id"]: row for row in inventory.physical_sets}
     physical_cards = inventory.physical_cards
-    if len(physical_sets) != 203 or len(physical_cards) != 20964:
+    if len(physical_sets) != EXPECTED_PHYSICAL_SETS or len(physical_cards) != EXPECTED_PHYSICAL_CARDS:
         raise AssertionError(
             f"Physical source moved unexpectedly: sets={len(physical_sets)} cards={len(physical_cards)}; "
             "re-audit before bootstrap"
         )
 
+    source_set_ids = list(physical_sets)
+    source_card_ids = list(physical_cards)
     db.init_engine()
     counters = {
         "sets_inserted": 0,
@@ -99,18 +135,22 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
         "images_updated": 0,
     }
 
+    game_id: int | None = None
+
     with db.SessionLocal() as session:
-        game = session.execute(select(Game).where(Game.slug == GAME_SLUG)).scalar_one_or_none()
-        if game is None:
-            raise AssertionError("Pokémon game row missing from Neon")
-
-        before = _before_state(session, game.id)
-        _write_json(backup_path, before)
-
-        # The entire catalog mutation is one database transaction. Any exception
-        # rolls back inserts, updates and relinks together.
+        # Start the transaction before the first SELECT. SQLAlchemy 2.x
+        # autobegins on SELECT, so doing this explicitly keeps the whole mutation
+        # under one clear transaction boundary.
         with session.begin():
-            existing_sets = list(session.execute(select(Set).where(Set.game_id == game.id)).scalars())
+            game = session.execute(select(Game).where(Game.slug == GAME_SLUG)).scalar_one_or_none()
+            if game is None:
+                raise AssertionError("Pokémon game row missing from Neon")
+            game_id = int(game.id)
+
+            before = _before_state(session, game_id)
+            _write_json(backup_path, before)
+
+            existing_sets = list(session.execute(select(Set).where(Set.game_id == game_id)).scalars())
             sets_by_tcgdex = {str(row.tcgdex_id): row for row in existing_sets if row.tcgdex_id}
             occupied_codes = {str(row.code).strip().lower() for row in existing_sets}
             set_map: dict[str, Set] = {}
@@ -121,7 +161,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
                     code, _strategy = choose_new_set_code(source, occupied_codes)
                     occupied_codes.add(code.strip().lower())
                     row = Set(
-                        game_id=game.id,
+                        game_id=game_id,
                         code=code,
                         tcgdex_id=source_id,
                         name=source.get("set_name") or source_id,
@@ -139,7 +179,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
 
             session.flush()
 
-            existing_cards = list(session.execute(select(Card).where(Card.game_id == game.id)).scalars())
+            existing_cards = list(session.execute(select(Card).where(Card.game_id == game_id)).scalars())
             cards_by_tcgdex = {str(row.tcgdex_id): row for row in existing_cards if row.tcgdex_id}
             card_map: dict[str, Card] = {}
 
@@ -147,7 +187,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
                 row = cards_by_tcgdex.get(source_id)
                 if row is None:
                     row = Card(
-                        game_id=game.id,
+                        game_id=game_id,
                         name=source.get("name") or source_id,
                         card_key=card_key(source_id),
                         tcgdex_id=source_id,
@@ -163,7 +203,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
             session.flush()
 
             existing_prints = list(session.execute(
-                select(Print).join(Card, Card.id == Print.card_id).where(Card.game_id == game.id)
+                select(Print).join(Card, Card.id == Print.card_id).where(Card.game_id == game_id)
             ).scalars())
             prints_by_tcgdex = {str(row.tcgdex_id): row for row in existing_prints if row.tcgdex_id}
             print_map: dict[str, Print] = {}
@@ -206,11 +246,17 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
             tcgdex_identifiers = {
                 row.print_id: row
                 for row in session.execute(
-                    select(PrintIdentifier).where(PrintIdentifier.source == SOURCE_NAME)
+                    select(PrintIdentifier)
+                    .join(Print, Print.id == PrintIdentifier.print_id)
+                    .join(Card, Card.id == Print.card_id)
+                    .where(Card.game_id == game_id, PrintIdentifier.source == SOURCE_NAME)
                 ).scalars()
             }
             existing_images = list(session.execute(
-                select(PrintImage).where(PrintImage.print_id.in_([row.id for row in print_map.values()]))
+                select(PrintImage)
+                .join(Print, Print.id == PrintImage.print_id)
+                .join(Card, Card.id == Print.card_id)
+                .where(Card.game_id == game_id)
             ).scalars())
             tcgdex_images = {
                 row.print_id: row
@@ -229,7 +275,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
                     identifier.external_id = source_id
                     counters["identifiers_updated"] += 1
 
-                image_url = str(source.get("image") or "").strip()
+                image_url = _primary_image_url(source.get("image"))
                 if not image_url:
                     continue
                 image = tcgdex_images.get(print_row.id)
@@ -250,59 +296,31 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
 
             session.flush()
 
-            # In-transaction hard postconditions. Stale legacy rows may remain,
-            # but the complete current physical source surface must now exist.
-            set_source_count = int(session.execute(text(
-                "SELECT COUNT(*) FROM sets WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
-            ), {"game": game.id, "ids": list(physical_sets)}).scalar_one())
-            card_source_count = int(session.execute(text(
-                "SELECT COUNT(*) FROM cards WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
-            ), {"game": game.id, "ids": list(physical_cards)}).scalar_one())
-            print_source_count = int(session.execute(text(
-                "SELECT COUNT(*) FROM prints WHERE tcgdex_id = ANY(:ids)"
-            ), {"ids": list(physical_cards)}).scalar_one())
-            print_card_mismatches = int(session.execute(text(
-                """
-                SELECT COUNT(*)
-                FROM prints p
-                JOIN cards c ON c.id=p.card_id
-                WHERE p.tcgdex_id = ANY(:ids)
-                  AND c.tcgdex_id IS DISTINCT FROM p.tcgdex_id
-                """
-            ), {"ids": list(physical_cards)}).scalar_one())
+            actual = _physical_source_counts(session, game_id, source_set_ids, source_card_ids)
+            if actual["sets"] != EXPECTED_PHYSICAL_SETS:
+                raise AssertionError(f"Postcondition failed: physical sets {actual['sets']} != {EXPECTED_PHYSICAL_SETS}")
+            if actual["cards"] != EXPECTED_PHYSICAL_CARDS:
+                raise AssertionError(f"Postcondition failed: physical cards {actual['cards']} != {EXPECTED_PHYSICAL_CARDS}")
+            if actual["prints"] != EXPECTED_PHYSICAL_CARDS:
+                raise AssertionError(f"Postcondition failed: physical prints {actual['prints']} != {EXPECTED_PHYSICAL_CARDS}")
+            if actual["print_card_identity_mismatches"]:
+                raise AssertionError(
+                    f"Postcondition failed: {actual['print_card_identity_mismatches']} print/card TCGdex identity mismatches"
+                )
 
-            expected = {"sets": 203, "cards": 20964, "prints": 20964}
-            actual = {
-                "sets": set_source_count,
-                "cards": card_source_count,
-                "prints": print_source_count,
-                "print_card_identity_mismatches": print_card_mismatches,
-            }
-            if set_source_count != expected["sets"]:
-                raise AssertionError(f"Postcondition failed: physical sets {set_source_count} != 203")
-            if card_source_count != expected["cards"]:
-                raise AssertionError(f"Postcondition failed: physical cards {card_source_count} != 20964")
-            if print_source_count != expected["prints"]:
-                raise AssertionError(f"Postcondition failed: physical prints {print_source_count} != 20964")
-            if print_card_mismatches:
-                raise AssertionError(f"Postcondition failed: {print_card_mismatches} print/card TCGdex identity mismatches")
-
-        # Re-query after commit for evidence.
+        # The transaction has committed. Use a fresh implicit read transaction
+        # only for final evidence.
+        assert game_id is not None
         after = {
-            "sets_total": int(session.execute(text("SELECT COUNT(*) FROM sets WHERE game_id=:game"), {"game": game.id}).scalar_one()),
-            "cards_total": int(session.execute(text("SELECT COUNT(*) FROM cards WHERE game_id=:game"), {"game": game.id}).scalar_one()),
+            "sets_total": int(session.execute(text("SELECT COUNT(*) FROM sets WHERE game_id=:game"), {"game": game_id}).scalar_one()),
+            "cards_total": int(session.execute(text("SELECT COUNT(*) FROM cards WHERE game_id=:game"), {"game": game_id}).scalar_one()),
             "prints_total": int(session.execute(text(
                 "SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=:game"
-            ), {"game": game.id}).scalar_one()),
-            "physical_source_sets": int(session.execute(text(
-                "SELECT COUNT(*) FROM sets WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
-            ), {"game": game.id, "ids": list(physical_sets)}).scalar_one()),
-            "physical_source_cards": int(session.execute(text(
-                "SELECT COUNT(*) FROM cards WHERE game_id=:game AND tcgdex_id = ANY(:ids)"
-            ), {"game": game.id, "ids": list(physical_cards)}).scalar_one()),
-            "physical_source_prints": int(session.execute(text(
-                "SELECT COUNT(*) FROM prints WHERE tcgdex_id = ANY(:ids)"
-            ), {"ids": list(physical_cards)}).scalar_one()),
+            ), {"game": game_id}).scalar_one()),
+            **{
+                f"physical_source_{key}": value
+                for key, value in _physical_source_counts(session, game_id, source_set_ids, source_card_ids).items()
+            },
         }
 
     report = {
