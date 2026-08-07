@@ -33,6 +33,7 @@ def test_release_code_parser_handles_all_canonical_product_families():
     assert OnePieceCanonicalConnector._release_set_code("STARTER DECK [ST30]") == "ST-30"
     assert OnePieceCanonicalConnector._release_set_code("EXTRA BOOSTER [EB-02]") == "EB-02"
     assert OnePieceCanonicalConnector._release_set_code("PREMIUM BOOSTER [PRB02]") == "PRB-02"
+    assert OnePieceCanonicalConnector._release_set_codes("BOOSTER PACK [OP14-EB04]") == ["OP-14", "EB-04"]
 
 
 def test_set_names_come_from_origin_release_not_reprint_container():
@@ -56,3 +57,27 @@ def test_set_names_come_from_origin_release_not_reprint_container():
     assert names["PRB-02"] == "PREMIUM BOOSTER -ONE PIECE CARD THE BEST vol.2- [PRB-02]"
     assert names["P"] == "Promotion Cards"
     assert result["diagnostics"]["canonical_set_names_unmatched"] == []
+
+
+def test_hybrid_release_keeps_ambiguous_set_neutral_and_products_as_releases():
+    payload = {
+        "sets": [
+            {"code": "OP-14", "name": "WRONG"},
+            {"code": "OP-15", "name": "WRONG"},
+            {"code": "EB-04", "name": "WRONG"},
+        ],
+        "releases": [
+            {"name": "BOOSTER PACK -THE AZURE SEA'S SEVEN- [OP14-EB04]"},
+            {"name": "BOOSTER PACK -ADVENTURE ON KAMI'S ISLAND- [OP15-EB04]"},
+        ],
+        "diagnostics": {},
+    }
+
+    result = OnePieceCanonicalConnector._canonicalize_set_names(payload)
+    names = {row["code"]: row["name"] for row in result["sets"]}
+
+    assert "OP14-EB04" in names["OP-14"]
+    assert "OP15-EB04" in names["OP-15"]
+    assert names["EB-04"] == "Extra Booster Series [EB-04]"
+    assert result["diagnostics"]["canonical_set_names_unmatched"] == []
+    assert len(result["diagnostics"]["canonical_set_names_ambiguous"]["EB-04"]) == 2
