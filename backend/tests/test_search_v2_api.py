@@ -1,3 +1,5 @@
+import os
+
 from app import db
 from app.models import Card, Game, Print, PrintImage, Set
 from app.search_v2_models import FacetDefinition, PrintSearchProfile
@@ -73,11 +75,23 @@ def _seed_search_v2(session):
     return card, prints
 
 
+def _public_get(client, path: str):
+    previous = os.environ.get("PUBLIC_API_ENABLED")
+    os.environ["PUBLIC_API_ENABLED"] = "true"
+    try:
+        return client.get(path)
+    finally:
+        if previous is None:
+            os.environ.pop("PUBLIC_API_ENABLED", None)
+        else:
+            os.environ["PUBLIC_API_ENABLED"] = previous
+
+
 def test_normal_search_api_groups_physical_variants_by_card(client):
     with db.SessionLocal() as session:
         _seed_search_v2(session)
 
-    response = client.get("/api/v2/search?q=Luffy&game=onepiece")
+    response = _public_get(client, "/api/v2/search?q=Luffy&game=onepiece")
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["count"] == 1
@@ -89,7 +103,7 @@ def test_search_suggest_contract_is_compact(client):
     with db.SessionLocal() as session:
         _seed_search_v2(session)
 
-    response = client.get("/api/v2/search/suggest?q=Luffy&game=onepiece")
+    response = _public_get(client, "/api/v2/search/suggest?q=Luffy&game=onepiece")
     assert response.status_code == 200
     item = response.get_json()["items"][0]
     assert item["name"] == "Monkey.D.Luffy"
@@ -101,7 +115,7 @@ def test_facets_api_is_dynamic_per_game(client):
     with db.SessionLocal() as session:
         _seed_search_v2(session)
 
-    response = client.get("/api/v2/games/onepiece/facets")
+    response = _public_get(client, "/api/v2/games/onepiece/facets")
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["facets"][0]["key"] == "color"
@@ -109,5 +123,5 @@ def test_facets_api_is_dynamic_per_game(client):
 
 
 def test_search_requires_query(client):
-    response = client.get("/api/v2/search")
+    response = _public_get(client, "/api/v2/search")
     assert response.status_code == 400
