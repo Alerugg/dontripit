@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import GameSearchBar from '../games/GameSearchBar'
 import StatePanel from '../catalog/StatePanel'
@@ -10,7 +10,8 @@ import SearchV2Results from './SearchV2Results'
 import { advancedSearchV2, fetchFacetsV2, searchV2, suggestV2 } from '../../lib/searchV2/client'
 import './SearchV2.css'
 
-const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'monky lufi']
+const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi']
+const ADVANCED_PAGE_SIZE = 24
 
 function suggestionForLegacyRow(item) {
   return {
@@ -20,15 +21,80 @@ function suggestionForLegacyRow(item) {
   }
 }
 
+function hasFilterValues(filters = {}) {
+  return Object.values(filters).some((value) => {
+    if (value === undefined || value === null || value === '') return false
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'object') return Object.values(value).some((nested) => nested !== undefined && nested !== null && nested !== '')
+    return true
+  })
+}
+
+function readAdvancedFilters(searchParams) {
+  const filters = {}
+  const ranges = {}
+
+  for (const [param, rawValue] of searchParams.entries()) {
+    if (!param.startsWith('f_')) continue
+    const key = param.slice(2)
+    if (!key) continue
+
+    if (key.endsWith('_min') || key.endsWith('_max')) {
+      const suffix = key.endsWith('_min') ? 'min' : 'max'
+      const base = key.slice(0, -4)
+      const parsed = Number(rawValue)
+      if (!base || !Number.isFinite(parsed)) continue
+      ranges[base] = { ...(ranges[base] || {}), [suffix]: parsed }
+      continue
+    }
+
+    const value = rawValue === '1' ? true : rawValue
+    if (!(key in filters)) {
+      filters[key] = value
+    } else if (Array.isArray(filters[key])) {
+      filters[key].push(value)
+    } else {
+      filters[key] = [filters[key], value]
+    }
+  }
+
+  return { ...filters, ...ranges }
+}
+
+function appendAdvancedFilters(params, filters = {}) {
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    if (Array.isArray(value)) {
+      value.filter((item) => item !== undefined && item !== null && item !== '').forEach((item) => params.append(`f_${key}`, String(item)))
+      return
+    }
+    if (typeof value === 'object') {
+      if (value.min !== undefined && value.min !== null && value.min !== '') params.set(`f_${key}_min`, String(value.min))
+      if (value.max !== undefined && value.max !== null && value.max !== '') params.set(`f_${key}_max`, String(value.max))
+      return
+    }
+    params.set(`f_${key}`, value === true ? '1' : String(value))
+  })
+}
+
+function safePage(rawValue) {
+  const parsed = Number(rawValue || 1)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
+}
+
 export default function OnePieceSearchV2Experience({ game }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const initialQuery = searchParams.get('q') || ''
   const initialAdvancedOpen = searchParams.get('advanced') === '1'
+  const initialAdvancedFilters = readAdvancedFilters(searchParams)
+  const initialAdvancedPage = safePage(searchParams.get('page'))
+  const initialAdvancedRan = initialAdvancedOpen && (Boolean(initialQuery.trim()) || hasFilterValues(initialAdvancedFilters))
+  const initialAdvancedHydrated = useRef(false)
 
   const [query, setQuery] = useState(initialQuery)
-  const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
+  const [submittedQuery, setSubmittedQuery] = useState(initialAdvancedRan ? '' : initialQuery)
   const [normalItems, setNormalItems] = useState([])
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
@@ -38,22 +104,18 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [facetGroups, setFacetGroups] = useState({})
   const [facetError, setFacetError] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(initialAdvancedOpen)
-  const [advancedFilters, setAdvancedFilters] = useState({})
+  const [advancedFilters, setAdvancedFilters] = useState(initialAdvancedFilters)
+  const [appliedAdvancedFilters, setAppliedAdvancedFilters] = useState(initialAdvancedFilters)
+  const [advancedQuery, setAdvancedQuery] = useState(initialAdvancedRan ? initialQuery : '')
   const [advancedItems, setAdvancedItems] = useState([])
   const [advancedTotal, setAdvancedTotal] = useState(0)
+  const [advancedPage, setAdvancedPage] = useState(initialAdvancedPage)
   const [advancedLoading, setAdvancedLoading] = useState(false)
   const [advancedError, setAdvancedError] = useState('')
-  const [advancedRan, setAdvancedRan] = useState(false)
+  const [advancedRan, setAdvancedRan] = useState(initialAdvancedRan)
 
-  const hasActiveAdvancedFilters = useMemo(
-    () => Object.values(advancedFilters).some((value) => {
-      if (value === undefined || value === null || value === '') return false
-      if (Array.isArray(value)) return value.length > 0
-      if (typeof value === 'object') return Object.values(value).some((nested) => nested !== undefined && nested !== null && nested !== '')
-      return true
-    }),
-    [advancedFilters],
-  )
+  const hasActiveAdvancedFilters = useMemo(() => hasFilterValues(advancedFilters), [advancedFilters])
+  const advancedPageCount = Math.max(1, Math.ceil(advancedTotal / ADVANCED_PAGE_SIZE))
 
   useEffect(() => {
     let cancelled = false
@@ -125,14 +187,23 @@ export default function OnePieceSearchV2Experience({ game }) {
   }, [game.slug, submittedQuery])
 
   useEffect(() => {
-    // Build the V2 URL from V2 state only. Depending on the live searchParams
-    // object here can cause replace -> params change -> replace churn.
+    if (initialAdvancedHydrated.current || !initialAdvancedRan) return
+    initialAdvancedHydrated.current = true
+    runAdvanced(initialAdvancedPage, { reuseApplied: true })
+  }, [])
+
+  useEffect(() => {
     const params = new URLSearchParams()
-    if (submittedQuery.trim()) params.set('q', submittedQuery.trim())
-    if (advancedOpen) params.set('advanced', '1')
+    const activeQuery = advancedRan ? advancedQuery.trim() : submittedQuery.trim()
+    if (activeQuery) params.set('q', activeQuery)
+    if (advancedOpen || advancedRan) params.set('advanced', '1')
+    if (advancedRan) {
+      appendAdvancedFilters(params, appliedAdvancedFilters)
+      if (advancedPage > 1) params.set('page', String(advancedPage))
+    }
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, pathname, router, submittedQuery])
+  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, pathname, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
@@ -140,20 +211,33 @@ export default function OnePieceSearchV2Experience({ game }) {
     setSubmittedQuery(clean)
     setAdvancedRan(false)
     setAdvancedItems([])
+    setAdvancedTotal(0)
+    setAdvancedPage(1)
     setAdvancedError('')
   }
 
-  async function runAdvanced() {
+  async function runAdvanced(nextPage = 1, { reuseApplied = false } = {}) {
+    const page = Math.max(1, Number(nextPage) || 1)
+    const filters = reuseApplied ? appliedAdvancedFilters : advancedFilters
+    const searchQuery = reuseApplied ? advancedQuery : query.trim()
+
+    if (!reuseApplied) {
+      setAppliedAdvancedFilters(filters)
+      setAdvancedQuery(searchQuery)
+    }
+    setSubmittedQuery('')
+    setAdvancedPage(page)
     setAdvancedLoading(true)
     setAdvancedError('')
     setAdvancedRan(true)
+
     try {
       const payload = await advancedSearchV2({
         game: game.slug,
-        q: query.trim(),
-        filters: advancedFilters,
-        limit: 100,
-        offset: 0,
+        q: searchQuery,
+        filters,
+        limit: ADVANCED_PAGE_SIZE,
+        offset: (page - 1) * ADVANCED_PAGE_SIZE,
       })
       setAdvancedItems(payload?.items || [])
       setAdvancedTotal(payload?.total || 0)
@@ -173,6 +257,17 @@ export default function OnePieceSearchV2Experience({ game }) {
       else next[key] = value
       return next
     })
+  }
+
+  function resetAdvanced() {
+    setAdvancedFilters({})
+    setAppliedAdvancedFilters({})
+    setAdvancedQuery('')
+    setAdvancedItems([])
+    setAdvancedTotal(0)
+    setAdvancedPage(1)
+    setAdvancedRan(false)
+    setAdvancedError('')
   }
 
   return (
@@ -198,7 +293,7 @@ export default function OnePieceSearchV2Experience({ game }) {
             }
             submitNormal(item.name || item.collector_number || '')
           }}
-          placeholder="Luffy, OP05-119, Zoro green, Luffy OP05…"
+          placeholder="Luffy, OP05-119, red leader, Luffy OP05 English SEC…"
           variant="pilot"
         />
 
@@ -212,16 +307,12 @@ export default function OnePieceSearchV2Experience({ game }) {
         {facetError ? <p className="sv2-inline-error">{facetError}</p> : null}
 
         <AdvancedSearchPanel
+          gameSlug={game.slug}
           groups={facetGroups}
           values={advancedFilters}
           onChange={updateAdvancedFilter}
-          onSearch={runAdvanced}
-          onReset={() => {
-            setAdvancedFilters({})
-            setAdvancedItems([])
-            setAdvancedTotal(0)
-            setAdvancedRan(false)
-          }}
+          onSearch={() => runAdvanced(1)}
+          onReset={resetAdvanced}
           loading={advancedLoading}
           open={advancedOpen}
           onToggle={() => setAdvancedOpen((current) => !current)}
@@ -240,7 +331,20 @@ export default function OnePieceSearchV2Experience({ game }) {
             />
           ) : null}
           {!advancedLoading && !advancedError && advancedItems.length > 0 ? (
-            <SearchV2Results items={advancedItems} mode="advanced" gameSlug={game.slug} query={query} total={advancedTotal} />
+            <>
+              <SearchV2Results items={advancedItems} mode="advanced" gameSlug={game.slug} query={advancedQuery} total={advancedTotal} />
+              {advancedPageCount > 1 ? (
+                <nav className="sv2-pagination" aria-label="Paginación de prints">
+                  <button type="button" disabled={advancedPage <= 1 || advancedLoading} onClick={() => runAdvanced(advancedPage - 1, { reuseApplied: true })}>
+                    ← Anterior
+                  </button>
+                  <span>Página <strong>{advancedPage}</strong> de {advancedPageCount} · {advancedTotal.toLocaleString()} prints</span>
+                  <button type="button" disabled={advancedPage >= advancedPageCount || advancedLoading} onClick={() => runAdvanced(advancedPage + 1, { reuseApplied: true })}>
+                    Siguiente →
+                  </button>
+                </nav>
+              ) : null}
+            </>
           ) : null}
         </>
       ) : (
