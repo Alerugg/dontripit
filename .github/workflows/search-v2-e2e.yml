@@ -13,6 +13,8 @@ on:
       - 'frontend/app/api/build-info/**'
       - 'frontend/app/api/catalog/cards/**'
       - 'frontend/app/api/catalog/prints/**'
+      - 'frontend/app/api/catalog/news/**'
+      - 'frontend/lib/news/**'
       - 'frontend/app/games/**'
       - 'frontend/app/cards/**'
       - 'frontend/app/prints/**'
@@ -123,6 +125,7 @@ jobs:
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/suggest?game=onepiece&q=Luffy&limit=8' > /tmp/suggest.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/facets?game=onepiece' > /tmp/facets.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/facet-values?game=onepiece&key=set&q=op05&limit=10' > /tmp/set-values.json
+          curl -fsS 'http://127.0.0.1:3000/api/catalog/news?game=onepiece&limit=1' > /tmp/news.json
           curl -fsS -X POST 'http://127.0.0.1:3000/api/search-v2/advanced' \
             -H 'Content-Type: application/json' \
             --data '{"game":"onepiece","q":"Luffy","filters":{"set":"op-05","language":"en","rarity":"SEC"},"limit":20,"offset":0}' \
@@ -141,6 +144,7 @@ jobs:
           suggest = load('/tmp/suggest.json')
           facets = load('/tmp/facets.json')
           sets = load('/tmp/set-values.json')
+          news = load('/tmp/news.json')
           advanced = load('/tmp/advanced.json')
           build = load('/tmp/build-info.json')
 
@@ -167,6 +171,9 @@ jobs:
           assert set_items, sets
           assert any(str(row.get('value') or '').lower() == 'op-05' for row in set_items), set_items
 
+          assert isinstance(news.get('items'), list), news
+          assert str(news.get('provider') or '').startswith('news_ingestion'), news
+
           adv_items = advanced.get('items') or []
           assert adv_items, advanced
           for row in adv_items[:10]:
@@ -187,6 +194,7 @@ jobs:
               'facet_count': sum(len(v) for v in groups.values()),
               'set_choices': len(set_items),
               'advanced_total': advanced.get('total'),
+              'news_provider': news.get('provider'),
               'build_contract': build.get('build_contract'),
           }, indent=2))
           PY
@@ -203,6 +211,7 @@ jobs:
             /tmp/suggest.json
             /tmp/facets.json
             /tmp/set-values.json
+            /tmp/news.json
             /tmp/advanced.json
             /tmp/build-info.json
             /tmp/backend-health.json
