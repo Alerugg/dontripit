@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchFacetValuesV2 } from '../../lib/searchV2/client'
 import './SearchV2.css'
+
+const QUICK_FILTER_KEYS = new Set(['color', 'card_type', 'promo', 'sp', 'treasure_rare'])
 
 function isEmpty(value) {
   if (value === undefined || value === null || value === '') return true
@@ -215,6 +217,13 @@ export default function AdvancedSearchPanel({
   onToggle,
 }) {
   const activeEntries = Object.entries(values).filter(([, value]) => !isEmpty(value))
+  const quickFacets = useMemo(
+    () => Object.values(groups)
+      .flat()
+      .filter((facet) => facet.quick_filter && QUICK_FILTER_KEYS.has(facet.key))
+      .sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0)),
+    [groups],
+  )
 
   return (
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
@@ -229,6 +238,33 @@ export default function AdvancedSearchPanel({
           <span aria-hidden="true">{open ? '−' : '+'}</span>
         </button>
       </div>
+
+      {quickFacets.length > 0 ? (
+        <div className="sv2-quick-filters">
+          <div className="sv2-quick-heading">
+            <div>
+              <strong>Quick filters</strong>
+              <span>Color, tipo y hits coleccionables sin abrir el panel completo.</span>
+            </div>
+            <button type="button" className="sv2-quick-apply" onClick={onSearch} disabled={loading}>
+              {loading ? 'Filtrando…' : 'Ver prints'}
+            </button>
+          </div>
+          <div className="sv2-quick-grid">
+            {quickFacets.map((facet) => (
+              <div key={`quick-${facet.key}`} className={`sv2-quick-facet sv2-quick-${facet.key}`}>
+                {facet.ui_type !== 'toggle' ? <span>{facet.label}</span> : null}
+                <FacetControl
+                  gameSlug={gameSlug}
+                  facet={facet}
+                  value={values[facet.key]}
+                  onChange={(nextValue) => onChange(facet.key, nextValue)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {activeEntries.length > 0 && (
         <div className="sv2-active-row">
