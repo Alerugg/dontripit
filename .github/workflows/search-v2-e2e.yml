@@ -23,7 +23,7 @@ on:
       - 'frontend/app/explorer/**'
       - 'frontend/components/searchV2/**'
       - 'frontend/lib/searchV2/**'
-      - 'frontend/tests/explorerPage.test.mjs'
+      - 'frontend/tests/**'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
   workflow_dispatch:
@@ -122,6 +122,9 @@ jobs:
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=OP05-119&limit=10' > /tmp/search.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=Luffy&limit=10' > /tmp/luffy.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=monky%20lufi&limit=10' > /tmp/typo.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=leader%20life%205&limit=10' > /tmp/life.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=purple%2010000%20power&limit=10' > /tmp/power.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=2000%20counter&limit=10' > /tmp/counter.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/suggest?game=onepiece&q=Luffy&limit=8' > /tmp/suggest.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/facets?game=onepiece' > /tmp/facets.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/facet-values?game=onepiece&key=set&q=op05&limit=10' > /tmp/set-values.json
@@ -138,9 +141,17 @@ jobs:
           def load(name):
               return json.loads(Path(name).read_text())
 
+          def first_attrs(payload):
+              items = payload.get('items') or []
+              assert items, payload
+              return items[0], items[0].get('attributes') or {}
+
           search = load('/tmp/search.json')
           luffy = load('/tmp/luffy.json')
           typo = load('/tmp/typo.json')
+          life = load('/tmp/life.json')
+          power = load('/tmp/power.json')
+          counter = load('/tmp/counter.json')
           suggest = load('/tmp/suggest.json')
           facets = load('/tmp/facets.json')
           sets = load('/tmp/set-values.json')
@@ -159,6 +170,17 @@ jobs:
           typo_items = typo.get('items') or []
           assert typo_items, typo
           assert all('luffy' in str(row.get('name') or '').lower() for row in typo_items[:10]), typo_items[:10]
+
+          life_row, life_attrs = first_attrs(life)
+          assert str(life_attrs.get('card_type') or '').lower() == 'leader', life_row
+          assert int(life_attrs.get('life') or -1) == 5, life_row
+
+          power_row, power_attrs = first_attrs(power)
+          assert 'purple' in [str(value).lower() for value in (power_attrs.get('color') or [])], power_row
+          assert int(power_attrs.get('power') or -1) == 10000, power_row
+
+          counter_row, counter_attrs = first_attrs(counter)
+          assert int(counter_attrs.get('counter') or -1) == 2000, counter_row
 
           suggest_items = suggest.get('items') or []
           assert suggest_items, suggest
@@ -190,6 +212,9 @@ jobs:
               'exact_results': len(items),
               'luffy_first': luffy_items[0].get('name'),
               'typo_results': len(typo_items),
+              'life_first': {'name': life_row.get('name'), 'life': life_attrs.get('life')},
+              'power_first': {'name': power_row.get('name'), 'power': power_attrs.get('power')},
+              'counter_first': {'name': counter_row.get('name'), 'counter': counter_attrs.get('counter')},
               'suggestion_first': suggest_items[0].get('name'),
               'facet_count': sum(len(v) for v in groups.values()),
               'set_choices': len(set_items),
@@ -208,6 +233,9 @@ jobs:
             /tmp/search.json
             /tmp/luffy.json
             /tmp/typo.json
+            /tmp/life.json
+            /tmp/power.json
+            /tmp/counter.json
             /tmp/suggest.json
             /tmp/facets.json
             /tmp/set-values.json
