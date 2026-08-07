@@ -5,7 +5,6 @@ import statistics
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable
 
 from app import db
 from app.search_v2.normalization import compact_search_text
@@ -22,6 +21,9 @@ class BenchmarkCase:
     expected_set: str | None = None
     expected_language: str | None = None
     expected_rarity: str | None = None
+    expected_trait: str | None = None
+    expected_color: str | None = None
+    expected_card_type: str | None = None
     max_rank: int = 10
 
 
@@ -33,12 +35,17 @@ def _print(row: dict) -> dict:
     return row.get("matched_print") or {}
 
 
+def _attributes(row: dict) -> dict:
+    return row.get("attributes") or {}
+
+
 def _collector_matches(row: dict, expected: str) -> bool:
     actual = str(_print(row).get("collector_number") or "")
     return compact_search_text(actual) == compact_search_text(expected)
 
 
 def _matches(case: BenchmarkCase, row: dict) -> bool:
+    attrs = _attributes(row)
     if case.expected_name and case.expected_name.lower() not in _name(row):
         return False
     if case.expected_collector and not _collector_matches(row, case.expected_collector):
@@ -48,6 +55,16 @@ def _matches(case: BenchmarkCase, row: dict) -> bool:
     if case.expected_language and str(_print(row).get("language") or "").lower() != case.expected_language.lower():
         return False
     if case.expected_rarity and str(_print(row).get("rarity") or "").upper() != case.expected_rarity.upper():
+        return False
+    if case.expected_trait:
+        traits = [str(value).lower() for value in (attrs.get("traits") or [])]
+        if case.expected_trait.lower() not in traits:
+            return False
+    if case.expected_color:
+        colors = [str(value).lower() for value in (attrs.get("color") or [])]
+        if case.expected_color.lower() not in colors:
+            return False
+    if case.expected_card_type and str(attrs.get("card_type") or "").lower() != case.expected_card_type.lower():
         return False
     return True
 
@@ -63,6 +80,7 @@ def _compact_rows(rows: list[dict], limit: int = 5) -> list[dict]:
     result: list[dict] = []
     for row in rows[:limit]:
         matched = _print(row)
+        attrs = _attributes(row)
         result.append(
             {
                 "name": row.get("name"),
@@ -72,6 +90,9 @@ def _compact_rows(rows: list[dict], limit: int = 5) -> list[dict]:
                 "language": matched.get("language"),
                 "rarity": matched.get("rarity"),
                 "variant": matched.get("exact_variant"),
+                "color": attrs.get("color"),
+                "card_type": attrs.get("card_type"),
+                "traits": attrs.get("traits"),
                 "score": row.get("score"),
             }
         )
@@ -113,7 +134,8 @@ CASES: tuple[BenchmarkCase, ...] = (
     BenchmarkCase("monky lufi", "typo", hard_gate=True, expected_name="luffy", max_rank=3),
     BenchmarkCase("lufi", "typo", expected_name="luffy", max_rank=5),
     BenchmarkCase("zolo", "typo", expected_name="zoro", max_rank=5),
-    BenchmarkCase("Straw Hat Crew", "semantic_trait", expected_name="", max_rank=10),
+    BenchmarkCase("Straw Hat Crew", "semantic_trait", expected_trait="Straw Hat Crew", max_rank=5),
+    BenchmarkCase("red leader", "natural_properties", expected_color="Red", expected_card_type="Leader", max_rank=10),
 )
 
 
@@ -161,6 +183,7 @@ def run() -> dict:
 
     sorted_elapsed = sorted(elapsed_values)
     p95_index = max(0, min(len(sorted_elapsed) - 1, round(0.95 * (len(sorted_elapsed) - 1))))
+    soft_passed = sum(1 for row in soft if row["passed"])
     report = {
         "generated_at": generated_at,
         "database": "neon",
@@ -172,9 +195,9 @@ def run() -> dict:
             "pass_rate": round((len(hard) - len(hard_failures)) / len(hard), 4) if hard else 1.0,
         },
         "soft_quality": {
-            "passed": sum(1 for row in soft if row["passed"]),
+            "passed": soft_passed,
             "total": len(soft),
-            "pass_rate": round(sum(1 for row in soft if row["passed"]) / len(soft), 4) if soft else 1.0,
+            "pass_rate": round(soft_passed / len(soft), 4) if soft else 1.0,
         },
         "latency_ms": {
             "median": round(statistics.median(elapsed_values), 2),
