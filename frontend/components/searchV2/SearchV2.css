@@ -87,6 +87,79 @@
 .sv2-advanced-toggle { display: inline-flex; align-items: center; gap: .7rem; white-space: nowrap; }
 .sv2-secondary-btn { background: transparent; color: inherit; }
 
+.sv2-quick-filters {
+  padding: .85rem 1.1rem 1rem;
+  border-top: 1px solid rgba(255,255,255,.07);
+  background: color-mix(in srgb, var(--game-accent, #8b7cff) 4%, transparent);
+}
+
+.sv2-quick-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .8rem;
+}
+
+.sv2-quick-heading > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .45rem .7rem;
+}
+
+.sv2-quick-heading strong {
+  font-size: .82rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.sv2-quick-heading span {
+  color: var(--muted, #9ca3af);
+  font-size: .74rem;
+}
+
+.sv2-quick-apply {
+  min-height: 38px;
+  border: 1px solid color-mix(in srgb, var(--game-accent, #8b7cff) 65%, rgba(255,255,255,.12));
+  border-radius: 999px;
+  padding: 0 .9rem;
+  background: color-mix(in srgb, var(--game-accent, #8b7cff) 20%, rgba(255,255,255,.025));
+  color: inherit;
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sv2-quick-apply:disabled { opacity: .45; cursor: not-allowed; }
+
+.sv2-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: .7rem .9rem;
+}
+
+.sv2-quick-facet {
+  min-width: 0;
+}
+
+.sv2-quick-facet > span {
+  display: block;
+  margin-bottom: .38rem;
+  color: var(--muted, #9ca3af);
+  font-size: .68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.sv2-quick-color,
+.sv2-quick-card_type {
+  grid-column: span 2;
+}
+
 .sv2-active-row {
   display: flex;
   align-items: center;
@@ -237,6 +310,11 @@
   .sv2-example-row button { font-size: .68rem; }
   .sv2-advanced-head { align-items: flex-start; flex-direction: column; }
   .sv2-advanced-toggle { width: 100%; justify-content: space-between; }
+  .sv2-quick-heading { align-items: stretch; flex-direction: column; }
+  .sv2-quick-apply { width: 100%; }
+  .sv2-quick-grid { grid-template-columns: 1fr; }
+  .sv2-quick-color,
+  .sv2-quick-card_type { grid-column: auto; }
   .sv2-facet-grid { grid-template-columns: 1fr; }
   .sv2-advanced-actions { position: sticky; bottom: 0; background: rgba(15,17,22,.96); padding-top: .75rem; }
   .sv2-results-grid { grid-template-columns: 1fr; }
