@@ -24,6 +24,10 @@ class BenchmarkCase:
     expected_trait: str | None = None
     expected_color: str | None = None
     expected_card_type: str | None = None
+    expected_cost: int | None = None
+    expected_life: int | None = None
+    expected_power: int | None = None
+    expected_counter: int | None = None
     max_rank: int = 10
 
 
@@ -42,6 +46,16 @@ def _attributes(row: dict) -> dict:
 def _collector_matches(row: dict, expected: str) -> bool:
     actual = str(_print(row).get("collector_number") or "")
     return compact_search_text(actual) == compact_search_text(expected)
+
+
+def _int_attr(attrs: dict, key: str) -> int | None:
+    try:
+        value = attrs.get(key)
+        if value in (None, ""):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _matches(case: BenchmarkCase, row: dict) -> bool:
@@ -66,6 +80,14 @@ def _matches(case: BenchmarkCase, row: dict) -> bool:
             return False
     if case.expected_card_type and normalize_search_text(str(attrs.get("card_type") or "")) != normalize_search_text(case.expected_card_type):
         return False
+    for key, expected in (
+        ("cost", case.expected_cost),
+        ("life", case.expected_life),
+        ("power", case.expected_power),
+        ("counter", case.expected_counter),
+    ):
+        if expected is not None and _int_attr(attrs, key) != expected:
+            return False
     return True
 
 
@@ -92,6 +114,10 @@ def _compact_rows(rows: list[dict], limit: int = 5) -> list[dict]:
                 "variant": matched.get("exact_variant"),
                 "color": attrs.get("color"),
                 "card_type": attrs.get("card_type"),
+                "cost": attrs.get("cost"),
+                "life": attrs.get("life"),
+                "power": attrs.get("power"),
+                "counter": attrs.get("counter"),
                 "traits": attrs.get("traits"),
                 "score": row.get("score"),
             }
@@ -138,6 +164,10 @@ CASES: tuple[BenchmarkCase, ...] = (
     BenchmarkCase("red leader", "natural_properties", hard_gate=True, expected_color="Red", expected_card_type="Leader", max_rank=1),
     BenchmarkCase("purple leader", "natural_properties", expected_color="Purple", expected_card_type="Leader", max_rank=1),
     BenchmarkCase("blue character", "natural_properties", expected_color="Blue", expected_card_type="Character", max_rank=1),
+    BenchmarkCase("leader life 5", "numeric_properties", hard_gate=True, expected_card_type="Leader", expected_life=5, max_rank=1),
+    BenchmarkCase("purple 10000 power", "numeric_properties", hard_gate=True, expected_color="Purple", expected_power=10000, max_rank=1),
+    BenchmarkCase("2000 counter", "numeric_properties", expected_counter=2000, max_rank=1),
+    BenchmarkCase("cost 5", "numeric_properties", expected_cost=5, max_rank=1),
 )
 
 
