@@ -13,10 +13,10 @@ from app.ingest.normalization import normalize_collector_number, normalize_varia
 class OnePieceV2Connector(OnePieceConnector):
     """One Piece connector with collector-number Card identity and release provenance.
 
-    The legacy official fallback grouped logical cards by visible character name
-    and accepted only OP/ST/EB collector families. V2 treats the base collector
-    number as the logical Card identity, accepts P/PRB families, deduplicates exact
-    print identities, and preserves every official series appearance separately.
+    Logical Card identity is the base collector number. Exact physical print
+    identity preserves the official suffix (P1/P2/P3/R1/...) instead of collapsing
+    every P-suffix into the generic word ``parallel``. Commercial series/product
+    appearances are retained independently as release provenance.
     """
 
     name = "onepiece"
@@ -40,6 +40,24 @@ class OnePieceV2Connector(OnePieceConnector):
     def _logical_card_key(collector_base: str | None) -> str:
         normalized = normalize_collector_number(collector_base)
         return f"onepiece:{normalized}" if normalized else ""
+
+    @staticmethod
+    def _exact_print_variant(variant_suffix: object) -> str:
+        raw = str(variant_suffix or "").strip().lower()
+        if not raw or raw == "default":
+            return "default"
+        # Source suffix is part of physical identity: P1 != P2 != P5.
+        raw = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+        return raw or "default"
+
+    @staticmethod
+    def _variant_family(exact_variant: str) -> str:
+        value = str(exact_variant or "default").lower()
+        if re.fullmatch(r"p\d+", value):
+            return "parallel"
+        if re.fullmatch(r"r\d+", value):
+            return "reprint"
+        return "default" if value == "default" else value
 
     @staticmethod
     def _canonical_set_name(set_code: str, source_label: str) -> str:
@@ -92,7 +110,7 @@ class OnePieceV2Connector(OnePieceConnector):
                 " ",
                 unescape(rarity_match.group(1) if rarity_match else ""),
             ).strip() or None
-            variant = self._normalize_onepiece_variant(variant_suffix or "default")
+            variant = self._exact_print_variant(variant_suffix)
 
             records.append(
                 {
@@ -103,6 +121,7 @@ class OnePieceV2Connector(OnePieceConnector):
                     "name": name or collector_base,
                     "rarity": rarity,
                     "variant": variant,
+                    "variant_family": self._variant_family(variant),
                     "image_url": image_url,
                 }
             )
@@ -145,8 +164,6 @@ class OnePieceV2Connector(OnePieceConnector):
                 "prints": [],
             },
         )
-        # The official source should not rename one collector-number definition.
-        # Keep the first name but preserve conflicts as metadata for later audit.
         if card_row["name"] != entry["name"]:
             aliases = card_row.setdefault("source_name_aliases", [])
             if entry["name"] not in aliases:
@@ -165,6 +182,7 @@ class OnePieceV2Connector(OnePieceConnector):
                 "collector_number": entry["collector_number"],
                 "rarity": entry["rarity"],
                 "variant": entry["variant"],
+                "variant_family": entry.get("variant_family") or self._variant_family(entry["variant"]),
                 "image_url": entry["image_url"],
                 "release_appearances": [],
                 "alternate_source_images": [],
@@ -203,18 +221,19 @@ class OnePieceV2Connector(OnePieceConnector):
 
         language = "en"
         sets_by_code: dict[str, dict] = {}
-        releases: list[dict] = []
+        releases_by_external_id: dict[str, dict] = {}
         cards_by_key: dict[str, dict] = {}
 
         for series_id, label in series_options:
-            releases.append(
+            releases_by_external_id.setdefault(
+                str(series_id),
                 {
                     "source": "onepiece_official",
                     "external_id": str(series_id),
                     "name": label,
                     "language": language,
                     "region": "global-en",
-                }
+                },
             )
             series_url = f"{base_url}?series={series_id}"
             series_response = requests.get(series_url, timeout=timeout, headers=headers)
@@ -245,6 +264,7 @@ class OnePieceV2Connector(OnePieceConnector):
         if not cards_by_key:
             raise ValueError("One Piece V2 official ingest found zero cards")
 
+        releases = list(releases_by_external_id.values())
         cards = list(cards_by_key.values())
         if card_limit is not None:
             cards = cards[:card_limit]
@@ -253,9 +273,7 @@ class OnePieceV2Connector(OnePieceConnector):
                 for card in cards
                 for print_row in card.get("prints") or []
             }
-            sets_by_code = {
-                code: row for code, row in sets_by_code.items() if code in used_set_codes
-            }
+            sets_by_code = {code: row for code, row in sets_by_code.items() if code in used_set_codes}
             used_release_ids = {
                 appearance["release_external_id"]
                 for card in cards
@@ -287,6 +305,8 @@ class OnePieceV2Connector(OnePieceConnector):
             "releases": releases,
             "cards": cards,
             "diagnostics": {
+                "source_option_rows": len(series_options),
+                "unique_release_ids": len(releases_by_external_id),
                 "series_count": len(releases),
                 "logical_card_count": len(cards),
                 "print_count": sum(len(card.get("prints") or []) for card in cards),
