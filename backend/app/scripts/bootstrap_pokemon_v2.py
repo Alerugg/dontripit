@@ -25,6 +25,7 @@ GAME_SLUG = "pokemon"
 SOURCE_NAME = "tcgdex"
 EXPECTED_PHYSICAL_SETS = 203
 EXPECTED_PHYSICAL_CARDS = 20964
+BASELINE_RARITY = "unknown"
 
 
 def _release_date(value: object) -> date | None:
@@ -218,7 +219,7 @@ def run(*, backup_path: Path | None = None, report_path: Path | None = None) -> 
                         card_id=card_row.id,
                         collector_number=str(source["local_id"]),
                         language=LANGUAGE,
-                        rarity=None,
+                        rarity=BASELINE_RARITY,
                         is_foil=IS_FOIL,
                         variant=VARIANT,
                         print_key=print_key(source_id),
