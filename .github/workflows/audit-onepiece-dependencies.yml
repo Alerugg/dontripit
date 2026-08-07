@@ -1,0 +1,38 @@
+name: Audit One Piece Rebuild Dependencies
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/scripts/audit_onepiece_dependencies.py'
+      - '.github/workflows/audit-onepiece-dependencies.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Audit One Piece dependencies without writes
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.audit_onepiece_dependencies | tee onepiece-dependency-audit.json
+      - name: Upload dependency audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-dependency-audit-${{ github.sha }}
+          path: backend/onepiece-dependency-audit.json
+          retention-days: 30
