@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app import db
-from app.search_v2.normalization import compact_search_text
+from app.search_v2.normalization import compact_search_text, normalize_search_text
 from app.search_v2.query import normal_search
 
 
@@ -28,7 +28,7 @@ class BenchmarkCase:
 
 
 def _name(row: dict) -> str:
-    return str(row.get("name") or "").strip().lower()
+    return normalize_search_text(str(row.get("name") or ""))
 
 
 def _print(row: dict) -> dict:
@@ -46,7 +46,7 @@ def _collector_matches(row: dict, expected: str) -> bool:
 
 def _matches(case: BenchmarkCase, row: dict) -> bool:
     attrs = _attributes(row)
-    if case.expected_name and case.expected_name.lower() not in _name(row):
+    if case.expected_name and normalize_search_text(case.expected_name) not in _name(row):
         return False
     if case.expected_collector and not _collector_matches(row, case.expected_collector):
         return False
@@ -57,14 +57,14 @@ def _matches(case: BenchmarkCase, row: dict) -> bool:
     if case.expected_rarity and str(_print(row).get("rarity") or "").upper() != case.expected_rarity.upper():
         return False
     if case.expected_trait:
-        traits = [str(value).lower() for value in (attrs.get("traits") or [])]
-        if case.expected_trait.lower() not in traits:
+        traits = [normalize_search_text(str(value)) for value in (attrs.get("traits") or [])]
+        if normalize_search_text(case.expected_trait) not in traits:
             return False
     if case.expected_color:
-        colors = [str(value).lower() for value in (attrs.get("color") or [])]
-        if case.expected_color.lower() not in colors:
+        colors = [normalize_search_text(str(value)) for value in (attrs.get("color") or [])]
+        if normalize_search_text(case.expected_color) not in colors:
             return False
-    if case.expected_card_type and str(attrs.get("card_type") or "").lower() != case.expected_card_type.lower():
+    if case.expected_card_type and normalize_search_text(str(attrs.get("card_type") or "")) != normalize_search_text(case.expected_card_type):
         return False
     return True
 
@@ -110,30 +110,30 @@ def _exact_collector_case(query: str) -> BenchmarkCase:
 
 
 CASES: tuple[BenchmarkCase, ...] = (
-    BenchmarkCase("Luffy", "canonical_name", hard_gate=True, expected_name="monkey.d.luffy", max_rank=1),
-    BenchmarkCase("Zoro", "canonical_name", hard_gate=True, expected_name="roronoa.zoro", max_rank=1),
-    BenchmarkCase("Ace", "canonical_name", expected_name="portgas.d.ace", max_rank=3),
-    BenchmarkCase("Law", "character_name", expected_name="law", max_rank=5),
-    BenchmarkCase("Shanks", "character_name", expected_name="shanks", max_rank=3),
-    BenchmarkCase("Nami", "character_name", expected_name="nami", max_rank=3),
+    BenchmarkCase("Luffy", "canonical_name", hard_gate=True, expected_name="Monkey D Luffy", max_rank=1),
+    BenchmarkCase("Zoro", "canonical_name", hard_gate=True, expected_name="Roronoa Zoro", max_rank=1),
+    BenchmarkCase("Ace", "canonical_name", expected_name="Portgas D Ace", max_rank=3),
+    BenchmarkCase("Law", "character_name", expected_name="Law", max_rank=5),
+    BenchmarkCase("Shanks", "character_name", expected_name="Shanks", max_rank=3),
+    BenchmarkCase("Nami", "character_name", expected_name="Nami", max_rank=3),
     _exact_collector_case("OP05-119"),
     _exact_collector_case("OP01-001"),
     _exact_collector_case("ST01-001"),
     _exact_collector_case("P-001"),
-    BenchmarkCase("Luffy OP05", "compound", hard_gate=True, expected_name="luffy", expected_set="op-05", max_rank=3),
+    BenchmarkCase("Luffy OP05", "compound", hard_gate=True, expected_name="Luffy", expected_set="op-05", max_rank=3),
     BenchmarkCase(
         "Luffy OP05 English SEC",
         "compound",
         hard_gate=True,
-        expected_name="luffy",
+        expected_name="Luffy",
         expected_set="op-05",
         expected_language="en",
         expected_rarity="SEC",
         max_rank=5,
     ),
-    BenchmarkCase("monky lufi", "typo", hard_gate=True, expected_name="luffy", max_rank=3),
-    BenchmarkCase("lufi", "typo", expected_name="luffy", max_rank=5),
-    BenchmarkCase("zolo", "typo", expected_name="zoro", max_rank=5),
+    BenchmarkCase("monky lufi", "typo", hard_gate=True, expected_name="Luffy", max_rank=3),
+    BenchmarkCase("lufi", "typo", expected_name="Luffy", max_rank=5),
+    BenchmarkCase("zolo", "typo", expected_name="Zoro", max_rank=5),
     BenchmarkCase("Straw Hat Crew", "semantic_trait", expected_trait="Straw Hat Crew", max_rank=5),
     BenchmarkCase("red leader", "natural_properties", expected_color="Red", expected_card_type="Leader", max_rank=10),
 )
