@@ -3,10 +3,10 @@ import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '.
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
-  const game = (searchParams.get('game') || '').trim().toLowerCase()
+  const game = (searchParams.get('game') || 'onepiece').trim().toLowerCase()
   const key = (searchParams.get('key') || '').trim().toLowerCase()
-  if (!game || !key) {
-    return NextResponse.json({ error: 'game_and_key_required' }, { status: 400 })
+  if (!key) {
+    return NextResponse.json({ error: 'facet_key_required' }, { status: 400 })
   }
 
   const upstream = await callInternalApi(
