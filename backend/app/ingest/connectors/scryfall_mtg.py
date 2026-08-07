@@ -123,21 +123,43 @@ class ScryfallMtgConnector(SourceConnector):
         return cards
 
     def _load_incremental(self, limit: int | None = None, last_run_at=None) -> list[dict]:
+        """Load newest prints without relying on Scryfall date-query syntax.
+
+        The previous implementation appended ``date>=YYYY-MM-DD`` to the Scryfall
+        search query. That query started returning HTTP 400 and left MTG stale for
+        weeks. We now request paper prints ordered newest-first and stop as soon as
+        we cross the last successful sync date. Records from the cutoff date itself
+        are intentionally re-read; checksum/idempotent upserts make that safe and
+        prevent missing cards released later on the same calendar day.
+        """
+
         cards: list[dict] = []
         seen_ids: set[str] = set()
-        params: dict[str, str] = {"q": "game:paper", "order": "released", "dir": "desc"}
-        if limit:
-            params["unique"] = "prints"
-
-        if last_run_at is not None:
-            sync_date = last_run_at.date().isoformat()
-            params["q"] = f"game:paper date>={sync_date}"
+        params: dict[str, str] | None = {
+            "q": "game:paper",
+            "order": "released",
+            "dir": "desc",
+            "unique": "prints",
+        }
+        cutoff_date = last_run_at.date() if last_run_at is not None else None
 
         url = f"{self.base_url}/cards/search"
-        while url:
+        reached_cutoff = False
+        while url and not reached_cutoff:
             payload = self._request_json(url, params=params)
             params = None
+
             for card in payload.get("data") or []:
+                released_at = str(card.get("released_at") or "").strip()
+                if cutoff_date is not None and released_at:
+                    try:
+                        released_date = date.fromisoformat(released_at)
+                    except ValueError:
+                        released_date = None
+                    if released_date is not None and released_date < cutoff_date:
+                        reached_cutoff = True
+                        break
+
                 dedupe_id = str(card.get("id") or "").strip()
                 if dedupe_id and dedupe_id in seen_ids:
                     continue
@@ -146,7 +168,8 @@ class ScryfallMtgConnector(SourceConnector):
                 cards.append(card)
                 if limit and len(cards) >= limit:
                     return cards
-            if not payload.get("has_more"):
+
+            if reached_cutoff or not payload.get("has_more"):
                 break
             url = payload.get("next_page")
 
