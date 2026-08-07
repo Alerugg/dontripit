@@ -9,8 +9,18 @@ on:
       - 'backend/app/search_v2/**'
       - 'backend/app/routes/search_v2.py'
       - 'frontend/app/api/search-v2/**'
+      - 'frontend/app/api/build-info/**'
+      - 'frontend/app/api/catalog/cards/**'
+      - 'frontend/app/api/catalog/prints/**'
+      - 'frontend/app/games/**'
+      - 'frontend/app/cards/**'
+      - 'frontend/app/prints/**'
+      - 'frontend/app/tcg/**'
+      - 'frontend/app/play/**'
+      - 'frontend/app/explorer/**'
       - 'frontend/components/searchV2/**'
       - 'frontend/lib/searchV2/**'
+      - 'frontend/tests/explorerPage.test.mjs'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
   workflow_dispatch:
@@ -52,7 +62,6 @@ jobs:
         run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
 
       - name: Create temporary catalog API key
-        id: key
         working-directory: backend
         run: |
           set -euo pipefail
@@ -92,7 +101,8 @@ jobs:
           nohup npm start > /tmp/frontend.log 2>&1 &
           echo $! > /tmp/frontend.pid
           for i in {1..40}; do
-            if curl -fsS http://127.0.0.1:3000/games/onepiece >/tmp/onepiece-page.html; then
+            if curl -fsS http://127.0.0.1:3000/api/build-info >/tmp/build-info.json; then
+              cat /tmp/build-info.json
               exit 0
             fi
             sleep 1
@@ -100,10 +110,12 @@ jobs:
           cat /tmp/frontend.log
           exit 1
 
-      - name: Exercise Search V2 over HTTP
+      - name: Exercise Search V2 and dynamic routes over HTTP
         run: |
           set -euo pipefail
 
+          curl -fsS 'http://127.0.0.1:3000/games/onepiece' > /tmp/onepiece-page.html
+          curl -fsS -o /tmp/legacy-tcg.html -w '%{http_code}' 'http://127.0.0.1:3000/tcg/onepiece' > /tmp/legacy-tcg-status.txt
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=OP05-119&limit=10' > /tmp/search.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=monky%20lufi&limit=10' > /tmp/typo.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/suggest?game=onepiece&q=Luffy&limit=8' > /tmp/suggest.json
@@ -127,6 +139,7 @@ jobs:
           facets = load('/tmp/facets.json')
           sets = load('/tmp/set-values.json')
           advanced = load('/tmp/advanced.json')
+          build = load('/tmp/build-info.json')
 
           items = search.get('items') or []
           assert items, search
@@ -153,6 +166,7 @@ jobs:
 
           html = Path('/tmp/onepiece-page.html').read_text(errors='ignore')
           assert 'One Piece' in html or 'ONE PIECE' in html, 'One Piece page rendered without game identity'
+          assert build.get('build_contract') == 'catalog-v2-search-v2', build
 
           print(json.dumps({
               'status': 'pass',
@@ -162,6 +176,7 @@ jobs:
               'facet_count': sum(len(v) for v in groups.values()),
               'set_choices': len(set_items),
               'advanced_total': advanced.get('total'),
+              'build_contract': build.get('build_contract'),
           }, indent=2))
           PY
 
@@ -177,6 +192,7 @@ jobs:
             /tmp/facets.json
             /tmp/set-values.json
             /tmp/advanced.json
+            /tmp/build-info.json
             /tmp/backend-health.json
             /tmp/backend.log
             /tmp/frontend.log
