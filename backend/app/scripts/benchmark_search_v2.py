@@ -28,6 +28,14 @@ class BenchmarkCase:
     expected_life: int | None = None
     expected_power: int | None = None
     expected_counter: int | None = None
+    expected_cost_min: int | None = None
+    expected_cost_max: int | None = None
+    expected_life_min: int | None = None
+    expected_life_max: int | None = None
+    expected_power_min: int | None = None
+    expected_power_max: int | None = None
+    expected_counter_min: int | None = None
+    expected_counter_max: int | None = None
     max_rank: int = 10
 
 
@@ -80,6 +88,7 @@ def _matches(case: BenchmarkCase, row: dict) -> bool:
             return False
     if case.expected_card_type and normalize_search_text(str(attrs.get("card_type") or "")) != normalize_search_text(case.expected_card_type):
         return False
+
     for key, expected in (
         ("cost", case.expected_cost),
         ("life", case.expected_life),
@@ -88,6 +97,23 @@ def _matches(case: BenchmarkCase, row: dict) -> bool:
     ):
         if expected is not None and _int_attr(attrs, key) != expected:
             return False
+
+    for key, minimum, maximum in (
+        ("cost", case.expected_cost_min, case.expected_cost_max),
+        ("life", case.expected_life_min, case.expected_life_max),
+        ("power", case.expected_power_min, case.expected_power_max),
+        ("counter", case.expected_counter_min, case.expected_counter_max),
+    ):
+        if minimum is None and maximum is None:
+            continue
+        actual = _int_attr(attrs, key)
+        if actual is None:
+            return False
+        if minimum is not None and actual < minimum:
+            return False
+        if maximum is not None and actual > maximum:
+            return False
+
     return True
 
 
@@ -168,6 +194,13 @@ CASES: tuple[BenchmarkCase, ...] = (
     BenchmarkCase("purple 10000 power", "numeric_properties", hard_gate=True, expected_color="Purple", expected_power=10000, max_rank=1),
     BenchmarkCase("2000 counter", "numeric_properties", expected_counter=2000, max_rank=1),
     BenchmarkCase("cost 5", "numeric_properties", expected_cost=5, max_rank=1),
+    BenchmarkCase("power >= 10000", "numeric_range", hard_gate=True, expected_power_min=10000, max_rank=1),
+    BenchmarkCase("life 4-5", "numeric_range", hard_gate=True, expected_life_min=4, expected_life_max=5, max_rank=1),
+    BenchmarkCase("cost <= 3", "numeric_range", expected_cost_max=3, max_rank=1),
+    BenchmarkCase("10000+ power", "numeric_range", expected_power_min=10000, max_rank=1),
+    BenchmarkCase("purple power >= 10000", "numeric_range", expected_color="Purple", expected_power_min=10000, max_rank=1),
+    BenchmarkCase("Luffy power >= 10000", "compound_numeric_range", hard_gate=True, expected_name="Luffy", expected_power_min=10000, max_rank=1),
+    BenchmarkCase("Luffy cost <= 4", "compound_numeric_range", expected_name="Luffy", expected_cost_max=4, max_rank=1),
 )
 
 
