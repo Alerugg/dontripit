@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import './GameExplorerPage.css'
+import '../searchV2/FacetPicker.css'
 import OnePieceSearchV2Experience from '../searchV2/OnePieceSearchV2Experience'
 import GameCollectionsList from './GameCollectionsList'
 import GameNewsGrid from './GameNewsGrid'
