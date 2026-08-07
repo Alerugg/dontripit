@@ -5,6 +5,16 @@ import { once } from 'node:events'
 
 const POCKET_SERIES = 'Pokémon TCG Pocket'
 
+// The official cards-database retained the historical Trainer Gallery set IDs,
+// while the current REST /en surface canonicalizes them with a `.5` segment.
+// Normalize only these proven aliases and preserve the original ID as evidence.
+const SET_ID_ALIASES: Record<string, string> = {
+  swsh9tg: 'swsh9.5tg',
+  swsh10tg: 'swsh10.5tg',
+  swsh11tg: 'swsh11.5tg',
+  swsh12tg: 'swsh12.5tg',
+}
+
 function arg(name: string): string {
   const index = Bun.argv.indexOf(name)
   if (index < 0 || !Bun.argv[index + 1]) throw new Error(`Missing required ${name}`)
@@ -63,8 +73,6 @@ async function main() {
   const glob = new Bun.Glob('data/**/*.ts')
   const files: string[] = []
   for await (const file of glob.scan({ cwd: sourceRoot, onlyFiles: true })) {
-    // Card modules live below data/<series>/<set>/<localId>.ts. Set and series
-    // metadata files are shallower and are intentionally excluded.
     if (file.split('/').length >= 4) files.push(file)
   }
   files.sort((a, b) => a.localeCompare(b, 'en'))
@@ -78,6 +86,7 @@ async function main() {
   const rarityCounts: Record<string, number> = {}
   const stageCounts: Record<string, number> = {}
   const variantShapes: Record<string, number> = {}
+  const aliasCounts: Record<string, number> = {}
   let physicalCards = 0
   let pocketCards = 0
   let nonCardModules = 0
@@ -102,13 +111,17 @@ async function main() {
       }
 
       const localId = basename(file, '.ts')
-      const sourceId = `${card.set.id}-${localId}`
+      const originalSetId = String(card.set.id)
+      const canonicalSetId = SET_ID_ALIASES[originalSetId] || originalSetId
+      const sourceId = `${canonicalSetId}-${localId}`
+      const originalSourceId = `${originalSetId}-${localId}`
       const seriesName = english(card.set?.serie?.name)
       if (seriesName === POCKET_SERIES) {
         pocketCards += 1
         continue
       }
 
+      if (originalSetId !== canonicalSetId) bump(aliasCounts, `${originalSetId}->${canonicalSetId}`)
       if (ids.has(sourceId)) duplicateIds.push(sourceId)
       ids.add(sourceId)
       physicalCards += 1
@@ -163,10 +176,12 @@ async function main() {
 
       await writeLine(stream, {
         source_id: sourceId,
+        source_id_original: originalSourceId,
         local_id: localId,
         name: english(card.name),
         set: {
-          id: card.set.id,
+          id: canonicalSetId,
+          id_original: originalSetId,
           name: english(card.set.name),
           series_id: card.set?.serie?.id ?? null,
           series_name: seriesName,
@@ -193,6 +208,7 @@ async function main() {
     pocket_cards_excluded: pocketCards,
     non_card_modules: nonCardModules,
     unique_source_ids: ids.size,
+    canonical_alias_counts: aliasCounts,
     duplicate_source_ids: [...new Set(duplicateIds)].sort(),
     import_errors: errors,
     coverage,
