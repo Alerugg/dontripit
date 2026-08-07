@@ -12,6 +12,45 @@ from app.search_v2.normalization import (
 from app.search_v2_models import FacetDefinition, PrintSearchProfile
 
 
+_ONEPIECE_COLORS = {
+    "red": "red",
+    "green": "green",
+    "blue": "blue",
+    "purple": "purple",
+    "black": "black",
+    "yellow": "yellow",
+}
+
+_ONEPIECE_CARD_TYPES = {
+    "leader": "leader",
+    "leaders": "leader",
+    "character": "character",
+    "characters": "character",
+    "event": "event",
+    "events": "event",
+    "stage": "stage",
+    "stages": "stage",
+}
+
+_ONEPIECE_LANGUAGES = {
+    "english": "en",
+    "en": "en",
+    "japanese": "jp",
+    "jp": "jp",
+}
+
+# Single-letter rarities are intentionally not interpreted as natural-search
+# intent. They collide too easily with normal words. Exact collectors and the
+# Advanced Search can still address every rarity.
+_ONEPIECE_RARITIES = {
+    "sec": "SEC",
+    "sr": "SR",
+    "uc": "UC",
+    "sp": "SP",
+    "tr": "TR",
+}
+
+
 def _bounded_limit(value: int | None, *, default: int = 24, maximum: int = 100) -> int:
     try:
         parsed = int(value or default)
@@ -33,6 +72,41 @@ def _find_onepiece_set(tokens: list[str], full_query: str) -> str | None:
         if parsed:
             return parsed
     return None
+
+
+def _parse_onepiece_intent(tokens: list[str], set_code: str | None) -> tuple[dict[str, str], list[str]]:
+    """Split natural One Piece properties from the free-text identity terms.
+
+    Normal Search remains a ranking engine, not a strict Advanced Search. The
+    structured terms are used for strong boosts, while the remaining tokens
+    identify the card/character. When the query contains only structured terms
+    (for example ``red leader``), all parsed properties become the candidate
+    constraint because there is no free-text identity to anchor the search.
+    """
+    intent: dict[str, str] = {}
+    residual: list[str] = []
+
+    for token in tokens:
+        token_set = normalize_onepiece_set_code(token)
+        if set_code and token_set == set_code:
+            continue
+        if token in _ONEPIECE_COLORS and "color" not in intent:
+            intent["color"] = _ONEPIECE_COLORS[token]
+            continue
+        if token in _ONEPIECE_CARD_TYPES and "card_type" not in intent:
+            intent["card_type"] = _ONEPIECE_CARD_TYPES[token]
+            continue
+        if token in _ONEPIECE_LANGUAGES and "language" not in intent:
+            intent["language"] = _ONEPIECE_LANGUAGES[token]
+            continue
+        if token in _ONEPIECE_RARITIES and "rarity" not in intent:
+            intent["rarity"] = _ONEPIECE_RARITIES[token]
+            continue
+        residual.append(token)
+
+    if set_code:
+        intent["set"] = set_code
+    return intent, residual
 
 
 def _public_card_row(row: dict) -> dict:
@@ -62,17 +136,14 @@ def _public_card_row(row: dict) -> dict:
 def normal_search(session, *, query: str, game_slug: str | None = None, limit: int = 24) -> list[dict]:
     """Google-like logical-Card search with exact Print evidence.
 
-    Human compound queries may contain name, set, language, rarity and variant
-    tokens in any order. Physical variants are grouped into one Card result, but
-    the best matching Print remains attached so the user can see why it matched.
+    Human queries may mix name, set, color, type, language and rarity in any
+    order. Physical variants are grouped into one Card result, while the best
+    matching Print remains attached so the user can see why it matched.
 
-    A query that is exactly a One Piece collector number is treated as an
-    identity lookup. This prevents the embedded set prefix (for example OP05 in
-    OP05-119) from flooding the remaining results with unrelated cards.
-
-    For a single fuzzy word, the last canonical name token is also compared.
-    This is intentionally generic: ``lufi`` can recover ``Monkey.D.Luffy`` and
-    ``zolo`` can recover ``Roronoa Zoro`` without hardcoded character aliases.
+    Exact One Piece collector numbers are identity lookups. Single-word fuzzy
+    searches also compare against the final canonical name token so ``lufi`` can
+    recover ``Monkey.D.Luffy`` and ``zolo`` can recover ``Roronoa Zoro`` without
+    hardcoded character aliases.
     """
     q = str(query or "").strip()
     if not q:
@@ -81,12 +152,22 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     limit = _bounded_limit(limit)
     q_norm = normalize_search_text(q)
     q_compact = compact_search_text(q)
-    tokens = _query_tokens(q)
-    single_token_query = len(tokens) == 1 and tokens[0] == q_norm
+    all_tokens = _query_tokens(q)
     is_onepiece = not game_slug or game_slug == "onepiece"
     q_collector = normalize_onepiece_collector_number(q) if is_onepiece else None
     collector_only = bool(q_collector and q_compact == compact_search_text(q_collector))
-    q_set = None if collector_only else (_find_onepiece_set(tokens, q) if is_onepiece else None)
+    q_set = None if collector_only else (_find_onepiece_set(all_tokens, q) if is_onepiece else None)
+
+    if is_onepiece and not collector_only:
+        intent, tokens = _parse_onepiece_intent(all_tokens, q_set)
+    else:
+        intent, tokens = ({}, all_tokens)
+
+    name_query_norm = " ".join(tokens) if tokens else q_norm
+    name_query_compact = compact_search_text(name_query_norm)
+    single_token_query = len(tokens) == 1 and tokens[0] == name_query_norm
+    has_residual = bool(tokens)
+    has_structured = bool(intent)
 
     if session.bind.dialect.name != "postgresql":
         stmt = (
@@ -100,6 +181,8 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
             stmt = stmt.where(PrintSearchProfile.normalized_collector_number == q_collector)
         elif tokens:
             stmt = stmt.where(and_(*[PrintSearchProfile.search_text.contains(token) for token in tokens]))
+        elif q_set:
+            stmt = stmt.where(PrintSearchProfile.normalized_set_code == q_set)
         else:
             stmt = stmt.where(PrintSearchProfile.search_text.contains(q_norm))
         if game_slug:
@@ -159,6 +242,30 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     all_tokens_bonus = f"CASE WHEN {all_tokens_sql} THEN 900.0 ELSE 0.0 END" if tokens else "0.0"
     last_name_token_sql = "regexp_replace(psp.normalized_name, '^.* ', '')"
 
+    color_match = "EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(psp.attributes_json -> 'color', '[]'::jsonb)) color_value WHERE lower(color_value) = :q_color)"
+    type_match = "lower(COALESCE(psp.attributes_json ->> 'card_type', '')) = :q_card_type"
+    language_match = "lower(COALESCE(psp.language, '')) = :q_language"
+    rarity_match = "upper(COALESCE(psp.rarity, '')) = :q_rarity"
+    set_match = "psp.normalized_set_code = :q_set"
+
+    structured_conditions = [
+        "(:q_color = '' OR " + color_match + ")",
+        "(:q_card_type = '' OR " + type_match + ")",
+        "(:q_language = '' OR " + language_match + ")",
+        "(:q_rarity = '' OR " + rarity_match + ")",
+        "(:q_set = '' OR " + set_match + ")",
+    ]
+    all_structured_sql = " AND ".join(structured_conditions)
+
+    residual_candidate_sql = f"""
+        ({all_tokens_sql})
+        OR psp.normalized_name LIKE '%' || :q_name_norm || '%'
+        OR psp.search_text LIKE '%' || :q_name_norm || '%'
+        OR similarity(psp.normalized_name, :q_name_norm) >= 0.18
+        OR similarity(psp.search_text, :q_name_norm) >= 0.12
+        OR (:single_token AND similarity({last_name_token_sql}, :q_name_norm) >= 0.20)
+    """
+
     sql = text(
         f"""
         WITH scored AS (
@@ -178,19 +285,23 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
             psp.attributes_json,
             (
               CASE WHEN :q_collector <> '' AND psp.normalized_collector_number = :q_collector THEN 5000.0 ELSE 0.0 END +
-              CASE WHEN psp.normalized_name = :q_norm THEN 3600.0 ELSE 0.0 END +
-              CASE WHEN replace(psp.normalized_name, ' ', '') = :q_compact AND :q_compact <> '' THEN 3200.0 ELSE 0.0 END +
-              CASE WHEN psp.normalized_name LIKE '% ' || :q_norm THEN 2600.0 ELSE 0.0 END +
-              CASE WHEN psp.normalized_name LIKE :q_norm || '%' THEN 1800.0 ELSE 0.0 END +
-              CASE WHEN (' ' || psp.normalized_name || ' ') LIKE '% ' || :q_norm || ' %' THEN 1500.0 ELSE 0.0 END +
-              CASE WHEN psp.normalized_name LIKE '%' || :q_norm || '%' THEN 1100.0 ELSE 0.0 END +
-              CASE WHEN :q_set <> '' AND psp.normalized_set_code = :q_set THEN 900.0 ELSE 0.0 END +
-              CASE WHEN psp.search_text LIKE '%' || :q_norm || '%' THEN 700.0 ELSE 0.0 END +
+              CASE WHEN psp.normalized_name = :q_name_norm THEN 3600.0 ELSE 0.0 END +
+              CASE WHEN replace(psp.normalized_name, ' ', '') = :q_name_compact AND :q_name_compact <> '' THEN 3200.0 ELSE 0.0 END +
+              CASE WHEN psp.normalized_name LIKE '% ' || :q_name_norm THEN 2600.0 ELSE 0.0 END +
+              CASE WHEN psp.normalized_name LIKE :q_name_norm || '%' THEN 1800.0 ELSE 0.0 END +
+              CASE WHEN (' ' || psp.normalized_name || ' ') LIKE '% ' || :q_name_norm || ' %' THEN 1500.0 ELSE 0.0 END +
+              CASE WHEN psp.normalized_name LIKE '%' || :q_name_norm || '%' THEN 1100.0 ELSE 0.0 END +
               {all_tokens_bonus} +
               {token_bonus_sql} +
-              similarity(psp.normalized_name, :q_norm) * 900.0 +
-              similarity(psp.search_text, :q_norm) * 350.0 +
-              CASE WHEN :single_token THEN similarity({last_name_token_sql}, :q_norm) * 2400.0 ELSE 0.0 END +
+              similarity(psp.normalized_name, :q_name_norm) * 900.0 +
+              similarity(psp.search_text, :q_name_norm) * 350.0 +
+              CASE WHEN :single_token THEN similarity({last_name_token_sql}, :q_name_norm) * 2400.0 ELSE 0.0 END +
+              CASE WHEN :q_color <> '' AND {color_match} THEN 1600.0 ELSE 0.0 END +
+              CASE WHEN :q_card_type <> '' AND {type_match} THEN 1900.0 ELSE 0.0 END +
+              CASE WHEN :q_language <> '' AND {language_match} THEN 1000.0 ELSE 0.0 END +
+              CASE WHEN :q_rarity <> '' AND {rarity_match} THEN 1300.0 ELSE 0.0 END +
+              CASE WHEN :q_set <> '' AND {set_match} THEN 1200.0 ELSE 0.0 END +
+              CASE WHEN :has_structured AND ({all_structured_sql}) THEN 2500.0 ELSE 0.0 END +
               CASE WHEN psp.exact_variant = 'default' THEN 25.0 ELSE 0.0 END
             ) AS score,
             (
@@ -207,15 +318,15 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
             AND (
               (:collector_only = TRUE AND psp.normalized_collector_number = :q_collector)
               OR
-              (:collector_only = FALSE AND (
-                ({all_tokens_sql})
-                OR psp.normalized_name LIKE '%' || :q_norm || '%'
+              (:collector_only = FALSE AND :has_residual = TRUE AND ({residual_candidate_sql}))
+              OR
+              (:collector_only = FALSE AND :has_residual = FALSE AND :has_structured = TRUE AND ({all_structured_sql}))
+              OR
+              (:collector_only = FALSE AND :has_residual = FALSE AND :has_structured = FALSE AND (
+                psp.normalized_name LIKE '%' || :q_norm || '%'
                 OR psp.search_text LIKE '%' || :q_norm || '%'
-                OR (:q_collector <> '' AND psp.normalized_collector_number = :q_collector)
-                OR (:q_set <> '' AND psp.normalized_set_code = :q_set)
                 OR similarity(psp.normalized_name, :q_norm) >= 0.18
                 OR similarity(psp.search_text, :q_norm) >= 0.12
-                OR (:single_token AND similarity({last_name_token_sql}, :q_norm) >= 0.20)
               ))
             )
         ), ranked AS (
@@ -247,11 +358,18 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     )
     params = {
         "q_norm": q_norm,
-        "q_compact": q_compact,
+        "q_name_norm": name_query_norm,
+        "q_name_compact": name_query_compact,
         "q_collector": q_collector or "",
-        "q_set": q_set or "",
+        "q_set": intent.get("set", ""),
+        "q_color": intent.get("color", ""),
+        "q_card_type": intent.get("card_type", ""),
+        "q_language": intent.get("language", ""),
+        "q_rarity": intent.get("rarity", ""),
         "collector_only": collector_only,
         "single_token": single_token_query,
+        "has_residual": has_residual,
+        "has_structured": has_structured,
         "game": str(game_slug or "").strip().lower(),
         "limit": limit,
         **token_params,
