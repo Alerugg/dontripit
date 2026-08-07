@@ -1,0 +1,52 @@
+name: Search V2 Quality Benchmark
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/search-v2-benchmark.yml'
+      - 'backend/app/scripts/benchmark_search_v2.py'
+      - 'backend/app/search_v2/query.py'
+      - 'backend/app/search_v2/normalization.py'
+      - 'backend/app/search_v2_models.py'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Run One Piece Search V2 benchmark
+        run: |
+          set -o pipefail
+          python -m app.scripts.benchmark_search_v2 | tee /tmp/search-v2-benchmark.json
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-benchmark-${{ github.sha }}
+          path: /tmp/search-v2-benchmark.json
+          if-no-files-found: warn
+          retention-days: 90
