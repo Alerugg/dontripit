@@ -50,6 +50,8 @@ _ONEPIECE_RARITIES = {
     "tr": "TR",
 }
 
+_ONEPIECE_NUMERIC_STATS = {"cost", "life", "power", "counter"}
+
 
 def _bounded_limit(value: int | None, *, default: int = 24, maximum: int = 100) -> int:
     try:
@@ -60,7 +62,11 @@ def _bounded_limit(value: int | None, *, default: int = 24, maximum: int = 100) 
 
 
 def _query_tokens(query: str) -> list[str]:
-    return [token for token in normalize_search_text(query).split() if len(token) >= 2][:8]
+    return [
+        token
+        for token in normalize_search_text(query).split()
+        if len(token) >= 2 or token.isdigit()
+    ][:10]
 
 
 def _find_onepiece_set(tokens: list[str], full_query: str) -> str | None:
@@ -74,19 +80,34 @@ def _find_onepiece_set(tokens: list[str], full_query: str) -> str | None:
     return None
 
 
-def _parse_onepiece_intent(tokens: list[str], set_code: str | None) -> tuple[dict[str, str], list[str]]:
-    """Split natural One Piece properties from the free-text identity terms.
+def _parse_onepiece_intent(tokens: list[str], set_code: str | None) -> tuple[dict[str, object], list[str]]:
+    """Split natural One Piece properties from free-text identity terms.
 
-    Normal Search remains a ranking engine, not a strict Advanced Search. The
-    structured terms are used for strong boosts, while the remaining tokens
-    identify the card/character. When the query contains only structured terms
-    (for example ``red leader``), all parsed properties become the candidate
-    constraint because there is no free-text identity to anchor the search.
+    Supported natural intent includes color, card type, language, rarity, set
+    and exact numeric stats such as ``leader life 5``, ``purple 10000 power``
+    and ``2000 counter``. Normal Search still ranks rather than behaving like
+    Advanced Search when a name/identity term is present.
     """
-    intent: dict[str, str] = {}
+    intent: dict[str, object] = {}
     residual: list[str] = []
+    consumed: set[int] = set()
 
-    for token in tokens:
+    # Numeric intent may be written either ``power 10000`` or ``10000 power``.
+    for index, token in enumerate(tokens):
+        if token not in _ONEPIECE_NUMERIC_STATS or token in intent:
+            continue
+        for number_index in (index + 1, index - 1):
+            if number_index < 0 or number_index >= len(tokens) or number_index in consumed:
+                continue
+            candidate = tokens[number_index]
+            if candidate.isdigit():
+                intent[token] = int(candidate)
+                consumed.update({index, number_index})
+                break
+
+    for index, token in enumerate(tokens):
+        if index in consumed:
+            continue
         token_set = normalize_onepiece_set_code(token)
         if set_code and token_set == set_code:
             continue
@@ -136,12 +157,12 @@ def _public_card_row(row: dict) -> dict:
 def normal_search(session, *, query: str, game_slug: str | None = None, limit: int = 24) -> list[dict]:
     """Google-like logical-Card search with exact Print evidence.
 
-    Human queries may mix name, set, color, type, language and rarity in any
-    order. Physical variants are grouped into one Card result, while the best
-    matching Print remains attached so the user can see why it matched.
+    Human queries may mix name, set, color, type, language, rarity and numeric
+    gameplay stats in any order. Physical variants are grouped into one Card
+    result, while the best matching Print remains attached.
 
     Exact One Piece collector numbers are identity lookups. Single-word fuzzy
-    searches also compare against the final canonical name token so ``lufi`` can
+    searches compare against the final canonical name token so ``lufi`` can
     recover ``Monkey.D.Luffy`` and ``zolo`` can recover ``Roronoa Zoro`` without
     hardcoded character aliases.
     """
@@ -247,6 +268,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     language_match = "lower(COALESCE(psp.language, '')) = :q_language"
     rarity_match = "upper(COALESCE(psp.rarity, '')) = :q_rarity"
     set_match = "psp.normalized_set_code = :q_set"
+    cost_match = "COALESCE(psp.attributes_json ->> 'cost', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'cost')::int = :q_cost"
+    life_match = "COALESCE(psp.attributes_json ->> 'life', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'life')::int = :q_life"
+    power_match = "COALESCE(psp.attributes_json ->> 'power', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'power')::int = :q_power"
+    counter_match = "COALESCE(psp.attributes_json ->> 'counter', '') ~ '^[0-9]+$' AND (psp.attributes_json ->> 'counter')::int = :q_counter"
 
     structured_conditions = [
         "(:q_color = '' OR " + color_match + ")",
@@ -254,6 +279,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "(:q_language = '' OR " + language_match + ")",
         "(:q_rarity = '' OR " + rarity_match + ")",
         "(:q_set = '' OR " + set_match + ")",
+        "(:q_cost < 0 OR (" + cost_match + "))",
+        "(:q_life < 0 OR (" + life_match + "))",
+        "(:q_power < 0 OR (" + power_match + "))",
+        "(:q_counter < 0 OR (" + counter_match + "))",
     ]
     all_structured_sql = " AND ".join(structured_conditions)
 
@@ -301,6 +330,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
               CASE WHEN :q_language <> '' AND {language_match} THEN 1000.0 ELSE 0.0 END +
               CASE WHEN :q_rarity <> '' AND {rarity_match} THEN 1300.0 ELSE 0.0 END +
               CASE WHEN :q_set <> '' AND {set_match} THEN 1200.0 ELSE 0.0 END +
+              CASE WHEN :q_cost >= 0 AND ({cost_match}) THEN 1500.0 ELSE 0.0 END +
+              CASE WHEN :q_life >= 0 AND ({life_match}) THEN 1700.0 ELSE 0.0 END +
+              CASE WHEN :q_power >= 0 AND ({power_match}) THEN 1600.0 ELSE 0.0 END +
+              CASE WHEN :q_counter >= 0 AND ({counter_match}) THEN 1500.0 ELSE 0.0 END +
               CASE WHEN :has_structured AND ({all_structured_sql}) THEN 2500.0 ELSE 0.0 END +
               CASE WHEN psp.exact_variant = 'default' THEN 25.0 ELSE 0.0 END
             ) AS score,
@@ -361,11 +394,15 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "q_name_norm": name_query_norm,
         "q_name_compact": name_query_compact,
         "q_collector": q_collector or "",
-        "q_set": intent.get("set", ""),
-        "q_color": intent.get("color", ""),
-        "q_card_type": intent.get("card_type", ""),
-        "q_language": intent.get("language", ""),
-        "q_rarity": intent.get("rarity", ""),
+        "q_set": str(intent.get("set") or ""),
+        "q_color": str(intent.get("color") or ""),
+        "q_card_type": str(intent.get("card_type") or ""),
+        "q_language": str(intent.get("language") or ""),
+        "q_rarity": str(intent.get("rarity") or ""),
+        "q_cost": int(intent.get("cost", -1)),
+        "q_life": int(intent.get("life", -1)),
+        "q_power": int(intent.get("power", -1)),
+        "q_counter": int(intent.get("counter", -1)),
         "collector_only": collector_only,
         "single_token": single_token_query,
         "has_residual": has_residual,
