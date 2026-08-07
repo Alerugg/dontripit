@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 
 import requests
@@ -9,20 +10,42 @@ from app.ingest.connectors.scryfall_mtg import ScryfallMtgConnector
 
 
 class ScryfallMtgV2Connector(ScryfallMtgConnector):
-    """Scryfall connector with query-independent incremental loading.
+    """Scryfall connector using current bulk-data conventions.
 
-    Scryfall search queries that the legacy connector relied on started returning
-    HTTP 400 in production. Catalog recovery must not depend on search grammar,
-    so this implementation uses Scryfall's official bulk-data metadata and the
-    ``default_cards`` dataset, then performs release-date/paper filtering locally.
+    Scryfall rejects poorly identified HTTP clients with 400/403 responses and,
+    as of July 20 2026, bulk exports are JSONL-only. This connector therefore
+    sends explicit application headers and parses JSON Lines rather than assuming
+    the legacy top-level JSON array format.
 
-    The connector name intentionally stays ``scryfall_mtg`` so existing source
-    records, sync state and ingest history continue to be reused.
+    The source name intentionally stays ``scryfall_mtg`` so existing sync state,
+    source records and ingest history remain continuous.
     """
 
     name = "scryfall_mtg"
+    _SCRYFALL_HEADERS = {
+        "User-Agent": "TCGCatalogV2/1.0 (+https://github.com/Alerugg/dontripit)",
+        "Accept": "application/json;q=0.9,*/*;q=0.8",
+    }
 
-    def _download_default_cards(self) -> list[dict]:
+    def _request_json(self, url: str, params: dict | None = None) -> dict:
+        wait_seconds = 0.3
+        for _ in range(6):
+            response = requests.get(
+                url,
+                params=params,
+                headers=self._SCRYFALL_HEADERS,
+                timeout=30,
+            )
+            if response.status_code in (429, 500, 502, 503, 504):
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+                continue
+            response.raise_for_status()
+            time.sleep(0.12)
+            return response.json()
+        raise RuntimeError(f"Scryfall request failed after retries: {url}")
+
+    def _bulk_metadata(self) -> dict:
         bulk_list = self._request_json(f"{self.base_url}/bulk-data")
         default_bulk = next(
             (item for item in bulk_list.get("data") or [] if item.get("type") == "default_cards"),
@@ -30,15 +53,48 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         )
         if default_bulk is None or not default_bulk.get("download_uri"):
             raise RuntimeError("Scryfall default_cards bulk endpoint unavailable")
+        return default_bulk
 
-        with requests.get(default_bulk["download_uri"], stream=True, timeout=180) as response:
+    def _download_default_cards(self, *, stop_after: int | None = None) -> list[dict]:
+        default_bulk = self._bulk_metadata()
+        download_headers = {
+            "User-Agent": self._SCRYFALL_HEADERS["User-Agent"],
+            "Accept": "application/jsonl,application/x-ndjson,application/json,*/*;q=0.8",
+        }
+
+        output: list[dict] = []
+        with requests.get(
+            default_bulk["download_uri"],
+            headers=download_headers,
+            stream=True,
+            timeout=180,
+        ) as response:
             response.raise_for_status()
-            response.raw.decode_content = True
-            payload = json.load(response.raw)
+            response.encoding = "utf-8"
 
-        if not isinstance(payload, list):
-            raise RuntimeError("Scryfall default_cards bulk payload is not a JSON array")
-        return [item for item in payload if isinstance(item, dict)]
+            # Current Scryfall bulk exports are JSONL: one complete card object per
+            # line. Parsing line-by-line avoids holding the raw compressed file plus
+            # a second decoded JSON representation in memory.
+            for raw_line in response.iter_lines(decode_unicode=True):
+                line = str(raw_line or "").strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError("Scryfall default_cards bulk payload is not valid JSONL") from exc
+                if isinstance(item, dict):
+                    output.append(item)
+                    if stop_after and len(output) >= int(stop_after):
+                        break
+
+        if not output:
+            raise RuntimeError("Scryfall default_cards bulk payload contained no card rows")
+        return output
+
+    def probe_remote(self, *, limit: int = 5) -> list[dict]:
+        """Read only a few JSONL rows to validate metadata + CDN access."""
+        return self._download_default_cards(stop_after=max(int(limit), 1))
 
     @staticmethod
     def _is_paper_card(card: dict) -> bool:
