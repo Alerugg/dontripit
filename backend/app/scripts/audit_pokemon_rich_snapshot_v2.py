@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -31,6 +32,30 @@ def load_snapshot(path: Path) -> dict[str, dict]:
     return rows
 
 
+def _source_release_date(row: dict) -> date | None:
+    raw = str((row.get("set") or {}).get("release_date") or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _compact_extra(row: dict) -> dict:
+    set_row = row.get("set") or {}
+    return {
+        "source_id": row.get("source_id"),
+        "source_id_original": row.get("source_id_original"),
+        "name": row.get("name"),
+        "set_id": set_row.get("id"),
+        "set_name": set_row.get("name"),
+        "series_name": set_row.get("series_name"),
+        "release_date": set_row.get("release_date"),
+        "source_file": row.get("source_file"),
+    }
+
+
 def run(snapshot_path: Path, manifest_path: Path) -> dict:
     snapshot = load_snapshot(snapshot_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -57,6 +82,32 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     snapshot_not_in_baseline = sorted(snapshot_ids - baseline_ids)
     baseline_missing_snapshot = sorted(baseline_ids - snapshot_ids)
 
+    # Classify source-repository records outside the current REST-derived English
+    # baseline. They are not all equivalent:
+    # - no English name: regional/non-English source material
+    # - future release: known but not yet part of the public catalog promise
+    # - released English: potentially real catalog identities omitted by REST
+    # - English with unknown date: conservative review bucket
+    today = datetime.now(timezone.utc).date()
+    regional_or_no_english: list[dict] = []
+    future_unreleased: list[dict] = []
+    released_english: list[dict] = []
+    english_unknown_release: list[dict] = []
+
+    for source_id in snapshot_not_in_baseline:
+        row = snapshot[source_id]
+        name = str(row.get("name") or "").strip()
+        release_date = _source_release_date(row)
+        compact = _compact_extra(row)
+        if not name:
+            regional_or_no_english.append(compact)
+        elif release_date is None:
+            english_unknown_release.append(compact)
+        elif release_date > today:
+            future_unreleased.append(compact)
+        else:
+            released_english.append(compact)
+
     name_mismatches = []
     for source_id in sorted(mapped):
         source_name = str(snapshot[source_id].get("name") or "").strip().casefold()
@@ -76,6 +127,9 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     detailed_variant_cards = 0
     total_detailed_variants = 0
 
+    # Quality statistics below are calculated for all rich-source physical rows
+    # because they describe the source itself. Enrichment later will only consume
+    # identities that have passed the English catalog reconciliation gate.
     for row in snapshot.values():
         attrs = row.get("attributes") or {}
         for key in (
@@ -108,19 +162,41 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
                     variant_type_counts[f"legacy:{key}"] += 1
 
     hard_failures = []
-    if snapshot_not_in_neon:
-        hard_failures.append(f"{len(snapshot_not_in_neon)} snapshot IDs are not present in Neon")
-    if snapshot_not_in_baseline:
-        hard_failures.append(f"{len(snapshot_not_in_baseline)} snapshot IDs are outside current physical baseline")
+    review_blockers = []
+
+    # The pinned rich repository must cover every identity we currently call
+    # canonical. Otherwise enrichment would knowingly leave holes.
+    if baseline_missing_snapshot:
+        hard_failures.append(f"{len(baseline_missing_snapshot)} baseline IDs have no rich-source snapshot row")
     if manifest.get("duplicate_source_ids"):
         hard_failures.append("snapshot exporter reported duplicate source IDs")
     if manifest.get("import_errors"):
         hard_failures.append("snapshot exporter reported module import errors")
 
+    # Released English extras are not dismissed as noise. They may prove the REST
+    # baseline incomplete and therefore block enrichment until individually
+    # reconciled. Unknown-date English records are blocked conservatively too.
+    if released_english:
+        review_blockers.append(
+            f"{len(released_english)} released English rich-source IDs are outside the current REST baseline"
+        )
+    if english_unknown_release:
+        review_blockers.append(
+            f"{len(english_unknown_release)} English rich-source IDs have no trustworthy release date"
+        )
+
+    if hard_failures:
+        status = "fail"
+    elif review_blockers:
+        status = "review_required"
+    else:
+        status = "pass"
+
     report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_repository": manifest.get("source_repository"),
         "source_version": manifest.get("source_version"),
-        "status": "pass" if not hard_failures else "fail",
+        "status": status,
         "identity": {
             "physical_baseline_cards": len(baseline_ids),
             "snapshot_cards": len(snapshot_ids),
@@ -130,6 +206,12 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
             "baseline_cards_missing_from_snapshot": len(baseline_missing_snapshot),
             "snapshot_coverage_of_baseline": round(len(snapshot_ids & baseline_ids) / len(baseline_ids), 6) if baseline_ids else 1.0,
             "name_mismatches": len(name_mismatches),
+        },
+        "extra_classification": {
+            "regional_or_no_english": len(regional_or_no_english),
+            "future_unreleased": len(future_unreleased),
+            "released_english": len(released_english),
+            "english_unknown_release_date": len(english_unknown_release),
         },
         "field_coverage": dict(field_coverage),
         "variants": {
@@ -141,14 +223,20 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
             "foil_pattern_counts": dict(foil_pattern_counts),
         },
         "baseline_missing_snapshot_samples": baseline_missing_snapshot[:200],
-        "snapshot_not_in_neon_samples": snapshot_not_in_neon[:100],
-        "snapshot_not_in_baseline_samples": snapshot_not_in_baseline[:100],
+        "regional_or_no_english_samples": regional_or_no_english[:200],
+        "future_unreleased_samples": future_unreleased[:200],
+        "released_english_samples": released_english[:200],
+        "english_unknown_release_date_samples": english_unknown_release[:200],
         "name_mismatch_samples": name_mismatches[:100],
         "hard_failures": hard_failures,
+        "review_blockers": review_blockers,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
+
     if hard_failures:
         raise AssertionError("; ".join(hard_failures))
+    if review_blockers:
+        raise AssertionError("Rich Pokémon source reconciliation requires review: " + "; ".join(review_blockers))
     return report
 
 
