@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app import db
 from app.pokemon_source_inventory import load_inventory
+from app.pokemon_variant_identity import third_party_ids, variant_dimensions
 from app.scripts.audit_pokemon_rich_snapshot_v2 import load_snapshot, run as run_rich_audit
 
 
@@ -43,23 +44,6 @@ def _canonical_ids(snapshot: dict[str, dict], neon_ids: set[str]) -> set[str]:
     return result
 
 
-def _normalize_third_party(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): child for key, child in sorted(value.items()) if child not in (None, "")}
-
-
-def _dimension_payload(variant: dict) -> dict:
-    return {
-        "type": str(variant.get("type") or "unknown").strip().lower(),
-        "subtype": str(variant.get("subtype") or "").strip().lower() or None,
-        "stamps": sorted({str(value).strip().lower() for value in (variant.get("stamp") or []) if str(value).strip()}),
-        "foil": str(variant.get("foil") or "").strip().lower() or None,
-        "size": str(variant.get("size") or "").strip().lower() or None,
-        "language": LANGUAGE,
-    }
-
-
 def _dimension_key(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -71,7 +55,7 @@ def _variant_hash(payload: dict) -> str:
 def _third_party_conflicts(rows: list[dict]) -> dict[str, list[object]]:
     values: dict[str, set[object]] = defaultdict(set)
     for row in rows:
-        for provider, external_id in _normalize_third_party(row.get("thirdParty")).items():
+        for provider, external_id in third_party_ids(row).items():
             values[provider].add(external_id)
     return {
         provider: sorted(provider_values, key=str)
@@ -91,7 +75,7 @@ def _detailed_candidates(source_id: str, variants: list[dict]) -> tuple[list[dic
         if languages and LANGUAGE not in languages:
             foreign_language.append(raw)
             continue
-        dimensions = _dimension_payload(raw)
+        dimensions = variant_dimensions(source_id, raw)
         groups[_dimension_key(dimensions)].append(raw)
 
     safe: list[dict] = []
@@ -101,7 +85,7 @@ def _detailed_candidates(source_id: str, variants: list[dict]) -> tuple[list[dic
         conflicts = _third_party_conflicts(rows)
         merged_third_party: dict[str, object] = {}
         for row in rows:
-            for provider, external_id in _normalize_third_party(row.get("thirdParty")).items():
+            for provider, external_id in third_party_ids(row).items():
                 merged_third_party.setdefault(provider, external_id)
 
         candidate = {
@@ -144,6 +128,7 @@ def _legacy_candidates(source_id: str, variants: dict) -> tuple[list[dict], list
             "foil": None,
             "size": None,
             "language": LANGUAGE,
+            "release_context": None,
         }
         safe.append({
             "source_id": source_id,
@@ -245,6 +230,7 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     foil_pattern_counts = Counter()
     size_counts = Counter()
     subtype_counts = Counter()
+    release_context_counts = Counter()
     for candidates in safe_candidates.values():
         for candidate in candidates:
             dims = candidate["dimensions"]
@@ -257,6 +243,8 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
                 size_counts[dims["size"]] += 1
             if dims.get("subtype"):
                 subtype_counts[dims["subtype"]] += 1
+            if dims.get("release_context"):
+                release_context_counts[dims["release_context"]] += 1
 
     hard_failures = []
     if len(canonical_ids) != 21065:
@@ -264,8 +252,6 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     if key_collisions:
         hard_failures.append(f"{len(key_collisions)} deterministic variant Print-key collisions")
 
-    # Ambiguous third-party mappings do not authorize a write for those variant
-    # groups. They are surfaced as review blockers rather than guessed away.
     review_blockers = []
     if ambiguous_candidates:
         review_blockers.append(
@@ -295,6 +281,7 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
             "foil_pattern_counts": dict(foil_pattern_counts),
             "size_counts": dict(size_counts),
             "subtype_counts": dict(subtype_counts),
+            "release_context_counts": dict(release_context_counts),
         },
         "ambiguity": {
             "ambiguous_variant_groups": len(ambiguous_candidates),
