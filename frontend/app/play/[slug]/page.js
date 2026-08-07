@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 
-export default function LegacyPlayPage({ params }) {
-  redirect(`/games/${params.slug}`)
+export default async function LegacyPlayPage({ params }) {
+  const { slug } = await params
+  redirect(`/games/${slug}`)
 }
