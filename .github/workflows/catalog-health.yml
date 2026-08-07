@@ -8,14 +8,19 @@ on:
       - 'backend/app/models.py'
       - 'backend/app/scripts/catalog_health.py'
       - 'backend/app/scripts/ingest_status.py'
+      - 'backend/app/scripts/daily_refresh.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg.py'
       - 'backend/tests/test_catalog_health.py'
       - 'backend/tests/test_ingest_status.py'
+      - 'backend/tests/test_daily_refresh.py'
+      - 'backend/tests/test_scryfall_incremental.py'
       - '.github/workflows/catalog-health.yml'
+      - '.github/workflows/ingest.yml'
   workflow_dispatch:
 
 jobs:
   tests:
-    name: Validate audit logic
+    name: Validate catalog and refresh logic
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,8 +37,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Catalog Health tests
-        run: pytest -q tests/test_catalog_health.py tests/test_ingest_status.py
+      - name: Run focused recovery tests
+        run: >-
+          pytest -q
+          tests/test_catalog_health.py
+          tests/test_ingest_status.py
+          tests/test_daily_refresh.py
+          tests/test_scryfall_incremental.py
 
   neon-audit:
     name: Audit Neon catalog (read only)
