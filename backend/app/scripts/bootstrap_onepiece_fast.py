@@ -149,9 +149,11 @@ def _ensure_source(session) -> Source:
 
 
 def _insert_catalog(session, prepared: dict) -> dict:
-    game = Game(slug="onepiece", name="ONE PIECE Card Game")
-    session.add(game)
-    session.flush()
+    game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+    if game is None:
+        game = Game(slug="onepiece", name="ONE PIECE Card Game")
+        session.add(game)
+        session.flush()
 
     set_rows = [
         Set(
