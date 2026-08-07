@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import db
 from app import catalog_release_models  # noqa: F401 - register release tables on Base.metadata
+from app import search_v2_models  # noqa: F401 - register Search V2 tables on Base.metadata
 from app.main import create_app
 from app.auth import middleware
 from app.models import Base
