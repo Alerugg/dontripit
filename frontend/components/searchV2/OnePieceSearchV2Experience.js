@@ -1,0 +1,261 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import GameSearchBar from '../games/GameSearchBar'
+import StatePanel from '../catalog/StatePanel'
+import SectionHeader from '../ui/SectionHeader'
+import AdvancedSearchPanel from './AdvancedSearchPanel'
+import SearchV2Results from './SearchV2Results'
+import { advancedSearchV2, fetchFacetsV2, searchV2, suggestV2 } from '../../lib/searchV2/client'
+import './SearchV2.css'
+
+const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'monky lufi']
+
+function suggestionForLegacyRow(item) {
+  return {
+    ...item,
+    primary_image_url: item.primary_image_url || item.image_url,
+    set_name: item.set_name || item.set_code,
+  }
+}
+
+export default function OnePieceSearchV2Experience({ game }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const initialQuery = searchParams.get('q') || ''
+
+  const [query, setQuery] = useState(initialQuery)
+  const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
+  const [normalItems, setNormalItems] = useState([])
+  const [suggestions, setSuggestions] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const [facetGroups, setFacetGroups] = useState({})
+  const [facetError, setFacetError] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(searchParams.get('advanced') === '1')
+  const [advancedFilters, setAdvancedFilters] = useState({})
+  const [advancedItems, setAdvancedItems] = useState([])
+  const [advancedTotal, setAdvancedTotal] = useState(0)
+  const [advancedLoading, setAdvancedLoading] = useState(false)
+  const [advancedError, setAdvancedError] = useState('')
+  const [advancedRan, setAdvancedRan] = useState(false)
+
+  const hasActiveAdvancedFilters = useMemo(
+    () => Object.values(advancedFilters).some((value) => {
+      if (value === undefined || value === null || value === '') return false
+      if (Array.isArray(value)) return value.length > 0
+      if (typeof value === 'object') return Object.values(value).some((nested) => nested !== undefined && nested !== null && nested !== '')
+      return true
+    }),
+    [advancedFilters],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadFacets() {
+      try {
+        const payload = await fetchFacetsV2(game.slug)
+        if (!cancelled) {
+          setFacetGroups(payload?.groups || {})
+          setFacetError('')
+        }
+      } catch (requestError) {
+        if (!cancelled) setFacetError(requestError.message || 'No pudimos cargar los filtros avanzados.')
+      }
+    }
+    loadFacets()
+    return () => { cancelled = true }
+  }, [game.slug])
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setSuggestions([])
+      return undefined
+    }
+
+    let cancelled = false
+    const handle = setTimeout(async () => {
+      setSuggestionsLoading(true)
+      try {
+        const rows = await suggestV2({ q: query.trim(), game: game.slug, limit: 8 })
+        if (!cancelled) setSuggestions(rows.map(suggestionForLegacyRow))
+      } catch {
+        if (!cancelled) setSuggestions([])
+      } finally {
+        if (!cancelled) setSuggestionsLoading(false)
+      }
+    }, 160)
+
+    return () => {
+      cancelled = true
+      clearTimeout(handle)
+    }
+  }, [game.slug, query])
+
+  useEffect(() => {
+    if (!submittedQuery.trim()) {
+      setNormalItems([])
+      setError('')
+      return undefined
+    }
+
+    let cancelled = false
+    async function runSearch() {
+      setLoading(true)
+      setError('')
+      try {
+        const rows = await searchV2({ q: submittedQuery.trim(), game: game.slug, limit: 48 })
+        if (!cancelled) setNormalItems(rows)
+      } catch (requestError) {
+        if (!cancelled) {
+          setNormalItems([])
+          setError(requestError.message || 'No pudimos ejecutar Search V2.')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    runSearch()
+    return () => { cancelled = true }
+  }, [game.slug, submittedQuery])
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (submittedQuery.trim()) params.set('q', submittedQuery.trim())
+    else params.delete('q')
+    if (advancedOpen) params.set('advanced', '1')
+    else params.delete('advanced')
+    params.delete('type')
+    params.delete('view')
+    const next = params.toString()
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
+  }, [advancedOpen, pathname, router, searchParams, submittedQuery])
+
+  function submitNormal(nextQuery = query) {
+    const clean = String(nextQuery || '').trim()
+    setQuery(clean)
+    setSubmittedQuery(clean)
+    setAdvancedRan(false)
+    setAdvancedItems([])
+    setAdvancedError('')
+  }
+
+  async function runAdvanced() {
+    setAdvancedLoading(true)
+    setAdvancedError('')
+    setAdvancedRan(true)
+    try {
+      const payload = await advancedSearchV2({
+        game: game.slug,
+        q: query.trim(),
+        filters: advancedFilters,
+        limit: 100,
+        offset: 0,
+      })
+      setAdvancedItems(payload?.items || [])
+      setAdvancedTotal(payload?.total || 0)
+    } catch (requestError) {
+      setAdvancedItems([])
+      setAdvancedTotal(0)
+      setAdvancedError(requestError.message || 'No pudimos aplicar los filtros avanzados.')
+    } finally {
+      setAdvancedLoading(false)
+    }
+  }
+
+  function updateAdvancedFilter(key, value) {
+    setAdvancedFilters((current) => {
+      const next = { ...current }
+      if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) delete next[key]
+      else next[key] = value
+      return next
+    })
+  }
+
+  return (
+    <>
+      <section className="game-section panel-soft sv2-search-shell" style={{ '--game-accent': game.accent }}>
+        <SectionHeader
+          compact
+          eyebrow="Search V2"
+          title="Busca como piensas, no como está organizada una base de datos."
+          description="Nombre, número, set, idioma o una combinación natural. Los resultados normales agrupan variantes para no llenarte la pantalla de duplicados."
+        />
+
+        <GameSearchBar
+          value={query}
+          onChange={setQuery}
+          onSubmit={() => submitNormal(query)}
+          suggestions={suggestions}
+          suggestionsLoading={suggestionsLoading}
+          onSuggestionSelect={(item) => {
+            if (item.card_id) {
+              router.push(`/games/${game.slug}/cards/${item.card_id}?q=${encodeURIComponent(item.name || '')}`)
+              return
+            }
+            submitNormal(item.name || item.collector_number || '')
+          }}
+          placeholder="Luffy, OP05-119, Zoro green, Luffy OP05…"
+          variant="pilot"
+        />
+
+        <div className="sv2-example-row">
+          <span>Prueba:</span>
+          {EXAMPLE_SEARCHES.map((example) => (
+            <button key={example} type="button" onClick={() => submitNormal(example)}>{example}</button>
+          ))}
+        </div>
+
+        {facetError ? <p className="sv2-inline-error">{facetError}</p> : null}
+
+        <AdvancedSearchPanel
+          groups={facetGroups}
+          values={advancedFilters}
+          onChange={updateAdvancedFilter}
+          onSearch={runAdvanced}
+          onReset={() => {
+            setAdvancedFilters({})
+            setAdvancedItems([])
+            setAdvancedTotal(0)
+            setAdvancedRan(false)
+          }}
+          loading={advancedLoading}
+          open={advancedOpen}
+          onToggle={() => setAdvancedOpen((current) => !current)}
+        />
+      </section>
+
+      {advancedRan ? (
+        <>
+          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando la impresión física exacta…" /> : null}
+          {!advancedLoading && advancedError ? <StatePanel title="No pudimos filtrar" description={advancedError} error /> : null}
+          {!advancedLoading && !advancedError && advancedItems.length === 0 ? (
+            <StatePanel
+              title="Sin prints para esta combinación"
+              description={hasActiveAdvancedFilters ? 'Prueba quitando uno de los filtros activos.' : 'Añade al menos un filtro o una búsqueda.'}
+              tone="muted"
+            />
+          ) : null}
+          {!advancedLoading && !advancedError && advancedItems.length > 0 ? (
+            <SearchV2Results items={advancedItems} mode="advanced" gameSlug={game.slug} query={query} total={advancedTotal} />
+          ) : null}
+        </>
+      ) : (
+        <>
+          {submittedQuery && loading ? <StatePanel title="Buscando" description={`Buscando “${submittedQuery}” con Search V2…`} /> : null}
+          {submittedQuery && !loading && error ? <StatePanel title="No pudimos buscar" description={error} error /> : null}
+          {submittedQuery && !loading && !error && normalItems.length === 0 ? (
+            <StatePanel title="Sin resultados" description="Prueba otro nombre, collector number o combina carta + set." tone="muted" />
+          ) : null}
+          {submittedQuery && !loading && !error && normalItems.length > 0 ? (
+            <SearchV2Results items={normalItems} mode="normal" gameSlug={game.slug} query={submittedQuery} />
+          ) : null}
+        </>
+      )}
+    </>
+  )
+}
