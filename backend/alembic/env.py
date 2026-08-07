@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.models import Base
+from app import catalog_release_models  # noqa: F401 - register release tables on Base.metadata
 
 
 config = context.config
