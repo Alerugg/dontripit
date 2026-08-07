@@ -19,7 +19,10 @@ def _compact(rows: list[dict], limit: int = 5) -> list[dict]:
                 "collector_number": matched.get("collector_number"),
                 "set_code": matched.get("set_code"),
                 "set_name": matched.get("set_name"),
+                "language": matched.get("language"),
+                "rarity": matched.get("rarity"),
                 "variant": matched.get("exact_variant"),
+                "variant_count": row.get("variant_count"),
                 "score": row.get("score"),
             }
         )
@@ -48,6 +51,7 @@ def run() -> dict:
             ("Zoro", "zoro"),
             ("OP05-119", "luffy"),
             ("Luffy OP05", "luffy"),
+            ("Luffy OP05 English SEC", "luffy"),
             ("monky lufi", "luffy"),
         ]
         for query, expected_name in cases:
@@ -73,14 +77,25 @@ def run() -> dict:
         exact_print = exact_match.get("matched_print") or {}
         if exact_print.get("set_code") != "op-05" or "OP-05" not in str(exact_print.get("set_name") or "").upper():
             raise AssertionError(f"OP05-119 canonical set label mismatch: {_compact([exact_match], 1)}")
+        if int(exact_match.get("variant_count") or 0) < 2:
+            raise AssertionError(f"Logical Card variant count looks filtered instead of total: {_compact([exact_match], 1)}")
 
-        compound_rows = normal_search(session, query="Luffy OP05", game_slug="onepiece", limit=20)
-        if not any(
-            "luffy" in str(row.get("name") or "").lower()
-            and (row.get("matched_print") or {}).get("set_code") == "op-05"
-            for row in compound_rows[:10]
-        ):
-            raise AssertionError(f"Compound Luffy OP05 did not surface an OP-05 Luffy: {_compact(compound_rows, 10)}")
+        compound_rows = normal_search(session, query="Luffy OP05 English SEC", game_slug="onepiece", limit=20)
+        compound_match = next(
+            (
+                row
+                for row in compound_rows[:10]
+                if "luffy" in str(row.get("name") or "").lower()
+                and (row.get("matched_print") or {}).get("set_code") == "op-05"
+                and (row.get("matched_print") or {}).get("language") == "en"
+                and str((row.get("matched_print") or {}).get("rarity") or "").upper() == "SEC"
+            ),
+            None,
+        )
+        if compound_match is None:
+            raise AssertionError(
+                f"Compound Luffy OP05 English SEC did not surface the expected print: {_compact(compound_rows, 10)}"
+            )
 
         exact_parallel = advanced_onepiece_search(
             session,
@@ -114,6 +129,32 @@ def run() -> dict:
             attrs = item.get("attributes") or {}
             if "Purple" not in (attrs.get("color") or []) or int(attrs.get("power") or 0) < 10000:
                 raise AssertionError(f"Advanced filter leaked a nonmatching row: {item}")
+
+        leaders = advanced_onepiece_search(
+            session,
+            filters={"card_type": "Leader", "life": {"min": 4, "max": 5}},
+            limit=10,
+        )
+        report["advanced"]["Leader life 4-5"] = {"total": leaders["total"], "top": leaders["items"][:3]}
+        if leaders["total"] <= 0:
+            raise AssertionError("Advanced Leader + life 4-5 returned zero rows")
+        for item in leaders["items"]:
+            attrs = item.get("attributes") or {}
+            if str(attrs.get("card_type") or "").lower() != "leader" or int(attrs.get("life") or 0) not in {4, 5}:
+                raise AssertionError(f"Leader/life filter leaked a nonmatching row: {item}")
+
+        straw_hat = advanced_onepiece_search(
+            session,
+            filters={"traits": "Straw Hat Crew", "block": "2"},
+            limit=10,
+        )
+        report["advanced"]["Straw Hat Crew block 2"] = {"total": straw_hat["total"], "top": straw_hat["items"][:3]}
+        if straw_hat["total"] <= 0:
+            raise AssertionError("Advanced Straw Hat Crew + block 2 returned zero rows")
+        for item in straw_hat["items"]:
+            attrs = item.get("attributes") or {}
+            if "Straw Hat Crew" not in (attrs.get("traits") or []) or str(attrs.get("block") or "") != "2":
+                raise AssertionError(f"Trait/block filter leaked a nonmatching row: {item}")
 
         facets = facet_definitions(session, game_slug="onepiece")
         facet_keys = [row["key"] for row in facets]
