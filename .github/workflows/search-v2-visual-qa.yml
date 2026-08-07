@@ -6,11 +6,15 @@ on:
       - catalog-v2
     paths:
       - '.github/workflows/search-v2-visual-qa.yml'
+      - 'frontend/components/search/**'
       - 'frontend/components/searchV2/**'
       - 'frontend/components/games/OnePieceExplorerV2Page.js'
+      - 'frontend/components/games/OnePieceExplorerV2Page.css'
       - 'frontend/app/games/**'
       - 'frontend/app/api/search-v2/**'
+      - 'frontend/app/api/catalog/image/**'
       - 'frontend/lib/searchV2/**'
+      - 'frontend/lib/catalog/image.js'
       - 'frontend/next.config.js'
   workflow_dispatch:
 
@@ -26,33 +30,27 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Set up Node.js 20.19
         uses: actions/setup-node@v4
         with:
           node-version: '20.19.0'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -r requirements.txt
-
       - name: Install frontend dependencies and Playwright
         working-directory: frontend
         run: |
           npm ci
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
-
       - name: Verify Neon secret
         run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
-
       - name: Create temporary catalog API key
         working-directory: backend
         run: |
@@ -62,7 +60,6 @@ jobs:
           echo "::add-mask::$KEY"
           echo "TEMP_API_KEY=$KEY" >> "$GITHUB_ENV"
           echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
-
       - name: Start backend
         working-directory: backend
         run: |
@@ -73,13 +70,11 @@ jobs:
           done
           cat /tmp/backend-visual.log
           exit 1
-
       - name: Build frontend
         working-directory: frontend
         env:
           INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
         run: npm run build
-
       - name: Start frontend
         working-directory: frontend
         env:
@@ -92,8 +87,28 @@ jobs:
           done
           cat /tmp/frontend-visual.log
           exit 1
-
-      - name: Capture desktop and mobile states
+      - name: Verify image proxy with real Search V2 source
+        run: |
+          set -euo pipefail
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=Luffy&limit=5' > /tmp/visual-luffy.json
+          python - <<'PY'
+          import json, urllib.parse, urllib.request
+          payload = json.load(open('/tmp/visual-luffy.json', encoding='utf-8'))
+          items = payload.get('items') or []
+          source = next(((row.get('matched_print') or {}).get('primary_image_url') for row in items if (row.get('matched_print') or {}).get('primary_image_url')), None)
+          assert source, 'Search V2 returned no image URL'
+          proxy = 'http://127.0.0.1:3000/api/catalog/image?src=' + urllib.parse.quote(source, safe='')
+          request = urllib.request.Request(proxy, headers={'User-Agent': 'search-v2-visual-qa/1.0'})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              content_type = response.headers.get('content-type', '')
+              body = response.read(64)
+              status = response.status
+          assert status == 200, status
+          assert content_type.lower().startswith('image/'), content_type
+          assert body, 'empty image proxy body'
+          json.dump({'status':'pass','proxy_status':status,'content_type':content_type}, open('/tmp/image-proxy-smoke.json','w'), indent=2)
+          PY
+      - name: Capture settled desktop and mobile states
         working-directory: frontend
         run: |
           mkdir -p /tmp/search-v2-visual
@@ -101,75 +116,79 @@ jobs:
           const { chromium } = require('playwright')
           const fs = require('fs')
           const base = 'http://127.0.0.1:3000'
+          const diagnostics = {}
 
-          async function waitForSearch(page) {
+          async function settle(page, label) {
             await page.waitForSelector('.sv2-search-shell', { timeout: 20000 })
-            await page.waitForTimeout(700)
-          }
-
-          async function waitForResults(page) {
-            await page.waitForSelector('.sv2-result-card', { timeout: 20000 })
-            await page.waitForTimeout(400)
+            await page.waitForSelector('.sv2-quick-filters', { timeout: 20000 })
+            const cards = await page.locator('.sv2-result-card').count()
+            if (cards > 0) {
+              await page.waitForFunction(() => {
+                const images = [...document.querySelectorAll('.sv2-result-image')]
+                return images.every((image) => image.complete)
+              }, undefined, { timeout: 15000 }).catch(() => {})
+              await page.waitForTimeout(750)
+            }
+            diagnostics[label] = await page.evaluate(() => ({
+              cards: document.querySelectorAll('.sv2-result-card').length,
+              images: document.querySelectorAll('.sv2-result-image').length,
+              placeholders: document.querySelectorAll('.sv2-image-placeholder').length,
+              loadedImages: [...document.querySelectorAll('.sv2-result-image')].filter((image) => image.complete && image.naturalWidth > 0).length,
+              brokenImages: [...document.querySelectorAll('.sv2-result-image')].filter((image) => image.complete && image.naturalWidth === 0).length,
+            }))
           }
 
           ;(async () => {
             const browser = await chromium.launch()
             try {
-              const desktop = await browser.newContext({ viewport: { width: 1440, height: 1100 }, deviceScaleFactor: 1 })
+              const desktop = await browser.newContext({ viewport: { width: 1440, height: 1100 } })
               const page = await desktop.newPage()
-
               await page.goto(`${base}/games/onepiece`, { waitUntil: 'domcontentloaded' })
-              await waitForSearch(page)
+              await settle(page, 'desktop_home')
               await page.locator('.sv2-search-shell').screenshot({ path: '/tmp/search-v2-visual/desktop-search-quick.png' })
-
               await page.goto(`${base}/games/onepiece?q=Luffy`, { waitUntil: 'domcontentloaded' })
-              await waitForResults(page)
+              await page.waitForSelector('.sv2-result-card', { timeout: 20000 })
+              await settle(page, 'desktop_luffy')
               await page.screenshot({ path: '/tmp/search-v2-visual/desktop-luffy-results.png', fullPage: true })
-
               await page.goto(`${base}/games/onepiece?advanced=1&q=Luffy&f_set=op-05&f_language=en&f_rarity=SEC`, { waitUntil: 'domcontentloaded' })
-              await waitForResults(page)
+              await page.waitForSelector('.sv2-result-card', { timeout: 20000 })
+              await settle(page, 'desktop_advanced')
               await page.screenshot({ path: '/tmp/search-v2-visual/desktop-advanced.png', fullPage: true })
               await desktop.close()
 
-              const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+              const mobile = await browser.newContext({ viewport: { width: 390, height: 844 } })
               const mobilePage = await mobile.newPage()
               await mobilePage.goto(`${base}/games/onepiece?q=Luffy`, { waitUntil: 'domcontentloaded' })
-              await waitForResults(mobilePage)
+              await mobilePage.waitForSelector('.sv2-result-card', { timeout: 20000 })
+              await settle(mobilePage, 'mobile_luffy')
               await mobilePage.screenshot({ path: '/tmp/search-v2-visual/mobile-luffy.png', fullPage: true })
-
               await mobilePage.goto(`${base}/games/onepiece?advanced=1&q=Luffy&f_set=op-05&f_language=en&f_rarity=SEC`, { waitUntil: 'domcontentloaded' })
-              await waitForResults(mobilePage)
+              await mobilePage.waitForSelector('.sv2-result-card', { timeout: 20000 })
+              await settle(mobilePage, 'mobile_advanced')
               await mobilePage.screenshot({ path: '/tmp/search-v2-visual/mobile-advanced.png', fullPage: true })
               await mobile.close()
 
-              fs.writeFileSync('/tmp/search-v2-visual/manifest.json', JSON.stringify({
-                status: 'pass',
-                files: [
-                  'desktop-search-quick.png',
-                  'desktop-luffy-results.png',
-                  'desktop-advanced.png',
-                  'mobile-luffy.png',
-                  'mobile-advanced.png',
-                ],
-              }, null, 2))
+              fs.writeFileSync('/tmp/search-v2-visual/manifest.json', JSON.stringify({status:'pass', diagnostics}, null, 2))
             } finally {
               await browser.close()
             }
-          })().catch((error) => {
-            console.error(error)
-            process.exit(1)
-          })
+          })().catch((error) => { console.error(error); process.exit(1) })
           NODE
-
+      - name: Print visual diagnostics
+        if: always()
+        run: |
+          cat /tmp/image-proxy-smoke.json 2>/dev/null || true
+          cat /tmp/search-v2-visual/manifest.json 2>/dev/null || true
       - name: Upload visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: search-v2-visual-${{ github.sha }}
-          path: /tmp/search-v2-visual
+          path: |
+            /tmp/search-v2-visual
+            /tmp/image-proxy-smoke.json
           if-no-files-found: warn
           retention-days: 30
-
       - name: Disable temporary API key
         if: always() && env.TEMP_API_PREFIX != ''
         working-directory: backend
