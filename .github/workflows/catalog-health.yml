@@ -9,6 +9,7 @@ on:
       - 'backend/app/scripts/catalog_health.py'
       - 'backend/app/scripts/ingest_status.py'
       - 'backend/app/scripts/daily_refresh.py'
+      - 'backend/app/scripts/bootstrap_onepiece_fast.py'
       - 'backend/app/ingest/registry.py'
       - 'backend/app/ingest/connectors/scryfall_mtg.py'
       - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
@@ -20,6 +21,7 @@ on:
       - 'backend/tests/test_scryfall_incremental.py'
       - 'backend/tests/test_scryfall_bulk_v2.py'
       - 'backend/tests/test_ygoprodeck_incremental_v2.py'
+      - 'backend/tests/test_bootstrap_onepiece_fast.py'
       - '.github/workflows/catalog-health.yml'
       - '.github/workflows/ingest.yml'
   workflow_dispatch:
@@ -52,6 +54,7 @@ jobs:
           tests/test_scryfall_incremental.py
           tests/test_scryfall_bulk_v2.py
           tests/test_ygoprodeck_incremental_v2.py
+          tests/test_bootstrap_onepiece_fast.py
 
   neon-audit:
     name: Audit Neon catalog (read only)
