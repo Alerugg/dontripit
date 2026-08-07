@@ -1,0 +1,44 @@
+name: Catalog Schema V2 CI
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/catalog_release_models.py'
+      - 'backend/alembic/env.py'
+      - 'backend/alembic/versions/20260807_18_add_catalog_releases.py'
+      - 'backend/app/ingest/connectors/onepiece_v2.py'
+      - 'backend/tests/conftest.py'
+      - 'backend/tests/test_catalog_release_models.py'
+      - 'backend/tests/test_onepiece_v2_identity.py'
+      - '.github/workflows/catalog-schema-v2-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run V2 model and identity tests
+        run: pytest -q tests/test_catalog_release_models.py tests/test_onepiece_v2_identity.py
+      - name: Validate Alembic head
+        run: |
+          HEAD="$(alembic heads | awk '{print $1}')"
+          echo "Alembic head: ${HEAD}"
+          test "${HEAD}" = "20260807_18"
+      - name: Render full migration chain offline
+        run: |
+          alembic upgrade head --sql > /tmp/catalog-v2-schema.sql
+          test -s /tmp/catalog-v2-schema.sql
+          tail -80 /tmp/catalog-v2-schema.sql
