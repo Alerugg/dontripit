@@ -25,6 +25,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const initialQuery = searchParams.get('q') || ''
+  const initialAdvancedOpen = searchParams.get('advanced') === '1'
 
   const [query, setQuery] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
@@ -36,7 +37,7 @@ export default function OnePieceSearchV2Experience({ game }) {
 
   const [facetGroups, setFacetGroups] = useState({})
   const [facetError, setFacetError] = useState('')
-  const [advancedOpen, setAdvancedOpen] = useState(searchParams.get('advanced') === '1')
+  const [advancedOpen, setAdvancedOpen] = useState(initialAdvancedOpen)
   const [advancedFilters, setAdvancedFilters] = useState({})
   const [advancedItems, setAdvancedItems] = useState([])
   const [advancedTotal, setAdvancedTotal] = useState(0)
@@ -124,16 +125,14 @@ export default function OnePieceSearchV2Experience({ game }) {
   }, [game.slug, submittedQuery])
 
   useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString())
+    // Build the V2 URL from V2 state only. Depending on the live searchParams
+    // object here can cause replace -> params change -> replace churn.
+    const params = new URLSearchParams()
     if (submittedQuery.trim()) params.set('q', submittedQuery.trim())
-    else params.delete('q')
     if (advancedOpen) params.set('advanced', '1')
-    else params.delete('advanced')
-    params.delete('type')
-    params.delete('view')
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, pathname, router, searchParams, submittedQuery])
+  }, [advancedOpen, pathname, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
