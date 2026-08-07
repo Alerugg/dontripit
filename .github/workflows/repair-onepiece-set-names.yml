@@ -1,0 +1,67 @@
+name: Repair One Piece Set Names
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/repair-onepiece-set-names.yml'
+      - 'backend/app/scripts/repair_onepiece_set_names.py'
+      - 'backend/app/ingest/connectors/onepiece_canonical.py'
+  workflow_dispatch:
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify database secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Repair canonical One Piece set names
+        run: |
+          set -o pipefail
+          python -m app.scripts.repair_onepiece_set_names | tee /tmp/onepiece-set-name-repair.json
+      - name: Rebuild Search V2 after set-name repair
+        run: |
+          set -o pipefail
+          python -m app.scripts.rebuild_search_v2 | tee /tmp/search-v2-after-set-repair.json
+      - name: Re-run real Search V2 smoke
+        run: |
+          set -o pipefail
+          python -m app.scripts.smoke_search_v2 | tee /tmp/search-v2-smoke-after-set-repair.json
+      - name: Verify OP05 canonical label
+        run: |
+          python - <<'PY'
+          import json
+          smoke=json.load(open('/tmp/search-v2-smoke-after-set-repair.json'))
+          exact=smoke['normal']['OP05-119']['top'][0]
+          assert exact['set_code'] == 'op-05', exact
+          repair=json.load(open('/tmp/onepiece-set-name-repair.json'))
+          assert repair['source_diagnostics']['canonical_set_names_unmatched'] == [], repair
+          print(json.dumps({'repair_changes': repair['changed_count'], 'exact': exact}, indent=2))
+          PY
+      - name: Upload repair evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-set-name-repair-${{ github.sha }}
+          path: |
+            /tmp/onepiece-set-name-repair.json
+            /tmp/search-v2-after-set-repair.json
+            /tmp/search-v2-smoke-after-set-repair.json
+          if-no-files-found: warn
+          retention-days: 30
