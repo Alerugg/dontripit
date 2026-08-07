@@ -16,16 +16,34 @@ VARIANT = "default"
 IS_FOIL = False
 
 
-def _card_key(source_id: str) -> str:
+def card_key(source_id: str) -> str:
     return f"pokemon:tcgdex:{source_id}"
 
 
-def _print_key(source_id: str) -> str:
+def print_key(source_id: str) -> str:
     return f"pokemon:tcgdex:{source_id}:{LANGUAGE}:{VARIANT}"
 
 
-def _norm(value: object) -> str:
+def norm(value: object) -> str:
     return str(value or "").strip().lower()
+
+
+def choose_new_set_code(source: dict, occupied: set[str]) -> tuple[str, str]:
+    source_id = str(source["set_id"])
+    candidates = []
+    for label, value in (
+        ("abbreviation", source.get("abbreviation")),
+        ("source_id", source_id),
+        ("namespaced_source_id", f"tcgdex-{source_id}"),
+    ):
+        clean = str(value or "").strip()
+        if clean and len(clean) <= 50 and norm(clean) not in {norm(item[1]) for item in candidates}:
+            candidates.append((label, clean))
+
+    for label, candidate in candidates:
+        if norm(candidate) not in occupied:
+            return candidate, label
+    raise AssertionError(f"Could not allocate a collision-free set code for {source_id}")
 
 
 def run() -> dict:
@@ -69,7 +87,6 @@ def run() -> dict:
         ).mappings().all()]
 
     sets_by_tcgdex = {str(row["tcgdex_id"]): row for row in db_sets if row.get("tcgdex_id")}
-    sets_by_code = {_norm(row.get("code")): row for row in db_sets if row.get("code")}
     cards_by_tcgdex = {str(row["tcgdex_id"]): row for row in db_cards if row.get("tcgdex_id")}
     cards_by_key = {str(row["card_key"]): row for row in db_cards if row.get("card_key")}
     prints_by_tcgdex = {str(row["tcgdex_id"]): row for row in db_prints if row.get("tcgdex_id")}
@@ -80,7 +97,7 @@ def run() -> dict:
         key = (
             int(row["set_id"]),
             str(row.get("collector_number") or ""),
-            _norm(row.get("language")),
+            norm(row.get("language")),
             bool(row.get("is_foil")),
             str(row.get("variant") or VARIANT),
         )
@@ -91,55 +108,51 @@ def run() -> dict:
     set_actions = Counter()
     card_actions = Counter()
     print_actions = Counter()
-    source_set_to_db_id: dict[str, int | None] = {}
 
-    # Stage 1: resolve every physical TCGdex set without writing anything.
+    source_set_to_db_id: dict[str, int | None] = {}
+    target_set_codes: dict[str, str] = {}
+    occupied_codes = {norm(row.get("code")) for row in db_sets if row.get("code")}
+
+    # Set identity is TCGdex ID. `code` is a display/routing field and may be
+    # disambiguated without changing the canonical external identity.
     for source_id, source in sorted(physical_sets.items()):
         exact = sets_by_tcgdex.get(source_id)
-        code_match = sets_by_code.get(_norm(source_id))
         if exact:
             source_set_to_db_id[source_id] = int(exact["id"])
+            target_set_codes[source_id] = str(exact["code"])
             set_actions["existing_exact"] += 1
-            if code_match and int(code_match["id"]) != int(exact["id"]):
-                conflicts.append({
-                    "type": "set_code_collision",
-                    "source_set_id": source_id,
-                    "exact_set_id": exact["id"],
-                    "code_owner_set_id": code_match["id"],
-                })
-        elif code_match:
-            owner_source = str(code_match.get("tcgdex_id") or "")
-            if owner_source and owner_source != source_id:
-                conflicts.append({
-                    "type": "set_code_owned_by_other_tcgdex",
-                    "source_set_id": source_id,
-                    "db_set_id": code_match["id"],
-                    "db_tcgdex_id": owner_source,
-                })
-                source_set_to_db_id[source_id] = None
-            else:
-                source_set_to_db_id[source_id] = int(code_match["id"])
-                set_actions["safe_attach_tcgdex_id"] += 1
-        else:
-            source_set_to_db_id[source_id] = None
-            set_actions["safe_insert"] += 1
+            continue
 
-    # For target tuples on sets that will be inserted, use a synthetic stable
-    # negative id. It only exists inside this read-only simulation.
+        code, strategy = choose_new_set_code(source, occupied_codes)
+        occupied_codes.add(norm(code))
+        source_set_to_db_id[source_id] = None
+        target_set_codes[source_id] = code
+        set_actions["safe_insert"] += 1
+        if strategy == "namespaced_source_id":
+            set_actions["safe_insert_disambiguated_code"] += 1
+            warnings.append({
+                "type": "set_code_disambiguated",
+                "source_set_id": source_id,
+                "target_code": code,
+                "reason": "preferred code(s) already owned by another canonical set",
+            })
+
     synthetic_set_ids = {
         source_id: -(index + 1)
         for index, source_id in enumerate(sorted(physical_sets))
         if source_set_to_db_id[source_id] is None
-        and not any(c.get("source_set_id") == source_id for c in conflicts)
     }
 
+    # Simulate cards and baseline prints. This stage deliberately models one
+    # logical Card + one baseline Print per current TCGdex card ID. Rich
+    # physical variants are a later expansion after canonical identity is safe.
     for source_id, source in sorted(physical_cards.items()):
         set_source_id = str(source.get("set_id") or "")
         if set_source_id not in physical_sets:
             conflicts.append({"type": "card_unresolved_set", "source_id": source_id, "set_id": set_source_id})
             continue
 
-        target_card_key = _card_key(source_id)
+        target_card_key = card_key(source_id)
         card_exact = cards_by_tcgdex.get(source_id)
         key_owner = cards_by_key.get(target_card_key)
         if card_exact:
@@ -152,7 +165,9 @@ def run() -> dict:
                     "card_key_owner_id": key_owner["id"],
                     "target_card_key": target_card_key,
                 })
-            card_id = int(card_exact["id"])
+            if str(card_exact.get("card_key") or "") != target_card_key:
+                card_actions["safe_normalize_card_key"] += 1
+            target_card_id = int(card_exact["id"])
         elif key_owner:
             owner_source = str(key_owner.get("tcgdex_id") or "")
             if owner_source and owner_source != source_id:
@@ -164,12 +179,12 @@ def run() -> dict:
                 })
                 continue
             card_actions["safe_attach_tcgdex_id"] += 1
-            card_id = int(key_owner["id"])
+            target_card_id = int(key_owner["id"])
         else:
             card_actions["safe_insert"] += 1
-            card_id = None
+            target_card_id = None
 
-        target_print_key = _print_key(source_id)
+        target_print_key = print_key(source_id)
         print_exact = prints_by_tcgdex.get(source_id)
         print_key_owner = prints_by_key.get(target_print_key)
 
@@ -199,6 +214,9 @@ def run() -> dict:
                     "print_key_owner_id": print_key_owner["id"],
                     "target_print_key": target_print_key,
                 })
+            if str(print_exact.get("print_key") or "") != target_print_key:
+                print_actions["safe_normalize_print_key"] += 1
+
             for owner in tuple_owners:
                 if int(owner["id"]) != int(print_exact["id"]):
                     conflicts.append({
@@ -209,6 +227,9 @@ def run() -> dict:
                         "set_id": resolved_set_id,
                         "collector_number": source.get("local_id"),
                     })
+
+            if target_card_id is None or int(print_exact["card_id"]) != int(target_card_id):
+                print_actions["safe_relink_to_canonical_card"] += 1
         else:
             if print_key_owner:
                 owner_source = str(print_key_owner.get("tcgdex_id") or "")
@@ -241,7 +262,7 @@ def run() -> dict:
             else:
                 print_actions["safe_insert"] += 1
 
-        if card_exact and _norm(card_exact.get("name")) != _norm(source.get("name")):
+        if card_exact and norm(card_exact.get("name")) != norm(source.get("name")):
             warnings.append({
                 "type": "existing_card_name_changed",
                 "source_id": source_id,
@@ -264,7 +285,6 @@ def run() -> dict:
     unidentified_cards = [row for row in db_cards if not row.get("tcgdex_id")]
     unidentified_prints = [row for row in db_prints if not row.get("tcgdex_id")]
 
-    # De-duplicate identical conflict records before reporting.
     serialized_conflicts = {json.dumps(row, sort_keys=True, default=str): row for row in conflicts}
     conflicts = list(serialized_conflicts.values())
     conflicts.sort(key=lambda row: (str(row.get("type")), str(row.get("source_id") or row.get("source_set_id") or "")))
@@ -279,12 +299,14 @@ def run() -> dict:
             "pocket_cards_excluded": len(inventory.pocket_cards),
         },
         "target_identity": {
+            "set_identity": "Set.tcgdex_id",
+            "set_code_policy": "existing exact code; otherwise abbreviation -> source id -> tcgdex-<source_id>",
             "card_key": "pokemon:tcgdex:<source_id>",
             "print_key": "pokemon:tcgdex:<source_id>:en:default",
             "language": LANGUAGE,
             "variant": VARIANT,
             "is_foil": IS_FOIL,
-            "note": "This is the bootstrap identity layer. Rich physical variants are expanded only after source-level identity is safe.",
+            "note": "Bootstrap identity layer only; rich TCGdex physical variants expand after this gate.",
         },
         "current_neon": {
             "sets": len(db_sets),
@@ -299,9 +321,14 @@ def run() -> dict:
             "sets": dict(set_actions),
             "cards": dict(card_actions),
             "prints": dict(print_actions),
+            "target_set_code_samples": [
+                {"tcgdex_id": source_id, "code": target_set_codes[source_id]}
+                for source_id in sorted(target_set_codes)[:30]
+            ],
         },
         "warnings": {
             "count": len(warnings),
+            "by_type": dict(Counter(row["type"] for row in warnings)),
             "samples": warnings[:100],
         },
         "conflicts": {
