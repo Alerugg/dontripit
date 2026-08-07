@@ -65,7 +65,7 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
         raise AssertionError("Snapshot manifest/card row count mismatch")
 
     inventory = load_inventory()
-    baseline_ids = set(inventory.physical_cards)
+    rest_baseline_ids = set(inventory.physical_cards)
     snapshot_ids = set(snapshot)
 
     db.init_engine()
@@ -79,22 +79,16 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     neon_ids = set(neon_by_source)
     mapped = snapshot_ids & neon_ids
     snapshot_not_in_neon = sorted(snapshot_ids - neon_ids)
-    snapshot_not_in_baseline = sorted(snapshot_ids - baseline_ids)
-    baseline_missing_snapshot = sorted(baseline_ids - snapshot_ids)
+    snapshot_not_in_rest_baseline = sorted(snapshot_ids - rest_baseline_ids)
+    rest_baseline_missing_snapshot = sorted(rest_baseline_ids - snapshot_ids)
 
-    # Classify source-repository records outside the current REST-derived English
-    # baseline. They are not all equivalent:
-    # - no English name: regional/non-English source material
-    # - future release: known but not yet part of the public catalog promise
-    # - released English: potentially real catalog identities omitted by REST
-    # - English with unknown date: conservative review bucket
     today = datetime.now(timezone.utc).date()
     regional_or_no_english: list[dict] = []
     future_unreleased: list[dict] = []
     released_english: list[dict] = []
     english_unknown_release: list[dict] = []
 
-    for source_id in snapshot_not_in_baseline:
+    for source_id in snapshot_not_in_rest_baseline:
         row = snapshot[source_id]
         name = str(row.get("name") or "").strip()
         release_date = _source_release_date(row)
@@ -107,6 +101,24 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
             future_unreleased.append(compact)
         else:
             released_english.append(compact)
+
+    released_english_ids = {str(row["source_id"]) for row in released_english}
+    unknown_release_ids = {str(row["source_id"]) for row in english_unknown_release}
+    accepted_released_english_ids = released_english_ids & neon_ids
+    missing_released_english_ids = released_english_ids - neon_ids
+    accepted_unknown_release_ids = unknown_release_ids & neon_ids
+    missing_unknown_release_ids = unknown_release_ids - neon_ids
+
+    # The canonical English catalog is the REST physical baseline plus reviewed,
+    # released-English repository supplements that have been explicitly inserted
+    # into Neon. Regional/no-English rows and unreleased rows remain outside the
+    # English catalog by design.
+    canonical_english_ids = rest_baseline_ids | accepted_released_english_ids | accepted_unknown_release_ids
+    canonical_missing_snapshot = sorted(canonical_english_ids - snapshot_ids)
+    canonical_snapshot_coverage = (
+        round(len(canonical_english_ids & snapshot_ids) / len(canonical_english_ids), 6)
+        if canonical_english_ids else 1.0
+    )
 
     name_mismatches = []
     for source_id in sorted(mapped):
@@ -127,9 +139,6 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     detailed_variant_cards = 0
     total_detailed_variants = 0
 
-    # Quality statistics below are calculated for all rich-source physical rows
-    # because they describe the source itself. Enrichment later will only consume
-    # identities that have passed the English catalog reconciliation gate.
     for row in snapshot.values():
         attrs = row.get("attributes") or {}
         for key in (
@@ -164,25 +173,26 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
     hard_failures = []
     review_blockers = []
 
-    # The pinned rich repository must cover every identity we currently call
-    # canonical. Otherwise enrichment would knowingly leave holes.
-    if baseline_missing_snapshot:
-        hard_failures.append(f"{len(baseline_missing_snapshot)} baseline IDs have no rich-source snapshot row")
+    if rest_baseline_missing_snapshot:
+        hard_failures.append(
+            f"{len(rest_baseline_missing_snapshot)} REST baseline IDs have no rich-source snapshot row"
+        )
+    if canonical_missing_snapshot:
+        hard_failures.append(
+            f"{len(canonical_missing_snapshot)} accepted canonical English IDs have no rich-source snapshot row"
+        )
     if manifest.get("duplicate_source_ids"):
         hard_failures.append("snapshot exporter reported duplicate source IDs")
     if manifest.get("import_errors"):
         hard_failures.append("snapshot exporter reported module import errors")
 
-    # Released English extras are not dismissed as noise. They may prove the REST
-    # baseline incomplete and therefore block enrichment until individually
-    # reconciled. Unknown-date English records are blocked conservatively too.
-    if released_english:
+    if missing_released_english_ids:
         review_blockers.append(
-            f"{len(released_english)} released English rich-source IDs are outside the current REST baseline"
+            f"{len(missing_released_english_ids)} released English rich-source IDs still need identity reconciliation"
         )
-    if english_unknown_release:
+    if missing_unknown_release_ids:
         review_blockers.append(
-            f"{len(english_unknown_release)} English rich-source IDs have no trustworthy release date"
+            f"{len(missing_unknown_release_ids)} English rich-source IDs with unknown release date still need review"
         )
 
     if hard_failures:
@@ -198,20 +208,26 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
         "source_version": manifest.get("source_version"),
         "status": status,
         "identity": {
-            "physical_baseline_cards": len(baseline_ids),
+            "rest_physical_baseline_cards": len(rest_baseline_ids),
+            "canonical_english_cards": len(canonical_english_ids),
             "snapshot_cards": len(snapshot_ids),
             "snapshot_mapped_to_neon": len(mapped),
             "snapshot_ids_not_in_neon": len(snapshot_not_in_neon),
-            "snapshot_ids_not_in_current_baseline": len(snapshot_not_in_baseline),
-            "baseline_cards_missing_from_snapshot": len(baseline_missing_snapshot),
-            "snapshot_coverage_of_baseline": round(len(snapshot_ids & baseline_ids) / len(baseline_ids), 6) if baseline_ids else 1.0,
+            "snapshot_ids_not_in_rest_baseline": len(snapshot_not_in_rest_baseline),
+            "rest_baseline_cards_missing_from_snapshot": len(rest_baseline_missing_snapshot),
+            "accepted_canonical_cards_missing_from_snapshot": len(canonical_missing_snapshot),
+            "canonical_snapshot_coverage": canonical_snapshot_coverage,
             "name_mismatches": len(name_mismatches),
         },
         "extra_classification": {
             "regional_or_no_english": len(regional_or_no_english),
             "future_unreleased": len(future_unreleased),
-            "released_english": len(released_english),
-            "english_unknown_release_date": len(english_unknown_release),
+            "released_english_total": len(released_english_ids),
+            "released_english_accepted_in_neon": len(accepted_released_english_ids),
+            "released_english_pending": len(missing_released_english_ids),
+            "english_unknown_release_date_total": len(unknown_release_ids),
+            "english_unknown_release_date_accepted": len(accepted_unknown_release_ids),
+            "english_unknown_release_date_pending": len(missing_unknown_release_ids),
         },
         "field_coverage": dict(field_coverage),
         "variants": {
@@ -222,11 +238,18 @@ def run(snapshot_path: Path, manifest_path: Path) -> dict:
             "stamp_counts": dict(stamp_counts),
             "foil_pattern_counts": dict(foil_pattern_counts),
         },
-        "baseline_missing_snapshot_samples": baseline_missing_snapshot[:200],
+        "rest_baseline_missing_snapshot_samples": rest_baseline_missing_snapshot[:200],
         "regional_or_no_english_samples": regional_or_no_english[:200],
         "future_unreleased_samples": future_unreleased[:200],
-        "released_english_samples": released_english[:200],
-        "english_unknown_release_date_samples": english_unknown_release[:200],
+        "released_english_accepted_samples": [
+            _compact_extra(snapshot[source_id]) for source_id in sorted(accepted_released_english_ids)[:200]
+        ],
+        "released_english_pending_samples": [
+            _compact_extra(snapshot[source_id]) for source_id in sorted(missing_released_english_ids)[:200]
+        ],
+        "english_unknown_release_date_pending_samples": [
+            _compact_extra(snapshot[source_id]) for source_id in sorted(missing_unknown_release_ids)[:200]
+        ],
         "name_mismatch_samples": name_mismatches[:100],
         "hard_failures": hard_failures,
         "review_blockers": review_blockers,
