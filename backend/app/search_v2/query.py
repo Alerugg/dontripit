@@ -65,6 +65,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     Human compound queries may contain name, set, language, rarity and variant
     tokens in any order. Physical variants are grouped into one Card result, but
     the best matching Print remains attached so the user can see why it matched.
+
+    A query that is exactly a One Piece collector number is treated as an
+    identity lookup. This prevents the embedded set prefix (for example OP05 in
+    OP05-119) from flooding the remaining results with unrelated cards.
     """
     q = str(query or "").strip()
     if not q:
@@ -76,7 +80,8 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     tokens = _query_tokens(q)
     is_onepiece = not game_slug or game_slug == "onepiece"
     q_collector = normalize_onepiece_collector_number(q) if is_onepiece else None
-    q_set = _find_onepiece_set(tokens, q) if is_onepiece else None
+    collector_only = bool(q_collector and q_compact == compact_search_text(q_collector))
+    q_set = None if collector_only else (_find_onepiece_set(tokens, q) if is_onepiece else None)
 
     if session.bind.dialect.name != "postgresql":
         stmt = (
@@ -86,7 +91,9 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
             .join(Set, Set.id == Print.set_id)
             .join(Game, Game.id == PrintSearchProfile.game_id)
         )
-        if tokens:
+        if collector_only:
+            stmt = stmt.where(PrintSearchProfile.normalized_collector_number == q_collector)
+        elif tokens:
             stmt = stmt.where(and_(*[PrintSearchProfile.search_text.contains(token) for token in tokens]))
         else:
             stmt = stmt.where(PrintSearchProfile.search_text.contains(q_norm))
@@ -167,6 +174,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
               CASE WHEN :q_collector <> '' AND psp.normalized_collector_number = :q_collector THEN 5000.0 ELSE 0.0 END +
               CASE WHEN psp.normalized_name = :q_norm THEN 3600.0 ELSE 0.0 END +
               CASE WHEN replace(psp.normalized_name, ' ', '') = :q_compact AND :q_compact <> '' THEN 3200.0 ELSE 0.0 END +
+              CASE WHEN psp.normalized_name LIKE '% ' || :q_norm THEN 2600.0 ELSE 0.0 END +
               CASE WHEN psp.normalized_name LIKE :q_norm || '%' THEN 1800.0 ELSE 0.0 END +
               CASE WHEN (' ' || psp.normalized_name || ' ') LIKE '% ' || :q_norm || ' %' THEN 1500.0 ELSE 0.0 END +
               CASE WHEN psp.normalized_name LIKE '%' || :q_norm || '%' THEN 1100.0 ELSE 0.0 END +
@@ -190,13 +198,17 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
           JOIN games g ON g.id = psp.game_id
           WHERE (:game = '' OR g.slug = :game)
             AND (
-              ({all_tokens_sql})
-              OR psp.normalized_name LIKE '%' || :q_norm || '%'
-              OR psp.search_text LIKE '%' || :q_norm || '%'
-              OR (:q_collector <> '' AND psp.normalized_collector_number = :q_collector)
-              OR (:q_set <> '' AND psp.normalized_set_code = :q_set)
-              OR similarity(psp.normalized_name, :q_norm) >= 0.18
-              OR similarity(psp.search_text, :q_norm) >= 0.12
+              (:collector_only = TRUE AND psp.normalized_collector_number = :q_collector)
+              OR
+              (:collector_only = FALSE AND (
+                ({all_tokens_sql})
+                OR psp.normalized_name LIKE '%' || :q_norm || '%'
+                OR psp.search_text LIKE '%' || :q_norm || '%'
+                OR (:q_collector <> '' AND psp.normalized_collector_number = :q_collector)
+                OR (:q_set <> '' AND psp.normalized_set_code = :q_set)
+                OR similarity(psp.normalized_name, :q_norm) >= 0.18
+                OR similarity(psp.search_text, :q_norm) >= 0.12
+              ))
             )
         ), ranked AS (
           SELECT
@@ -230,6 +242,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "q_compact": q_compact,
         "q_collector": q_collector or "",
         "q_set": q_set or "",
+        "collector_only": collector_only,
         "game": str(game_slug or "").strip().lower(),
         "limit": limit,
         **token_params,
