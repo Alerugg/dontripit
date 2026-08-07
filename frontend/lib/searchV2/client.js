@@ -42,6 +42,15 @@ export async function fetchFacetsV2(game) {
   return readJson(response)
 }
 
+export async function fetchFacetValuesV2({ game, key, q = '', limit = 30 } = {}) {
+  const response = await fetch(`/api/search-v2/facet-values${toQuery({ game, key, q, limit })}`, {
+    method: 'GET',
+    cache: 'no-store',
+  })
+  const payload = await readJson(response)
+  return payload?.items || []
+}
+
 export async function advancedSearchV2({ game, q = '', filters = {}, limit = 50, offset = 0 } = {}) {
   const response = await fetch('/api/search-v2/advanced', {
     method: 'POST',
