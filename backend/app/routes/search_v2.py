@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
+from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.query import facet_definitions, normal_search
 
 
@@ -61,6 +62,32 @@ def search_v2_facets(game_slug: str):
     for facet in facets:
         groups.setdefault(facet.get("group") or "Other", []).append(facet)
     return jsonify({"game": game_slug, "facets": facets, "groups": groups})
+
+
+@search_v2_bp.get("/api/v2/games/<game_slug>/facets/<facet_key>/values")
+def search_v2_facet_values(game_slug: str, facet_key: str):
+    game_slug = game_slug.strip().lower()
+    facet_key = facet_key.strip().lower()
+    if game_slug != "onepiece":
+        return jsonify({"error": "game_not_search_v2_ready", "game": game_slug}), 422
+
+    query = str(request.args.get("q") or "").strip()
+    limit = request.args.get("limit", default=30, type=int) or 30
+    try:
+        with db.SessionLocal() as session:
+            items = onepiece_facet_values(session, key=facet_key, query=query, limit=limit)
+    except ValueError as exc:
+        return jsonify({"error": "facet_values_unavailable", "detail": str(exc)}), 400
+
+    return jsonify(
+        {
+            "game": game_slug,
+            "facet": facet_key,
+            "query": query,
+            "items": items,
+            "count": len(items),
+        }
+    )
 
 
 @search_v2_bp.post("/api/v2/search/advanced")
