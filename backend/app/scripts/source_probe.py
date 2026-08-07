@@ -32,6 +32,84 @@ def _probe(name: str, fn) -> dict:
         }
 
 
+def _safe_shape(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {"python_type": type(value).__name__}
+
+    interesting = {}
+    for key, item in value.items():
+        lower = str(key).lower()
+        if any(token in lower for token in ("download", "file", "url", "uri", "content", "format", "size", "updated", "type", "name", "id")):
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                interesting[key] = item
+            else:
+                interesting[key] = f"<{type(item).__name__}>"
+
+    data = value.get("data")
+    return {
+        "keys": sorted(str(key) for key in value.keys()),
+        "interesting": interesting,
+        "data_type": type(data).__name__ if "data" in value else None,
+        "data_keys": sorted(str(key) for key in data.keys()) if isinstance(data, dict) else None,
+    }
+
+
+def _diagnose_scryfall() -> dict:
+    connector = ScryfallMtgV2Connector()
+    diagnostic: dict = {}
+    try:
+        listing = connector._request_json(f"{connector.base_url}/bulk-data")
+        diagnostic["listing"] = _safe_shape(listing)
+        candidates = listing.get("data") if isinstance(listing, dict) else None
+        candidate = None
+        if isinstance(candidates, list):
+            candidate = next(
+                (
+                    item
+                    for item in candidates
+                    if isinstance(item, dict)
+                    and str(item.get("type") or "").strip().lower() == "default_cards"
+                ),
+                None,
+            )
+        diagnostic["default_summary"] = _safe_shape(candidate)
+        if isinstance(candidate, dict):
+            uri = str(candidate.get("uri") or "").strip()
+            if uri:
+                detail = connector._request_json(uri)
+                diagnostic["detail_via_uri"] = _safe_shape(detail)
+            bulk_id = str(candidate.get("id") or "").strip()
+            if bulk_id:
+                detail_by_id = connector._request_json(f"{connector.base_url}/bulk-data/{bulk_id}")
+                diagnostic["detail_via_id"] = _safe_shape(detail_by_id)
+    except Exception as exc:  # noqa: BLE001
+        diagnostic["diagnostic_error"] = f"{type(exc).__name__}: {exc}"
+    return diagnostic
+
+
+def _probe_mtg() -> dict:
+    started = datetime.now(timezone.utc)
+    connector = ScryfallMtgV2Connector()
+    try:
+        rows = connector.probe_remote(limit=5)
+        return {
+            "name": "mtg",
+            "status": "success",
+            "records": len(rows),
+            "error": None,
+            "duration_seconds": round((datetime.now(timezone.utc) - started).total_seconds(), 3),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "name": "mtg",
+            "status": "failed",
+            "records": 0,
+            "error": f"{type(exc).__name__}: {exc}",
+            "diagnostic": _diagnose_scryfall(),
+            "duration_seconds": round((datetime.now(timezone.utc) - started).total_seconds(), 3),
+        }
+
+
 def _riftbound_is_configured() -> bool:
     official = bool(
         str(os.getenv("RIFTBOUND_API_BASE_URL") or "").strip()
@@ -56,12 +134,7 @@ def run_probe() -> dict:
             lambda: len(OnePieceConnector().load(None, fixture=False, limit=5)),
         )
     )
-    results.append(
-        _probe(
-            "mtg",
-            lambda: len(ScryfallMtgV2Connector().probe_remote(limit=5)),
-        )
-    )
+    results.append(_probe_mtg())
     results.append(
         _probe(
             "yugioh",
