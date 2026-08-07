@@ -1,0 +1,56 @@
+.sv2-quick-primary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .8rem;
+}
+
+.sv2-quick-primary .sv2-quick-facet {
+  min-width: 0;
+}
+
+.sv2-quick-hits {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  margin-top: .8rem;
+  padding-top: .75rem;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+
+.sv2-quick-hits > span {
+  color: var(--muted, #9ca3af);
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sv2-quick-hit-buttons {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.sv2-quick-hit-buttons .sv2-toggle {
+  min-height: 36px;
+  padding-inline: .75rem;
+}
+
+@media (max-width: 700px) {
+  .sv2-quick-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .sv2-quick-hits {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sv2-quick-hit-buttons {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
