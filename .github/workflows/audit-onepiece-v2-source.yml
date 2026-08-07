@@ -1,0 +1,59 @@
+name: Audit One Piece V2 Source
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/ingest/connectors/onepiece_v2.py'
+      - 'backend/app/scripts/audit_onepiece_v2_source.py'
+      - 'backend/tests/test_onepiece_v2_identity.py'
+      - '.github/workflows/audit-onepiece-v2-source.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run One Piece V2 unit tests
+        run: pytest -q tests/test_onepiece_v2_identity.py
+      - name: Normalize all official One Piece series without DB writes
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.audit_onepiece_v2_source | tee onepiece-v2-source-audit.json
+      - name: Print compact V2 result
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('onepiece-v2-source-audit.json')
+          if path.exists():
+              payload = json.loads(path.read_text())
+              print(json.dumps({
+                  'counts': payload.get('counts'),
+                  'collector_families': payload.get('collector_families'),
+                  'variants': payload.get('variants'),
+                  'physical_identity_conflict_samples': payload.get('physical_identity_conflict_samples', [])[:5],
+              }, indent=2))
+          PY
+      - name: Upload V2 source audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-v2-source-audit-${{ github.sha }}
+          path: backend/onepiece-v2-source-audit.json
+          retention-days: 30
+          if-no-files-found: warn
