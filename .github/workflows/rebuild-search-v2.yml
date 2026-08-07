@@ -12,6 +12,10 @@ on:
       - 'backend/app/scripts/rebuild_search_v2.py'
   workflow_dispatch:
 
+concurrency:
+  group: onepiece-catalog-write-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   rebuild:
     runs-on: ubuntu-latest
