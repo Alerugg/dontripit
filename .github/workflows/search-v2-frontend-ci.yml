@@ -1,0 +1,39 @@
+name: Search V2 Frontend CI
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'frontend/components/searchV2/**'
+      - 'frontend/components/games/OnePieceExplorerV2Page.js'
+      - 'frontend/app/games/[slug]/page.js'
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/lib/searchV2/**'
+      - '.github/workflows/search-v2-frontend-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      INTERNAL_API_KEY: ci-placeholder-key
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run frontend tests
+        run: npm test
+      - name: Build Next.js app
+        run: npm run build
