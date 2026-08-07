@@ -1,0 +1,78 @@
+name: Preflight Pokemon Rich Extras V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/preflight-pokemon-rich-extras-v2.yml'
+      - 'backend/tools/export_tcgdex_rich_snapshot.ts'
+      - 'backend/app/scripts/preflight_pokemon_rich_extras_v2.py'
+      - 'backend/app/scripts/audit_pokemon_rich_snapshot_v2.py'
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TCGDEX_SOURCE_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Checkout pinned official TCGdex cards database
+        run: |
+          set -euo pipefail
+          git init /tmp/tcgdex-cards
+          git -C /tmp/tcgdex-cards remote add origin https://github.com/tcgdex/cards-database.git
+          git -C /tmp/tcgdex-cards fetch --depth 1 origin "$TCGDEX_SOURCE_SHA"
+          git -C /tmp/tcgdex-cards checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/tcgdex-cards rev-parse HEAD)" = "$TCGDEX_SOURCE_SHA"
+
+      - name: Export canonical rich snapshot
+        run: |
+          bun backend/tools/export_tcgdex_rich_snapshot.ts \
+            --source-root /tmp/tcgdex-cards \
+            --source-version "$TCGDEX_SOURCE_SHA" \
+            --output /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json
+
+      - name: Preflight released English extras against Neon
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m app.scripts.preflight_pokemon_rich_extras_v2 \
+            --snapshot /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json \
+            | tee /tmp/pokemon-rich-extras-preflight.json
+
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-rich-extras-preflight-${{ github.sha }}
+          path: |
+            /tmp/pokemon-rich-manifest.json
+            /tmp/pokemon-rich-extras-preflight.json
+          retention-days: 180
+          if-no-files-found: warn
