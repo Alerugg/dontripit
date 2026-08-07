@@ -3,17 +3,18 @@ import TopNav from '../../../../../components/layout/TopNav'
 import GameSetPage from '../../../../../components/games/GameSetPage'
 import { getGameConfig } from '../../../../../lib/catalog/games'
 
-export default function SetPage({ params }) {
-  const game = getGameConfig(params.slug)
+export default async function SetPage({ params }) {
+  const { slug, setCode } = await params
+  const game = getGameConfig(slug)
 
-  if (!game || !params.setCode) {
+  if (!game || !setCode) {
     notFound()
   }
 
   return (
     <main>
       <TopNav />
-      <GameSetPage gameSlug={params.slug} setCode={params.setCode} />
+      <GameSetPage gameSlug={slug} setCode={setCode} />
     </main>
   )
 }
