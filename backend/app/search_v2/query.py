@@ -69,6 +69,10 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     A query that is exactly a One Piece collector number is treated as an
     identity lookup. This prevents the embedded set prefix (for example OP05 in
     OP05-119) from flooding the remaining results with unrelated cards.
+
+    For a single fuzzy word, the last canonical name token is also compared.
+    This is intentionally generic: ``lufi`` can recover ``Monkey.D.Luffy`` and
+    ``zolo`` can recover ``Roronoa Zoro`` without hardcoded character aliases.
     """
     q = str(query or "").strip()
     if not q:
@@ -78,6 +82,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     q_norm = normalize_search_text(q)
     q_compact = compact_search_text(q)
     tokens = _query_tokens(q)
+    single_token_query = len(tokens) == 1 and tokens[0] == q_norm
     is_onepiece = not game_slug or game_slug == "onepiece"
     q_collector = normalize_onepiece_collector_number(q) if is_onepiece else None
     collector_only = bool(q_collector and q_compact == compact_search_text(q_collector))
@@ -152,6 +157,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
     token_params = {f"token_{i}": f"%{token}%" for i, token in enumerate(tokens)}
     all_tokens_sql = " AND ".join([f"psp.search_text LIKE :token_{i}" for i in range(len(tokens))]) or "FALSE"
     all_tokens_bonus = f"CASE WHEN {all_tokens_sql} THEN 900.0 ELSE 0.0 END" if tokens else "0.0"
+    last_name_token_sql = "regexp_replace(psp.normalized_name, '^.* ', '')"
 
     sql = text(
         f"""
@@ -184,6 +190,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
               {token_bonus_sql} +
               similarity(psp.normalized_name, :q_norm) * 900.0 +
               similarity(psp.search_text, :q_norm) * 350.0 +
+              CASE WHEN :single_token THEN similarity({last_name_token_sql}, :q_norm) * 2400.0 ELSE 0.0 END +
               CASE WHEN psp.exact_variant = 'default' THEN 25.0 ELSE 0.0 END
             ) AS score,
             (
@@ -208,6 +215,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
                 OR (:q_set <> '' AND psp.normalized_set_code = :q_set)
                 OR similarity(psp.normalized_name, :q_norm) >= 0.18
                 OR similarity(psp.search_text, :q_norm) >= 0.12
+                OR (:single_token AND similarity({last_name_token_sql}, :q_norm) >= 0.20)
               ))
             )
         ), ranked AS (
@@ -243,6 +251,7 @@ def normal_search(session, *, query: str, game_slug: str | None = None, limit: i
         "q_collector": q_collector or "",
         "q_set": q_set or "",
         "collector_only": collector_only,
+        "single_token": single_token_query,
         "game": str(game_slug or "").strip().lower(),
         "limit": limit,
         **token_params,
