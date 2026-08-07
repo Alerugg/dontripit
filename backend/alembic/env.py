@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.models import Base
 from app import catalog_release_models  # noqa: F401 - register release tables on Base.metadata
+from app import search_v2_models  # noqa: F401 - register Search V2 tables on Base.metadata
 
 
 config = context.config
