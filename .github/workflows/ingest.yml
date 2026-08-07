@@ -9,23 +9,32 @@ on:
         description: 'Optional Pokemon set code (example: base1)'
         required: false
         type: string
+      pokemon_all_sets:
+        description: 'Refresh every Pokemon set from TCGdex'
+        required: false
+        default: false
+        type: boolean
       pokemon_limit:
-        description: 'Pokemon ingest limit'
+        description: 'Pokemon cards per set; blank = full set, 0 = skip'
+        required: false
+        type: string
+      onepiece_limit:
+        description: 'One Piece cards; blank = full catalog, 0 = skip'
         required: false
         default: '200'
         type: string
       mtg_limit:
-        description: 'MTG ingest limit'
+        description: 'MTG incremental print limit; 0 = skip'
         required: false
-        default: '200'
+        default: '500'
         type: string
       yugioh_limit:
-        description: 'Yu-Gi-Oh ingest limit'
+        description: 'Yu-Gi-Oh ingest limit; 0 = skip'
         required: false
-        default: '200'
+        default: '500'
         type: string
       riftbound_limit:
-        description: 'Riftbound ingest limit'
+        description: 'Riftbound ingest limit; 0 = skip'
         required: false
         default: '200'
         type: string
@@ -38,13 +47,18 @@ on:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: backend
     env:
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ONEPIECE_SOURCE: remote
+      RIFTBOUND_API_BASE_URL: ${{ secrets.RIFTBOUND_API_BASE_URL }}
+      RIFTBOUND_API_KEY: ${{ secrets.RIFTBOUND_API_KEY }}
+      RIFTBOUND_FALLBACK_BASE_URL: ${{ secrets.RIFTBOUND_FALLBACK_BASE_URL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -61,17 +75,14 @@ jobs:
         run: |
           if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
           if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
-          python - <<'PY'
-          import os
-          from urllib.parse import urlparse
-
-          database_url = os.getenv("DATABASE_URL", "")
-          host = "<not available>"
-          if database_url:
-              parsed = urlparse(database_url)
-              host = parsed.hostname or "<not available>"
-          print(f"DATABASE_URL host: {host}")
-          PY
+          if [ -n "${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN is set for One Piece source access"; fi
+          if [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; then
+            echo "Riftbound official source is configured"
+          elif [ -n "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
+            echo "Riftbound fallback source is configured"
+          else
+            echo "Riftbound remote source is NOT configured; connector will be skipped"
+          fi
 
       - name: Run Alembic migrations
         run: alembic upgrade head
@@ -82,40 +93,76 @@ jobs:
 
           EVENT_NAME="${{ github.event_name }}"
           POKEMON_SET_INPUT="${{ github.event.inputs.pokemon_set || '' }}"
+          POKEMON_ALL_SETS_INPUT="${{ github.event.inputs.pokemon_all_sets || '' }}"
           POKEMON_LIMIT_INPUT="${{ github.event.inputs.pokemon_limit || '' }}"
+          ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
           MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
           YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
           RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
-          POKEMON_LIMIT="${POKEMON_LIMIT_INPUT:-200}"
-          MTG_LIMIT="${MTG_LIMIT_INPUT:-200}"
-          YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-200}"
+          POKEMON_SET=""
+          POKEMON_ALL_SETS="false"
+          POKEMON_LIMIT="${POKEMON_LIMIT_INPUT}"
+          ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
+          MTG_LIMIT="${MTG_LIMIT_INPUT:-500}"
+          YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
           RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
-
           SKIP_POKEMON="false"
-          if [ -n "${POKEMON_SET_INPUT}" ]; then
-            POKEMON_SET="${POKEMON_SET_INPUT}"
-          elif [ "${EVENT_NAME}" = "schedule" ]; then
-            POKEMON_SET="base1"
+
+          if [ "${EVENT_NAME}" = "schedule" ]; then
+            # TCGdex set payloads are relatively cheap and idempotent by checksum.
+            # Scheduled runs therefore scan every set instead of the old base1-only behavior.
+            POKEMON_ALL_SETS="true"
+            POKEMON_LIMIT=""
+
+            # One Piece remote ingestion can involve thousands of card files. Refresh
+            # the full source once per week; the separate bootstrap workflow seeds it initially.
+            if [ "$(date -u +%u)" = "7" ]; then
+              ONEPIECE_LIMIT=""
+            else
+              ONEPIECE_LIMIT="0"
+            fi
           else
-            POKEMON_SET=""
-            SKIP_POKEMON="true"
+            if [ -n "${POKEMON_SET_INPUT}" ]; then
+              POKEMON_SET="${POKEMON_SET_INPUT}"
+            elif [ "${POKEMON_ALL_SETS_INPUT}" = "true" ]; then
+              POKEMON_ALL_SETS="true"
+            else
+              SKIP_POKEMON="true"
+            fi
+          fi
+
+          # Do not turn a missing Riftbound credential into a fake pipeline failure.
+          # The connector becomes active automatically once either official config or
+          # a valid fallback endpoint is present in repository secrets.
+          if ! { [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; } \
+             && [ -z "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
+            RIFTBOUND_LIMIT="0"
           fi
 
           ARGS=(
-            --pokemon-limit "${POKEMON_LIMIT}"
             --mtg-limit "${MTG_LIMIT}"
             --yugioh-limit "${YUGIOH_LIMIT}"
             --riftbound-limit "${RIFTBOUND_LIMIT}"
             --incremental "${INCREMENTAL}"
           )
+
+          if [ -n "${POKEMON_LIMIT}" ]; then
+            ARGS+=(--pokemon-limit "${POKEMON_LIMIT}")
+          fi
           if [ -n "${POKEMON_SET}" ]; then
             ARGS+=(--pokemon-set "${POKEMON_SET}")
+          elif [ "${POKEMON_ALL_SETS}" = "true" ]; then
+            ARGS+=(--pokemon-all-sets true)
           fi
           if [ "${SKIP_POKEMON}" = "true" ]; then
             ARGS+=(--skip-pokemon true)
+          fi
+
+          if [ -n "${ONEPIECE_LIMIT}" ]; then
+            ARGS+=(--onepiece-limit "${ONEPIECE_LIMIT}")
           fi
 
           echo "Resolved ARGS:"
@@ -132,15 +179,48 @@ jobs:
           set -e
 
           if [ -s "${STDOUT_FILE}" ]; then
-            echo "Daily refresh summary (pretty):"
-            if ! python -m json.tool < "${STDOUT_FILE}"; then
-              echo "stdout did not contain valid JSON summary"
-            fi
+            echo "Daily refresh final summary:"
+            tail -n 1 "${STDOUT_FILE}" | python -m json.tool || true
           else
             echo "No stdout summary captured"
           fi
 
           if [ "${CMD_STATUS}" -ne 0 ]; then
-            echo "daily_refresh failed with exit code ${CMD_STATUS}"
+            echo "daily_refresh reported a failed/degraded connector state (exit ${CMD_STATUS})"
             exit "${CMD_STATUS}"
           fi
+
+      - name: Generate post-refresh Catalog Health snapshot
+        if: always()
+        run: python -m app.scripts.catalog_health --json > catalog-health-after-refresh.json
+
+      - name: Print post-refresh Catalog Health totals
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('catalog-health-after-refresh.json')
+          if not path.exists():
+              print('Catalog Health snapshot unavailable')
+              raise SystemExit(0)
+          payload = json.loads(path.read_text())
+          print(json.dumps({
+              'generated_at': payload.get('generated_at'),
+              'totals': payload.get('totals'),
+              'status_counts': payload.get('status_counts'),
+              'games': [
+                  {'slug': row.get('slug'), 'status': row.get('status'), 'counts': row.get('counts')}
+                  for row in payload.get('games', [])
+              ],
+          }, indent=2))
+          PY
+
+      - name: Upload post-refresh Catalog Health artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-health-after-refresh-${{ github.run_id }}
+          path: backend/catalog-health-after-refresh.json
+          retention-days: 30
+          if-no-files-found: ignore
