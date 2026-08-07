@@ -8,7 +8,7 @@ from app.ingest.connectors.onepiece import OnePieceConnector
 from app.ingest.connectors.riftbound import RiftboundConnector
 from app.ingest.connectors.scryfall_mtg_v2 import ScryfallMtgV2Connector
 from app.ingest.connectors.tcgdex_pokemon import TcgdexPokemonConnector
-from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
+from app.ingest.connectors.ygoprodeck_yugioh_v2 import YgoProDeckYugiohV2Connector
 
 
 def _probe(name: str, fn) -> dict:
@@ -65,7 +65,13 @@ def run_probe() -> dict:
     results.append(
         _probe(
             "yugioh",
-            lambda: len(YgoProDeckYugiohConnector()._load_remote(limit=5, page_size=5)),
+            lambda: len(
+                YgoProDeckYugiohV2Connector()._load_incremental_remote(
+                    limit=5,
+                    page_size=5,
+                    last_run_at=None,
+                )
+            ),
         )
     )
 
