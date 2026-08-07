@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from app.ingest.connectors.onepiece import OnePieceConnector
 from app.ingest.connectors.riftbound import RiftboundConnector
-from app.ingest.connectors.scryfall_mtg import ScryfallMtgConnector
+from app.ingest.connectors.scryfall_mtg_v2 import ScryfallMtgV2Connector
 from app.ingest.connectors.tcgdex_pokemon import TcgdexPokemonConnector
 from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
 
@@ -59,7 +59,7 @@ def run_probe() -> dict:
     results.append(
         _probe(
             "mtg",
-            lambda: len(ScryfallMtgConnector()._load_incremental(limit=5, last_run_at=None)),
+            lambda: len(ScryfallMtgV2Connector()._load_incremental(limit=5, last_run_at=None)),
         )
     )
     results.append(
