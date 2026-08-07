@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/repair-onepiece-set-names.yml'
       - 'backend/app/scripts/repair_onepiece_set_names.py'
+      - 'backend/app/scripts/smoke_search_v2.py'
       - 'backend/app/ingest/connectors/onepiece_canonical.py'
   workflow_dispatch:
 
@@ -50,6 +51,7 @@ jobs:
           smoke=json.load(open('/tmp/search-v2-smoke-after-set-repair.json'))
           exact=smoke['normal']['OP05-119']['top'][0]
           assert exact['set_code'] == 'op-05', exact
+          assert 'OP-05' in (exact.get('set_name') or '').upper(), exact
           repair=json.load(open('/tmp/onepiece-set-name-repair.json'))
           assert repair['source_diagnostics']['canonical_set_names_unmatched'] == [], repair
           print(json.dumps({'repair_changes': repair['changed_count'], 'exact': exact}, indent=2))
