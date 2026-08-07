@@ -11,6 +11,10 @@ on:
       - 'backend/app/ingest/connectors/onepiece_canonical.py'
   workflow_dispatch:
 
+concurrency:
+  group: onepiece-catalog-write-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   repair:
     runs-on: ubuntu-latest
