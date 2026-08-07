@@ -46,35 +46,68 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         raise RuntimeError(f"Scryfall request failed after retries: {url}")
 
     @staticmethod
-    def _find_default_bulk(payload: object) -> dict | None:
+    def _is_default_bulk_item(item: object) -> bool:
+        if not isinstance(item, dict):
+            return False
+        raw_type = str(item.get("type") or "").strip().lower().replace("-", "_")
+        raw_name = str(item.get("name") or "").strip().lower().replace("-", " ").replace("_", " ")
+        return raw_type == "default_cards" or raw_type.startswith("default_cards_") or raw_name == "default cards"
+
+    @classmethod
+    def _find_default_bulk(cls, payload: object) -> dict | None:
         if not isinstance(payload, dict):
             return None
-        if payload.get("download_uri"):
+
+        # A detailed bulk object may be returned directly.
+        if cls._is_default_bulk_item(payload) or payload.get("download_uri"):
             return payload
 
         data = payload.get("data")
-        if isinstance(data, dict) and data.get("download_uri"):
-            return data
+        if isinstance(data, dict):
+            if cls._is_default_bulk_item(data) or data.get("download_uri"):
+                return data
+            return None
         if not isinstance(data, list):
             return None
 
         for item in data:
-            if not isinstance(item, dict) or not item.get("download_uri"):
-                continue
-            raw_type = str(item.get("type") or "").strip().lower().replace("-", "_")
-            raw_name = str(item.get("name") or "").strip().lower().replace("-", " ").replace("_", " ")
-            if raw_type == "default_cards" or raw_type.startswith("default_cards_") or raw_name == "default cards":
+            if cls._is_default_bulk_item(item):
                 return item
         return None
 
+    def _resolve_bulk_detail(self, candidate: dict) -> dict | None:
+        if candidate.get("download_uri"):
+            return candidate
+
+        detail_uri = str(candidate.get("uri") or "").strip()
+        if detail_uri:
+            detail = self._request_json(detail_uri)
+            if isinstance(detail, dict) and detail.get("download_uri"):
+                return detail
+            nested = self._find_default_bulk(detail)
+            if nested and nested.get("download_uri"):
+                return nested
+
+        bulk_id = str(candidate.get("id") or "").strip()
+        if bulk_id:
+            detail = self._request_json(f"{self.base_url}/bulk-data/{bulk_id}")
+            if isinstance(detail, dict) and detail.get("download_uri"):
+                return detail
+            nested = self._find_default_bulk(detail)
+            if nested and nested.get("download_uri"):
+                return nested
+        return None
+
     def _bulk_metadata(self) -> dict:
-        # Prefer the typed endpoint, but tolerate deployments where the route is
-        # represented as a list/wrapper rather than the object itself.
+        # Prefer the typed endpoint. Current Scryfall deployments can return a
+        # summary object/list here, so follow uri/id when download_uri is omitted.
         try:
             direct = self._request_json(f"{self.base_url}/bulk-data/default_cards")
             direct_match = self._find_default_bulk(direct)
             if direct_match is not None:
-                return direct_match
+                resolved = self._resolve_bulk_detail(direct_match)
+                if resolved is not None:
+                    return resolved
         except requests.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status not in {404, 405}:
@@ -83,15 +116,19 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
         bulk_list = self._request_json(f"{self.base_url}/bulk-data")
         default_bulk = self._find_default_bulk(bulk_list)
         if default_bulk is not None:
-            return default_bulk
+            resolved = self._resolve_bulk_detail(default_bulk)
+            if resolved is not None:
+                return resolved
 
         candidates = bulk_list.get("data") if isinstance(bulk_list, dict) else None
         sample = []
         if isinstance(candidates, list):
             sample = [
                 {
+                    "id": item.get("id"),
                     "type": item.get("type"),
                     "name": item.get("name"),
+                    "uri": item.get("uri"),
                     "content_type": item.get("content_type"),
                     "has_download_uri": bool(item.get("download_uri")),
                 }
