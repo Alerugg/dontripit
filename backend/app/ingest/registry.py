@@ -2,14 +2,14 @@ from app.ingest.base import SourceConnector
 from app.ingest.connectors.fixture_local import FixtureLocalConnector
 from app.ingest.connectors.onepiece import OnePieceConnector
 from app.ingest.connectors.riftbound import RiftboundConnector
-from app.ingest.connectors.scryfall_mtg import ScryfallMtgConnector
+from app.ingest.connectors.scryfall_mtg_v2 import ScryfallMtgV2Connector
 from app.ingest.connectors.tcgdex_pokemon import TcgdexPokemonConnector
 from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
 
 
 CONNECTORS = {
     FixtureLocalConnector.name: FixtureLocalConnector,
-    ScryfallMtgConnector.name: ScryfallMtgConnector,
+    ScryfallMtgV2Connector.name: ScryfallMtgV2Connector,
     TcgdexPokemonConnector.name: TcgdexPokemonConnector,
     OnePieceConnector.name: OnePieceConnector,
     YgoProDeckYugiohConnector.name: YgoProDeckYugiohConnector,
