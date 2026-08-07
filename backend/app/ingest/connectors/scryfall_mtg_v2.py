@@ -45,41 +45,62 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
             return response.json()
         raise RuntimeError(f"Scryfall request failed after retries: {url}")
 
+    @staticmethod
+    def _find_default_bulk(payload: object) -> dict | None:
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("download_uri"):
+            return payload
+
+        data = payload.get("data")
+        if isinstance(data, dict) and data.get("download_uri"):
+            return data
+        if not isinstance(data, list):
+            return None
+
+        for item in data:
+            if not isinstance(item, dict) or not item.get("download_uri"):
+                continue
+            raw_type = str(item.get("type") or "").strip().lower().replace("-", "_")
+            raw_name = str(item.get("name") or "").strip().lower().replace("-", " ").replace("_", " ")
+            if raw_type == "default_cards" or raw_type.startswith("default_cards_") or raw_name == "default cards":
+                return item
+        return None
+
     def _bulk_metadata(self) -> dict:
-        # Prefer the typed endpoint. It is less coupled to the representation of
-        # the general bulk-data listing and returns the default_cards object itself.
+        # Prefer the typed endpoint, but tolerate deployments where the route is
+        # represented as a list/wrapper rather than the object itself.
         try:
             direct = self._request_json(f"{self.base_url}/bulk-data/default_cards")
-            if isinstance(direct, dict) and direct.get("download_uri"):
-                return direct
+            direct_match = self._find_default_bulk(direct)
+            if direct_match is not None:
+                return direct_match
         except requests.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status not in {404, 405}:
                 raise
 
-        # Compatibility fallback for older Scryfall responses.
         bulk_list = self._request_json(f"{self.base_url}/bulk-data")
+        default_bulk = self._find_default_bulk(bulk_list)
+        if default_bulk is not None:
+            return default_bulk
+
         candidates = bulk_list.get("data") if isinstance(bulk_list, dict) else None
+        sample = []
         if isinstance(candidates, list):
-            default_bulk = next(
-                (
-                    item
-                    for item in candidates
-                    if isinstance(item, dict)
-                    and str(item.get("type") or "").strip().lower() == "default_cards"
-                ),
-                None,
-            )
-            if default_bulk and default_bulk.get("download_uri"):
-                return default_bulk
-
-        # Some transitional responses may wrap the requested object under data.
-        if isinstance(candidates, dict) and candidates.get("download_uri"):
-            return candidates
-
+            sample = [
+                {
+                    "type": item.get("type"),
+                    "name": item.get("name"),
+                    "content_type": item.get("content_type"),
+                    "has_download_uri": bool(item.get("download_uri")),
+                }
+                for item in candidates[:10]
+                if isinstance(item, dict)
+            ]
         raise RuntimeError(
             "Scryfall default_cards bulk endpoint unavailable "
-            f"(top_level_keys={sorted(bulk_list.keys()) if isinstance(bulk_list, dict) else []})"
+            f"(top_level_keys={sorted(bulk_list.keys()) if isinstance(bulk_list, dict) else []}, sample={sample})"
         )
 
     def _download_default_cards(self, *, stop_after: int | None = None) -> list[dict]:
