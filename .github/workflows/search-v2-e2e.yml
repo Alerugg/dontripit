@@ -8,6 +8,7 @@ on:
       - '.github/workflows/search-v2-e2e.yml'
       - 'backend/app/search_v2/**'
       - 'backend/app/routes/search_v2.py'
+      - 'frontend/next.config.js'
       - 'frontend/app/api/search-v2/**'
       - 'frontend/app/api/build-info/**'
       - 'frontend/app/api/catalog/cards/**'
@@ -117,6 +118,7 @@ jobs:
           curl -fsS 'http://127.0.0.1:3000/games/onepiece' > /tmp/onepiece-page.html
           curl -fsS -o /tmp/legacy-tcg.html -w '%{http_code}' 'http://127.0.0.1:3000/tcg/onepiece' > /tmp/legacy-tcg-status.txt
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=OP05-119&limit=10' > /tmp/search.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=Luffy&limit=10' > /tmp/luffy.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=monky%20lufi&limit=10' > /tmp/typo.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/suggest?game=onepiece&q=Luffy&limit=8' > /tmp/suggest.json
           curl -fsS 'http://127.0.0.1:3000/api/search-v2/facets?game=onepiece' > /tmp/facets.json
@@ -134,6 +136,7 @@ jobs:
               return json.loads(Path(name).read_text())
 
           search = load('/tmp/search.json')
+          luffy = load('/tmp/luffy.json')
           typo = load('/tmp/typo.json')
           suggest = load('/tmp/suggest.json')
           facets = load('/tmp/facets.json')
@@ -142,14 +145,21 @@ jobs:
           build = load('/tmp/build-info.json')
 
           items = search.get('items') or []
-          assert items, search
-          assert any((row.get('card_key') == 'onepiece:op05-119') for row in items[:5]), items[:5]
+          assert len(items) == 1, f'exact collector should return one logical Card, got {items}'
+          assert items[0].get('card_key') == 'onepiece:op05-119', items
+
+          luffy_items = luffy.get('items') or []
+          assert luffy_items, luffy
+          assert str(luffy_items[0].get('name') or '').lower() == 'monkey.d.luffy', luffy_items[:5]
 
           typo_items = typo.get('items') or []
           assert typo_items, typo
-          assert any('luffy' in str(row.get('name') or '').lower() for row in typo_items[:10]), typo_items[:10]
+          assert all('luffy' in str(row.get('name') or '').lower() for row in typo_items[:10]), typo_items[:10]
 
-          assert (suggest.get('items') or []), suggest
+          suggest_items = suggest.get('items') or []
+          assert suggest_items, suggest
+          assert str(suggest_items[0].get('name') or '').lower() == 'monkey.d.luffy', suggest_items[:5]
+
           groups = facets.get('groups') or {}
           assert groups and sum(len(v) for v in groups.values()) >= 19, facets
 
@@ -171,8 +181,9 @@ jobs:
           print(json.dumps({
               'status': 'pass',
               'exact_results': len(items),
+              'luffy_first': luffy_items[0].get('name'),
               'typo_results': len(typo_items),
-              'suggestions': len(suggest.get('items') or []),
+              'suggestion_first': suggest_items[0].get('name'),
               'facet_count': sum(len(v) for v in groups.values()),
               'set_choices': len(set_items),
               'advanced_total': advanced.get('total'),
@@ -187,6 +198,7 @@ jobs:
           name: search-v2-e2e-${{ github.sha }}
           path: |
             /tmp/search.json
+            /tmp/luffy.json
             /tmp/typo.json
             /tmp/suggest.json
             /tmp/facets.json
