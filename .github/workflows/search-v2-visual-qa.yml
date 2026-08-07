@@ -1,0 +1,176 @@
+name: Search V2 Visual QA
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/search-v2-visual-qa.yml'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/components/games/OnePieceExplorerV2Page.js'
+      - 'frontend/app/games/**'
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/lib/searchV2/**'
+      - 'frontend/next.config.js'
+  workflow_dispatch:
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PUBLIC_API_ENABLED: 'false'
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Install frontend dependencies and Playwright
+        working-directory: frontend
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "ci-visual-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "TEMP_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          nohup flask --app app.main:app run --host 127.0.0.1 --port 5000 > /tmp/backend-visual.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5000/api/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/backend-visual.log
+          exit 1
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
+        run: npm run build
+
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
+        run: |
+          nohup npm start > /tmp/frontend-visual.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:3000/api/build-info >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/frontend-visual.log
+          exit 1
+
+      - name: Capture desktop and mobile states
+        working-directory: frontend
+        run: |
+          mkdir -p /tmp/search-v2-visual
+          node - <<'NODE'
+          const { chromium } = require('playwright')
+          const fs = require('fs')
+          const base = 'http://127.0.0.1:3000'
+
+          async function waitForSearch(page) {
+            await page.waitForSelector('.sv2-search-shell', { timeout: 20000 })
+            await page.waitForTimeout(700)
+          }
+
+          async function waitForResults(page) {
+            await page.waitForSelector('.sv2-result-card', { timeout: 20000 })
+            await page.waitForTimeout(400)
+          }
+
+          ;(async () => {
+            const browser = await chromium.launch()
+            try {
+              const desktop = await browser.newContext({ viewport: { width: 1440, height: 1100 }, deviceScaleFactor: 1 })
+              const page = await desktop.newPage()
+
+              await page.goto(`${base}/games/onepiece`, { waitUntil: 'domcontentloaded' })
+              await waitForSearch(page)
+              await page.locator('.sv2-search-shell').screenshot({ path: '/tmp/search-v2-visual/desktop-search-quick.png' })
+
+              await page.goto(`${base}/games/onepiece?q=Luffy`, { waitUntil: 'domcontentloaded' })
+              await waitForResults(page)
+              await page.screenshot({ path: '/tmp/search-v2-visual/desktop-luffy-results.png', fullPage: true })
+
+              await page.goto(`${base}/games/onepiece?advanced=1&q=Luffy&f_set=op-05&f_language=en&f_rarity=SEC`, { waitUntil: 'domcontentloaded' })
+              await waitForResults(page)
+              await page.screenshot({ path: '/tmp/search-v2-visual/desktop-advanced.png', fullPage: true })
+              await desktop.close()
+
+              const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+              const mobilePage = await mobile.newPage()
+              await mobilePage.goto(`${base}/games/onepiece?q=Luffy`, { waitUntil: 'domcontentloaded' })
+              await waitForResults(mobilePage)
+              await mobilePage.screenshot({ path: '/tmp/search-v2-visual/mobile-luffy.png', fullPage: true })
+
+              await mobilePage.goto(`${base}/games/onepiece?advanced=1&q=Luffy&f_set=op-05&f_language=en&f_rarity=SEC`, { waitUntil: 'domcontentloaded' })
+              await waitForResults(mobilePage)
+              await mobilePage.screenshot({ path: '/tmp/search-v2-visual/mobile-advanced.png', fullPage: true })
+              await mobile.close()
+
+              fs.writeFileSync('/tmp/search-v2-visual/manifest.json', JSON.stringify({
+                status: 'pass',
+                files: [
+                  'desktop-search-quick.png',
+                  'desktop-luffy-results.png',
+                  'desktop-advanced.png',
+                  'mobile-luffy.png',
+                  'mobile-advanced.png',
+                ],
+              }, null, 2))
+            } finally {
+              await browser.close()
+            }
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
+          NODE
+
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-visual-${{ github.sha }}
+          path: /tmp/search-v2-visual
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true
