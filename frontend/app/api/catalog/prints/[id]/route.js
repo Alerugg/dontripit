@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../../lib/catalog/internalApi'
 
 export async function GET(_, { params }) {
-  const upstream = await callInternalApi(`/api/v1/prints/${params.id}`)
+  const { id } = await params
+  const upstream = await callInternalApi(`/api/v1/prints/${id}`)
 
   if (!upstream.ok) {
     const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
