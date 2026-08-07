@@ -8,11 +8,11 @@ import SectionHeader from '../ui/SectionHeader'
 import AdvancedSearchPanel from './AdvancedSearchPanel'
 import SearchV2Results from './SearchV2Results'
 import { advancedSearchV2, fetchFacetsV2, searchV2, suggestV2 } from '../../lib/searchV2/client'
+import { appendAdvancedFilters, hasFilterValues, readAdvancedFilters, safePage } from '../../lib/searchV2/urlState'
 import './SearchV2.css'
 
 const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi']
 const ADVANCED_PAGE_SIZE = 24
-const TRUE_FILTER_TOKEN = '__true__'
 
 function suggestionForLegacyRow(item) {
   return {
@@ -20,67 +20,6 @@ function suggestionForLegacyRow(item) {
     primary_image_url: item.primary_image_url || item.image_url,
     set_name: item.set_name || item.set_code,
   }
-}
-
-function hasFilterValues(filters = {}) {
-  return Object.values(filters).some((value) => {
-    if (value === undefined || value === null || value === '') return false
-    if (Array.isArray(value)) return value.length > 0
-    if (typeof value === 'object') return Object.values(value).some((nested) => nested !== undefined && nested !== null && nested !== '')
-    return true
-  })
-}
-
-function readAdvancedFilters(searchParams) {
-  const filters = {}
-  const ranges = {}
-
-  for (const [param, rawValue] of searchParams.entries()) {
-    if (!param.startsWith('f_')) continue
-    const key = param.slice(2)
-    if (!key) continue
-
-    if (key.endsWith('_min') || key.endsWith('_max')) {
-      const suffix = key.endsWith('_min') ? 'min' : 'max'
-      const base = key.slice(0, -4)
-      const parsed = Number(rawValue)
-      if (!base || !Number.isFinite(parsed)) continue
-      ranges[base] = { ...(ranges[base] || {}), [suffix]: parsed }
-      continue
-    }
-
-    const value = rawValue === TRUE_FILTER_TOKEN ? true : rawValue
-    if (!(key in filters)) {
-      filters[key] = value
-    } else if (Array.isArray(filters[key])) {
-      filters[key].push(value)
-    } else {
-      filters[key] = [filters[key], value]
-    }
-  }
-
-  return { ...filters, ...ranges }
-}
-
-function appendAdvancedFilters(params, filters = {}) {
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') return
-    if (Array.isArray(value)) {
-      value.filter((item) => item !== undefined && item !== null && item !== '').forEach((item) => params.append(`f_${key}`, String(item)))
-      return
-    }
-    if (typeof value === 'object') {
-      if (value.min !== undefined && value.min !== null && value.min !== '') params.set(`f_${key}_min`, String(value.min))
-      if (value.max !== undefined && value.max !== null && value.max !== '') params.set(`f_${key}_max`, String(value.max))
-      return
-    }
-    params.set(`f_${key}`, value === true ? TRUE_FILTER_TOKEN : String(value))
-  })
-}
-
-function safePage(rawValue) {
-  const parsed = Number(rawValue || 1)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
 }
 
 export default function OnePieceSearchV2Experience({ game }) {
