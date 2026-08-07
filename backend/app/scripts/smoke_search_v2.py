@@ -18,6 +18,7 @@ def _compact(rows: list[dict], limit: int = 5) -> list[dict]:
                 "card_key": row.get("card_key"),
                 "collector_number": matched.get("collector_number"),
                 "set_code": matched.get("set_code"),
+                "set_name": matched.get("set_name"),
                 "variant": matched.get("exact_variant"),
                 "score": row.get("score"),
             }
@@ -63,8 +64,15 @@ def run() -> dict:
                 )
 
         exact_rows = normal_search(session, query="OP05-119", game_slug="onepiece", limit=10)
-        if not any(row.get("card_key") == "onepiece:op05-119" for row in exact_rows[:3]):
+        exact_match = next(
+            (row for row in exact_rows[:3] if row.get("card_key") == "onepiece:op05-119"),
+            None,
+        )
+        if exact_match is None:
             raise AssertionError(f"Exact collector OP05-119 did not rank in top 3: {_compact(exact_rows, 10)}")
+        exact_print = exact_match.get("matched_print") or {}
+        if exact_print.get("set_code") != "op-05" or "OP-05" not in str(exact_print.get("set_name") or "").upper():
+            raise AssertionError(f"OP05-119 canonical set label mismatch: {_compact([exact_match], 1)}")
 
         compound_rows = normal_search(session, query="Luffy OP05", game_slug="onepiece", limit=20)
         if not any(
@@ -88,6 +96,8 @@ def run() -> dict:
         first = exact_parallel["items"][0]
         if first["collector_number"] != "OP05-119" or first["exact_variant"] != "p1":
             raise AssertionError(f"Advanced exact print mismatch: {first}")
+        if first["set_code"] != "op-05" or "OP-05" not in str(first.get("set_name") or "").upper():
+            raise AssertionError(f"Advanced OP05-119 canonical set label mismatch: {first}")
 
         purple_power = advanced_onepiece_search(
             session,
