@@ -33,7 +33,8 @@ function comparePrints(a = {}, b = {}) {
 }
 
 export async function GET(_, { params }) {
-  const upstream = await callInternalApi(`/api/v1/cards/${params.id}`)
+  const { id } = await params
+  const upstream = await callInternalApi(`/api/v1/cards/${id}`)
 
   if (!upstream.ok) {
     const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
@@ -48,7 +49,7 @@ export async function GET(_, { params }) {
   }
 
   const payload = upstream.payload || {}
-  const requestedCardId = String(params.id || '').trim()
+  const requestedCardId = String(id || '').trim()
   const requestedCardIdAsNumber = Number(requestedCardId)
   const payloadCardIdAsNumber = Number(payload?.id)
   const canCompareAsNumber = Number.isFinite(requestedCardIdAsNumber) && Number.isFinite(payloadCardIdAsNumber)
@@ -83,7 +84,7 @@ export async function GET(_, { params }) {
 
   return NextResponse.json({
     ...payload,
-    id: payload?.id ?? Number(params.id),
+    id: payload?.id ?? Number(id),
     primary_image_url: payload?.primary_image_url || normalizedPrints[0]?.primary_image_url || null,
     prints: normalizedPrints,
     sets: normalizedSets,
