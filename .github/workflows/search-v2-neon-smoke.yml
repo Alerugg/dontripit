@@ -9,6 +9,8 @@ on:
       - 'backend/app/scripts/smoke_search_v2.py'
       - 'backend/app/search_v2/query.py'
       - 'backend/app/search_v2/advanced.py'
+      - 'backend/app/search_v2/facet_values.py'
+      - 'backend/app/routes/search_v2.py'
   workflow_dispatch:
 
 jobs:
