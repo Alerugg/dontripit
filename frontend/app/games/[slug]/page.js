@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import TopNav from '../../../components/layout/TopNav'
 import GameExplorerPage from '../../../components/games/GameExplorerPage'
+import OnePieceExplorerV2Page from '../../../components/games/OnePieceExplorerV2Page'
 import { getGameConfig } from '../../../lib/catalog/games'
 
 export default function GamePage({ params }) {
@@ -11,7 +12,11 @@ export default function GamePage({ params }) {
   return (
     <main>
       <TopNav />
-      <GameExplorerPage game={game} />
+      {game.slug === 'onepiece' ? (
+        <OnePieceExplorerV2Page game={game} />
+      ) : (
+        <GameExplorerPage game={game} />
+      )}
     </main>
   )
 }
