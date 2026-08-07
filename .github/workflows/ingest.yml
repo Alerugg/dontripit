@@ -6,16 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       pokemon_set:
-        description: 'Optional Pokemon set code (example: base1)'
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
         required: false
         type: string
       pokemon_all_sets:
-        description: 'Refresh every Pokemon set from TCGdex'
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
         required: false
         default: false
         type: boolean
       pokemon_limit:
-        description: 'Pokemon cards per set; blank = full set, 0 = skip'
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
         required: false
         type: string
       onepiece_limit:
@@ -76,6 +76,7 @@ jobs:
           if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
           if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
           if [ -n "${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN is set for One Piece source access"; fi
+          echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the next catalog rebuild."
           if [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; then
             echo "Riftbound official source is configured"
           elif [ -n "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
@@ -92,74 +93,45 @@ jobs:
           set -euo pipefail
 
           EVENT_NAME="${{ github.event_name }}"
-          POKEMON_SET_INPUT="${{ github.event.inputs.pokemon_set || '' }}"
-          POKEMON_ALL_SETS_INPUT="${{ github.event.inputs.pokemon_all_sets || '' }}"
-          POKEMON_LIMIT_INPUT="${{ github.event.inputs.pokemon_limit || '' }}"
           ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
           MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
           YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
           RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
-          POKEMON_SET=""
-          POKEMON_ALL_SETS="false"
-          POKEMON_LIMIT="${POKEMON_LIMIT_INPUT}"
           ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
           MTG_LIMIT="${MTG_LIMIT_INPUT:-500}"
           YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
           RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
-          SKIP_POKEMON="false"
+
+          # The legacy TCGdex connector collapsed distinct Pokémon identities and
+          # does not separate Pokémon TCG Pocket. Never let it mutate the rebuilt
+          # physical catalog. V2 bootstrap/refresh replaces it after certification.
+          SKIP_POKEMON="true"
 
           if [ "${EVENT_NAME}" = "schedule" ]; then
-            # TCGdex set payloads are relatively cheap and idempotent by checksum.
-            # Scheduled runs therefore scan every set instead of the old base1-only behavior.
-            POKEMON_ALL_SETS="true"
-            POKEMON_LIMIT=""
-
             # One Piece remote ingestion can involve thousands of card files. Refresh
-            # the full source once per week; the separate bootstrap workflow seeds it initially.
+            # the full source once per week; incremental days skip it.
             if [ "$(date -u +%u)" = "7" ]; then
               ONEPIECE_LIMIT=""
             else
               ONEPIECE_LIMIT="0"
             fi
-          else
-            if [ -n "${POKEMON_SET_INPUT}" ]; then
-              POKEMON_SET="${POKEMON_SET_INPUT}"
-            elif [ "${POKEMON_ALL_SETS_INPUT}" = "true" ]; then
-              POKEMON_ALL_SETS="true"
-            else
-              SKIP_POKEMON="true"
-            fi
           fi
 
-          # Do not turn a missing Riftbound credential into a fake pipeline failure.
-          # The connector becomes active automatically once either official config or
-          # a valid fallback endpoint is present in repository secrets.
           if ! { [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; } \
              && [ -z "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
             RIFTBOUND_LIMIT="0"
           fi
 
           ARGS=(
+            --skip-pokemon "${SKIP_POKEMON}"
             --mtg-limit "${MTG_LIMIT}"
             --yugioh-limit "${YUGIOH_LIMIT}"
             --riftbound-limit "${RIFTBOUND_LIMIT}"
             --incremental "${INCREMENTAL}"
           )
-
-          if [ -n "${POKEMON_LIMIT}" ]; then
-            ARGS+=(--pokemon-limit "${POKEMON_LIMIT}")
-          fi
-          if [ -n "${POKEMON_SET}" ]; then
-            ARGS+=(--pokemon-set "${POKEMON_SET}")
-          elif [ "${POKEMON_ALL_SETS}" = "true" ]; then
-            ARGS+=(--pokemon-all-sets true)
-          fi
-          if [ "${SKIP_POKEMON}" = "true" ]; then
-            ARGS+=(--skip-pokemon true)
-          fi
 
           if [ -n "${ONEPIECE_LIMIT}" ]; then
             ARGS+=(--onepiece-limit "${ONEPIECE_LIMIT}")
