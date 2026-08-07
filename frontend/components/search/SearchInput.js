@@ -26,10 +26,7 @@ export default function SearchInput({
     if (!value?.trim()) {
       setIsOpen(false)
       setActiveIndex(-1)
-      return
     }
-
-    setIsOpen(true)
   }, [value])
 
   useEffect(() => {
@@ -108,12 +105,19 @@ export default function SearchInput({
     }
   }
 
+  function handleChange(event) {
+    const nextValue = event.target.value
+    onChange(nextValue)
+    setActiveIndex(-1)
+    setIsOpen(Boolean(nextValue.trim()))
+  }
+
   return (
     <div className={`search-input-shell search-input-shell-${variant} ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
       <div className={`search-input-row search-input-row-${variant}`} ref={inputRowRef}>
         <input
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => value?.trim() && setIsOpen(true)}
           placeholder={placeholder}
