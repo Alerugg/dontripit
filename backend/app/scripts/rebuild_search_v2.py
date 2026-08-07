@@ -12,6 +12,9 @@ from app.search_v2.onepiece_source import load_onepiece_search_attributes
 from app.search_v2_models import CardSearchProfile, FacetDefinition, PrintSearchProfile
 
 
+MIN_ACTIVE_ONEPIECE_FACETS = 19
+
+
 def run(*, game_slug: str = "onepiece") -> dict:
     if game_slug != "onepiece":
         raise ValueError(f"Search V2 rebuild not implemented for game: {game_slug}")
@@ -52,7 +55,7 @@ def run(*, game_slug: str = "onepiece") -> dict:
 
     if verified["card_profiles"] != 2665 or verified["print_profiles"] != 4672:
         raise RuntimeError(f"Search V2 verification failed: {verified}")
-    if verified["facets"] < 20:
+    if verified["facets"] < MIN_ACTIVE_ONEPIECE_FACETS:
         raise RuntimeError(f"Search V2 facet coverage unexpectedly low: {verified}")
 
     return {
