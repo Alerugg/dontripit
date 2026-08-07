@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import { fetchFacetValuesV2 } from '../../lib/searchV2/client'
 import './SearchV2.css'
 
 function isEmpty(value) {
@@ -9,21 +11,113 @@ function isEmpty(value) {
   return false
 }
 
-function normalizeTextValue(value, multiValue) {
-  if (!multiValue) return value
-  if (Array.isArray(value)) return value.join(', ')
-  return value || ''
+function DynamicFacetPicker({ gameSlug, facet, value, onChange }) {
+  const [input, setInput] = useState('')
+  const [options, setOptions] = useState([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const current = facet.multi_value ? (Array.isArray(value) ? value : value ? [value] : []) : value
+
+  useEffect(() => {
+    if (!open) return undefined
+    let cancelled = false
+    const handle = setTimeout(async () => {
+      setLoading(true)
+      try {
+        const rows = await fetchFacetValuesV2({ game: gameSlug, key: facet.key, q: input, limit: 24 })
+        if (!cancelled) setOptions(rows)
+      } catch {
+        if (!cancelled) setOptions([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }, input ? 140 : 0)
+    return () => {
+      cancelled = true
+      clearTimeout(handle)
+    }
+  }, [facet.key, gameSlug, input, open])
+
+  function choose(option) {
+    const nextValue = option.value
+    if (facet.multi_value) {
+      const next = current.includes(nextValue) ? current : [...current, nextValue]
+      onChange(next)
+    } else {
+      onChange(nextValue)
+      setOpen(false)
+    }
+    setInput('')
+  }
+
+  function remove(selected) {
+    if (facet.multi_value) {
+      const next = current.filter((item) => item !== selected)
+      onChange(next.length ? next : undefined)
+    } else {
+      onChange(undefined)
+    }
+  }
+
+  return (
+    <div className="sv2-picker">
+      {facet.multi_value && current.length > 0 ? (
+        <div className="sv2-picker-selected">
+          {current.map((selected) => (
+            <button key={selected} type="button" onClick={() => remove(selected)}>{selected} ×</button>
+          ))}
+        </div>
+      ) : null}
+      {!facet.multi_value && current ? (
+        <button type="button" className="sv2-picker-single" onClick={() => remove(current)}>{current} ×</button>
+      ) : null}
+      <div className="sv2-picker-input-wrap">
+        <input
+          type="text"
+          className="sv2-facet-input"
+          value={input}
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            setInput(event.target.value)
+            setOpen(true)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setOpen(false)
+            if (event.key === 'Enter' && options[0]) {
+              event.preventDefault()
+              choose(options[0])
+            }
+          }}
+          placeholder={`Buscar ${facet.label.toLowerCase()}…`}
+          autoComplete="off"
+        />
+        {open ? (
+          <div className="sv2-picker-menu">
+            {loading ? <div className="sv2-picker-state">Buscando…</div> : null}
+            {!loading && options.length === 0 ? <div className="sv2-picker-state">Sin coincidencias</div> : null}
+            {!loading && options.map((option) => (
+              <button
+                type="button"
+                key={`${option.value}-${option.label}`}
+                className="sv2-picker-option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choose(option)}
+              >
+                <span>
+                  <strong>{option.value}</strong>
+                  {option.label && option.label !== option.value ? <small>{option.label}</small> : null}
+                </span>
+                <em>{Number(option.count || 0).toLocaleString()}</em>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
-function parseTextValue(value, multiValue) {
-  if (!multiValue) return value
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function FacetControl({ facet, value, onChange }) {
+function FacetControl({ gameSlug, facet, value, onChange }) {
   const options = Array.isArray(facet.options) ? facet.options : []
 
   if (facet.ui_type === 'toggle') {
@@ -66,10 +160,8 @@ function FacetControl({ facet, value, onChange }) {
     )
   }
 
-  if (facet.ui_type === 'chips' && options.length > 0) {
-    const current = facet.multi_value
-      ? (Array.isArray(value) ? value : value ? [value] : [])
-      : value
+  if ((facet.ui_type === 'chips' || facet.ui_type === 'multi_select') && options.length > 0) {
+    const current = facet.multi_value ? (Array.isArray(value) ? value : value ? [value] : []) : value
     return (
       <div className="sv2-chip-list">
         {options.map((option) => {
@@ -96,42 +188,23 @@ function FacetControl({ facet, value, onChange }) {
     )
   }
 
-  if ((facet.ui_type === 'multi_select' || facet.ui_type === 'chips') && options.length > 0) {
-    const current = Array.isArray(value) ? value : value ? [value] : []
-    return (
-      <div className="sv2-chip-list">
-        {options.map((option) => {
-          const selected = current.includes(option)
-          return (
-            <button
-              key={option}
-              type="button"
-              className={`sv2-chip ${selected ? 'is-active' : ''}`}
-              onClick={() => {
-                const next = selected ? current.filter((item) => item !== option) : [...current, option]
-                onChange(next.length ? next : undefined)
-              }}
-            >
-              {option}
-            </button>
-          )
-        })}
-      </div>
-    )
+  if (facet.ui_type === 'autocomplete' || facet.ui_type === 'multi_select' || facet.searchable) {
+    return <DynamicFacetPicker gameSlug={gameSlug} facet={facet} value={value} onChange={onChange} />
   }
 
   return (
     <input
       type="text"
       className="sv2-facet-input"
-      value={normalizeTextValue(value, facet.multi_value)}
-      onChange={(event) => onChange(parseTextValue(event.target.value, facet.multi_value))}
-      placeholder={facet.searchable ? `Buscar ${facet.label.toLowerCase()}…` : facet.label}
+      value={value || ''}
+      onChange={(event) => onChange(event.target.value || undefined)}
+      placeholder={facet.label}
     />
   )
 }
 
 export default function AdvancedSearchPanel({
+  gameSlug,
   groups = {},
   values = {},
   onChange,
@@ -176,7 +249,7 @@ export default function AdvancedSearchPanel({
                 <legend>{groupName}</legend>
                 <div className="sv2-facet-grid">
                   {facets.map((facet) => (
-                    <label key={`${facet.scope}-${facet.key}`} className={`sv2-facet sv2-facet-${facet.ui_type}`}>
+                    <div key={`${facet.scope}-${facet.key}`} className={`sv2-facet sv2-facet-${facet.ui_type}`}>
                       {facet.ui_type !== 'toggle' && (
                         <span className="sv2-facet-label">
                           {facet.label}
@@ -184,11 +257,12 @@ export default function AdvancedSearchPanel({
                         </span>
                       )}
                       <FacetControl
+                        gameSlug={gameSlug}
                         facet={facet}
                         value={values[facet.key]}
                         onChange={(nextValue) => onChange(facet.key, nextValue)}
                       />
-                    </label>
+                    </div>
                   ))}
                 </div>
               </fieldset>
