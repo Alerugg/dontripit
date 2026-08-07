@@ -1,0 +1,23 @@
+.onepiece-v2-hero-card {
+  display: grid;
+  gap: .42rem;
+}
+
+.onepiece-v2-hero-label {
+  color: var(--game-accent, #8b7cff);
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.onepiece-v2-hero-title {
+  display: block;
+  line-height: 1.35;
+}
+
+.onepiece-v2-hero-note {
+  display: block;
+  color: var(--muted, #9ca3af);
+  line-height: 1.45;
+}
