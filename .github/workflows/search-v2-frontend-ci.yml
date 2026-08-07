@@ -8,6 +8,7 @@ on:
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
       - 'frontend/next.config.js'
+      - 'frontend/components/search/**'
       - 'frontend/components/searchV2/**'
       - 'frontend/components/games/OnePieceExplorerV2Page.js'
       - 'frontend/app/games/**'
