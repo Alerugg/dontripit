@@ -12,6 +12,7 @@ on:
       - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon.py'
       - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh_v2.py'
       - 'backend/app/ingest/connectors/riftbound.py'
       - 'backend/app/ingest/connectors/riftbound_official.py'
       - 'backend/app/ingest/connectors/riftbound_fallback.py'
