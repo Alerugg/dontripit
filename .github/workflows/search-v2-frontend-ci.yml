@@ -19,8 +19,10 @@ on:
       - 'frontend/app/api/search-v2/**'
       - 'frontend/app/api/catalog/cards/**'
       - 'frontend/app/api/catalog/prints/**'
+      - 'frontend/app/api/catalog/news/**'
       - 'frontend/app/api/build-info/**'
       - 'frontend/lib/searchV2/**'
+      - 'frontend/lib/news/**'
       - 'frontend/tests/explorerPage.test.mjs'
       - '.github/workflows/search-v2-frontend-ci.yml'
   workflow_dispatch:
