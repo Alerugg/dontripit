@@ -7,10 +7,19 @@ on:
     paths:
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
+      - 'frontend/next.config.js'
       - 'frontend/components/searchV2/**'
       - 'frontend/components/games/OnePieceExplorerV2Page.js'
-      - 'frontend/app/games/[slug]/page.js'
+      - 'frontend/app/games/**'
+      - 'frontend/app/cards/**'
+      - 'frontend/app/prints/**'
+      - 'frontend/app/tcg/**'
+      - 'frontend/app/play/**'
+      - 'frontend/app/explorer/**'
       - 'frontend/app/api/search-v2/**'
+      - 'frontend/app/api/catalog/cards/**'
+      - 'frontend/app/api/catalog/prints/**'
+      - 'frontend/app/api/build-info/**'
       - 'frontend/lib/searchV2/**'
       - 'frontend/tests/explorerPage.test.mjs'
       - '.github/workflows/search-v2-frontend-ci.yml'
@@ -28,10 +37,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Node.js 20
+      - name: Set up Node.js 20.19
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19.0'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
