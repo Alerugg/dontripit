@@ -57,6 +57,23 @@ def request_json(session: requests.Session, path: str, *, attempts: int = 5):
     raise RuntimeError(f"TCGdex request failed after {attempts} attempts: {url}: {last_error}")
 
 
+def _normalized_abbreviation(value: object) -> str | None:
+    if isinstance(value, str):
+        clean = value.strip()
+        return clean or None
+    if isinstance(value, dict):
+        # TCGdex uses objects such as {"official": "MCD11"} for many sets.
+        # Prefer the official code, then other stable string values.
+        for key in ("official", "tcgOnline", "ptcgo", "code"):
+            clean = str(value.get(key) or "").strip()
+            if clean:
+                return clean
+        for raw in value.values():
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
 def _set_detail(summary: dict) -> dict:
     set_id = str(summary.get("id") or "").strip()
     if not set_id:
@@ -70,6 +87,7 @@ def _set_detail(summary: dict) -> dict:
 
     serie = detail.get("serie") if isinstance(detail, dict) else None
     card_count = detail.get("cardCount") if isinstance(detail, dict) else None
+    raw_abbreviation = (detail or {}).get("abbreviation")
     return {
         "set_id": set_id,
         "set_name": str((detail or {}).get("name") or summary.get("name") or "").strip(),
@@ -79,7 +97,8 @@ def _set_detail(summary: dict) -> dict:
         "declared_total": (card_count or {}).get("total") if isinstance(card_count, dict) else None,
         "declared_official": (card_count or {}).get("official") if isinstance(card_count, dict) else None,
         "set_endpoint_cards": len((detail or {}).get("cards") or []),
-        "abbreviation": (detail or {}).get("abbreviation"),
+        "abbreviation": _normalized_abbreviation(raw_abbreviation),
+        "abbreviation_raw": raw_abbreviation,
     }
 
 
