@@ -33,9 +33,9 @@ jobs:
         run: alembic upgrade head
       - name: Verify Alembic head
         run: |
-          CURRENT="$(alembic current | awk '{print $1}')"
-          echo "Current DB revision: ${CURRENT}"
-          test "${CURRENT}" = "20260807_19"
+          set -o pipefail
+          alembic current 2>&1 | tee /tmp/alembic-current.txt
+          grep -q '20260807_19' /tmp/alembic-current.txt
       - name: Build One Piece Search V2 profiles
         run: |
           set -o pipefail
