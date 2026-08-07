@@ -1,0 +1,76 @@
+name: Evaluate Next Upgrade
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/evaluate-next-upgrade.yml'
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    strategy:
+      fail-fast: false
+      matrix:
+        next_version: ['15.5.16', '16.2.9']
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      INTERNAL_API_KEY: ci-placeholder-key
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Upgrade Next and React in isolated workspace
+        run: npm install next@${{ matrix.next_version }} react@latest react-dom@latest --save-exact
+      - name: Show resolved versions
+        run: |
+          node - <<'NODE'
+          const pkg=require('./package.json')
+          const lock=require('./package-lock.json')
+          console.log(JSON.stringify({
+            package:{next:pkg.dependencies.next,react:pkg.dependencies.react,reactDom:pkg.dependencies['react-dom']},
+            resolved:{
+              next:lock.packages?.['node_modules/next']?.version,
+              react:lock.packages?.['node_modules/react']?.version,
+              reactDom:lock.packages?.['node_modules/react-dom']?.version,
+            }
+          },null,2))
+          NODE
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --json > /tmp/audit-${{ matrix.next_version }}.json || true
+          node - <<'NODE'
+          const fs=require('fs')
+          const p=JSON.parse(fs.readFileSync('/tmp/audit-${{ matrix.next_version }}.json','utf8'))
+          console.log(JSON.stringify({metadata:p.metadata,vulnerabilities:p.vulnerabilities},null,2))
+          const counts=p.metadata?.vulnerabilities || {}
+          if ((counts.critical||0)>0 || (counts.high||0)>0) process.exit(2)
+          NODE
+      - name: Run frontend tests
+        run: npm test
+      - name: Build production frontend
+        run: npm run build
+      - name: Stage candidate package files
+        if: always()
+        run: |
+          mkdir -p /tmp/candidate-${{ matrix.next_version }}
+          cp package.json package-lock.json /tmp/candidate-${{ matrix.next_version }}/
+          cp /tmp/audit-${{ matrix.next_version }}.json /tmp/candidate-${{ matrix.next_version }}/audit.json || true
+      - name: Upload candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-upgrade-${{ matrix.next_version }}-${{ github.sha }}
+          path: /tmp/candidate-${{ matrix.next_version }}
+          if-no-files-found: warn
+          retention-days: 30
