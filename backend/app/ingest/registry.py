@@ -4,7 +4,7 @@ from app.ingest.connectors.onepiece import OnePieceConnector
 from app.ingest.connectors.riftbound import RiftboundConnector
 from app.ingest.connectors.scryfall_mtg_v2 import ScryfallMtgV2Connector
 from app.ingest.connectors.tcgdex_pokemon import TcgdexPokemonConnector
-from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
+from app.ingest.connectors.ygoprodeck_yugioh_v2 import YgoProDeckYugiohV2Connector
 
 
 CONNECTORS = {
@@ -12,7 +12,7 @@ CONNECTORS = {
     ScryfallMtgV2Connector.name: ScryfallMtgV2Connector,
     TcgdexPokemonConnector.name: TcgdexPokemonConnector,
     OnePieceConnector.name: OnePieceConnector,
-    YgoProDeckYugiohConnector.name: YgoProDeckYugiohConnector,
+    YgoProDeckYugiohV2Connector.name: YgoProDeckYugiohV2Connector,
     RiftboundConnector.name: RiftboundConnector,
 }
 
