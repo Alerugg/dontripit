@@ -1,0 +1,189 @@
+name: Search V2 End-to-End
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/search-v2-e2e.yml'
+      - 'backend/app/search_v2/**'
+      - 'backend/app/routes/search_v2.py'
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/lib/searchV2/**'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PUBLIC_API_ENABLED: 'false'
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Create temporary catalog API key
+        id: key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "ci-e2e-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "TEMP_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+          echo "Created temporary key prefix $PREFIX"
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          nohup flask --app app.main:app run --host 127.0.0.1 --port 5000 > /tmp/backend.log 2>&1 &
+          echo $! > /tmp/backend.pid
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5000/api/health >/tmp/backend-health.json; then
+              cat /tmp/backend-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/backend.log
+          exit 1
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
+        run: npm run build
+
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_KEY: ${{ env.TEMP_API_KEY }}
+        run: |
+          nohup npm start > /tmp/frontend.log 2>&1 &
+          echo $! > /tmp/frontend.pid
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:3000/games/onepiece >/tmp/onepiece-page.html; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/frontend.log
+          exit 1
+
+      - name: Exercise Search V2 over HTTP
+        run: |
+          set -euo pipefail
+
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=OP05-119&limit=10' > /tmp/search.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2?game=onepiece&q=monky%20lufi&limit=10' > /tmp/typo.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2/suggest?game=onepiece&q=Luffy&limit=8' > /tmp/suggest.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2/facets?game=onepiece' > /tmp/facets.json
+          curl -fsS 'http://127.0.0.1:3000/api/search-v2/facet-values?game=onepiece&key=set&q=op05&limit=10' > /tmp/set-values.json
+          curl -fsS -X POST 'http://127.0.0.1:3000/api/search-v2/advanced' \
+            -H 'Content-Type: application/json' \
+            --data '{"game":"onepiece","q":"Luffy","filters":{"set":"op-05","language":"en","rarity":"SEC"},"limit":20,"offset":0}' \
+            > /tmp/advanced.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def load(name):
+              return json.loads(Path(name).read_text())
+
+          search = load('/tmp/search.json')
+          typo = load('/tmp/typo.json')
+          suggest = load('/tmp/suggest.json')
+          facets = load('/tmp/facets.json')
+          sets = load('/tmp/set-values.json')
+          advanced = load('/tmp/advanced.json')
+
+          items = search.get('items') or []
+          assert items, search
+          assert any((row.get('card_key') == 'onepiece:op05-119') for row in items[:5]), items[:5]
+
+          typo_items = typo.get('items') or []
+          assert typo_items, typo
+          assert any('luffy' in str(row.get('name') or '').lower() for row in typo_items[:10]), typo_items[:10]
+
+          assert (suggest.get('items') or []), suggest
+          groups = facets.get('groups') or {}
+          assert groups and sum(len(v) for v in groups.values()) >= 19, facets
+
+          set_items = sets.get('items') or []
+          assert set_items, sets
+          assert any(str(row.get('value') or '').lower() == 'op-05' for row in set_items), set_items
+
+          adv_items = advanced.get('items') or []
+          assert adv_items, advanced
+          for row in adv_items[:10]:
+              assert row.get('set_code') == 'op-05', row
+              assert row.get('language') == 'en', row
+              assert str(row.get('rarity') or '').upper() == 'SEC', row
+
+          html = Path('/tmp/onepiece-page.html').read_text(errors='ignore')
+          assert 'One Piece' in html or 'ONE PIECE' in html, 'One Piece page rendered without game identity'
+
+          print(json.dumps({
+              'status': 'pass',
+              'exact_results': len(items),
+              'typo_results': len(typo_items),
+              'suggestions': len(suggest.get('items') or []),
+              'facet_count': sum(len(v) for v in groups.values()),
+              'set_choices': len(set_items),
+              'advanced_total': advanced.get('total'),
+          }, indent=2))
+          PY
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-e2e-${{ github.sha }}
+          path: |
+            /tmp/search.json
+            /tmp/typo.json
+            /tmp/suggest.json
+            /tmp/facets.json
+            /tmp/set-values.json
+            /tmp/advanced.json
+            /tmp/backend-health.json
+            /tmp/backend.log
+            /tmp/frontend.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true
