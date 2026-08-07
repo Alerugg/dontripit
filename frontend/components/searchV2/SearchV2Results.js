@@ -1,10 +1,24 @@
 'use client'
 
 import Link from 'next/link'
+import FallbackImage from '../common/FallbackImage'
 import './SearchV2.css'
 
 function badge(value) {
   return value ? <span className="sv2-badge">{value}</span> : null
+}
+
+function ResultImage({ src, name, gameSlug }) {
+  return (
+    <FallbackImage
+      src={src}
+      alt={name}
+      className="sv2-result-image"
+      placeholderClassName="sv2-image-placeholder"
+      label={gameSlug === 'onepiece' ? 'One Piece' : gameSlug || 'TCG'}
+      initials={gameSlug === 'onepiece' ? 'OP' : undefined}
+    />
+  )
 }
 
 function CardResult({ item, gameSlug, query }) {
@@ -15,11 +29,7 @@ function CardResult({ item, gameSlug, query }) {
       className="sv2-result-card"
     >
       <div className="sv2-result-image-wrap">
-        {matched.primary_image_url ? (
-          <img src={matched.primary_image_url} alt={item.name} className="sv2-result-image" loading="lazy" />
-        ) : (
-          <div className="sv2-image-placeholder">No image</div>
-        )}
+        <ResultImage src={matched.primary_image_url} name={item.name} gameSlug={gameSlug} />
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
@@ -45,11 +55,7 @@ function PrintResult({ item, gameSlug }) {
   return (
     <Link href={`/games/${gameSlug}/cards/${item.card_id}`} className="sv2-result-card sv2-result-card-print">
       <div className="sv2-result-image-wrap">
-        {item.primary_image_url ? (
-          <img src={item.primary_image_url} alt={item.name} className="sv2-result-image" loading="lazy" />
-        ) : (
-          <div className="sv2-image-placeholder">No image</div>
-        )}
+        <ResultImage src={item.primary_image_url} name={item.name} gameSlug={gameSlug} />
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
