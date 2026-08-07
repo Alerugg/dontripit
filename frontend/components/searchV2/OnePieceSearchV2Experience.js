@@ -12,6 +12,7 @@ import './SearchV2.css'
 
 const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi']
 const ADVANCED_PAGE_SIZE = 24
+const TRUE_FILTER_TOKEN = '__true__'
 
 function suggestionForLegacyRow(item) {
   return {
@@ -48,7 +49,7 @@ function readAdvancedFilters(searchParams) {
       continue
     }
 
-    const value = rawValue === '1' ? true : rawValue
+    const value = rawValue === TRUE_FILTER_TOKEN ? true : rawValue
     if (!(key in filters)) {
       filters[key] = value
     } else if (Array.isArray(filters[key])) {
@@ -73,7 +74,7 @@ function appendAdvancedFilters(params, filters = {}) {
       if (value.max !== undefined && value.max !== null && value.max !== '') params.set(`f_${key}_max`, String(value.max))
       return
     }
-    params.set(`f_${key}`, value === true ? '1' : String(value))
+    params.set(`f_${key}`, value === true ? TRUE_FILTER_TOKEN : String(value))
   })
 }
 
