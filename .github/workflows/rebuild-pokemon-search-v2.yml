@@ -7,12 +7,14 @@ on:
     paths:
       - '.github/workflows/rebuild-pokemon-search-v2.yml'
       - 'backend/app/scripts/rebuild_pokemon_search_v2_fast.py'
-      - 'backend/app/scripts/benchmark_pokemon_search_v2.py'
+      - 'backend/app/scripts/benchmark_pokemon_search_v2_fast.py'
       - 'backend/app/search_v2/pokemon_indexer.py'
+      - 'backend/app/search_v2/pokemon_query.py'
       - 'backend/app/search_v2/pokemon_advanced.py'
       - 'backend/app/search_v2/pokemon_facet_values.py'
       - 'backend/app/search_v2/facets.py'
       - 'backend/app/routes/search_v2.py'
+      - 'backend/alembic/versions/20260808_22_add_pokemon_search_numeric_indexes.py'
   workflow_dispatch:
 
 concurrency:
@@ -47,9 +49,9 @@ jobs:
       - name: Compile Search V2 modules
         working-directory: backend
         run: |
-          python -m compileall -q app/search_v2 app/routes/search_v2.py app/scripts/rebuild_pokemon_search_v2_fast.py app/scripts/benchmark_pokemon_search_v2.py
+          python -m compileall -q app/search_v2 app/routes/search_v2.py app/scripts/rebuild_pokemon_search_v2_fast.py app/scripts/benchmark_pokemon_search_v2_fast.py
 
-      - name: Apply schema migrations
+      - name: Apply performance schema migrations
         working-directory: backend
         run: alembic upgrade head
 
@@ -61,11 +63,11 @@ jobs:
             --report-path /tmp/pokemon-search-v2-rebuild.json \
             | tee /tmp/pokemon-search-v2-rebuild.log
 
-      - name: Run Pokémon Search V2 certification benchmark
+      - name: Run Pokémon Search V2 functional and latency benchmark
         working-directory: backend
         run: |
           set -euo pipefail
-          python -u -m app.scripts.benchmark_pokemon_search_v2 \
+          python -u -m app.scripts.benchmark_pokemon_search_v2_fast \
             --report-path /tmp/pokemon-search-v2-benchmark.json \
             | tee /tmp/pokemon-search-v2-benchmark.log
 
