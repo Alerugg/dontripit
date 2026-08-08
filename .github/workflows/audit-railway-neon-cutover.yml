@@ -59,8 +59,6 @@ jobs:
           import psycopg2
           from psycopg2 import sql
 
-          EXCLUDED_SCHEMAS = {'pg_catalog', 'information_schema'}
-
           def normalize(url: str) -> str:
               if url.startswith('postgresql+psycopg2://'):
                   return 'postgresql://' + url[len('postgresql+psycopg2://'):]
@@ -216,8 +214,6 @@ jobs:
           Path('/tmp/cutover/railway-neon-inventory.json').write_text(
               json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
           )
-
-          # Print only non-sensitive summary/counts to Actions logs.
           print(json.dumps({
               'status': report['status'],
               'summary': report['summary'],
@@ -230,28 +226,23 @@ jobs:
           PY
           python /tmp/cutover/inventory.py
 
-      - name: Install PostgreSQL client
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
-          pg_dump --version
-
-      - name: Create encrypted logical Railway backup
+      - name: Create encrypted logical Railway backup with PostgreSQL 17
         shell: bash
         run: |
           set -euo pipefail
           RAILWAY_PG_URL="${RAILWAY_DATABASE_URL/postgresql+psycopg2:\/\//postgresql:\/\/}"
           RAILWAY_PG_URL="${RAILWAY_PG_URL/postgres+psycopg2:\/\//postgresql:\/\/}"
           RAILWAY_PG_URL="${RAILWAY_PG_URL/postgres:\/\//postgresql:\/\/}"
-          pg_dump "$RAILWAY_PG_URL" \
-            --format=custom \
-            --compress=9 \
-            --no-owner \
-            --no-acl \
-            --file=/tmp/cutover/railway-backup.dump
-          pg_restore --list /tmp/cutover/railway-backup.dump > /tmp/cutover/railway-backup.list
+          docker run --rm \
+            -e RAILWAY_PG_URL="$RAILWAY_PG_URL" \
+            -v /tmp/cutover:/backup \
+            postgres:17 \
+            sh -c 'pg_dump "$RAILWAY_PG_URL" --format=custom --compress=9 --no-owner --no-acl --file=/backup/railway-backup.dump'
+          docker run --rm \
+            -v /tmp/cutover:/backup \
+            postgres:17 \
+            sh -c 'pg_restore --list /backup/railway-backup.dump' \
+            > /tmp/cutover/railway-backup.list
           test -s /tmp/cutover/railway-backup.dump
           sha256sum /tmp/cutover/railway-backup.dump > /tmp/cutover/railway-backup.sha256
           openssl enc -aes-256-cbc -pbkdf2 -salt \
@@ -263,6 +254,7 @@ jobs:
           ls -lh /tmp/cutover/railway-backup.dump.enc
 
       - name: Upload cutover evidence and encrypted backup
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: railway-neon-cutover-audit-${{ github.sha }}
@@ -272,5 +264,5 @@ jobs:
             /tmp/cutover/railway-backup.list
             /tmp/cutover/railway-backup.sha256
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
           compression-level: 6
