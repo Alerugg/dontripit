@@ -27,6 +27,7 @@ class IngestStats:
 class SourceConnector:
     name = "base"
     uses_normalized_payload = False
+    persist_raw_source_payload = True
     logger = logging.getLogger("app.ingest")
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
@@ -48,6 +49,22 @@ class SourceConnector:
 
     def normalize(self, payload: dict, **kwargs) -> dict:
         return payload
+
+    def source_record_payload(self, payload: dict, **kwargs) -> dict:
+        """Return the provenance payload persisted next to a source checksum.
+
+        Most connectors keep their original payload for debugging/replay. Very
+        large authoritative bulk sources may opt out when the raw source is
+        reproducible and duplicating it in the operational database would be
+        materially wasteful. The checksum row is still preserved so incremental
+        idempotency and source provenance remain intact.
+        """
+        if self.persist_raw_source_payload:
+            return payload
+        return {
+            "_payload_omitted": True,
+            "_connector": self.name,
+        }
 
     def ensure_source(self, session):
         source = session.execute(select(Source).where(Source.name == self.name)).scalar_one_or_none()
@@ -185,7 +202,13 @@ class SourceConnector:
                     continue
 
                 if existing_record is None:
-                    session.add(SourceRecord(source_id=source.id, checksum=checksum, raw_json=payload))
+                    session.add(
+                        SourceRecord(
+                            source_id=source.id,
+                            checksum=checksum,
+                            raw_json=self.source_record_payload(payload, **kwargs),
+                        )
+                    )
                 normalized = self.normalize(payload, **kwargs)
                 normalized = self.validate_payload_contract(normalized)
                 upsert_result = self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
