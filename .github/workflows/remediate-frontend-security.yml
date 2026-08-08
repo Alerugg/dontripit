@@ -1,0 +1,91 @@
+name: Remediate Frontend Security
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/remediate-frontend-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Align production framework to patched Active LTS
+        run: |
+          npm install --save-exact next@16.2.11 react@19.2.8 react-dom@19.2.8
+
+      - name: Remove obsolete Next 13 lint stack
+        run: |
+          npm uninstall eslint eslint-config-next
+          npm pkg delete scripts.lint
+
+      - name: Refresh compatible CSS build tooling
+        run: |
+          npm install --save-dev --save-exact autoprefixer@latest postcss@latest tailwindcss@3.4.17
+
+      - name: Apply non-breaking audit remediation
+        run: npm audit fix
+
+      - name: Enforce zero critical and high vulnerabilities
+        run: |
+          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
+          npm audit --json > /tmp/frontend-audit.json || true
+          node - <<'NODE'
+          const fs = require('fs')
+          const audit = JSON.parse(fs.readFileSync('/tmp/frontend-audit.json', 'utf8'))
+          const v = audit.metadata?.vulnerabilities || {}
+          console.log(JSON.stringify({ vulnerabilities: v }, null, 2))
+          if ((v.critical || 0) !== 0 || (v.high || 0) !== 0) process.exit(1)
+          NODE
+
+      - name: Run frontend contract tests
+        run: npm test
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Verify intended framework version
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json')
+          if (pkg.dependencies.next !== '16.2.11') throw new Error(`Unexpected Next version ${pkg.dependencies.next}`)
+          if (pkg.devDependencies?.['eslint-config-next']) throw new Error('Obsolete eslint-config-next still present')
+          if (pkg.devDependencies?.eslint) throw new Error('Obsolete eslint dependency still present')
+          console.log(JSON.stringify({ next: pkg.dependencies.next, react: pkg.dependencies.react, reactDom: pkg.dependencies['react-dom'] }, null, 2))
+          NODE
+
+      - name: Commit only after all security and build gates pass
+        working-directory: .
+        run: |
+          if git diff --quiet -- frontend/package.json frontend/package-lock.json; then
+            echo 'No dependency changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/package.json frontend/package-lock.json
+          git commit -m 'Harden frontend dependency baseline'
+          git push origin HEAD:catalog-v2
