@@ -63,7 +63,7 @@ jobs:
         working-directory: backend
         run: |
           source_dir=$(cat /tmp/mtg-v22-dir.txt)
-          python -u -m app.scripts.upgrade_mtg_v22_snapshot_to_v23 \
+          python -u app/scripts/upgrade_mtg_v22_snapshot_to_v23.py \
             --source-dir "$source_dir" \
             --output-dir /tmp/mtg-v23
 
