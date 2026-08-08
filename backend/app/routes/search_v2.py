@@ -7,11 +7,18 @@ from app.search_v2.advanced import advanced_onepiece_search
 from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
+from app.search_v2.pokemon_query import normal_pokemon_search
 from app.search_v2.query import facet_definitions, normal_search
 
 
 search_v2_bp = Blueprint("search_v2", __name__)
 SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon"}
+
+
+def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
+    if game == "pokemon":
+        return normal_pokemon_search(session, query=query, limit=limit)
+    return normal_search(session, query=query, game_slug=game, limit=limit)
 
 
 @search_v2_bp.get("/api/v2/search")
@@ -23,7 +30,7 @@ def search_v2():
     limit = request.args.get("limit", default=24, type=int) or 24
 
     with db.SessionLocal() as session:
-        items = normal_search(session, query=q, game_slug=game, limit=limit)
+        items = _normal_search_for_game(session, query=q, game=game, limit=limit)
     return jsonify({"query": q, "game": game, "items": items, "count": len(items)})
 
 
@@ -36,7 +43,7 @@ def search_v2_suggest():
     limit = min(max(request.args.get("limit", default=8, type=int) or 8, 1), 15)
 
     with db.SessionLocal() as session:
-        cards = normal_search(session, query=q, game_slug=game, limit=limit)
+        cards = _normal_search_for_game(session, query=q, game=game, limit=limit)
 
     items = [
         {
