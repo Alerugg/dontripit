@@ -59,8 +59,9 @@ def compact_card_attributes(raw: dict | None) -> dict:
         "pendulum_scale": _int_or_none(raw.get("scale")),
         "link_value": _int_or_none(raw.get("link_value")),
         "link_markers": _clean_list(raw.get("link_markers")),
-        # Keep normalized rule data available for later activation, but the facet
-        # definition remains inactive until status semantics are separately certified.
+        # Kept in the compact Card profile so Banlist can be activated later without
+        # re-reading rich canonical attributes. The facet remains hidden until its
+        # status semantics are separately certified.
         "banlist_tcg": banlist.get("ban_tcg"),
         "banlist_ocg": banlist.get("ban_ocg"),
         "banlist_goat": banlist.get("ban_goat"),
@@ -94,9 +95,7 @@ def iter_yugioh_card_profiles(session) -> Iterator[dict]:
         raw = row["attributes_json"] or {}
         attrs = compact_card_attributes(raw)
         source_aliases = _clean_list(raw.get("source_alias_ids"))
-        aliases = [str(row["yugoprodeck_id"] or "").strip(), *source_aliases]
-        aliases = [value for value in aliases if value]
-        keywords = [
+        search_keywords = [
             attrs.get("card_class"),
             attrs.get("card_type"),
             attrs.get("frame_type"),
@@ -104,13 +103,22 @@ def iter_yugioh_card_profiles(session) -> Iterator[dict]:
             attrs.get("race"),
             attrs.get("archetype"),
         ]
+        canonical_source_id = str(row["yugoprodeck_id"] or "").strip()
         yield {
             "card_id": int(row["card_id"]),
             "normalized_name": normalize_search_text(row["name"]),
-            "aliases_json": aliases,
-            "keywords_json": [value for value in keywords if value],
+            # Only true aliases are stored as an array. Canonical source ID and
+            # searchable dimensions already live in search_text and do not need a
+            # second JSON copy.
+            "aliases_json": source_aliases,
+            "keywords_json": [],
             "attributes_json": attrs,
-            "search_text": build_search_text(row["name"], aliases, keywords),
+            "search_text": build_search_text(
+                row["name"],
+                canonical_source_id,
+                source_aliases,
+                [value for value in search_keywords if value],
+            ),
         }
 
 
@@ -146,15 +154,7 @@ def iter_yugioh_print_profiles(session) -> Iterator[dict]:
     for row in rows:
         release_year = row["release_date"].year if row["release_date"] is not None else None
         attributes = {"release_year": release_year} if release_year is not None else {}
-        aliases = [
-            row["collector_number"],
-            row["set_code"],
-            row["yugoprodeck_id"],
-            row["release_code"],
-        ]
-        aliases = [str(value).strip() for value in aliases if str(value or "").strip()]
         release_names = [row["release_name"]] if row["release_name"] else []
-        keywords = [row["rarity"], row["release_name"]]
         yield {
             "print_id": int(row["print_id"]),
             "card_id": int(row["card_id"]),
@@ -166,8 +166,11 @@ def iter_yugioh_print_profiles(session) -> Iterator[dict]:
             "exact_variant": row["variant"],
             "variant_family": "rarity",
             "release_names_json": release_names,
-            "aliases_json": aliases,
-            "keywords_json": [value for value in keywords if value],
+            # Print aliases/keywords would duplicate collector number, Set, rarity,
+            # release and source Card ID already present in dedicated columns or
+            # search_text. Keep the JSON arrays empty for a lean 44k-row projection.
+            "aliases_json": [],
+            "keywords_json": [],
             "attributes_json": attributes,
             "search_text": build_search_text(
                 row["name"],
