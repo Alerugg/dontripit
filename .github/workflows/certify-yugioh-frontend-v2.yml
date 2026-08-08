@@ -17,6 +17,8 @@ on:
       - 'frontend/components/games/YugiohExplorerV2Page.js'
       - 'frontend/components/searchV2/**'
       - 'frontend/tests/search-v2-yugioh-contract.test.js'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
 
 jobs:
   certify:
@@ -76,6 +78,12 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Enforce committed frontend security baseline
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
 
       - name: Run frontend contract tests
         working-directory: frontend
