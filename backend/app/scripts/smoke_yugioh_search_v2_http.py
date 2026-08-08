@@ -81,6 +81,29 @@ def main() -> int:
             client,
             "post",
             "/api/v2/search/advanced",
+            json={
+                "game": "yugioh",
+                "q": "Dark Magician",
+                "filters": {"card_class": "Monster", "attribute": "DARK"},
+                "limit": 10,
+            },
+        )
+        payload = _require(response)
+        items = payload.get("items") or []
+        if not items:
+            raise AssertionError("HTTP advanced Dark Magician + Monster + DARK returned zero")
+        for row in items:
+            attrs = row.get("attributes") or {}
+            if "dark magician" not in str(row.get("name") or "").casefold():
+                raise AssertionError(f"Advanced text/facet intersection leaked unrelated card: {row.get('name')}")
+            if str(attrs.get("card_class") or "").casefold() != "monster" or str(attrs.get("attribute") or "").upper() != "DARK":
+                raise AssertionError("Advanced text/facet intersection returned mismatched gameplay evidence")
+        checks.append({"name": "advanced_query_monster_dark_intersection", "ms": ms, "total": int(payload.get("total") or 0)})
+
+        response, ms = _timed(
+            client,
+            "post",
+            "/api/v2/search/advanced",
             json={"game": "yugioh", "filters": {"atk": {"min": 3000}}, "limit": 5},
         )
         payload = _require(response)
