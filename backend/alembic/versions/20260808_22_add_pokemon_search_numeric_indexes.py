@@ -18,20 +18,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # JSONB GIN is excellent for containment, but integer ranges such as HP and
-    # release year need typed expression indexes. The partial predicate protects
-    # historical/non-Pokémon rows whose JSON value is absent or non-numeric.
+    # release year need typed expression indexes. The partial predicates mirror
+    # the Advanced Search query exactly so PostgreSQL can prove the cast is safe
+    # and use the indexes for range scans.
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS ix_print_search_profiles_game_hp_int
         ON print_search_profiles (game_id, ((attributes_json ->> 'hp')::integer))
-        WHERE (attributes_json ->> 'hp') ~ '^[0-9]+$'
+        WHERE COALESCE(attributes_json ->> 'hp', '') ~ '^[0-9]+$'
         """
     )
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS ix_print_search_profiles_game_release_year_int
         ON print_search_profiles (game_id, ((attributes_json ->> 'release_year')::integer))
-        WHERE (attributes_json ->> 'release_year') ~ '^[0-9]+$'
+        WHERE COALESCE(attributes_json ->> 'release_year', '') ~ '^[0-9]+$'
         """
     )
 
