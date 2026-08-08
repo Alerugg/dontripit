@@ -1,0 +1,75 @@
+name: Benchmark MTG Production Schema Baseline Indexes V4
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/benchmark-mtg-production-schema-baseline-indexes-v4.yml'
+      - 'backend/app/scripts/benchmark_mtg_production_schema_shadow_v3.py'
+      - 'backend/app/scripts/benchmark_mtg_production_schema_shadow_v4.py'
+      - 'backend/app/scripts/benchmark_mtg_production_schema_shadow_baseline_indexes_v4.py'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtg_shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mtg_shadow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile comparison stack
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/scripts/benchmark_mtg_production_schema_shadow_v3.py \
+            app/scripts/benchmark_mtg_production_schema_shadow_v4.py \
+            app/scripts/benchmark_mtg_production_schema_shadow_baseline_indexes_v4.py
+      - name: Build shared schema through revision 25
+        working-directory: backend
+        run: alembic upgrade 20260808_25
+      - name: Load full MTG Model D with current shared index strategy
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_mtg_production_schema_shadow_baseline_indexes_v4 \
+            --report-path /tmp/mtg-production-schema-baseline-indexes-v4.json \
+            2>&1 | tee /tmp/mtg-production-schema-baseline-indexes-v4.log
+      - name: Upload baseline-index comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-production-schema-baseline-indexes-v4-${{ github.sha }}
+          path: |
+            /tmp/mtg-production-schema-baseline-indexes-v4.json
+            /tmp/mtg-production-schema-baseline-indexes-v4.log
+          retention-days: 90
+          if-no-files-found: warn
