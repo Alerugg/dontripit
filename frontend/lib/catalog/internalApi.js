@@ -3,6 +3,7 @@ const DEFAULT_TIMEOUT_MS = 12000
 function getInternalConfig() {
   const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
   const apiKey = (process.env.INTERNAL_API_KEY || '').trim()
+  const allowPublic = String(process.env.INTERNAL_API_ALLOW_PUBLIC || '').trim().toLowerCase() === 'true'
 
   if (!baseUrl) {
     return {
@@ -12,7 +13,10 @@ function getInternalConfig() {
     }
   }
 
-  if (!apiKey) {
+  // Production/internal traffic continues to require the shared API key. The
+  // explicit opt-in exists for isolated full-stack QA where the local Flask app
+  // is deliberately started with PUBLIC_API_ENABLED=true. It is off by default.
+  if (!apiKey && !allowPublic) {
     return {
       ok: false,
       reason: 'missing_internal_api_key',
@@ -20,7 +24,7 @@ function getInternalConfig() {
     }
   }
 
-  return { ok: true, baseUrl, apiKey }
+  return { ok: true, baseUrl, apiKey, allowPublic }
 }
 
 async function _fetchInternal(url, { method, body, apiKey, signal }) {
