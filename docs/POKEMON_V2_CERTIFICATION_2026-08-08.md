@@ -182,3 +182,49 @@ It also does not assert that any third-party marketplace product identifier is a
 **Pokémon V2 is FINAL CERTIFIED and is no longer the active catalog-certification blocker.**
 
 Future Pokémon changes that alter canonical counts, physical-variant identity, the 23-facet contract, Search V2 semantics, or certification postconditions must re-run the relevant gates rather than silently changing this baseline.
+
+## 11. Post-certification base-table hygiene
+
+A later storage audit found that the physical `cards` / `prints` base tables still contained **one legacy Card and three legacy Prints** from the pre-V2 importer even though the certified V2 attributes and Search projection were already exact.
+
+Read-only evidence proved that these rows were historical residues rather than missing canonical content:
+
+- legacy Card `366`, `Pineco`, source ID `sv1-1`, had no V2 identity key, attributes or Search profile;
+- legacy Print `512` mapped that stale `sv1-1` identity to the old Pineco row;
+- legacy Print `513` incorrectly attached source identity `sv1-62` to Pikachu;
+- legacy Print `1` attached Scarlet & Violet collector `001` to Pikachu with no source identity.
+
+The legacy source IDs were reconciled before any deletion:
+
+- `sv1-1` → canonical `sv01-001` → **Pineco**, with a complete V2 Card/Print identity;
+- `sv1-62` → canonical `sv01-062` → **Tatsugiri**, proving the legacy Pikachu assignment was incorrect.
+
+The cleanup was guarded by exact row signatures, exact before/after counts, canonical-replacement checks, a scan of every public relation exposing `card_id` / `print_id`, and transaction rollback on any unexpected dependency. The first attempt deliberately aborted before writes when it discovered `print_search_projection`; PostgreSQL metadata then proved that relation was an ordinary derived view (`relkind = v`), not stored canonical state.
+
+The successful transactional cleanup removed exactly:
+
+- **1** legacy Card;
+- **3** legacy Prints;
+- **3** legacy Print identifiers;
+- **3** legacy Print images.
+
+It touched:
+
+- **0** pricing/product rows;
+- **0** certified Card attributes;
+- **0** certified Print attributes;
+- **0** Card Search profiles;
+- **0** Print Search profiles.
+
+Final post-cleanup base-table and projection counts now match exactly:
+
+| Layer | Cards | Prints |
+|---|---:|---:|
+| Canonical base tables | **21,065** | **33,757** |
+| Attributes | **21,065** | **33,757** |
+| Search V2 profiles | **21,065** | **33,757** |
+| Rows outside certified V2 projection | **0** | **0** |
+
+Cleanup workflow evidence: `Cleanup Pokemon Legacy Scope Anomalies V2`, run **31270286065**, successful rerun job **93135222273**.
+
+This hygiene pass strengthens the original certification: Pokémon no longer merely has an exact certified projection; the underlying canonical base tables themselves now exactly equal that certified scope.
