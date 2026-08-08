@@ -9,15 +9,20 @@ from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
 from app.search_v2.query import facet_definitions, normal_search
+from app.search_v2.yugioh_advanced import advanced_yugioh_search
+from app.search_v2.yugioh_facet_values import yugioh_facet_values
+from app.search_v2.yugioh_query import normal_yugioh_search
 
 
 search_v2_bp = Blueprint("search_v2", __name__)
-SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon"}
+SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh"}
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
     if game == "pokemon":
         return normal_pokemon_search(session, query=query, limit=limit)
+    if game == "yugioh":
+        return normal_yugioh_search(session, query=query, limit=limit)
     return normal_search(session, query=query, game_slug=game, limit=limit)
 
 
@@ -87,6 +92,8 @@ def search_v2_facet_values(game_slug: str, facet_key: str):
         with db.SessionLocal() as session:
             if game_slug == "pokemon":
                 items = pokemon_facet_values(session, key=facet_key, query=query, limit=limit)
+            elif game_slug == "yugioh":
+                items = yugioh_facet_values(session, key=facet_key, query=query, limit=limit)
             else:
                 items = onepiece_facet_values(session, key=facet_key, query=query, limit=limit)
     except ValueError as exc:
@@ -118,7 +125,12 @@ def search_v2_advanced():
 
     try:
         with db.SessionLocal() as session:
-            search_fn = advanced_pokemon_search if game == "pokemon" else advanced_onepiece_search
+            if game == "pokemon":
+                search_fn = advanced_pokemon_search
+            elif game == "yugioh":
+                search_fn = advanced_yugioh_search
+            else:
+                search_fn = advanced_onepiece_search
             result = search_fn(
                 session,
                 filters=filters,
