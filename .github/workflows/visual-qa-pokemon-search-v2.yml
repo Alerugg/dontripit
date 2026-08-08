@@ -12,6 +12,7 @@ on:
       - 'frontend/components/search/**'
       - 'frontend/components/searchV2/**'
       - 'frontend/lib/searchV2/**'
+      - 'frontend/lib/catalog/internalApi.js'
       - 'frontend/app/api/search-v2/**'
       - 'backend/app/routes/search_v2.py'
       - 'backend/app/search_v2/pokemon_*.py'
@@ -28,6 +29,7 @@ jobs:
       PUBLIC_IP_RATE_LIMIT_RPM: '200'
       INTERNAL_API_BASE_URL: http://127.0.0.1:5000
       INTERNAL_API_KEY: ''
+      INTERNAL_API_ALLOW_PUBLIC: 'true'
       ADMIN_CONSOLE_USERNAME: admin
       ADMIN_CONSOLE_PASSWORD: visual-qa-password
       QA_BASE_URL: http://127.0.0.1:3000
