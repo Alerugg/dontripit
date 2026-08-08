@@ -6,6 +6,8 @@ on:
       - catalog-v2
     paths:
       - '.github/workflows/qa-pokemon-search-v2-frontend.yml'
+      - 'frontend/package.json'
+      - 'frontend/tests/**'
       - 'frontend/app/games/[slug]/page.js'
       - 'frontend/components/games/PokemonExplorerV2Page.js'
       - 'frontend/components/searchV2/**'
