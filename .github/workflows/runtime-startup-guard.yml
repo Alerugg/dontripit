@@ -27,7 +27,8 @@ jobs:
           set -euo pipefail
           file=backend/scripts/start.sh
           grep -F 'exec gunicorn' "$file"
-          if grep -E 'alembic|seed_catalog|app\.scripts\.seed|bootstrap|rebuild' "$file"; then
+          commands="$(grep -Ev '^[[:space:]]*(#|$)' "$file")"
+          if printf '%s\n' "$commands" | grep -E 'alembic|seed_catalog|app\.scripts\.seed|bootstrap|rebuild'; then
             echo 'Production startup must not mutate the database.' >&2
             exit 1
           fi
