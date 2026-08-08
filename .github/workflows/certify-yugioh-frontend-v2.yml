@@ -9,6 +9,9 @@ on:
       - '.github/workflows/certify-yugioh-frontend-v2.yml'
       - 'backend/app/routes/search_v2.py'
       - 'backend/app/scripts/smoke_yugioh_search_v2_http.py'
+      - 'backend/app/search_v2/yugioh_query.py'
+      - 'backend/app/search_v2/yugioh_advanced.py'
+      - 'backend/app/search_v2/yugioh_facet_values.py'
       - 'frontend/app/games/**'
       - 'frontend/components/games/YugiohExplorerV2Page.js'
       - 'frontend/components/searchV2/**'
@@ -51,6 +54,9 @@ jobs:
         run: |
           python -m py_compile \
             app/routes/search_v2.py \
+            app/search_v2/yugioh_query.py \
+            app/search_v2/yugioh_advanced.py \
+            app/search_v2/yugioh_facet_values.py \
             app/scripts/smoke_yugioh_search_v2_http.py
 
       - name: Run Yu-Gi-Oh Search V2 HTTP contract smoke
