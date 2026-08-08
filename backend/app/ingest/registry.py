@@ -16,9 +16,32 @@ CONNECTORS = {
     RiftboundConnector.name: RiftboundConnector,
 }
 
+# Canonical V2 identity can be stricter than the historical generic connector
+# upsert contract. Keep the connector class importable for read-only source
+# access (bulk metadata/downloads, audits, snapshot builders), but prevent the
+# generic ingest framework and schedulers from invoking a writer that would
+# collapse Scryfall finishes back into variant='default'.
+WRITE_QUARANTINED_CONNECTORS = {
+    "scryfall_mtg": (
+        "MTG Canonical V2 uses exact physical Print identity "
+        "(Scryfall object id + finish). The legacy generic Scryfall upsert is "
+        "quarantined until a finish-aware incremental writer is certified."
+    ),
+}
 
-def get_connector(name: str) -> SourceConnector:
-    connector_cls = CONNECTORS.get(name)
+
+def is_connector_write_quarantined(name: str) -> bool:
+    return str(name or "").strip() in WRITE_QUARANTINED_CONNECTORS
+
+
+def get_connector(name: str, *, allow_quarantined: bool = False) -> SourceConnector:
+    connector_name = str(name or "").strip()
+    connector_cls = CONNECTORS.get(connector_name)
     if not connector_cls:
-        raise ValueError(f"Unknown connector: {name}")
+        raise ValueError(f"Unknown connector: {connector_name}")
+    if is_connector_write_quarantined(connector_name) and not allow_quarantined:
+        raise RuntimeError(
+            f"Write connector quarantined: {connector_name}. "
+            f"{WRITE_QUARANTINED_CONNECTORS[connector_name]}"
+        )
     return connector_cls()
