@@ -48,6 +48,13 @@ jobs:
         with:
           ref: catalog-v2
 
+      - name: Gate canonical MTG schema at revision 25
+        run: |
+          test ! -e backend/alembic/versions/20260808_26_add_mtg_source_print_layer.py
+          test ! -e backend/app/mtg_models.py
+          test ! -e .github/workflows/certify-mtg-identity-schema-v26.yml
+          ! grep -R "from app import mtg_models" backend/alembic/env.py
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
