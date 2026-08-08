@@ -41,19 +41,21 @@ def advanced_pokemon_search(
 ) -> dict:
     """Advanced physical Pokémon Print search over certified Search V2 profiles.
 
-    Filter names intentionally match `POKEMON_FACETS` exactly. Unsupported keys
-    fail loudly so a frontend control can never appear to work while being ignored.
+    Filters operate only on the compact PrintSearchProfile projection. Matching
+    IDs are counted and paginated before wide JSON/image data is loaded, avoiding
+    expensive sorts of thousands of rich rows for common finishes such as Holo.
     """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Advanced Pokémon Search V2 requires PostgreSQL")
 
+    game_id = int(session.execute(text("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")).scalar_one())
     filters = dict(filters or {})
     params: dict[str, object] = {
-        "game": "pokemon",
+        "game_id": game_id,
         "limit": max(1, min(int(limit or 50), 200)),
         "offset": max(0, int(offset or 0)),
     }
-    where = ["g.slug = :game"]
+    where = ["psp.game_id = :game_id"]
 
     q_tokens = [token for token in normalize_search_text(query or "").split() if len(token) >= 2][:8]
     for idx, token in enumerate(q_tokens):
@@ -88,7 +90,6 @@ def advanced_pokemon_search(
 
     languages = [normalize_language(value) for value in _as_list(filters.pop("language", None))]
     add_in("psp.language", "language", [value for value in languages if value])
-
     add_in(
         "lower(COALESCE(psp.rarity,''))",
         "rarity",
@@ -105,7 +106,6 @@ def advanced_pokemon_search(
         [_lower(value) for value in _as_list(filters.pop("variant_family", None))],
     )
 
-    # Multi-valued canonical attributes whose facet keys exactly mirror the UI.
     for input_key, json_key in (("types", "types"), ("stamp", "stamps")):
         values = _as_list(filters.pop(input_key, None))
         if not values:
@@ -144,6 +144,8 @@ def advanced_pokemon_search(
             bind = f"{input_key}_{idx}"
             binds.append(f":{bind}")
             params[bind] = value
+        # Explicit non-empty predicate matches partial expression indexes.
+        where.append(f"COALESCE(psp.attributes_json ->> '{json_key}', '') <> ''")
         where.append(
             f"lower(COALESCE(psp.attributes_json ->> '{json_key}', '')) IN ({', '.join(binds)})"
         )
@@ -166,9 +168,7 @@ def advanced_pokemon_search(
     dex_value = filters.pop("dex_id", None)
     if dex_value is not None:
         lo, hi = _range(dex_value)
-        clauses = [
-            "value ~ '^[0-9]+$'",
-        ]
+        clauses = ["value ~ '^[0-9]+$'"]
         if lo is not None:
             params["dex_id_min"] = lo
             clauses.append("value::integer >= :dex_id_min")
@@ -184,25 +184,44 @@ def advanced_pokemon_search(
         raise ValueError(f"Unsupported Pokémon advanced filters: {sorted(filters)}")
 
     where_sql = " AND ".join(where)
-    base_from = """
-      FROM print_search_profiles psp
-      JOIN prints p ON p.id=psp.print_id
-      JOIN cards c ON c.id=psp.card_id
-      JOIN sets s ON s.id=p.set_id
-      JOIN games g ON g.id=psp.game_id
-    """
-    total = int(session.execute(text(f"SELECT COUNT(*) {base_from} WHERE {where_sql}"), params).scalar_one() or 0)
+
+    total = int(
+        session.execute(
+            text(f"SELECT COUNT(*) FROM print_search_profiles psp WHERE {where_sql}"),
+            params,
+        ).scalar_one() or 0
+    )
 
     rows = session.execute(
         text(
             f"""
+            WITH matched AS MATERIALIZED (
+              SELECT
+                psp.print_id,
+                psp.card_id,
+                c.name AS sort_name,
+                s.release_date AS sort_release_date,
+                s.code AS sort_set_code,
+                p.collector_number AS sort_collector_number,
+                COALESCE(psp.variant_family, '') AS sort_variant_family,
+                COALESCE(psp.exact_variant, '') AS sort_exact_variant
+              FROM print_search_profiles psp
+              JOIN prints p ON p.id=psp.print_id
+              JOIN cards c ON c.id=psp.card_id
+              JOIN sets s ON s.id=p.set_id
+              WHERE {where_sql}
+              ORDER BY c.name ASC, s.release_date ASC NULLS LAST, s.code ASC,
+                       p.collector_number ASC, psp.variant_family ASC,
+                       psp.exact_variant ASC, psp.print_id ASC
+              LIMIT :limit OFFSET :offset
+            )
             SELECT
               psp.print_id,
               psp.card_id,
               c.card_key,
               c.tcgdex_id,
               c.name,
-              g.slug AS game,
+              'pokemon' AS game,
               s.code AS set_code,
               s.name AS set_name,
               p.collector_number,
@@ -217,12 +236,15 @@ def advanced_pokemon_search(
                 ORDER BY pi.is_primary DESC, pi.id ASC
                 LIMIT 1
               ) AS primary_image_url
-            {base_from}
-            WHERE {where_sql}
-            ORDER BY c.name ASC, s.release_date ASC NULLS LAST, s.code ASC,
-                     p.collector_number ASC, psp.variant_family ASC,
-                     psp.exact_variant ASC, psp.print_id ASC
-            LIMIT :limit OFFSET :offset
+            FROM matched m
+            JOIN print_search_profiles psp ON psp.print_id=m.print_id
+            JOIN prints p ON p.id=m.print_id
+            JOIN cards c ON c.id=m.card_id
+            JOIN sets s ON s.id=p.set_id
+            ORDER BY m.sort_name ASC, m.sort_release_date ASC NULLS LAST,
+                     m.sort_set_code ASC, m.sort_collector_number ASC,
+                     m.sort_variant_family ASC, m.sort_exact_variant ASC,
+                     m.print_id ASC
             """
         ),
         params,
