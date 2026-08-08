@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,9 +39,18 @@ def _json(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def _chunks(rows: list[dict], size: int = 600):
-    for index in range(0, len(rows), size):
-        yield rows[index:index + size]
+def _stage_buffer(rows: list[tuple[int, int, str, str, str, str, str]]) -> io.StringIO:
+    buffer = io.StringIO()
+    writer = csv.writer(
+        buffer,
+        delimiter="\t",
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        lineterminator="\n",
+    )
+    writer.writerows(rows)
+    buffer.seek(0)
+    return buffer
 
 
 def run(snapshot_path: Path, manifest_path: Path, *, backup_path: Path | None = None, report_path: Path | None = None) -> dict:
@@ -65,9 +76,6 @@ def run(snapshot_path: Path, manifest_path: Path, *, backup_path: Path | None = 
         )).mappings().all()]
         neon_by_source = {str(row["tcgdex_id"]): row for row in rows}
 
-        # Canonical English identity has already been reconciled. The pinned rich
-        # snapshot contains 94 regional/no-English rows that are intentionally not
-        # in Neon; stale legacy Neon IDs are intentionally not in the snapshot.
         canonical_ids = set(snapshot) & set(neon_by_source)
         if len(canonical_ids) != EXPECTED_CANONICAL_ENGLISH:
             raise AssertionError(
@@ -81,7 +89,6 @@ def run(snapshot_path: Path, manifest_path: Path, *, backup_path: Path | None = 
 
         card_ids = [int(neon_by_source[source_id]["card_id"]) for source_id in sorted(canonical_ids)]
         print_ids = [int(neon_by_source[source_id]["print_id"]) for source_id in sorted(canonical_ids)]
-
         before = {
             "captured_at": datetime.now(timezone.utc).isoformat(),
             "source_version": source_version,
@@ -99,9 +106,7 @@ def run(snapshot_path: Path, manifest_path: Path, *, backup_path: Path | None = 
         _write_json(backup_path, before)
         session.rollback()
 
-    card_rows: list[dict] = []
-    print_rows: list[dict] = []
-    rarity_rows: list[dict] = []
+    staged_rows: list[tuple[int, int, str, str, str, str, str]] = []
     for source_id in sorted(canonical_ids):
         source = snapshot[source_id]
         attrs = source.get("attributes") or {}
@@ -127,108 +132,151 @@ def run(snapshot_path: Path, manifest_path: Path, *, backup_path: Path | None = 
             "release_date": set_row.get("release_date"),
         })
         rarity = str(attrs.get("rarity") or "unknown")
-        card_rows.append({
-            "card_id": int(neon["card_id"]),
-            "attributes_json": _json(card_payload),
-            "source": SOURCE,
-            "source_version": source_version,
-        })
-        print_rows.append({
-            "print_id": int(neon["print_id"]),
-            "attributes_json": _json(print_payload),
-            "source": SOURCE,
-            "source_version": source_version,
-        })
-        rarity_rows.append({"print_id": int(neon["print_id"]), "rarity": rarity})
+        staged_rows.append((
+            int(neon["card_id"]),
+            int(neon["print_id"]),
+            _json(card_payload),
+            _json(print_payload),
+            rarity,
+            SOURCE,
+            source_version,
+        ))
 
-    card_upsert = text(
-        """
-        INSERT INTO card_attributes (card_id, attributes_json, source, source_version, updated_at)
-        VALUES (:card_id, CAST(:attributes_json AS jsonb), :source, :source_version, now())
-        ON CONFLICT (card_id) DO UPDATE SET
-          attributes_json=EXCLUDED.attributes_json,
-          source=EXCLUDED.source,
-          source_version=EXCLUDED.source_version,
-          updated_at=now()
-        """
-    )
-    print_upsert = text(
-        """
-        INSERT INTO print_attributes (print_id, attributes_json, source, source_version, updated_at)
-        VALUES (:print_id, CAST(:attributes_json AS jsonb), :source, :source_version, now())
-        ON CONFLICT (print_id) DO UPDATE SET
-          attributes_json=EXCLUDED.attributes_json,
-          source=EXCLUDED.source,
-          source_version=EXCLUDED.source_version,
-          updated_at=now()
-        """
-    )
+    if len(staged_rows) != EXPECTED_CANONICAL_ENGLISH:
+        raise AssertionError(f"Staging row count mismatch: {len(staged_rows)}")
 
-    with db.SessionLocal() as session:
-        with session.begin():
-            for batch in _chunks(card_rows):
-                session.execute(card_upsert, batch)
-            for batch in _chunks(print_rows):
-                session.execute(print_upsert, batch)
-            for batch in _chunks(rarity_rows):
-                session.execute(text("UPDATE prints SET rarity=:rarity WHERE id=:print_id"), batch)
+    raw = db.engine.raw_connection()
+    try:
+        raw.autocommit = False
+        cur = raw.cursor()
+        cur.execute(
+            """
+            CREATE TEMP TABLE pokemon_attr_stage (
+              card_id BIGINT NOT NULL,
+              print_id BIGINT NOT NULL,
+              card_json JSONB NOT NULL,
+              print_json JSONB NOT NULL,
+              rarity TEXT NOT NULL,
+              source TEXT NOT NULL,
+              source_version TEXT NOT NULL
+            ) ON COMMIT DROP
+            """
+        )
+        cur.copy_expert(
+            """
+            COPY pokemon_attr_stage
+              (card_id, print_id, card_json, print_json, rarity, source, source_version)
+            FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t', QUOTE '"', ESCAPE '"')
+            """,
+            _stage_buffer(staged_rows),
+        )
 
-            card_attr_count = int(session.execute(text(
-                "SELECT COUNT(*) FROM card_attributes WHERE card_id = ANY(:ids) AND source=:source AND source_version=:version"
-            ), {"ids": card_ids, "source": SOURCE, "version": source_version}).scalar_one())
-            print_attr_count = int(session.execute(text(
-                "SELECT COUNT(*) FROM print_attributes WHERE print_id = ANY(:ids) AND source=:source AND source_version=:version"
-            ), {"ids": print_ids, "source": SOURCE, "version": source_version}).scalar_one())
-            unknown_rarity = int(session.execute(text(
-                "SELECT COUNT(*) FROM prints WHERE id = ANY(:ids) AND lower(COALESCE(rarity,''))='unknown'"
-            ), {"ids": print_ids}).scalar_one())
-            rarity_mismatch = int(session.execute(text(
-                """
-                SELECT COUNT(*) FROM prints p
-                JOIN print_attributes pa ON pa.print_id=p.id
-                WHERE p.id = ANY(:ids)
-                  AND p.rarity IS DISTINCT FROM COALESCE(pa.attributes_json->>'rarity','unknown')
-                """
-            ), {"ids": print_ids}).scalar_one())
+        cur.execute("SELECT COUNT(*) FROM pokemon_attr_stage")
+        stage_count = int(cur.fetchone()[0])
+        if stage_count != EXPECTED_CANONICAL_ENGLISH:
+            raise AssertionError(f"COPY stage count mismatch: {stage_count}")
 
-            if card_attr_count != EXPECTED_CANONICAL_ENGLISH or print_attr_count != EXPECTED_CANONICAL_ENGLISH:
-                raise AssertionError(f"Attribute postcondition failed: cards={card_attr_count}, prints={print_attr_count}")
-            if unknown_rarity:
-                raise AssertionError(f"{unknown_rarity} canonical Prints still have unknown rarity")
-            if rarity_mismatch:
-                raise AssertionError(f"{rarity_mismatch} Print rarity values disagree with pinned source")
+        cur.execute(
+            """
+            INSERT INTO card_attributes (card_id, attributes_json, source, source_version, updated_at)
+            SELECT card_id, card_json, source, source_version, now()
+            FROM pokemon_attr_stage
+            ON CONFLICT (card_id) DO UPDATE SET
+              attributes_json=EXCLUDED.attributes_json,
+              source=EXCLUDED.source,
+              source_version=EXCLUDED.source_version,
+              updated_at=now()
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO print_attributes (print_id, attributes_json, source, source_version, updated_at)
+            SELECT print_id, print_json, source, source_version, now()
+            FROM pokemon_attr_stage
+            ON CONFLICT (print_id) DO UPDATE SET
+              attributes_json=EXCLUDED.attributes_json,
+              source=EXCLUDED.source,
+              source_version=EXCLUDED.source_version,
+              updated_at=now()
+            """
+        )
+        cur.execute(
+            """
+            UPDATE prints p
+            SET rarity=s.rarity
+            FROM pokemon_attr_stage s
+            WHERE p.id=s.print_id
+            """
+        )
 
-        card_coverage = dict(session.execute(text(
+        cur.execute(
             """
             SELECT
-              COUNT(*) FILTER (WHERE attributes_json->>'category' IS NOT NULL) AS category,
-              COUNT(*) FILTER (WHERE attributes_json->>'hp' IS NOT NULL) AS hp,
-              COUNT(*) FILTER (WHERE jsonb_array_length(COALESCE(attributes_json->'types','[]'::jsonb)) > 0) AS types,
-              COUNT(*) FILTER (WHERE attributes_json->>'stage' IS NOT NULL) AS stage
-            FROM card_attributes WHERE card_id = ANY(:ids)
-            """
-        ), {"ids": card_ids}).mappings().one())
-        print_coverage = dict(session.execute(text(
+              COUNT(*) FILTER (
+                WHERE ca.source=%s AND ca.source_version=%s
+              ) AS card_attrs,
+              COUNT(*) FILTER (
+                WHERE pa.source=%s AND pa.source_version=%s
+              ) AS print_attrs,
+              COUNT(*) FILTER (
+                WHERE lower(COALESCE(p.rarity,''))='unknown'
+              ) AS unknown_rarity,
+              COUNT(*) FILTER (
+                WHERE p.rarity IS DISTINCT FROM COALESCE(pa.attributes_json->>'rarity','unknown')
+              ) AS rarity_mismatch
+            FROM pokemon_attr_stage s
+            JOIN card_attributes ca ON ca.card_id=s.card_id
+            JOIN print_attributes pa ON pa.print_id=s.print_id
+            JOIN prints p ON p.id=s.print_id
+            """,
+            (SOURCE, source_version, SOURCE, source_version),
+        )
+        card_attr_count, print_attr_count, unknown_rarity, rarity_mismatch = map(int, cur.fetchone())
+        if card_attr_count != EXPECTED_CANONICAL_ENGLISH or print_attr_count != EXPECTED_CANONICAL_ENGLISH:
+            raise AssertionError(f"Attribute postcondition failed: cards={card_attr_count}, prints={print_attr_count}")
+        if unknown_rarity:
+            raise AssertionError(f"{unknown_rarity} canonical Prints still have unknown rarity")
+        if rarity_mismatch:
+            raise AssertionError(f"{rarity_mismatch} Print rarity values disagree with pinned source")
+
+        cur.execute(
             """
             SELECT
-              COUNT(*) FILTER (WHERE attributes_json->>'illustrator' IS NOT NULL) AS illustrator,
-              COUNT(*) FILTER (WHERE attributes_json->>'regulation_mark' IS NOT NULL) AS regulation_mark,
-              COUNT(*) FILTER (WHERE attributes_json->'variants' IS NOT NULL AND attributes_json->'variants' <> 'null'::jsonb) AS variants_defined,
-              COUNT(*) FILTER (WHERE attributes_json->>'variant_shape'='detailed_array') AS detailed_variant_cards
-            FROM print_attributes WHERE print_id = ANY(:ids)
+              COUNT(*) FILTER (WHERE card_json->>'category' IS NOT NULL) AS category,
+              COUNT(*) FILTER (WHERE card_json->>'hp' IS NOT NULL) AS hp,
+              COUNT(*) FILTER (WHERE jsonb_array_length(COALESCE(card_json->'types','[]'::jsonb)) > 0) AS types,
+              COUNT(*) FILTER (WHERE card_json->>'stage' IS NOT NULL) AS stage,
+              COUNT(*) FILTER (WHERE print_json->>'illustrator' IS NOT NULL) AS illustrator,
+              COUNT(*) FILTER (WHERE print_json->>'regulation_mark' IS NOT NULL) AS regulation_mark,
+              COUNT(*) FILTER (WHERE print_json->'variants' IS NOT NULL AND print_json->'variants' <> 'null'::jsonb) AS variants_defined,
+              COUNT(*) FILTER (WHERE print_json->>'variant_shape'='detailed_array') AS detailed_variant_cards
+            FROM pokemon_attr_stage
             """
-        ), {"ids": print_ids}).mappings().one())
+        )
+        coverage_names = [
+            "category", "hp", "types", "stage", "illustrator", "regulation_mark",
+            "variants_defined", "detailed_variant_cards",
+        ]
+        coverage_values = [int(value) for value in cur.fetchone()]
+        coverage = dict(zip(coverage_names, coverage_values))
+        raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "mode": "fast_transactional_pinned_snapshot_enrichment",
+        "mode": "postgres_copy_staging_transactional_enrichment",
         "source": SOURCE,
         "source_version": source_version,
         "canonical_english_cards": EXPECTED_CANONICAL_ENGLISH,
-        "card_attributes_upserted": len(card_rows),
-        "print_attributes_upserted": len(print_rows),
-        "rarities_updated": len(rarity_rows),
-        "coverage": {**{k: int(v) for k, v in card_coverage.items()}, **{k: int(v) for k, v in print_coverage.items()}},
+        "stage_rows": len(staged_rows),
+        "card_attributes_upserted": len(staged_rows),
+        "print_attributes_upserted": len(staged_rows),
+        "rarities_updated": len(staged_rows),
+        "coverage": coverage,
         "variant_expansion": "not_performed",
         "status": "pass",
     }
