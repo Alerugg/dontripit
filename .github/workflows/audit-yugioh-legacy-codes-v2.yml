@@ -1,0 +1,47 @@
+name: Audit Yu-Gi-Oh Legacy Codes V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-yugioh-legacy-codes-v2.yml'
+      - 'backend/app/scripts/audit_yugioh_legacy_codes_v2.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile audit
+        working-directory: backend
+        run: python -m compileall -q app/scripts/audit_yugioh_legacy_codes_v2.py app/ingest/connectors/ygoprodeck_yugioh.py
+      - name: Audit legacy collector codes read-only
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_yugioh_legacy_codes_v2 \
+            --report-path /tmp/yugioh-legacy-codes-v2.json \
+            | tee /tmp/yugioh-legacy-codes-v2.log
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-legacy-codes-v2-${{ github.sha }}
+          path: |
+            /tmp/yugioh-legacy-codes-v2.json
+            /tmp/yugioh-legacy-codes-v2.log
+          retention-days: 90
+          if-no-files-found: warn
