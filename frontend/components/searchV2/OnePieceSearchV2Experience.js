@@ -11,7 +11,28 @@ import { advancedSearchV2, fetchFacetsV2, searchV2, suggestV2 } from '../../lib/
 import { appendAdvancedFilters, hasFilterValues, readAdvancedFilters, safePage } from '../../lib/searchV2/urlState'
 import './SearchV2.css'
 
-const EXAMPLE_SEARCHES = ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi']
+const SEARCH_COPY_BY_GAME = {
+  onepiece: {
+    examples: ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi'],
+    placeholder: 'Luffy, OP05-119, red leader, Luffy OP05 English SEC…',
+    description: 'Nombre, número, set, idioma o una combinación natural. Los resultados normales agrupan variantes para no llenarte la pantalla de duplicados.',
+    empty: 'Prueba otro nombre, collector number o combina carta + set.',
+  },
+  pokemon: {
+    examples: ['Pikachu', 'Charizard', 'Pikachu 151', 'Fire Basic', 'SIR Holo', 'pikchu'],
+    placeholder: 'Pikachu, Charizard, 151, Fire Basic, Special Illustration Rare…',
+    description: 'Nombre, collector number, set o una combinación natural. La búsqueda normal agrupa la carta; Advanced Search baja a rareza, tipo, etapa, regulación y variante física.',
+    empty: 'Prueba otro Pokémon, collector number, set o abre Advanced Search para filtrar la impresión exacta.',
+  },
+}
+
+const DEFAULT_SEARCH_COPY = {
+  examples: [],
+  placeholder: 'Nombre, número, set o combinación natural…',
+  description: 'Busca por identidad y usa Advanced Search para bajar a la impresión física exacta.',
+  empty: 'Prueba otro nombre, número o set.',
+}
+
 const ADVANCED_PAGE_SIZE = 24
 
 function suggestionForLegacyRow(item) {
@@ -26,6 +47,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const searchCopy = SEARCH_COPY_BY_GAME[game.slug] || DEFAULT_SEARCH_COPY
   const initialQuery = searchParams.get('q') || ''
   const initialAdvancedOpen = searchParams.get('advanced') === '1'
   const initialAdvancedFilters = readAdvancedFilters(searchParams)
@@ -217,7 +239,7 @@ export default function OnePieceSearchV2Experience({ game }) {
           compact
           eyebrow="Search V2"
           title="Busca como piensas, no como está organizada una base de datos."
-          description="Nombre, número, set, idioma o una combinación natural. Los resultados normales agrupan variantes para no llenarte la pantalla de duplicados."
+          description={searchCopy.description}
         />
 
         <GameSearchBar
@@ -233,16 +255,18 @@ export default function OnePieceSearchV2Experience({ game }) {
             }
             submitNormal(item.name || item.collector_number || '')
           }}
-          placeholder="Luffy, OP05-119, red leader, Luffy OP05 English SEC…"
+          placeholder={searchCopy.placeholder}
           variant="pilot"
         />
 
-        <div className="sv2-example-row">
-          <span>Prueba:</span>
-          {EXAMPLE_SEARCHES.map((example) => (
-            <button key={example} type="button" onClick={() => submitNormal(example)}>{example}</button>
-          ))}
-        </div>
+        {searchCopy.examples.length > 0 ? (
+          <div className="sv2-example-row">
+            <span>Prueba:</span>
+            {searchCopy.examples.map((example) => (
+              <button key={example} type="button" onClick={() => submitNormal(example)}>{example}</button>
+            ))}
+          </div>
+        ) : null}
 
         {facetError ? <p className="sv2-inline-error">{facetError}</p> : null}
 
@@ -292,7 +316,7 @@ export default function OnePieceSearchV2Experience({ game }) {
           {submittedQuery && loading ? <StatePanel title="Buscando" description={`Buscando “${submittedQuery}” con Search V2…`} /> : null}
           {submittedQuery && !loading && error ? <StatePanel title="No pudimos buscar" description={error} error /> : null}
           {submittedQuery && !loading && !error && normalItems.length === 0 ? (
-            <StatePanel title="Sin resultados" description="Prueba otro nombre, collector number o combina carta + set." tone="muted" />
+            <StatePanel title="Sin resultados" description={searchCopy.empty} tone="muted" />
           ) : null}
           {submittedQuery && !loading && !error && normalItems.length > 0 ? (
             <SearchV2Results items={normalItems} mode="normal" gameSlug={game.slug} query={submittedQuery} />
