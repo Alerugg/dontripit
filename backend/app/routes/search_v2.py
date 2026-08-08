@@ -5,6 +5,8 @@ from flask import Blueprint, jsonify, request
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
 from app.search_v2.facet_values import onepiece_facet_values
+from app.search_v2.mtg_advanced import advanced_mtg_search
+from app.search_v2.mtg_facet_values import mtg_facet_values
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
@@ -15,7 +17,7 @@ from app.search_v2.yugioh_query import normal_yugioh_search
 
 
 search_v2_bp = Blueprint("search_v2", __name__)
-SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh"}
+SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh", "mtg"}
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
@@ -23,6 +25,9 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
         return normal_pokemon_search(session, query=query, limit=limit)
     if game == "yugioh":
         return normal_yugioh_search(session, query=query, limit=limit)
+    # MTG intentionally starts on the proven generic logical-Card search path.
+    # A game-specific natural query is only justified if the disposable shadow
+    # benchmark demonstrates a quality/latency gap worth extra code/index cost.
     return normal_search(session, query=query, game_slug=game, limit=limit)
 
 
@@ -94,6 +99,8 @@ def search_v2_facet_values(game_slug: str, facet_key: str):
                 items = pokemon_facet_values(session, key=facet_key, query=query, limit=limit)
             elif game_slug == "yugioh":
                 items = yugioh_facet_values(session, key=facet_key, query=query, limit=limit)
+            elif game_slug == "mtg":
+                items = mtg_facet_values(session, key=facet_key, query=query, limit=limit)
             else:
                 items = onepiece_facet_values(session, key=facet_key, query=query, limit=limit)
     except ValueError as exc:
@@ -129,6 +136,8 @@ def search_v2_advanced():
                 search_fn = advanced_pokemon_search
             elif game == "yugioh":
                 search_fn = advanced_yugioh_search
+            elif game == "mtg":
+                search_fn = advanced_mtg_search
             else:
                 search_fn = advanced_onepiece_search
             result = search_fn(
