@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/certify-yugioh-frontend-v2.yml'
       - 'backend/app/routes/search_v2.py'
+      - 'backend/app/scripts/benchmark_yugioh_search_v2.py'
       - 'backend/app/scripts/smoke_yugioh_search_v2_http.py'
       - 'backend/app/search_v2/yugioh_query.py'
       - 'backend/app/search_v2/yugioh_advanced.py'
@@ -49,7 +50,7 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
-      - name: Compile Yu-Gi-Oh API integration
+      - name: Compile Yu-Gi-Oh API integration and benchmark
         working-directory: backend
         run: |
           python -m py_compile \
@@ -57,7 +58,16 @@ jobs:
             app/search_v2/yugioh_query.py \
             app/search_v2/yugioh_advanced.py \
             app/search_v2/yugioh_facet_values.py \
+            app/scripts/benchmark_yugioh_search_v2.py \
             app/scripts/smoke_yugioh_search_v2_http.py
+
+      - name: Run strict Yu-Gi-Oh Search V2 benchmark
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_yugioh_search_v2 \
+            --report-path /tmp/yugioh-search-v2-benchmark.json \
+            | tee /tmp/yugioh-search-v2-benchmark.log
 
       - name: Run Yu-Gi-Oh Search V2 HTTP contract smoke
         working-directory: backend
@@ -74,3 +84,14 @@ jobs:
       - name: Build Next.js frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Upload Yu-Gi-Oh read-only certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-frontend-http-benchmark-${{ github.sha }}
+          path: |
+            /tmp/yugioh-search-v2-benchmark.json
+            /tmp/yugioh-search-v2-benchmark.log
+          retention-days: 90
+          if-no-files-found: warn
