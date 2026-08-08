@@ -1,5 +1,7 @@
 name: Cleanup Pokemon Legacy Scope Anomalies V2
 
+# This workflow is intentionally narrow: it can delete only the four proven
+# legacy Pokémon identity rows and their own identifier/image dependants.
 on:
   workflow_dispatch:
   push:
