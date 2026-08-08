@@ -1,0 +1,52 @@
+name: Audit Core Catalog Index Storage V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-core-catalog-index-storage-v2.yml'
+      - 'backend/app/scripts/audit_core_catalog_index_storage_v2.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Compile audit
+        working-directory: backend
+        run: python -m py_compile app/scripts/audit_core_catalog_index_storage_v2.py
+      - name: Run read-only core catalog index audit
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_core_catalog_index_storage_v2 \
+            --report-path /tmp/core-catalog-index-storage-v2.json \
+            | tee /tmp/core-catalog-index-storage-v2.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-catalog-index-storage-v2-${{ github.sha }}
+          path: |
+            /tmp/core-catalog-index-storage-v2.json
+            /tmp/core-catalog-index-storage-v2.log
+          retention-days: 90
+          if-no-files-found: error
