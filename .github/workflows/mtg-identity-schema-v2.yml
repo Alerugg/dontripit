@@ -67,23 +67,31 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql -h 127.0.0.1 -U postgres -d tcg_test -v ON_ERROR_STOP=1 <<'SQL'
-          SELECT CASE WHEN EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conrelid='prints'::regclass
-              AND conname='uq_prints_scryfall_id'
-          ) THEN 1/0 ELSE 1 END;
+          DO $check$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM pg_constraint
+              WHERE conrelid='prints'::regclass
+                AND conname='uq_prints_scryfall_id'
+            ) THEN
+              RAISE EXCEPTION 'legacy global Scryfall unique constraint is still present';
+            END IF;
 
-          SELECT CASE WHEN EXISTS (
-            SELECT 1
-            FROM pg_indexes
-            WHERE schemaname='public'
-              AND tablename='prints'
-              AND indexname='uq_prints_scryfall_variant'
-              AND indexdef ILIKE '%UNIQUE%'
-              AND indexdef ILIKE '%scryfall_id%'
-              AND indexdef ILIKE '%variant%'
-          ) THEN 1 ELSE 1/0 END;
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname='public'
+                AND tablename='prints'
+                AND indexname='uq_prints_scryfall_variant'
+                AND indexdef ILIKE '%UNIQUE%'
+                AND indexdef ILIKE '%scryfall_id%'
+                AND indexdef ILIKE '%variant%'
+            ) THEN
+              RAISE EXCEPTION 'exact Scryfall plus variant unique index is missing';
+            END IF;
+          END
+          $check$;
           SQL
 
       - name: Prove one Scryfall object can have distinct exact finishes
@@ -105,6 +113,11 @@ jobs:
           SELECT s.id,c.id,'1','en','rare',true,'foil','mtg:scryfall:probe:foil','00000000-0000-0000-0000-000000000001'
           FROM sets s JOIN cards c ON c.game_id=s.game_id WHERE s.code='probe';
 
-          SELECT CASE WHEN COUNT(*)=2 THEN 1 ELSE 1/0 END
-          FROM prints WHERE scryfall_id='00000000-0000-0000-0000-000000000001';
+          DO $check$
+          BEGIN
+            IF (SELECT COUNT(*) FROM prints WHERE scryfall_id='00000000-0000-0000-0000-000000000001') <> 2 THEN
+              RAISE EXCEPTION 'expected two exact finish Prints sharing one Scryfall object id';
+            END IF;
+          END
+          $check$;
           SQL
