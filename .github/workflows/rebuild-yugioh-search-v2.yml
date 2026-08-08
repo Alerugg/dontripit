@@ -6,10 +6,10 @@ on:
     branches:
       - catalog-v2
     paths:
-      - '.github/workflows/rebuild-yugioh-search-v2.yml'
       - 'backend/app/scripts/rebuild_yugioh_search_v2_fast.py'
-      - 'backend/app/scripts/benchmark_yugioh_search_v2.py'
-      - 'backend/app/search_v2/yugioh_*.py'
+      - 'backend/app/search_v2/yugioh_facets.py'
+      - 'backend/app/search_v2/yugioh_profiles.py'
+      - 'backend/migrations/versions/**'
 
 concurrency:
   group: yugioh-search-v2-write
