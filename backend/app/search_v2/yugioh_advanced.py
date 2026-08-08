@@ -89,8 +89,16 @@ def advanced_yugioh_search(
 
     q_norm = normalize_search_text(query or "")
     if q_norm:
-        conditions.append("(csp.search_text LIKE :q OR psp.search_text LIKE :q)")
+        # Advanced `q` is an identity/gameplay search, not a release-name search.
+        # Print search_text intentionally contains release metadata for normal search,
+        # but using it here lets a release title such as "Dark Magician ..." match
+        # unrelated cards. Release has its own explicit facet, so keep text + filters
+        # as a strict intersection over Card identity/gameplay or Print codes.
+        conditions.append(
+            "(csp.search_text LIKE :q OR psp.normalized_collector_number LIKE :q_code OR psp.normalized_set_code LIKE :q_code)"
+        )
         params["q"] = f"%{q_norm}%"
+        params["q_code"] = f"%{q_norm.replace(' ', '-')}%"
 
     for key, value in filters.items():
         if value in (None, "", [], {}):
