@@ -1,0 +1,276 @@
+name: Audit Railway to Neon Cutover
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-railway-neon-cutover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-neon-cutover-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
+      NEON_DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Verify required secrets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RAILWAY_DATABASE_URL"
+          test -n "$NEON_DATABASE_URL"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install audit dependencies
+        run: pip install psycopg2-binary
+
+      - name: Inventory Railway and Neon read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cutover
+          cat > /tmp/cutover/inventory.py <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          import psycopg2
+          from psycopg2 import sql
+
+          EXCLUDED_SCHEMAS = {'pg_catalog', 'information_schema'}
+
+          def normalize(url: str) -> str:
+              if url.startswith('postgresql+psycopg2://'):
+                  return 'postgresql://' + url[len('postgresql+psycopg2://'):]
+              if url.startswith('postgres+psycopg2://'):
+                  return 'postgresql://' + url[len('postgres+psycopg2://'):]
+              if url.startswith('postgres://'):
+                  return 'postgresql://' + url[len('postgres://'):]
+              return url
+
+          def safe_endpoint(url: str) -> dict:
+              parsed = urlparse(normalize(url))
+              host = parsed.hostname or ''
+              provider = 'neon' if 'neon.tech' in host else ('railway' if 'railway' in host else 'other')
+              return {
+                  'provider': provider,
+                  'host_suffix': '.'.join(host.split('.')[-3:]) if host else None,
+                  'database': (parsed.path or '').lstrip('/') or None,
+                  'port': parsed.port,
+              }
+
+          def inventory(label: str, raw_url: str) -> dict:
+              url = normalize(raw_url)
+              conn = psycopg2.connect(url, connect_timeout=15)
+              conn.set_session(readonly=True, autocommit=False)
+              try:
+                  with conn.cursor() as cur:
+                      cur.execute('SELECT current_database(), current_user, pg_database_size(current_database())')
+                      db_name, db_user, db_bytes = cur.fetchone()
+                      cur.execute("SELECT COALESCE(version_num, 'none') FROM alembic_version LIMIT 1")
+                      alembic = cur.fetchone()[0]
+                      cur.execute('''
+                          SELECT n.nspname, c.relname,
+                                 pg_total_relation_size(c.oid)::bigint,
+                                 pg_relation_size(c.oid)::bigint
+                          FROM pg_class c
+                          JOIN pg_namespace n ON n.oid=c.relnamespace
+                          WHERE c.relkind='r'
+                            AND n.nspname NOT IN ('pg_catalog','information_schema')
+                            AND n.nspname NOT LIKE 'pg_toast%'
+                          ORDER BY n.nspname, c.relname
+                      ''')
+                      tables = []
+                      for schema, table, total_bytes, heap_bytes in cur.fetchall():
+                          cur.execute(
+                              sql.SQL('SELECT COUNT(*)::bigint FROM {}.{}').format(
+                                  sql.Identifier(schema), sql.Identifier(table)
+                              )
+                          )
+                          count = int(cur.fetchone()[0])
+                          cur.execute('''
+                              SELECT column_name, data_type, is_nullable
+                              FROM information_schema.columns
+                              WHERE table_schema=%s AND table_name=%s
+                              ORDER BY ordinal_position
+                          ''', (schema, table))
+                          cols = [
+                              {'name': name, 'type': typ, 'nullable': nullable}
+                              for name, typ, nullable in cur.fetchall()
+                          ]
+                          schema_fingerprint = hashlib.sha256(
+                              json.dumps(cols, sort_keys=True, separators=(',', ':')).encode()
+                          ).hexdigest()
+                          tables.append({
+                              'schema': schema,
+                              'table': table,
+                              'rows': count,
+                              'total_bytes': int(total_bytes),
+                              'heap_bytes': int(heap_bytes),
+                              'schema_sha256': schema_fingerprint,
+                              'columns': cols,
+                          })
+                      cur.execute('''
+                          SELECT g.slug,
+                                 COUNT(DISTINCT c.id)::bigint AS cards,
+                                 COUNT(DISTINCT p.id)::bigint AS prints
+                          FROM games g
+                          LEFT JOIN cards c ON c.game_id=g.id
+                          LEFT JOIN prints p ON p.card_id=c.id
+                          GROUP BY g.slug ORDER BY g.slug
+                      ''')
+                      games = [
+                          {'slug': slug, 'cards': int(cards), 'prints': int(prints)}
+                          for slug, cards, prints in cur.fetchall()
+                      ]
+                  conn.rollback()
+                  return {
+                      'label': label,
+                      'endpoint': safe_endpoint(raw_url),
+                      'database': db_name,
+                      'user': db_user,
+                      'database_bytes': int(db_bytes),
+                      'alembic_version': str(alembic),
+                      'tables': tables,
+                      'games': games,
+                  }
+              finally:
+                  conn.close()
+
+          railway = inventory('railway', os.environ['RAILWAY_DATABASE_URL'])
+          neon = inventory('neon', os.environ['NEON_DATABASE_URL'])
+
+          def table_map(inv):
+              return {(x['schema'], x['table']): x for x in inv['tables']}
+
+          rmap, nmap = table_map(railway), table_map(neon)
+          all_keys = sorted(set(rmap) | set(nmap))
+          comparison = []
+          for key in all_keys:
+              r = rmap.get(key)
+              n = nmap.get(key)
+              comparison.append({
+                  'schema': key[0],
+                  'table': key[1],
+                  'railway_rows': r['rows'] if r else None,
+                  'neon_rows': n['rows'] if n else None,
+                  'row_delta_railway_minus_neon': (r['rows'] - n['rows']) if r and n else None,
+                  'railway_total_bytes': r['total_bytes'] if r else None,
+                  'neon_total_bytes': n['total_bytes'] if n else None,
+                  'schema_match': bool(r and n and r['schema_sha256'] == n['schema_sha256']),
+                  'only_in': 'railway' if r and not n else ('neon' if n and not r else None),
+              })
+
+          operational_names = {
+              'api_keys', 'api_plans', 'api_usage', 'api_request_metrics',
+              'users', 'user', 'accounts', 'sessions', 'collections', 'collection_items',
+              'favorites', 'watchlists', 'inventories', 'inventory',
+              'price_sources', 'prices', 'price_snapshots', 'price_daily_ohlc',
+              'source_sync_state', 'ingest_runs', 'field_provenance',
+          }
+          operational = [
+              row for row in comparison
+              if row['table'].lower() in operational_names
+              or any(token in row['table'].lower() for token in ('user', 'account', 'session', 'collection', 'inventory', 'favorite', 'watchlist', 'price', 'api_'))
+          ]
+
+          report = {
+              'status': 'pass',
+              'database_writes': 0,
+              'railway': railway,
+              'neon': neon,
+              'comparison': comparison,
+              'operational_focus': operational,
+              'summary': {
+                  'railway_tables': len(railway['tables']),
+                  'neon_tables': len(neon['tables']),
+                  'tables_only_in_railway': sum(1 for x in comparison if x['only_in'] == 'railway'),
+                  'tables_only_in_neon': sum(1 for x in comparison if x['only_in'] == 'neon'),
+                  'shared_tables_schema_mismatch': sum(1 for x in comparison if x['only_in'] is None and not x['schema_match']),
+                  'railway_database_bytes': railway['database_bytes'],
+                  'neon_database_bytes': neon['database_bytes'],
+              },
+          }
+          Path('/tmp/cutover/railway-neon-inventory.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+
+          # Print only non-sensitive summary/counts to Actions logs.
+          print(json.dumps({
+              'status': report['status'],
+              'summary': report['summary'],
+              'railway_alembic': railway['alembic_version'],
+              'neon_alembic': neon['alembic_version'],
+              'railway_games': railway['games'],
+              'neon_games': neon['games'],
+              'operational_focus': operational,
+          }, indent=2, sort_keys=True))
+          PY
+          python /tmp/cutover/inventory.py
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          pg_dump --version
+
+      - name: Create encrypted logical Railway backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAILWAY_PG_URL="${RAILWAY_DATABASE_URL/postgresql+psycopg2:\/\//postgresql:\/\/}"
+          RAILWAY_PG_URL="${RAILWAY_PG_URL/postgres+psycopg2:\/\//postgresql:\/\/}"
+          RAILWAY_PG_URL="${RAILWAY_PG_URL/postgres:\/\//postgresql:\/\/}"
+          pg_dump "$RAILWAY_PG_URL" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-acl \
+            --file=/tmp/cutover/railway-backup.dump
+          pg_restore --list /tmp/cutover/railway-backup.dump > /tmp/cutover/railway-backup.list
+          test -s /tmp/cutover/railway-backup.dump
+          sha256sum /tmp/cutover/railway-backup.dump > /tmp/cutover/railway-backup.sha256
+          openssl enc -aes-256-cbc -pbkdf2 -salt \
+            -in /tmp/cutover/railway-backup.dump \
+            -out /tmp/cutover/railway-backup.dump.enc \
+            -pass env:RAILWAY_DATABASE_URL
+          rm -f /tmp/cutover/railway-backup.dump
+          test -s /tmp/cutover/railway-backup.dump.enc
+          ls -lh /tmp/cutover/railway-backup.dump.enc
+
+      - name: Upload cutover evidence and encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: railway-neon-cutover-audit-${{ github.sha }}
+          path: |
+            /tmp/cutover/railway-neon-inventory.json
+            /tmp/cutover/railway-backup.dump.enc
+            /tmp/cutover/railway-backup.list
+            /tmp/cutover/railway-backup.sha256
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 6
