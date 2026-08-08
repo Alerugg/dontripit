@@ -24,6 +24,12 @@ const SEARCH_COPY_BY_GAME = {
     description: 'Nombre, collector number, set o una combinación natural. La búsqueda normal agrupa la carta; Advanced Search baja a rareza, tipo, etapa, regulación y variante física.',
     empty: 'Prueba otro Pokémon, collector number, set o abre Advanced Search para filtrar la impresión exacta.',
   },
+  yugioh: {
+    examples: ['Dark Magician', 'Blue-Eyes White Dragon', '2017-EN001', 'DARK Monster', 'ATK 3000', 'Extra Secret Rare'],
+    placeholder: 'Dark Magician, Blue-Eyes White Dragon, 2017-EN001, DARK Monster…',
+    description: 'Nombre, código de impresión, release o una combinación natural. La búsqueda normal agrupa reimpresiones por carta; Advanced Search baja al Print exacto por rareza, clase, atributo, tipo y estadísticas.',
+    empty: 'Prueba otro nombre, código de impresión, release o abre Advanced Search para combinar filtros Yu-Gi-Oh!.',
+  },
 }
 
 const DEFAULT_SEARCH_COPY = {
