@@ -9,8 +9,8 @@ function badge(value) {
 }
 
 function ResultImage({ src, name, gameSlug }) {
-  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug || 'TCG'
-  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : undefined
+  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug || 'TCG'
+  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : undefined
   return (
     <FallbackImage
       src={src}
@@ -25,6 +25,7 @@ function ResultImage({ src, name, gameSlug }) {
 
 function CardResult({ item, gameSlug, query }) {
   const matched = item.matched_print || {}
+  const attrs = item.attributes || {}
   return (
     <Link
       href={`/games/${gameSlug}/cards/${item.card_id}?q=${encodeURIComponent(query || item.name || '')}`}
@@ -47,6 +48,9 @@ function CardResult({ item, gameSlug, query }) {
           {badge(matched.language?.toUpperCase())}
           {matched.variant_family && matched.variant_family !== 'default' ? badge(matched.variant_family) : null}
           {matched.exact_variant && matched.exact_variant !== 'default' ? badge(matched.exact_variant) : null}
+          {gameSlug === 'yugioh' && attrs.card_class ? badge(attrs.card_class) : null}
+          {gameSlug === 'yugioh' && attrs.attribute ? badge(attrs.attribute) : null}
+          {gameSlug === 'yugioh' && attrs.archetype ? badge(attrs.archetype) : null}
         </div>
       </div>
     </Link>
@@ -80,9 +84,17 @@ function PrintResult({ item, gameSlug }) {
           {gameSlug === 'pokemon' && physical.regulation_mark ? badge(`Reg ${physical.regulation_mark}`) : null}
           {gameSlug === 'pokemon' && physical.foil_pattern ? badge(physical.foil_pattern) : null}
           {gameSlug === 'pokemon' ? stamps.slice(0, 2).map((stamp) => <span key={stamp} className="sv2-badge">{stamp}</span>) : null}
+          {gameSlug === 'yugioh' && physical.card_class ? badge(physical.card_class) : null}
+          {gameSlug === 'yugioh' && physical.attribute ? badge(physical.attribute) : null}
+          {gameSlug === 'yugioh' && physical.race ? badge(physical.race) : null}
+          {gameSlug === 'yugioh' && physical.atk !== undefined && physical.atk !== null ? badge(`ATK ${physical.atk}`) : null}
+          {gameSlug === 'yugioh' && physical.def !== undefined && physical.def !== null ? badge(`DEF ${physical.def}`) : null}
         </div>
         {item.releases?.length ? (
           <small className="sv2-release-line">{item.releases[0]}{item.releases.length > 1 ? ` +${item.releases.length - 1}` : ''}</small>
+        ) : null}
+        {gameSlug === 'yugioh' && Array.isArray(physical.release_names) && physical.release_names.length ? (
+          <small className="sv2-release-line">{physical.release_names[0]}{physical.release_names.length > 1 ? ` +${physical.release_names.length - 1}` : ''}</small>
         ) : null}
       </div>
     </Link>
