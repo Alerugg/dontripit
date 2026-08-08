@@ -9,6 +9,7 @@ on:
       - 'backend/app/scripts/expand_pokemon_variants_v2.py'
       - 'backend/app/scripts/expand_pokemon_variants_v2_copy_safe.py'
       - 'backend/app/scripts/preflight_pokemon_variants_v2.py'
+      - 'backend/alembic/versions/20260808_21_align_print_identifier_uniqueness.py'
   workflow_dispatch:
 
 concurrency:
@@ -63,7 +64,7 @@ jobs:
             --output /tmp/pokemon-rich-snapshot.jsonl \
             --manifest /tmp/pokemon-rich-manifest.json
 
-      - name: Apply schema migrations
+      - name: Apply and validate schema migrations
         working-directory: backend
         run: alembic upgrade head
 
