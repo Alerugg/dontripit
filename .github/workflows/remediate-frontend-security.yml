@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: catalog-v2
+          fetch-depth: 0
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
@@ -88,4 +89,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add frontend/package.json frontend/package-lock.json
           git commit -m 'Harden frontend dependency baseline'
+          # Preserve any unrelated commits that landed while the security gate ran.
+          git fetch origin catalog-v2
+          git rebase origin/catalog-v2
           git push origin HEAD:catalog-v2
