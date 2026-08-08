@@ -9,14 +9,16 @@ function badge(value) {
 }
 
 function ResultImage({ src, name, gameSlug }) {
+  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug || 'TCG'
+  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : undefined
   return (
     <FallbackImage
       src={src}
       alt={name}
       className="sv2-result-image"
       placeholderClassName="sv2-image-placeholder"
-      label={gameSlug === 'onepiece' ? 'One Piece' : gameSlug || 'TCG'}
-      initials={gameSlug === 'onepiece' ? 'OP' : undefined}
+      label={label}
+      initials={initials}
     />
   )
 }
@@ -52,6 +54,8 @@ function CardResult({ item, gameSlug, query }) {
 }
 
 function PrintResult({ item, gameSlug }) {
+  const physical = item.attributes || {}
+  const stamps = Array.isArray(physical.stamps) ? physical.stamps : []
   return (
     <Link href={`/games/${gameSlug}/cards/${item.card_id}`} className="sv2-result-card sv2-result-card-print">
       <div className="sv2-result-image-wrap">
@@ -71,7 +75,11 @@ function PrintResult({ item, gameSlug }) {
           {badge(item.language?.toUpperCase())}
           {item.variant_family && item.variant_family !== 'default' ? badge(item.variant_family) : null}
           {item.exact_variant && item.exact_variant !== 'default' ? badge(item.exact_variant) : null}
-          {item.attributes?.block ? badge(`Block ${item.attributes.block}`) : null}
+          {gameSlug === 'onepiece' && physical.block ? badge(`Block ${physical.block}`) : null}
+          {gameSlug === 'pokemon' && physical.finish ? badge(physical.finish) : null}
+          {gameSlug === 'pokemon' && physical.regulation_mark ? badge(`Reg ${physical.regulation_mark}`) : null}
+          {gameSlug === 'pokemon' && physical.foil_pattern ? badge(physical.foil_pattern) : null}
+          {gameSlug === 'pokemon' ? stamps.slice(0, 2).map((stamp) => <span key={stamp} className="sv2-badge">{stamp}</span>) : null}
         </div>
         {item.releases?.length ? (
           <small className="sv2-release-line">{item.releases[0]}{item.releases.length > 1 ? ` +${item.releases.length - 1}` : ''}</small>
