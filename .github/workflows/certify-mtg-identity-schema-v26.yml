@@ -1,0 +1,182 @@
+name: Certify MTG Identity Schema V26
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/certify-mtg-identity-schema-v26.yml'
+      - 'backend/alembic/versions/20260808_26_add_mtg_source_print_layer.py'
+      - 'backend/app/mtg_models.py'
+      - 'backend/alembic/env.py'
+  workflow_dispatch:
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtg_schema
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mtg_schema"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_schema
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@127.0.0.1:5432/mtg_schema
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile revision and ORM models
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            alembic/versions/20260808_26_add_mtg_source_print_layer.py \
+            app/mtg_models.py
+      - name: Build revision 25 baseline
+        working-directory: backend
+        run: alembic upgrade 20260808_25
+      - name: Seed non-MTG control row and capture baseline
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, psycopg2
+          url='postgresql://postgres:postgres@127.0.0.1:5432/mtg_schema'
+          conn=psycopg2.connect(url); conn.autocommit=True
+          with conn.cursor() as cur:
+              cur.execute("INSERT INTO games(slug,name) VALUES ('pokemon','Pokémon') RETURNING id")
+              game=int(cur.fetchone()[0])
+              cur.execute("INSERT INTO sets(game_id,code,name) VALUES (%s,'ctrl','Control Set') RETURNING id",(game,))
+              set_id=int(cur.fetchone()[0])
+              cur.execute("INSERT INTO cards(game_id,name,card_key) VALUES (%s,'Control Card','pokemon|control-card') RETURNING id",(game,))
+              card=int(cur.fetchone()[0])
+              cur.execute("INSERT INTO prints(set_id,card_id,collector_number,language,rarity,is_foil,variant,print_key) VALUES (%s,%s,'001','en','rare',false,'default','pokemon|control-print') RETURNING id",(set_id,card))
+              print_id=int(cur.fetchone()[0])
+              cur.execute("SELECT pg_database_size(current_database())")
+              db_bytes=int(cur.fetchone()[0])
+          conn.close()
+          payload={'pokemon_game_id':game,'pokemon_set_id':set_id,'pokemon_card_id':card,'pokemon_print_id':print_id,'database_bytes_revision25':db_bytes}
+          open('/tmp/mtg-v26-baseline.json','w').write(json.dumps(payload,indent=2))
+          print(json.dumps(payload,indent=2))
+          PY
+      - name: Upgrade to revision 26
+        working-directory: backend
+        run: alembic upgrade 20260808_26
+      - name: Verify MTG V26 schema and exact finish identity
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, psycopg2
+          from psycopg2 import errors
+          url='postgresql://postgres:postgres@127.0.0.1:5432/mtg_schema'
+          baseline=json.load(open('/tmp/mtg-v26-baseline.json'))
+          conn=psycopg2.connect(url); conn.autocommit=False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT version_num FROM alembic_version")
+                  assert cur.fetchone()[0]=='20260808_26'
+                  for table in ('mtg_source_snapshots','mtg_catalog_state','mtg_source_prints'):
+                      cur.execute("SELECT to_regclass(%s)",(f'public.{table}',))
+                      assert cur.fetchone()[0] is not None, table
+                  cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='prints' AND column_name='mtg_source_print_id'")
+                  assert cur.fetchone() is not None
+                  cur.execute("SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname IN ('ix_prints_mtg_source','uq_prints_mtg_source_variant')")
+                  assert {r[0] for r in cur.fetchall()}=={'ix_prints_mtg_source','uq_prints_mtg_source_variant'}
+
+                  cur.execute("INSERT INTO games(slug,name) VALUES ('mtg','Magic: The Gathering') RETURNING id")
+                  game=int(cur.fetchone()[0])
+                  cur.execute("INSERT INTO sets(game_id,code,name) VALUES (%s,'tst','Test MTG Set') RETURNING id",(game,))
+                  set_id=int(cur.fetchone()[0])
+                  cur.execute("INSERT INTO cards(game_id,name,card_key,oracle_id) VALUES (%s,'Black Lotus','oracle:test-black-lotus','00000000-0000-0000-0000-000000000001') RETURNING id",(game,))
+                  card=int(cur.fetchone()[0])
+                  cur.execute("INSERT INTO mtg_source_snapshots(game_id,source,external_id,manifest_sha256,counts_json) VALUES (%s,'scryfall/default_cards','snapshot-test','%s','{\"source_prints\":1}'::jsonb) RETURNING id",(game,'a'*64))
+                  snapshot=int(cur.fetchone()[0])
+                  cur.execute("INSERT INTO mtg_catalog_state(game_id,active_snapshot_id) VALUES (%s,%s)",(game,snapshot))
+                  cur.execute("INSERT INTO mtg_source_prints(snapshot_id,scryfall_id,card_id,set_id,collector_number,language,rarity,attributes_json) VALUES (%s,'11111111-1111-1111-1111-111111111111',%s,%s,'233','en','rare','{}'::jsonb) RETURNING id",(snapshot,card,set_id))
+                  source_print=int(cur.fetchone()[0])
+
+                  exact=[]
+                  for variant,is_foil in [('nonfoil',False),('foil',True),('etched',False)]:
+                      cur.execute("INSERT INTO prints(set_id,card_id,collector_number,language,rarity,is_foil,variant,mtg_source_print_id) VALUES (%s,%s,'233','en','rare',%s,%s,%s) RETURNING id",(set_id,card,is_foil,variant,source_print))
+                      exact.append(int(cur.fetchone()[0]))
+                  assert len(exact)==3
+
+                  cur.execute('SAVEPOINT duplicate_finish')
+                  rejected=False
+                  try:
+                      cur.execute("INSERT INTO prints(set_id,card_id,collector_number,language,rarity,is_foil,variant,mtg_source_print_id) VALUES (%s,%s,'233','en','rare',false,'nonfoil',%s)",(set_id,card,source_print))
+                  except errors.UniqueViolation:
+                      rejected=True
+                      cur.execute('ROLLBACK TO SAVEPOINT duplicate_finish')
+                  assert rejected, 'duplicate SourcePrint+finish was not rejected'
+                  cur.execute('RELEASE SAVEPOINT duplicate_finish')
+
+                  cur.execute("SELECT COUNT(*) FROM prints WHERE mtg_source_print_id=%s",(source_print,))
+                  assert int(cur.fetchone()[0])==3
+                  cur.execute("SELECT COUNT(*) FROM prints WHERE id=%s",(baseline['pokemon_print_id'],))
+                  assert int(cur.fetchone()[0])==1
+                  cur.execute("SELECT pg_database_size(current_database())")
+                  db_bytes=int(cur.fetchone()[0])
+              conn.commit()
+          finally:
+              conn.close()
+          payload={**baseline,'database_bytes_revision26_with_test_rows':db_bytes,'schema_delta_bytes_with_test_rows':db_bytes-baseline['database_bytes_revision25'],'three_finishes_allowed':True,'duplicate_finish_rejected':True,'non_mtg_control_preserved':True}
+          open('/tmp/mtg-v26-upgrade.json','w').write(json.dumps(payload,indent=2))
+          print(json.dumps(payload,indent=2))
+          PY
+      - name: Downgrade back to revision 25
+        working-directory: backend
+        run: alembic downgrade 20260808_25
+      - name: Verify downgrade preserves non-MTG catalog
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, psycopg2
+          baseline=json.load(open('/tmp/mtg-v26-baseline.json'))
+          conn=psycopg2.connect('postgresql://postgres:postgres@127.0.0.1:5432/mtg_schema')
+          with conn.cursor() as cur:
+              cur.execute("SELECT version_num FROM alembic_version")
+              assert cur.fetchone()[0]=='20260808_25'
+              for table in ('mtg_source_snapshots','mtg_catalog_state','mtg_source_prints'):
+                  cur.execute("SELECT to_regclass(%s)",(f'public.{table}',))
+                  assert cur.fetchone()[0] is None, table
+              cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='prints' AND column_name='mtg_source_print_id'")
+              assert cur.fetchone() is None
+              cur.execute("SELECT COUNT(*) FROM prints WHERE id=%s",(baseline['pokemon_print_id'],))
+              assert int(cur.fetchone()[0])==1
+              cur.execute("SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id WHERE g.slug='mtg'")
+              assert int(cur.fetchone()[0])==0
+          conn.close()
+          print(json.dumps({'status':'pass','revision':'20260808_25','non_mtg_control_preserved':True,'mtg_v26_exact_prints_removed_on_downgrade':True},indent=2))
+          PY
+      - name: Re-upgrade revision 26 from clean downgrade
+        working-directory: backend
+        run: alembic upgrade 20260808_26
+      - name: Upload revision 26 certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-identity-schema-v26-${{ github.sha }}
+          path: |
+            /tmp/mtg-v26-baseline.json
+            /tmp/mtg-v26-upgrade.json
+          retention-days: 90
+          if-no-files-found: warn
