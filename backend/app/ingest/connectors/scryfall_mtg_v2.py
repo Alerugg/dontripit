@@ -20,6 +20,11 @@ class ScryfallMtgV2Connector(ScryfallMtgConnector):
     """
 
     name = "scryfall_mtg"
+    # Scryfall's authoritative bulk export is reproducible from the upstream
+    # source. Persisting every full card JSON in a 512 MiB operational Neon
+    # database would duplicate hundreds of MiB without improving identity or
+    # idempotency. SourceRecord still keeps the source checksum + omission marker.
+    persist_raw_source_payload = False
     _SCRYFALL_HEADERS = {
         "User-Agent": "TCGCatalogV2/1.0 (+https://github.com/Alerugg/dontripit)",
         "Accept": "application/json;q=0.9,*/*;q=0.8",
