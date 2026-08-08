@@ -1,0 +1,97 @@
+name: Expand Pokemon Variants V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/expand-pokemon-variants-v2.yml'
+      - 'backend/app/scripts/expand_pokemon_variants_v2.py'
+      - 'backend/app/scripts/preflight_pokemon_variants_v2.py'
+  workflow_dispatch:
+
+concurrency:
+  group: pokemon-v2-variant-expansion
+  cancel-in-progress: false
+
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TCGDEX_SOURCE_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Checkout pinned official TCGdex cards database
+        run: |
+          set -euo pipefail
+          git init /tmp/tcgdex-cards
+          git -C /tmp/tcgdex-cards remote add origin https://github.com/tcgdex/cards-database.git
+          git -C /tmp/tcgdex-cards fetch --depth 1 origin "$TCGDEX_SOURCE_SHA"
+          git -C /tmp/tcgdex-cards checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/tcgdex-cards rev-parse HEAD)" = "$TCGDEX_SOURCE_SHA"
+
+      - name: Export canonical rich snapshot
+        run: |
+          bun backend/tools/export_tcgdex_rich_snapshot.ts \
+            --source-root /tmp/tcgdex-cards \
+            --source-version "$TCGDEX_SOURCE_SHA" \
+            --output /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json
+
+      - name: Apply schema migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Expand exact physical variants transactionally
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.expand_pokemon_variants_v2 \
+            --snapshot /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json \
+            --backup-path /tmp/pokemon-variants-before.json \
+            --report-path /tmp/pokemon-variants-report.json \
+            | tee /tmp/pokemon-variants.log
+
+      - name: Print variant evidence
+        if: always()
+        run: |
+          echo '--- variant expansion ---'
+          cat /tmp/pokemon-variants-report.json 2>/dev/null || true
+
+      - name: Upload variant expansion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-variants-v2-${{ github.sha }}
+          path: |
+            /tmp/pokemon-rich-manifest.json
+            /tmp/pokemon-variants-before.json
+            /tmp/pokemon-variants-report.json
+            /tmp/pokemon-variants.log
+          retention-days: 180
+          if-no-files-found: warn
