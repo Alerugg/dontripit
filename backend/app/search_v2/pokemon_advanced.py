@@ -27,6 +27,10 @@ def _range(value) -> tuple[int | None, int | None]:
     )
 
 
+def _lower(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
 def advanced_pokemon_search(
     session,
     *,
@@ -35,7 +39,11 @@ def advanced_pokemon_search(
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
-    """Advanced physical Pokémon Print search over certified Search V2 profiles."""
+    """Advanced physical Pokémon Print search over certified Search V2 profiles.
+
+    Filter names intentionally match `POKEMON_FACETS` exactly. Unsupported keys
+    fail loudly so a frontend control can never appear to work while being ignored.
+    """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Advanced Pokémon Search V2 requires PostgreSQL")
 
@@ -53,9 +61,8 @@ def advanced_pokemon_search(
         where.append(f"psp.search_text LIKE :{key}")
         params[key] = f"%{token}%"
 
-    def add_in(column: str, key: str, values: list[str], *, normalize: bool = False) -> None:
-        clean_values = [normalize_search_text(v) if normalize else v for v in values]
-        clean_values = [v for v in clean_values if v]
+    def add_in(column: str, key: str, values: list[str]) -> None:
+        clean_values = [value for value in values if value]
         if not clean_values:
             return
         binds = []
@@ -79,24 +86,27 @@ def advanced_pokemon_search(
         [normalize_search_text(value).replace(" ", "-") for value in collectors],
     )
 
-    languages = [normalize_language(v) for v in _as_list(filters.pop("language", None))]
-    add_in("psp.language", "language", [v for v in languages if v])
+    languages = [normalize_language(value) for value in _as_list(filters.pop("language", None))]
+    add_in("psp.language", "language", [value for value in languages if value])
 
-    rarities = [normalize_search_text(v) for v in _as_list(filters.pop("rarity", None))]
-    add_in("lower(COALESCE(psp.rarity,''))", "rarity", rarities)
+    add_in(
+        "lower(COALESCE(psp.rarity,''))",
+        "rarity",
+        [_lower(value) for value in _as_list(filters.pop("rarity", None))],
+    )
+    add_in(
+        "psp.exact_variant",
+        "exact_variant",
+        [normalize_search_text(value).replace(" ", "-") for value in _as_list(filters.pop("exact_variant", None))],
+    )
+    add_in(
+        "psp.variant_family",
+        "variant_family",
+        [_lower(value) for value in _as_list(filters.pop("variant_family", None))],
+    )
 
-    exact_variants = [normalize_search_text(v).replace(" ", "-") for v in _as_list(filters.pop("exact_variant", None))]
-    add_in("psp.exact_variant", "exact_variant", exact_variants)
-
-    families = [normalize_search_text(v) for v in _as_list(filters.pop("variant_family", None))]
-    add_in("psp.variant_family", "variant_family", families)
-
-    array_filters = {
-        "type": "types",
-        "stamps": "stamps",
-        "dex_id": "dex_id",
-    }
-    for input_key, json_key in array_filters.items():
+    # Multi-valued canonical attributes whose facet keys exactly mirror the UI.
+    for input_key, json_key in (("types", "types"), ("stamp", "stamps")):
         values = _as_list(filters.pop(input_key, None))
         if not values:
             continue
@@ -107,7 +117,7 @@ def advanced_pokemon_search(
                 "EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(psp.attributes_json -> "
                 f"'{json_key}', '[]'::jsonb)) v WHERE lower(v) = :{bind})"
             )
-            params[bind] = normalize_search_text(value)
+            params[bind] = _lower(value)
         where.append("(" + " OR ".join(clauses) + ")")
 
     scalar_filters = {
@@ -115,6 +125,7 @@ def advanced_pokemon_search(
         "stage": "stage",
         "trainer_type": "trainer_type",
         "energy_type": "energy_type",
+        "evolve_from": "evolve_from",
         "regulation_mark": "regulation_mark",
         "illustrator": "illustrator",
         "series": "series",
@@ -125,7 +136,7 @@ def advanced_pokemon_search(
         "size": "size",
     }
     for input_key, json_key in scalar_filters.items():
-        values = [normalize_search_text(v) for v in _as_list(filters.pop(input_key, None))]
+        values = [_lower(value) for value in _as_list(filters.pop(input_key, None))]
         if not values:
             continue
         binds = []
@@ -151,6 +162,23 @@ def advanced_pokemon_search(
         if hi is not None:
             params[f"{key}_max"] = hi
             where.append(f"{numeric_expr} <= :{key}_max")
+
+    dex_value = filters.pop("dex_id", None)
+    if dex_value is not None:
+        lo, hi = _range(dex_value)
+        clauses = [
+            "value ~ '^[0-9]+$'",
+        ]
+        if lo is not None:
+            params["dex_id_min"] = lo
+            clauses.append("value::integer >= :dex_id_min")
+        if hi is not None:
+            params["dex_id_max"] = hi
+            clauses.append("value::integer <= :dex_id_max")
+        where.append(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(psp.attributes_json -> 'dex_id', '[]'::jsonb)) value "
+            "WHERE " + " AND ".join(clauses) + ")"
+        )
 
     if filters:
         raise ValueError(f"Unsupported Pokémon advanced filters: {sorted(filters)}")
