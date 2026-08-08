@@ -5,10 +5,13 @@ from flask import Blueprint, jsonify, request
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
 from app.search_v2.facet_values import onepiece_facet_values
+from app.search_v2.pokemon_advanced import advanced_pokemon_search
+from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.query import facet_definitions, normal_search
 
 
 search_v2_bp = Blueprint("search_v2", __name__)
+SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon"}
 
 
 @search_v2_bp.get("/api/v2/search")
@@ -68,14 +71,17 @@ def search_v2_facets(game_slug: str):
 def search_v2_facet_values(game_slug: str, facet_key: str):
     game_slug = game_slug.strip().lower()
     facet_key = facet_key.strip().lower()
-    if game_slug != "onepiece":
+    if game_slug not in SEARCH_V2_ADVANCED_GAMES:
         return jsonify({"error": "game_not_search_v2_ready", "game": game_slug}), 422
 
     query = str(request.args.get("q") or "").strip()
     limit = request.args.get("limit", default=30, type=int) or 30
     try:
         with db.SessionLocal() as session:
-            items = onepiece_facet_values(session, key=facet_key, query=query, limit=limit)
+            if game_slug == "pokemon":
+                items = pokemon_facet_values(session, key=facet_key, query=query, limit=limit)
+            else:
+                items = onepiece_facet_values(session, key=facet_key, query=query, limit=limit)
     except ValueError as exc:
         return jsonify({"error": "facet_values_unavailable", "detail": str(exc)}), 400
 
@@ -96,7 +102,7 @@ def search_v2_advanced():
     game = str(body.get("game") or "").strip().lower()
     if not game:
         return jsonify({"error": "game is required"}), 400
-    if game != "onepiece":
+    if game not in SEARCH_V2_ADVANCED_GAMES:
         return jsonify({"error": "game_not_search_v2_ready", "game": game}), 422
 
     filters = body.get("filters") or {}
@@ -105,7 +111,8 @@ def search_v2_advanced():
 
     try:
         with db.SessionLocal() as session:
-            result = advanced_onepiece_search(
+            search_fn = advanced_pokemon_search if game == "pokemon" else advanced_onepiece_search
+            result = search_fn(
                 session,
                 filters=filters,
                 query=body.get("q"),
