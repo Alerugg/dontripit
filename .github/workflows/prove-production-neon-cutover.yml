@@ -1,0 +1,160 @@
+name: Prove Production Neon Cutover
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/prove-production-neon-cutover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prove-production-neon-cutover
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      LIVE_API_BASE: https://api.dontripit.com
+    steps:
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install proof dependencies
+        run: pip install psycopg2-binary requests
+
+      - name: Prove live API is reading Neon and clean up probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/prove_cutover.py <<'PY'
+          import hashlib
+          import json
+          import os
+          import secrets
+          import sys
+          import time
+          from datetime import datetime, timezone
+
+          import psycopg2
+          import requests
+
+          def norm(url):
+              for old in ('postgresql+psycopg2://','postgres+psycopg2://','postgres://'):
+                  if url.startswith(old):
+                      return 'postgresql://' + url[len(old):]
+              return url
+
+          db_url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not db_url:
+              raise SystemExit('Missing Neon database secret')
+
+          raw_key = 'ak_cutover_' + secrets.token_urlsafe(24)
+          key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+          prefix = raw_key[:8]
+          label = 'temporary-production-neon-cutover-proof'
+          started = datetime.now(timezone.utc)
+          conn = psycopg2.connect(norm(db_url), connect_timeout=15)
+          conn.autocommit = False
+          api_key_id = None
+
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT id FROM api_plans WHERE name='free'")
+                  row = cur.fetchone()
+                  if not row:
+                      raise RuntimeError('free API plan missing in Neon')
+                  plan_id = row[0]
+                  cur.execute(
+                      '''INSERT INTO api_keys (key_hash,prefix,plan_id,is_active,label,scopes)
+                         VALUES (%s,%s,%s,true,%s,%s::jsonb) RETURNING id''',
+                      (key_hash, prefix, plan_id, label, json.dumps(['read:catalog']))
+                  )
+                  api_key_id = cur.fetchone()[0]
+              conn.commit()
+
+              # This key exists only in Neon. A 200 from the live Railway-hosted
+              # API therefore proves its runtime DB target is Neon.
+              url = os.environ['LIVE_API_BASE'].rstrip('/') + '/api/v2/search'
+              response = requests.get(
+                  url,
+                  params={'q': 'Black Lotus', 'game': 'mtg', 'limit': 5},
+                  headers={'X-API-Key': raw_key},
+                  timeout=30,
+              )
+              body_text = response.text[:5000]
+              if response.status_code != 200:
+                  raise RuntimeError(f'Live API rejected Neon-only key: HTTP {response.status_code}: {body_text}')
+              payload = response.json()
+              items = payload.get('items') or []
+              if not items:
+                  raise RuntimeError(f'Live MTG Search V2 returned no items: {body_text}')
+              if not any('black lotus' in str(item.get('name','')).lower() for item in items):
+                  raise RuntimeError(f'Live MTG Search V2 did not return Black Lotus: {body_text}')
+
+              # Wait briefly for middleware writes to commit, then prove the
+              # request was metered in Neon under this exact temporary key.
+              time.sleep(1)
+              with conn.cursor() as cur:
+                  cur.execute(
+                      'SELECT COALESCE(SUM(request_count),0) FROM api_usage WHERE api_key_id=%s',
+                      (api_key_id,)
+                  )
+                  usage_requests = int(cur.fetchone()[0])
+                  cur.execute(
+                      '''SELECT COUNT(*) FROM api_request_metrics
+                         WHERE api_key_prefix=%s AND requested_at >= %s''',
+                      (prefix, started)
+                  )
+                  metric_rows = int(cur.fetchone()[0])
+              conn.rollback()
+
+              if usage_requests < 1:
+                  raise RuntimeError('Live request did not increment Neon api_usage')
+              if metric_rows < 1:
+                  raise RuntimeError('Live request did not create Neon api_request_metrics evidence')
+
+              report = {
+                  'status': 'pass',
+                  'live_api': os.environ['LIVE_API_BASE'],
+                  'proof': 'temporary API key existed only in Neon and was accepted by live API',
+                  'http_status': response.status_code,
+                  'search_game': payload.get('game'),
+                  'search_count': payload.get('count'),
+                  'matched_names': [item.get('name') for item in items[:5]],
+                  'neon_usage_requests_for_probe': usage_requests,
+                  'neon_metric_rows_for_probe': metric_rows,
+              }
+              print(json.dumps(report, indent=2, sort_keys=True))
+          finally:
+              if api_key_id is not None:
+                  try:
+                      with conn.cursor() as cur:
+                          cur.execute('DELETE FROM api_request_metrics WHERE api_key_prefix=%s AND requested_at >= %s', (prefix, started))
+                          cur.execute('DELETE FROM api_usage WHERE api_key_id=%s', (api_key_id,))
+                          cur.execute('DELETE FROM api_keys WHERE id=%s AND label=%s', (api_key_id, label))
+                      conn.commit()
+                  except Exception as exc:
+                      conn.rollback()
+                      print(f'WARNING: probe cleanup failed: {exc}', file=sys.stderr)
+              conn.close()
+          PY
+          python /tmp/prove_cutover.py | tee /tmp/production-neon-cutover-proof.json
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-neon-cutover-proof-${{ github.sha }}
+          path: /tmp/production-neon-cutover-proof.json
+          retention-days: 30
+          if-no-files-found: warn
