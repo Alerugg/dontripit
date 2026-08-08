@@ -42,7 +42,7 @@ jobs:
       - name: Compile audit
         run: python -m py_compile app/scripts/audit_mtg_postload_v23.py
       - name: Run read-only post-load audit
-        run: python -u -m app.scripts.audit_mtg_postload_v23 --output /tmp/mtg-v23-postload-audit.json
+        run: python -u app/scripts/audit_mtg_postload_v23.py --output /tmp/mtg-v23-postload-audit.json
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
