@@ -16,16 +16,21 @@ CONNECTORS = {
     RiftboundConnector.name: RiftboundConnector,
 }
 
-# Canonical V2 identity can be stricter than the historical generic connector
-# upsert contract. Keep the connector class importable for read-only source
-# access (bulk metadata/downloads, audits, snapshot builders), but prevent the
-# generic ingest framework and schedulers from invoking a writer that would
-# collapse Scryfall finishes back into variant='default'.
+# Canonical identity can be stricter than historical generic upsert contracts.
+# Keep source classes importable for read-only audits/snapshot tools, but block
+# generic writers until their physical identity and source policy are certified.
 WRITE_QUARANTINED_CONNECTORS = {
     "scryfall_mtg": (
         "MTG Canonical V2 uses exact physical Print identity "
         "(Scryfall object id + finish). The legacy generic Scryfall upsert is "
         "quarantined until a finish-aware incremental writer is certified."
+    ),
+    "riftbound": (
+        "Riftbound must use Riot's authorized riftbound-content-v1 source only. "
+        "The legacy connector can auto-fallback to unofficial data, merges Cards "
+        "by name when source IDs are absent, and does not yet prove exact physical "
+        "variant identity. It is read-only/quarantined until the official Riot API "
+        "source and canonical V2 snapshot are certified."
     ),
 }
 
