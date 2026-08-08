@@ -1,0 +1,215 @@
+name: Apply MTG Search V2 Live
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/mtg-search-v2-live-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-search-v2-live
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Gate canonical MTG architecture
+        working-directory: .
+        run: |
+          test ! -e backend/alembic/versions/20260808_26_add_mtg_source_print_layer.py
+          test ! -e backend/app/mtg_models.py
+          ! grep -R "from app import mtg_models" backend/alembic/env.py
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify database secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Run focused Search V2 tests before live write
+        run: pytest -q tests/test_mtg_search_v2.py tests/test_mtg_identity_v2.py tests/test_mtg_write_quarantine_v2.py
+
+      - name: Hard-gate exact live baseline read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgresql+psycopg2://'):
+              url='postgresql://'+url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url='postgresql://'+url[len('postgres://'):]
+
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SET TRANSACTION READ ONLY')
+                  cur.execute("SELECT current_setting('neon.max_cluster_size', true)")
+                  neon_limit=str(cur.fetchone()[0])
+                  cur.execute('SELECT version_num FROM alembic_version')
+                  alembic=str(cur.fetchone()[0])
+                  cur.execute('SELECT pg_database_size(current_database())')
+                  database_bytes=int(cur.fetchone()[0])
+                  cur.execute("SELECT id FROM games WHERE slug='mtg'")
+                  game_id=int(cur.fetchone()[0])
+
+                  def scalar(sql, params=()):
+                      cur.execute(sql, params)
+                      return int(cur.fetchone()[0])
+
+                  mtg={
+                    'sets':scalar('SELECT COUNT(*) FROM sets WHERE game_id=%s',(game_id,)),
+                    'cards':scalar('SELECT COUNT(*) FROM cards WHERE game_id=%s',(game_id,)),
+                    'card_attributes':scalar('SELECT COUNT(*) FROM card_attributes ca JOIN cards c ON c.id=ca.card_id WHERE c.game_id=%s',(game_id,)),
+                    'prints':scalar('SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s',(game_id,)),
+                    'print_attributes':scalar('SELECT COUNT(*) FROM print_attributes pa JOIN prints p ON p.id=pa.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s',(game_id,)),
+                    'card_search_profiles':scalar('SELECT COUNT(*) FROM card_search_profiles WHERE game_id=%s',(game_id,)),
+                    'print_search_profiles':scalar('SELECT COUNT(*) FROM print_search_profiles WHERE game_id=%s',(game_id,)),
+                    'facets':scalar('SELECT COUNT(*) FROM facet_definitions WHERE game_id=%s',(game_id,)),
+                    'prices':scalar('SELECT COUNT(*) FROM prices WHERE game_id=%s',(game_id,)),
+                  }
+                  cur.execute("""
+                    SELECT g.slug,COUNT(DISTINCT c.id)::bigint,COUNT(p.id)::bigint
+                    FROM games g LEFT JOIN cards c ON c.game_id=g.id LEFT JOIN prints p ON p.card_id=c.id
+                    WHERE g.slug<>'mtg' GROUP BY g.slug ORDER BY g.slug
+                  """)
+                  non_mtg={str(slug):{'cards':int(cards),'prints':int(prints)} for slug,cards,prints in cur.fetchall()}
+              conn.rollback()
+          finally:
+              conn.close()
+
+          expected_mtg={
+            'sets':986,'cards':37624,'card_attributes':37624,'prints':161275,'print_attributes':161275,
+            'card_search_profiles':0,'print_search_profiles':0,'facets':0,'prices':0,
+          }
+          expected_non_mtg={
+            'onepiece':{'cards':2665,'prints':4672},
+            'pokemon':{'cards':21065,'prints':33757},
+            'yugioh':{'cards':14479,'prints':44226},
+            'riftbound':{'cards':2,'prints':2},
+          }
+          report={
+            'status':'pass','mode':'read_only','database_writes':0,'alembic_version':alembic,
+            'neon_max_cluster_size':neon_limit,'database_bytes':database_bytes,'mtg':mtg,'non_mtg':non_mtg,
+          }
+          if alembic!='20260808_25':
+              raise SystemExit(f'Unexpected Alembic revision: {alembic}')
+          if mtg!=expected_mtg:
+              raise SystemExit(f'Live MTG baseline moved or Search V2 already exists: {mtg!r}')
+          if non_mtg!=expected_non_mtg:
+              raise SystemExit(f'Non-MTG baseline moved: {non_mtg!r}')
+          Path('/tmp/mtg-search-live-before.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Compile exact lean rebuild and benchmark
+        run: python -m py_compile app/scripts/rebuild_mtg_search_v2_fast.py app/scripts/benchmark_mtg_search_v2_shadow.py app/search_v2/mtg_query.py
+
+      - name: Apply one transactional lean MTG Search V2 rebuild
+        run: python -u -m app.scripts.rebuild_mtg_search_v2_fast --report-path /tmp/mtg-search-v2-live-build.json
+
+      - name: Validate live counts, isolation and storage read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+
+          before=json.loads(Path('/tmp/mtg-search-live-before.json').read_text())
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgresql+psycopg2://'):
+              url='postgresql://'+url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url='postgresql://'+url[len('postgres://'):]
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SET TRANSACTION READ ONLY')
+                  cur.execute("SELECT id FROM games WHERE slug='mtg'")
+                  game_id=int(cur.fetchone()[0])
+                  def scalar(sql, params=()):
+                      cur.execute(sql, params)
+                      return int(cur.fetchone()[0])
+                  after={
+                    'sets':scalar('SELECT COUNT(*) FROM sets WHERE game_id=%s',(game_id,)),
+                    'cards':scalar('SELECT COUNT(*) FROM cards WHERE game_id=%s',(game_id,)),
+                    'prints':scalar('SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s',(game_id,)),
+                    'card_search_profiles':scalar('SELECT COUNT(*) FROM card_search_profiles WHERE game_id=%s',(game_id,)),
+                    'print_search_profiles':scalar('SELECT COUNT(*) FROM print_search_profiles WHERE game_id=%s',(game_id,)),
+                    'facets':scalar('SELECT COUNT(*) FROM facet_definitions WHERE game_id=%s AND active=true',(game_id,)),
+                    'prices':scalar('SELECT COUNT(*) FROM prices WHERE game_id=%s',(game_id,)),
+                  }
+                  cur.execute("SELECT key FROM facet_definitions WHERE game_id=%s AND active=true AND quick_filter=true ORDER BY key",(game_id,))
+                  quick=[str(row[0]) for row in cur.fetchall()]
+                  cur.execute("""
+                    SELECT g.slug,COUNT(DISTINCT c.id)::bigint,COUNT(p.id)::bigint
+                    FROM games g LEFT JOIN cards c ON c.game_id=g.id LEFT JOIN prints p ON p.card_id=c.id
+                    WHERE g.slug<>'mtg' GROUP BY g.slug ORDER BY g.slug
+                  """)
+                  non_mtg={str(slug):{'cards':int(cards),'prints':int(prints)} for slug,cards,prints in cur.fetchall()}
+                  invalid=scalar('SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid OR NOT indisready')
+                  database_bytes=scalar('SELECT pg_database_size(current_database())')
+              conn.rollback()
+          finally:
+              conn.close()
+
+          expected={'sets':986,'cards':37624,'prints':161275,'card_search_profiles':37624,'print_search_profiles':161275,'facets':21,'prices':0}
+          if after!=expected:
+              raise SystemExit(f'Live MTG Search V2 validation failed: {after!r}')
+          if quick!=['card_type','color_identity','finish','rarity','set']:
+              raise SystemExit(f'Quick filters moved: {quick!r}')
+          if non_mtg!=before['non_mtg']:
+              raise SystemExit(f'Non-MTG catalogs changed: {non_mtg!r}')
+          if invalid!=0:
+              raise SystemExit(f'Invalid indexes detected: {invalid}')
+          report={
+            'status':'pass','mode':'read_only','database_writes':0,'mtg':after,'quick_filters':quick,
+            'non_mtg':non_mtg,'invalid_indexes':invalid,'database_bytes_before':before['database_bytes'],
+            'database_bytes_after':database_bytes,'database_delta_bytes':database_bytes-before['database_bytes'],
+          }
+          Path('/tmp/mtg-search-v2-live-validation.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Run short live query certification
+        run: python -u -m app.scripts.benchmark_mtg_search_v2_shadow --output /tmp/mtg-search-v2-live-benchmark.json
+
+      - name: Upload live Search V2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-search-v2-live-${{ github.sha }}
+          path: |
+            /tmp/mtg-search-live-before.json
+            /tmp/mtg-search-v2-live-build.json
+            /tmp/mtg-search-v2-live-validation.json
+            /tmp/mtg-search-v2-live-benchmark.json
+          retention-days: 90
+          if-no-files-found: warn
