@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           python -u -m app.scripts.benchmark_mtg_production_schema_shadow_v3 \
             --report-path /tmp/mtg-production-schema-shadow-v3.json \
-            | tee /tmp/mtg-production-schema-shadow-v3.log
+            2>&1 | tee /tmp/mtg-production-schema-shadow-v3.log
 
       - name: Upload production-schema shadow evidence
         if: always()
