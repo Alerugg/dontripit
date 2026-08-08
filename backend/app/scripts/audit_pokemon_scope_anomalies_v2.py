@@ -12,6 +12,7 @@ from app import db
 
 
 _SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+_LEGACY_SV_ID = re.compile(r"^sv(?P<set_no>\d+)-(?P<collector>\d+)$", re.IGNORECASE)
 
 
 def _write(path: Path | None, payload: dict) -> None:
@@ -19,6 +20,15 @@ def _write(path: Path | None, payload: dict) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+
+
+def _normalize_legacy_tcgdex_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = _LEGACY_SV_ID.fullmatch(value.strip())
+    if not match:
+        return None
+    return f"sv{int(match.group('set_no')):02d}-{int(match.group('collector')):03d}"
 
 
 def _foreign_key_usage(session, *, foreign_table: str, target_ids: list[int]) -> list[dict]:
@@ -229,6 +239,60 @@ def run(*, report_path: Path | None = None) -> dict:
             """
         ), {"game_id": game_id, "print_ids": print_ids or [-1]}).mappings().all()]
 
+        legacy_alias_requests: list[dict] = []
+        for row in cards:
+            normalized = _normalize_legacy_tcgdex_id(row.get("tcgdex_id"))
+            if normalized:
+                legacy_alias_requests.append({
+                    "kind": "card",
+                    "legacy_row_id": int(row["id"]),
+                    "legacy_tcgdex_id": row.get("tcgdex_id"),
+                    "normalized_tcgdex_id": normalized,
+                })
+        for row in prints:
+            normalized = _normalize_legacy_tcgdex_id(row.get("print_tcgdex_id"))
+            if normalized:
+                legacy_alias_requests.append({
+                    "kind": "print",
+                    "legacy_row_id": int(row["id"]),
+                    "legacy_tcgdex_id": row.get("print_tcgdex_id"),
+                    "normalized_tcgdex_id": normalized,
+                })
+        normalized_ids = sorted({row["normalized_tcgdex_id"] for row in legacy_alias_requests})
+
+        normalized_rows = [dict(row) for row in session.execute(text(
+            """
+            SELECT
+              c.id AS card_id,
+              c.name AS card_name,
+              c.card_key,
+              c.tcgdex_id AS card_tcgdex_id,
+              p.id AS print_id,
+              p.print_key,
+              p.tcgdex_id AS print_tcgdex_id,
+              s.code AS set_code,
+              s.name AS set_name,
+              p.collector_number,
+              p.language,
+              p.rarity,
+              p.variant,
+              (ca.card_id IS NOT NULL) AS has_card_attributes,
+              (pa.print_id IS NOT NULL) AS has_print_attributes,
+              (csp.card_id IS NOT NULL) AS has_card_search_profile,
+              (psp.print_id IS NOT NULL) AS has_print_search_profile
+            FROM cards c
+            LEFT JOIN prints p ON p.card_id=c.id
+            LEFT JOIN sets s ON s.id=p.set_id
+            LEFT JOIN card_attributes ca ON ca.card_id=c.id
+            LEFT JOIN print_attributes pa ON pa.print_id=p.id
+            LEFT JOIN card_search_profiles csp ON csp.card_id=c.id
+            LEFT JOIN print_search_profiles psp ON psp.print_id=p.id
+            WHERE c.game_id=:game_id
+              AND (c.tcgdex_id = ANY(:normalized_ids) OR p.tcgdex_id = ANY(:normalized_ids))
+            ORDER BY c.tcgdex_id, p.id
+            """
+        ), {"game_id": game_id, "normalized_ids": normalized_ids or ["__none__"]}).mappings().all()]
+
         totals = dict(session.execute(text(
             """
             SELECT
@@ -254,6 +318,11 @@ def run(*, report_path: Path | None = None) -> dict:
         "prints_outside_certified_projection": prints,
         "canonical_card_candidates": card_candidates,
         "canonical_print_candidates": print_candidates,
+        "legacy_tcgdex_normalization": {
+            "rule": "sv<set>-<collector> -> sv<set:02>-<collector:03>; evidence probe only, not deletion authority",
+            "requests": legacy_alias_requests,
+            "matched_canonical_rows": normalized_rows,
+        },
         "foreign_key_usage": {
             "cards": card_fk_usage,
             "prints": print_fk_usage,
@@ -263,6 +332,8 @@ def run(*, report_path: Path | None = None) -> dict:
             "prints_outside_certified_projection": len(prints),
             "canonical_card_candidates": len(card_candidates),
             "canonical_print_candidates": len(print_candidates),
+            "normalized_alias_requests": len(legacy_alias_requests),
+            "normalized_alias_rows": len(normalized_rows),
             "card_fk_usage_rows": len(card_fk_usage),
             "print_fk_usage_rows": len(print_fk_usage),
         },
