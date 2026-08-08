@@ -1,0 +1,64 @@
+name: MTG Write Quarantine V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/mtg-write-quarantine-v2.yml'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/app/ingest/run.py'
+      - 'backend/app/jobs/schedule.py'
+      - 'backend/app/jobs/runtime.py'
+      - 'backend/tests/test_mtg_write_quarantine_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile quarantined ingest and scheduler paths
+        run: python -m py_compile app/ingest/registry.py app/ingest/run.py app/jobs/schedule.py app/jobs/runtime.py
+
+      - name: Run MTG write quarantine tests
+        run: pytest -q tests/test_mtg_write_quarantine_v2.py
+
+      - name: Prove generic CLI refuses Scryfall before database initialization
+        run: |
+          set +e
+          output=$(python -m app.ingest.run scryfall_mtg --limit 1 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F "Write connector quarantined: scryfall_mtg"
+
+      - name: Prove scheduler configuration filters Scryfall
+        run: |
+          python - <<'PY'
+          from app.jobs.schedule import _scheduled_jobs
+          jobs = _scheduled_jobs('scryfall_mtg:daily,fixture_local:manual')
+          assert jobs == [('fixture_local', 'manual')], jobs
+          print({'status': 'pass', 'scheduled_jobs_after_quarantine': jobs})
+          PY
