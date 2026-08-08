@@ -14,6 +14,14 @@ def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _source_ref(card: dict) -> dict:
+    return {
+        "scryfall_id": clean(card.get("scryfall_id") or card.get("id")),
+        "set": clean(card.get("set")),
+        "collector_number": clean(card.get("collector_number")),
+    }
+
+
 def run(*, output_path: Path) -> dict:
     connector = ScryfallMtgV2Connector()
     metadata = connector._bulk_metadata()
@@ -24,7 +32,9 @@ def run(*, output_path: Path) -> dict:
     first_by_key: dict[str, dict] = {}
     differing_fields: Counter[str] = Counter()
     conflict_keys: set[str] = set()
+    conflict_keys_by_field: dict[str, set[str]] = defaultdict(set)
     samples: list[dict] = []
+    field_samples: dict[str, list[dict]] = defaultdict(list)
     objects = 0
 
     for card in _iter_bulk_rows(connector, download_url):
@@ -53,13 +63,37 @@ def run(*, output_path: Path) -> dict:
             after = attrs.get(field)
             if _canonical(before) != _canonical(after):
                 differing_fields[field] += 1
-                changed.append(
-                    {
-                        "field": field,
-                        "baseline": before,
-                        "current": after,
-                    }
-                )
+                conflict_keys_by_field[field].add(key)
+                difference = {
+                    "field": field,
+                    "baseline": before,
+                    "current": after,
+                }
+                changed.append(difference)
+
+                # Keep targeted evidence for every field. This is intentionally
+                # capped per field so rare conflicts cannot be hidden behind the
+                # very common legality/reserved differences.
+                if len(field_samples[field]) < 20:
+                    field_samples[field].append(
+                        {
+                            "card_key": key,
+                            "name": current["name"],
+                            "oracle_id": current["oracle_id"],
+                            "baseline_source": {
+                                "scryfall_id": baseline["scryfall_id"],
+                                "set": baseline["set"],
+                                "collector_number": baseline["collector_number"],
+                            },
+                            "current_source": {
+                                "scryfall_id": current["scryfall_id"],
+                                "set": current["set"],
+                                "collector_number": current["collector_number"],
+                            },
+                            "baseline": before,
+                            "current": after,
+                        }
+                    )
 
         if changed:
             conflict_keys.add(key)
@@ -93,6 +127,10 @@ def run(*, output_path: Path) -> dict:
         "logical_card_keys": len(first_by_key),
         "logical_cards_with_attribute_conflicts": len(conflict_keys),
         "differing_field_comparisons": dict(sorted(differing_fields.items())),
+        "logical_cards_with_conflict_by_field": {
+            field: len(keys) for field, keys in sorted(conflict_keys_by_field.items())
+        },
+        "field_samples": {field: rows for field, rows in sorted(field_samples.items())},
         "samples": samples,
         "database_writes": 0,
     }
