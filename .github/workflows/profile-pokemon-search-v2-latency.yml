@@ -1,0 +1,45 @@
+name: Profile Pokemon Search V2 Latency
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/profile-pokemon-search-v2-latency.yml'
+      - 'backend/app/scripts/profile_pokemon_search_v2_latency.py'
+  workflow_dispatch:
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Profile each Search V2 operation independently
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.profile_pokemon_search_v2_latency | tee /tmp/pokemon-search-v2-profile.log
+      - name: Upload profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-search-v2-profile-${{ github.sha }}
+          path: /tmp/pokemon-search-v2-profile.log
+          retention-days: 30
+          if-no-files-found: warn
