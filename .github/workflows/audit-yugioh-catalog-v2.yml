@@ -1,0 +1,50 @@
+name: Audit Yu-Gi-Oh Catalog V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-yugioh-catalog-v2.yml'
+      - 'backend/app/scripts/audit_yugioh_catalog_v2.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Run YGOPRODeck vs Neon catalog audit
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_yugioh_catalog_v2 \
+            --report-path /tmp/yugioh-catalog-v2-audit.json \
+            | tee /tmp/yugioh-catalog-v2-audit.log
+      - name: Upload Yu-Gi-Oh audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-catalog-v2-audit-${{ github.sha }}
+          path: |
+            /tmp/yugioh-catalog-v2-audit.json
+            /tmp/yugioh-catalog-v2-audit.log
+          retention-days: 90
+          if-no-files-found: warn
