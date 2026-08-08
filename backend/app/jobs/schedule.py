@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import time
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from app.ingest.registry import is_connector_write_quarantined
 from app.ingest.run import run_ingest
+
+
+logger = logging.getLogger(__name__)
+DEFAULT_SCHEDULER_JOBS = "fixture_local:manual"
 
 
 def _parse_jobs(raw: str) -> list[tuple[str, str]]:
@@ -19,11 +25,21 @@ def _parse_jobs(raw: str) -> list[tuple[str, str]]:
     return jobs
 
 
+def _scheduled_jobs(raw: str) -> list[tuple[str, str]]:
+    output: list[tuple[str, str]] = []
+    for name, mode in _parse_jobs(raw):
+        if is_connector_write_quarantined(name):
+            logger.warning("scheduler skipping quarantined write connector=%s mode=%s", name, mode)
+            continue
+        output.append((name, mode))
+    return output
+
+
 def run_once() -> None:
-    for name, mode in _parse_jobs(os.getenv("SCHEDULER_JOBS", "scryfall_mtg:daily,fixture_local:manual")):
+    for name, mode in _scheduled_jobs(os.getenv("SCHEDULER_JOBS", DEFAULT_SCHEDULER_JOBS)):
         if mode == "manual":
             continue
-        run_ingest(name, fixture=name == "scryfall_mtg")
+        run_ingest(name)
 
 
 def main() -> None:
@@ -39,7 +55,7 @@ def main() -> None:
         return
 
     scheduler = BackgroundScheduler()
-    for name, mode in _parse_jobs(os.getenv("SCHEDULER_JOBS", "scryfall_mtg:daily,fixture_local:manual")):
+    for name, mode in _scheduled_jobs(os.getenv("SCHEDULER_JOBS", DEFAULT_SCHEDULER_JOBS)):
         if mode == "daily":
             scheduler.add_job(lambda n=name: run_ingest(n), "interval", hours=24, id=f"{name}_daily", replace_existing=True)
     scheduler.start()
