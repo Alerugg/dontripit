@@ -7,11 +7,13 @@ import './SearchV2.css'
 const QUICK_FILTER_KEYS_BY_GAME = {
   onepiece: new Set(['color', 'card_type', 'promo', 'sp', 'treasure_rare']),
   pokemon: new Set(['types', 'stage', 'rarity', 'regulation_mark', 'finish', 'stamp']),
+  yugioh: new Set(['set', 'release', 'card_class', 'attribute', 'archetype', 'rarity']),
 }
 
 const QUICK_FILTER_COPY_BY_GAME = {
   onepiece: 'Color, tipo y hits coleccionables sin abrir el panel completo.',
   pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir el panel completo.',
+  yugioh: 'Set, release, clase, atributo, arquetipo y rareza sin abrir el panel completo.',
 }
 
 function isEmpty(value) {
