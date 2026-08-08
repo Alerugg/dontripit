@@ -80,23 +80,34 @@ def _count_snapshot(session, game_id: int) -> dict[str, int]:
 def _nonzero_column_usage(session, *, column_name: str, target_ids: list[int]) -> list[dict]:
     rows = session.execute(text(
         """
-        SELECT table_name
-        FROM information_schema.columns
-        WHERE table_schema='public' AND column_name=:column_name
-        ORDER BY table_name
+        SELECT
+          cols.table_name,
+          cls.relkind
+        FROM information_schema.columns cols
+        JOIN pg_namespace ns ON ns.nspname=cols.table_schema
+        JOIN pg_class cls ON cls.relnamespace=ns.oid AND cls.relname=cols.table_name
+        WHERE cols.table_schema='public'
+          AND cols.column_name=:column_name
+        ORDER BY cols.table_name
         """
-    ), {"column_name": column_name}).scalars().all()
+    ), {"column_name": column_name}).mappings().all()
 
     evidence: list[dict] = []
-    for table_name in rows:
-        table_name = str(table_name)
+    for relation in rows:
+        table_name = str(relation["table_name"])
+        relkind = str(relation["relkind"])
         if not _SAFE_IDENT.fullmatch(table_name) or not _SAFE_IDENT.fullmatch(column_name):
             raise AssertionError(f"Unsafe metadata identifier: {table_name}.{column_name}")
         count = int(session.execute(text(
             f'SELECT COUNT(*) FROM "{table_name}" WHERE "{column_name}" = ANY(:target_ids)'
         ), {"target_ids": target_ids}).scalar_one())
         if count:
-            evidence.append({"table": table_name, "column": column_name, "rows": count})
+            evidence.append({
+                "table": table_name,
+                "column": column_name,
+                "rows": count,
+                "relation_kind": relkind,
+            })
     return evidence
 
 
@@ -211,15 +222,21 @@ def run(*, report_path: Path | None = None) -> dict:
 
         card_usage = _nonzero_column_usage(session, column_name="card_id", target_ids=[TARGET_CARD_ID])
         print_usage = _nonzero_column_usage(session, column_name="print_id", target_ids=list(TARGET_PRINT_IDS))
-        expected_card_usage = [{"table": "prints", "column": "card_id", "rows": 1}]
+        expected_card_usage = [
+            {"table": "prints", "column": "card_id", "rows": 1, "relation_kind": "r"},
+        ]
         expected_print_usage = [
-            {"table": "print_identifiers", "column": "print_id", "rows": 3},
-            {"table": "print_images", "column": "print_id", "rows": 3},
+            {"table": "print_identifiers", "column": "print_id", "rows": 3, "relation_kind": "r"},
+            {"table": "print_images", "column": "print_id", "rows": 3, "relation_kind": "r"},
+            # This is an ordinary PostgreSQL view over live print data. It is
+            # evidence, not separately stored state, and must disappear when
+            # the underlying legacy Prints are deleted.
+            {"table": "print_search_projection", "column": "print_id", "rows": 3, "relation_kind": "v"},
         ]
         if card_usage != expected_card_usage:
             raise AssertionError(f"Unexpected Card dependencies; refusing cleanup: {card_usage}")
         if print_usage != expected_print_usage:
-            raise AssertionError(f"Unexpected Print dependencies; refusing cleanup: {print_usage}")
+            raise AssertionError(f"Unexpected Print dependencies or relation kind; refusing cleanup: {print_usage}")
 
         deleted_identifiers = session.execute(text(
             "DELETE FROM print_identifiers WHERE print_id = ANY(:print_ids)"
@@ -263,17 +280,17 @@ def run(*, report_path: Path | None = None) -> dict:
               + (SELECT COUNT(*) FROM prints WHERE id = ANY(:print_ids))
               + (SELECT COUNT(*) FROM print_identifiers WHERE print_id = ANY(:print_ids))
               + (SELECT COUNT(*) FROM print_images WHERE print_id = ANY(:print_ids))
+              + (SELECT COUNT(*) FROM print_search_projection WHERE print_id = ANY(:print_ids))
             """
         ), {"card_id": TARGET_CARD_ID, "print_ids": list(TARGET_PRINT_IDS)}).scalar_one())
         if remaining_targets != 0:
             raise AssertionError(f"Legacy target rows remain after cleanup: {remaining_targets}")
 
         session.commit()
-        status = "pass"
         report = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "mode": "transactional_pokemon_legacy_scope_cleanup_v2",
-            "status": status,
+            "status": "pass",
             "before": before,
             "legacy_card_signature": card_signature,
             "legacy_print_signatures": print_signatures,
@@ -281,7 +298,7 @@ def run(*, report_path: Path | None = None) -> dict:
             "dependency_preflight": {"card_id": card_usage, "print_id": print_usage},
             "deleted": deleted,
             "after": after,
-            "remaining_target_rows": remaining_targets,
+            "remaining_target_rows_including_projection_view": remaining_targets,
             "certified_projection_row_writes": 0,
             "pricing_or_product_rows_touched": 0,
         }
