@@ -1,0 +1,192 @@
+name: Apply MTG V2.3 Live
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/apply-mtg-v23-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mtg-v23-live-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Gate canonical MTG schema files
+        working-directory: .
+        run: |
+          test ! -e backend/alembic/versions/20260808_26_add_mtg_source_print_layer.py
+          test ! -e backend/app/mtg_models.py
+          test ! -e .github/workflows/certify-mtg-identity-schema-v26.yml
+          ! grep -R "from app import mtg_models" backend/alembic/env.py
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Compile recovery exporter
+        run: python -m py_compile app/scripts/export_mtg_legacy_backup.py
+
+      - name: Export live MTG legacy recovery backup read-only
+        run: python -u -m app.scripts.export_mtg_legacy_backup --output-dir /tmp/mtg-live-legacy-backup
+
+      - name: Hard-gate exact live prebootstrap shape before preserving backup
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root=Path('/tmp/mtg-live-legacy-backup')
+          manifest=json.loads((root/'manifest.json').read_text(encoding='utf-8'))
+          assert manifest['status']=='pass'
+          assert manifest['mode']=='read_only'
+          assert manifest['database_writes']==0
+          assert manifest['alembic_version']=='20260808_25'
+          files=manifest['files']
+          assert files['sets.jsonl']['rows']==298, files['sets.jsonl']['rows']
+          assert files['cards.jsonl']['rows']==1183, files['cards.jsonl']['rows']
+          assert files['prints.jsonl']['rows']==1588, files['prints.jsonl']['rows']
+          print({
+              'status':'pass',
+              'alembic_version':manifest['alembic_version'],
+              'sets':files['sets.jsonl']['rows'],
+              'cards':files['cards.jsonl']['rows'],
+              'prints':files['prints.jsonl']['rows'],
+              'database_bytes':manifest['database_bytes'],
+              'database_writes':0,
+          })
+          PY
+
+      - name: Upload recovery backup before any live write
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-pre-v23-live-backup-${{ github.sha }}
+          path: /tmp/mtg-live-legacy-backup
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
+
+  apply:
+    needs: backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      CERTIFIED_ARTIFACT_ID: '9026354085'
+      CERTIFIED_ARTIFACT_SHA256: '594b041b3055e8d7fe564cbb7138b044e8593131c939810ff104729e015b8845'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Gate canonical MTG schema files
+        working-directory: .
+        run: |
+          test ! -e backend/alembic/versions/20260808_26_add_mtg_source_print_layer.py
+          test ! -e backend/app/mtg_models.py
+          test ! -e .github/workflows/certify-mtg-identity-schema-v26.yml
+          ! grep -R "from app import mtg_models" backend/alembic/env.py
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Compile exact V2.3 loader
+        run: python -m py_compile app/scripts/apply_mtg_v22_snapshot_live.py app/scripts/apply_mtg_v23_snapshot_live.py
+
+      - name: Download exact certified V2.3 snapshot
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mtg-certified /tmp/mtg-certified.zip
+          mkdir -p /tmp/mtg-certified
+          curl -fL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CERTIFIED_ARTIFACT_ID}/zip" \
+            -o /tmp/mtg-certified.zip
+          echo "${CERTIFIED_ARTIFACT_SHA256}  /tmp/mtg-certified.zip" | sha256sum -c -
+          unzip -q /tmp/mtg-certified.zip -d /tmp/mtg-certified
+          manifest=$(find /tmp/mtg-certified -name manifest.json -type f -print -quit)
+          test -n "$manifest"
+          python - "$manifest" <<'PY'
+          import json,sys
+          manifest=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert manifest['status']=='pass'
+          assert manifest['snapshot_schema_version']=='mtg-canonical-v2.3'
+          assert manifest['counts']['sets']==986
+          assert manifest['counts']['logical_cards']==37624
+          assert manifest['counts']['exact_prints']==161275
+          assert manifest['finish_counts']=={'etched':1218,'foil':65936,'nonfoil':94121}
+          assert manifest['identifier_policy']['exact_identifier_rows']==161275
+          assert manifest['identifier_policy']['unique_source_external_pairs']==161275
+          assert manifest['identifier_policy']['unique_print_source_pairs']==161275
+          print({
+              'status':'pass',
+              'snapshot_schema':manifest['snapshot_schema_version'],
+              'sets':986,
+              'cards':37624,
+              'prints':161275,
+          })
+          PY
+          dirname "$manifest" > /tmp/mtg-snapshot-dir.txt
+
+      - name: Apply one transactional MTG V2.3 bootstrap
+        run: |
+          snapshot_dir=$(cat /tmp/mtg-snapshot-dir.txt)
+          python -u -m app.scripts.apply_mtg_v23_snapshot_live \
+            --snapshot-dir "$snapshot_dir" \
+            --output /tmp/mtg-v23-live-apply-report.json
+
+      - name: Upload live apply evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-v23-live-apply-${{ github.sha }}
+          path: /tmp/mtg-v23-live-apply-report.json
+          retention-days: 90
+          if-no-files-found: warn
