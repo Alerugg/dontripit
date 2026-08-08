@@ -1,0 +1,53 @@
+name: Probe MTG Missing Oracle V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/probe-mtg-missing-oracle-v2.yml'
+      - 'backend/app/scripts/probe_mtg_missing_oracle_v2.py'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile MTG missing-oracle probe
+        working-directory: backend
+        run: python -m py_compile app/scripts/probe_mtg_missing_oracle_v2.py
+
+      - name: Probe missing-oracle source identities read-only
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.probe_mtg_missing_oracle_v2 \
+            --report-path /tmp/mtg-missing-oracle-v2.json \
+            | tee /tmp/mtg-missing-oracle-v2.log
+
+      - name: Upload identity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-missing-oracle-v2-${{ github.sha }}
+          path: |
+            /tmp/mtg-missing-oracle-v2.json
+            /tmp/mtg-missing-oracle-v2.log
+          retention-days: 90
+          if-no-files-found: error
