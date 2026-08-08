@@ -9,6 +9,7 @@ on:
       - 'backend/app/scripts/audit_database_storage_v2.py'
   workflow_dispatch:
 
+# Read-only final storage checkpoint after Yu-Gi-Oh Search V2 certification work.
 jobs:
   audit:
     runs-on: ubuntu-latest
