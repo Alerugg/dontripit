@@ -1,0 +1,50 @@
+name: Build Yu-Gi-Oh V2 Snapshot
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/build-yugioh-v2-snapshot.yml'
+      - 'backend/app/scripts/build_yugioh_v2_snapshot.py'
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile snapshot builder
+        working-directory: backend
+        run: python -m compileall -q app/scripts/build_yugioh_v2_snapshot.py app/ingest/connectors/ygoprodeck_yugioh.py
+      - name: Build and validate deterministic snapshot outside Neon
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-v2-snapshot
+          python -u -m app.scripts.build_yugioh_v2_snapshot \
+            --output-dir /tmp/yugioh-v2-snapshot \
+            | tee /tmp/yugioh-v2-snapshot.log
+      - name: Show artifact sizes
+        run: du -h /tmp/yugioh-v2-snapshot/* | sort -h
+      - name: Upload canonical snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-v2-snapshot-${{ github.sha }}
+          path: |
+            /tmp/yugioh-v2-snapshot
+            /tmp/yugioh-v2-snapshot.log
+          retention-days: 90
+          if-no-files-found: warn
