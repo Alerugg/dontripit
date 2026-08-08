@@ -7,6 +7,7 @@ from app.search_v2.advanced import advanced_onepiece_search
 from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.mtg_advanced import advanced_mtg_search
 from app.search_v2.mtg_facet_values import mtg_facet_values
+from app.search_v2.mtg_query import normal_mtg_search
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
@@ -25,9 +26,8 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
         return normal_pokemon_search(session, query=query, limit=limit)
     if game == "yugioh":
         return normal_yugioh_search(session, query=query, limit=limit)
-    # MTG intentionally starts on the proven generic logical-Card search path.
-    # A game-specific natural query is only justified if the disposable shadow
-    # benchmark demonstrates a quality/latency gap worth extra code/index cost.
+    if game == "mtg":
+        return normal_mtg_search(session, query=query, limit=limit)
     return normal_search(session, query=query, game_slug=game, limit=limit)
 
 
