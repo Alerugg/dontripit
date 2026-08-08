@@ -24,9 +24,9 @@ on:
         default: '200'
         type: string
       mtg_limit:
-        description: 'MTG incremental print limit; 0 = skip'
+        description: 'MTG is quarantined here until Identity V2/storage certification; this input is currently ignored'
         required: false
-        default: '500'
+        default: '0'
         type: string
       yugioh_limit:
         description: 'Yu-Gi-Oh ingest limit; 0 = skip'
@@ -77,6 +77,7 @@ jobs:
           if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
           if [ -n "${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN is set for One Piece source access"; fi
           echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the next catalog rebuild."
+          echo "MTG general ingest is quarantined; only dedicated Identity V2/storage workflows may exercise Scryfall until certification."
           if [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; then
             echo "Riftbound official source is configured"
           elif [ -n "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
@@ -94,13 +95,15 @@ jobs:
 
           EVENT_NAME="${{ github.event_name }}"
           ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
-          MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
           YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
           RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
           ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
-          MTG_LIMIT="${MTG_LIMIT_INPUT:-500}"
+          # MTG is intentionally forced off in this general pipeline. The current
+          # Scryfall catalog is far larger than the available Neon headroom and the
+          # exact finish identity model is still under V2 certification.
+          MTG_LIMIT="0"
           YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
           RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
