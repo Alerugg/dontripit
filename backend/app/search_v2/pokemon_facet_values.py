@@ -106,9 +106,11 @@ def pokemon_facet_values(
             for row in rows
         ]
 
+    # Exact names mirror POKEMON_FACETS. dex_id is exposed here as distinct
+    # values for discovery even though the advanced filter itself is a range.
     json_arrays = {
-        "type": "types",
-        "stamps": "stamps",
+        "types": "types",
+        "stamp": "stamps",
         "dex_id": "dex_id",
     }
     if key in json_arrays:
@@ -139,6 +141,7 @@ def pokemon_facet_values(
         "stage": "stage",
         "trainer_type": "trainer_type",
         "energy_type": "energy_type",
+        "evolve_from": "evolve_from",
         "regulation_mark": "regulation_mark",
         "illustrator": "illustrator",
         "series": "series",
