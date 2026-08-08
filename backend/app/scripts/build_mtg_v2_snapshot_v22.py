@@ -8,6 +8,7 @@ from app.scripts import build_mtg_v2_snapshot as base
 
 
 SNAPSHOT_SCHEMA_VERSION = "mtg-canonical-v2.2"
+_BASE_PRINT_ATTRIBUTES = base._print_attributes
 
 
 def card_attributes(card: dict) -> dict:
@@ -42,7 +43,7 @@ def card_attributes(card: dict) -> dict:
 
 
 def print_attributes(card: dict, finish: str) -> dict:
-    attrs = dict(base._print_attributes(card, finish))
+    attrs = dict(_BASE_PRINT_ATTRIBUTES(card, finish))
     attrs["legalities"] = base._norm_dict(card.get("legalities"))
     attrs["reserved"] = bool(card.get("reserved"))
     return attrs
