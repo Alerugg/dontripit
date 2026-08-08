@@ -32,9 +32,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Align production framework to patched Active LTS
+      - name: Align production framework to current patched line
         run: |
-          npm install --save-exact next@16.2.11 react@19.2.8 react-dom@19.2.8
+          npm install --save-exact next@16.3.0 react@19.2.8 react-dom@19.2.8
 
       - name: Remove obsolete Next 13 lint stack
         run: |
@@ -71,7 +71,7 @@ jobs:
         run: |
           node - <<'NODE'
           const pkg = require('./package.json')
-          if (pkg.dependencies.next !== '16.2.11') throw new Error(`Unexpected Next version ${pkg.dependencies.next}`)
+          if (pkg.dependencies.next !== '16.3.0') throw new Error(`Unexpected Next version ${pkg.dependencies.next}`)
           if (pkg.devDependencies?.['eslint-config-next']) throw new Error('Obsolete eslint-config-next still present')
           if (pkg.devDependencies?.eslint) throw new Error('Obsolete eslint dependency still present')
           console.log(JSON.stringify({ next: pkg.dependencies.next, react: pkg.dependencies.react, reactDom: pkg.dependencies['react-dom'] }, null, 2))
