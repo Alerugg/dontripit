@@ -1,0 +1,59 @@
+name: Audit Pokemon Scope Anomalies V2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-pokemon-scope-anomalies-v2.yml'
+      - 'backend/app/scripts/audit_pokemon_scope_anomalies_v2.py'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile anomaly audit
+        working-directory: backend
+        run: python -m py_compile app/scripts/audit_pokemon_scope_anomalies_v2.py
+
+      - name: Audit Pokémon rows outside certified V2 projection read-only
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_pokemon_scope_anomalies_v2 \
+            --report-path /tmp/pokemon-scope-anomalies-v2.json \
+            | tee /tmp/pokemon-scope-anomalies-v2.log
+
+      - name: Upload anomaly evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-scope-anomalies-v2-${{ github.sha }}
+          path: |
+            /tmp/pokemon-scope-anomalies-v2.json
+            /tmp/pokemon-scope-anomalies-v2.log
+          retention-days: 90
+          if-no-files-found: warn
