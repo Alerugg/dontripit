@@ -79,11 +79,11 @@ def mtg_facet_values(session, *, key: str, query: str | None = None, limit: int 
         table = "card_search_profiles csp" if is_card else "print_search_profiles psp"
         alias = "csp" if is_card else "psp"
         return _public(session.execute(text(f"""
-            SELECT value,value AS label,COUNT(*) AS count
+            SELECT vals.value AS value,vals.value AS label,COUNT(*) AS count
             FROM {table} JOIN games g ON g.id={alias}.game_id
-            CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE({alias}.attributes_json->'{json_key}','[]'::jsonb)) value
-            WHERE g.slug=:game AND (:q='%%' OR lower(value) LIKE :q)
-            GROUP BY value ORDER BY count DESC,value LIMIT :limit
+            CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE({alias}.attributes_json->'{json_key}','[]'::jsonb)) AS vals(value)
+            WHERE g.slug=:game AND (:q='%%' OR lower(vals.value) LIKE :q)
+            GROUP BY vals.value ORDER BY count DESC,vals.value LIMIT :limit
         """), params).mappings().all())
 
     if key == "release_year":
