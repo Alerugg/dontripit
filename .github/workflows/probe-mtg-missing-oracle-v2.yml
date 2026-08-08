@@ -1,5 +1,6 @@
 name: Probe MTG Missing Oracle V2
 
+# Read-only evidence gate for the small source subset that has no oracle_id.
 on:
   push:
     branches:
