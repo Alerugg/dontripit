@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-yugioh-v2-snapshot.yml'
       - 'backend/app/scripts/build_yugioh_v2_snapshot.py'
       - 'backend/app/scripts/build_yugioh_v2_snapshot_canonical.py'
+      - 'backend/app/scripts/verify_yugioh_v2_snapshot_manifest.py'
   workflow_dispatch:
 
 jobs:
@@ -26,9 +27,9 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -r requirements.txt
-      - name: Compile canonical snapshot builder
+      - name: Compile canonical snapshot builder and frozen verifier
         working-directory: backend
-        run: python -m compileall -q app/scripts/build_yugioh_v2_snapshot.py app/scripts/build_yugioh_v2_snapshot_canonical.py app/ingest/connectors/ygoprodeck_yugioh.py
+        run: python -m compileall -q app/scripts/build_yugioh_v2_snapshot.py app/scripts/build_yugioh_v2_snapshot_canonical.py app/scripts/verify_yugioh_v2_snapshot_manifest.py app/ingest/connectors/ygoprodeck_yugioh.py
       - name: Build and validate canonical snapshot outside Neon
         working-directory: backend
         run: |
@@ -37,6 +38,12 @@ jobs:
           python -u -m app.scripts.build_yugioh_v2_snapshot_canonical \
             --output-dir /tmp/yugioh-v2-snapshot \
             | tee /tmp/yugioh-v2-snapshot.log
+      - name: Verify frozen canonical counts
+        working-directory: backend
+        run: |
+          python -u -m app.scripts.verify_yugioh_v2_snapshot_manifest \
+            /tmp/yugioh-v2-snapshot/manifest.json \
+            | tee /tmp/yugioh-v2-snapshot-frozen-verification.log
       - name: Show artifact sizes
         if: always()
         run: |
@@ -51,5 +58,6 @@ jobs:
           path: |
             /tmp/yugioh-v2-snapshot
             /tmp/yugioh-v2-snapshot.log
+            /tmp/yugioh-v2-snapshot-frozen-verification.log
           retention-days: 90
           if-no-files-found: warn
