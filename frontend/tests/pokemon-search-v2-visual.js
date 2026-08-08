@@ -13,6 +13,7 @@ async function main() {
   const page = await context.newPage()
   const failures = []
   const requestFailures = []
+  const resourceLoadErrors = []
   let stage = 'boot'
 
   async function snapshot(name) {
@@ -34,13 +35,22 @@ async function main() {
       normalCards: await page.locator('.sv2-result-card:not(.sv2-result-card-print)').count().catch(() => -1),
       exactPrints: await page.locator('.sv2-result-card-print').count().catch(() => -1),
       requestFailures,
+      resourceLoadErrors,
       browserFailures: failures,
     }
   }
 
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`))
   page.on('console', (message) => {
-    if (message.type() === 'error') failures.push(`console: ${message.text()}`)
+    if (message.type() !== 'error') return
+    const text = message.text()
+    // Card art is remote and the UI has an explicit fallback. A missing remote image
+    // is evidence worth recording, but it must not hide or mimic an application error.
+    if (/Failed to load resource:.*(?:404|Not Found)/i.test(text)) {
+      resourceLoadErrors.push(text)
+      return
+    }
+    failures.push(`console: ${text}`)
   })
   page.on('response', (response) => {
     if (response.url().includes('/api/search-v2') && response.status() >= 400) {
@@ -141,8 +151,9 @@ async function main() {
         'Pokémon physical badge visibility',
         'mobile viewport without horizontal overflow',
         'Search V2 BFF responses without HTTP errors',
-        'no browser page or console errors',
+        'no browser page errors or fatal console errors',
       ],
+      resourceLoadErrorsObserved: resourceLoadErrors.length,
       screenshots: fs.readdirSync(OUTPUT_DIR).filter((name) => name.endsWith('.png')).sort(),
     }
     fs.writeFileSync(path.join(OUTPUT_DIR, 'report.json'), JSON.stringify(report, null, 2) + '\n')
