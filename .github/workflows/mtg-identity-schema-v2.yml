@@ -1,0 +1,110 @@
+name: MTG Identity Schema V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/mtg-identity-schema-v2.yml'
+      - 'backend/app/models.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/alembic/versions/20260808_25_allow_mtg_scryfall_finish_variants.py'
+      - 'backend/tests/test_mtg_identity_v2.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tcg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d tcg_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/tcg_test
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile MTG identity modules
+        working-directory: backend
+        run: python -m py_compile app/mtg_identity_v2.py app/models.py
+
+      - name: Run focused MTG identity tests
+        working-directory: backend
+        run: pytest -q tests/test_mtg_identity_v2.py
+
+      - name: Apply complete Alembic chain to disposable PostgreSQL
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          test "$(alembic heads | awk '{print $1}')" = "20260808_25"
+
+      - name: Verify exact Scryfall plus finish schema semantics
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d tcg_test -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid='prints'::regclass
+              AND conname='uq_prints_scryfall_id'
+          ) THEN 1/0 ELSE 1 END;
+
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='prints'
+              AND indexname='uq_prints_scryfall_variant'
+              AND indexdef ILIKE '%UNIQUE%'
+              AND indexdef ILIKE '%scryfall_id%'
+              AND indexdef ILIKE '%variant%'
+          ) THEN 1 ELSE 1/0 END;
+          SQL
+
+      - name: Prove one Scryfall object can have distinct exact finishes
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d tcg_test -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO games (slug,name) VALUES ('mtg-schema-probe','MTG Schema Probe');
+          INSERT INTO sets (game_id,code,name)
+          SELECT id,'probe','Probe Set' FROM games WHERE slug='mtg-schema-probe';
+          INSERT INTO cards (game_id,name,card_key)
+          SELECT id,'Probe Card','mtg:oracle:probe' FROM games WHERE slug='mtg-schema-probe';
+
+          INSERT INTO prints (set_id,card_id,collector_number,language,rarity,is_foil,variant,print_key,scryfall_id)
+          SELECT s.id,c.id,'1','en','rare',false,'nonfoil','mtg:scryfall:probe:nonfoil','00000000-0000-0000-0000-000000000001'
+          FROM sets s JOIN cards c ON c.game_id=s.game_id WHERE s.code='probe';
+
+          INSERT INTO prints (set_id,card_id,collector_number,language,rarity,is_foil,variant,print_key,scryfall_id)
+          SELECT s.id,c.id,'1','en','rare',true,'foil','mtg:scryfall:probe:foil','00000000-0000-0000-0000-000000000001'
+          FROM sets s JOIN cards c ON c.game_id=s.game_id WHERE s.code='probe';
+
+          SELECT CASE WHEN COUNT(*)=2 THEN 1 ELSE 1/0 END
+          FROM prints WHERE scryfall_id='00000000-0000-0000-0000-000000000001';
+          SQL
