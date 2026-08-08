@@ -1,20 +1,6 @@
 name: Rebuild Pokemon Search V2
 
 on:
-  push:
-    branches:
-      - catalog-v2
-    paths:
-      - '.github/workflows/rebuild-pokemon-search-v2.yml'
-      - 'backend/app/scripts/rebuild_pokemon_search_v2_fast.py'
-      - 'backend/app/scripts/benchmark_pokemon_search_v2_fast.py'
-      - 'backend/app/search_v2/pokemon_indexer.py'
-      - 'backend/app/search_v2/pokemon_query.py'
-      - 'backend/app/search_v2/pokemon_advanced.py'
-      - 'backend/app/search_v2/pokemon_facet_values.py'
-      - 'backend/app/search_v2/facets.py'
-      - 'backend/app/routes/search_v2.py'
-      - 'backend/alembic/versions/20260808_22_add_pokemon_search_numeric_indexes.py'
   workflow_dispatch:
 
 concurrency:
