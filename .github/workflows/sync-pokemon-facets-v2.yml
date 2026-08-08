@@ -1,0 +1,83 @@
+name: Sync Pokemon Facets V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/sync-pokemon-facets-v2.yml'
+      - 'backend/app/search_v2/facets.py'
+      - 'backend/app/scripts/sync_pokemon_facets_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: pokemon-facets-v2-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile facet sync
+        working-directory: backend
+        run: python -m compileall -q app/search_v2/facets.py app/scripts/sync_pokemon_facets_v2.py
+
+      - name: Apply schema migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Sync only Pokémon facet definitions
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.sync_pokemon_facets_v2 \
+            --report-path /tmp/pokemon-facets-v2-sync.json \
+            | tee /tmp/pokemon-facets-v2-sync.log
+
+      - name: Upload facet sync evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-facets-v2-sync-${{ github.sha }}
+          path: |
+            /tmp/pokemon-facets-v2-sync.json
+            /tmp/pokemon-facets-v2-sync.log
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Dispatch final Pokémon visual QA
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/visual-qa-pokemon-search-v2.yml/dispatches" \
+            -d '{"ref":"catalog-v2"}'
