@@ -149,7 +149,7 @@ export default function SearchInput({
 
           {!hasMeaningfulQuery && <p className="suggestions-empty">Escribe al menos 2 caracteres para sugerencias más precisas.</p>}
           {hasMeaningfulQuery && suggestionsLoading && <p className="suggestions-empty">Buscando cartas, sets y prints…</p>}
-          {hasMeaningfulQuery && !suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias. Prueba con otro nombre o código (ej: OP-01).</p>}
+          {hasMeaningfulQuery && !suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias. Prueba con otro nombre, collector number o set.</p>}
 
           {hasMeaningfulQuery && !suggestionsLoading && hasSuggestions && (
             <ul id={listId} className="suggestions-list" role="listbox">
