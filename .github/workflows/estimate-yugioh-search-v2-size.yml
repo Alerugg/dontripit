@@ -1,0 +1,57 @@
+name: Estimate Yu-Gi-Oh Search V2 Size
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/estimate-yugioh-search-v2-size.yml'
+      - 'backend/app/scripts/estimate_yugioh_search_v2_size.py'
+      - 'backend/app/search_v2/yugioh_profiles.py'
+      - 'backend/app/search_v2/yugioh_facets.py'
+  workflow_dispatch:
+
+jobs:
+  estimate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Compile lean profile estimator
+        working-directory: backend
+        run: python -m compileall -q app/search_v2/yugioh_profiles.py app/search_v2/yugioh_facets.py app/scripts/estimate_yugioh_search_v2_size.py
+      - name: Generate profiles outside Neon and estimate storage
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-search-v2-estimate
+          python -u -m app.scripts.estimate_yugioh_search_v2_size \
+            --output-dir /tmp/yugioh-search-v2-estimate \
+            --report-path /tmp/yugioh-search-v2-size.json \
+            | tee /tmp/yugioh-search-v2-size.log
+      - name: Upload size evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-search-v2-size-${{ github.sha }}
+          path: |
+            /tmp/yugioh-search-v2-estimate
+            /tmp/yugioh-search-v2-size.json
+            /tmp/yugioh-search-v2-size.log
+          retention-days: 90
+          if-no-files-found: error
