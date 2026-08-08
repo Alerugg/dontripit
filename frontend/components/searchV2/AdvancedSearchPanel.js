@@ -4,7 +4,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchFacetValuesV2 } from '../../lib/searchV2/client'
 import './SearchV2.css'
 
-const QUICK_FILTER_KEYS = new Set(['color', 'card_type', 'promo', 'sp', 'treasure_rare'])
+const QUICK_FILTER_KEYS_BY_GAME = {
+  onepiece: new Set(['color', 'card_type', 'promo', 'sp', 'treasure_rare']),
+  pokemon: new Set(['types', 'stage', 'rarity', 'regulation_mark', 'finish', 'stamp']),
+}
+
+const QUICK_FILTER_COPY_BY_GAME = {
+  onepiece: 'Color, tipo y hits coleccionables sin abrir el panel completo.',
+  pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir el panel completo.',
+}
 
 function isEmpty(value) {
   if (value === undefined || value === null || value === '') return true
@@ -229,6 +237,9 @@ export default function AdvancedSearchPanel({
   open = false,
   onToggle,
 }) {
+  const quickFilterKeys = QUICK_FILTER_KEYS_BY_GAME[gameSlug] || new Set()
+  const quickFilterCopy = QUICK_FILTER_COPY_BY_GAME[gameSlug] || 'Accesos rápidos a los filtros más usados de este juego.'
+
   const facetByKey = useMemo(() => {
     const entries = Object.values(groups).flat().map((facet) => [facet.key, facet])
     return Object.fromEntries(entries)
@@ -238,15 +249,15 @@ export default function AdvancedSearchPanel({
   const quickFacets = useMemo(
     () => Object.values(groups)
       .flat()
-      .filter((facet) => facet.quick_filter && QUICK_FILTER_KEYS.has(facet.key))
+      .filter((facet) => facet.quick_filter && quickFilterKeys.has(facet.key))
       .sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0)),
-    [groups],
+    [groups, quickFilterKeys],
   )
   const fullGroups = useMemo(() => Object.fromEntries(
     Object.entries(groups)
-      .map(([groupName, facets]) => [groupName, facets.filter((facet) => !QUICK_FILTER_KEYS.has(facet.key))])
+      .map(([groupName, facets]) => [groupName, facets.filter((facet) => !quickFilterKeys.has(facet.key))])
       .filter(([, facets]) => facets.length > 0),
-  ), [groups])
+  ), [groups, quickFilterKeys])
 
   return (
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
@@ -267,7 +278,7 @@ export default function AdvancedSearchPanel({
           <div className="sv2-quick-heading">
             <div>
               <strong>Quick filters</strong>
-              <span>Color, tipo y hits coleccionables sin abrir el panel completo.</span>
+              <span>{quickFilterCopy}</span>
             </div>
             <button type="button" className="sv2-quick-apply" onClick={onSearch} disabled={loading}>
               {loading ? 'Filtrando…' : 'Ver prints'}
