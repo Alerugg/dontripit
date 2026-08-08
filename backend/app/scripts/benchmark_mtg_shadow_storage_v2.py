@@ -218,7 +218,7 @@ def _create_schema(cur, schema: str, *, child_model: bool) -> None:
           layout TEXT NOT NULL,
           type_line TEXT NOT NULL,
           mana_cost TEXT NOT NULL,
-          mana_value NUMERIC(8,2) NOT NULL,
+          mana_value DOUBLE PRECISION NOT NULL,
           color_identity TEXT NOT NULL,
           oracle_text TEXT NOT NULL,
           keywords TEXT NOT NULL,
@@ -622,7 +622,6 @@ def run(*, database_url: str, report_path: Path | None = None) -> dict:
             _create_schema(cur, "mtg_dup", child_model=False)
             _create_schema(cur, "mtg_child", child_model=True)
 
-            # Both candidate schemas deliberately receive identical Card/Set data.
             for schema in SCHEMAS:
                 _copy(cur, schema, "sets", ["id", "code", "name", "set_type", "released_at"], sets_f)
                 _copy(cur, schema, "cards", [
