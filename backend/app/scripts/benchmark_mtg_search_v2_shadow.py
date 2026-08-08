@@ -11,7 +11,7 @@ from sqlalchemy import text
 from app import db
 from app.search_v2.mtg_advanced import advanced_mtg_search
 from app.search_v2.mtg_facet_values import mtg_facet_values
-from app.search_v2.query import normal_search
+from app.search_v2.mtg_query import normal_mtg_search
 
 
 NATURAL_CASES = [
@@ -46,7 +46,7 @@ def run(output: Path) -> dict:
         session.execute(text("SET statement_timeout='10s'"))
 
         for query, expected_name in NATURAL_CASES:
-            rows, timing = _timed(lambda q=query: normal_search(session, query=q, game_slug="mtg", limit=12))
+            rows, timing = _timed(lambda q=query: normal_mtg_search(session, query=q, limit=12))
             first = rows[0] if rows else None
             first_name = str((first or {}).get("name") or "").strip().lower()
             ok = bool(first) and first_name == expected_name
@@ -98,10 +98,8 @@ def run(output: Path) -> dict:
     natural_max = max((row["max_ms"] for row in report["natural"]), default=0)
     advanced_max = max((row["max_ms"] for row in report["advanced"]), default=0)
     facet_max = max((row["max_ms"] for row in report["facets"]), default=0)
-    # Shadow runners are intentionally slower/noisier than Neon. These gates
-    # catch pathological plans without forcing expensive production tuning.
-    if natural_max > 3000:
-        blockers.append(f"natural_latency_max_ms:{natural_max}>3000")
+    if natural_max > 1200:
+        blockers.append(f"natural_latency_max_ms:{natural_max}>1200")
     if advanced_max > 3000:
         blockers.append(f"advanced_latency_max_ms:{advanced_max}>3000")
     if facet_max > 3000:
