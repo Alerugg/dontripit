@@ -37,10 +37,10 @@ def main() -> int:
             raise AssertionError("HTTP natural search did not return Dark Magician")
         checks.append({"name": "search", "ms": ms, "count": len(items)})
 
-        response, ms = _timed(client, "get", "/api/v2/search/suggest?game=yugioh&q=Blue-Eyes&limit=5")
+        response, ms = _timed(client, "get", "/api/v2/search/suggest?game=yugioh&q=Blue-Eyes%20White%20Dragon&limit=5")
         payload = _require(response)
         suggestions = payload.get("items") or []
-        if not suggestions or not any("blue-eyes white dragon" in str(row.get("name") or "").lower() for row in suggestions):
+        if not suggestions or not any(str(row.get("name") or "").casefold() == "blue-eyes white dragon" for row in suggestions):
             raise AssertionError("HTTP suggest did not return Blue-Eyes White Dragon")
         checks.append({"name": "suggest", "ms": ms, "count": len(suggestions)})
 
