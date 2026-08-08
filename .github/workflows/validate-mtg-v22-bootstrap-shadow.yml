@@ -1,4 +1,4 @@
-name: Validate MTG V2.2 Bootstrap Shadow
+name: Validate MTG V2.3 Bootstrap Shadow
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/validate-mtg-v22-bootstrap-shadow.yml'
       - 'backend/app/scripts/apply_mtg_v22_snapshot_live.py'
+      - 'backend/app/scripts/apply_mtg_v23_snapshot_live.py'
       - 'backend/app/scripts/export_mtg_legacy_backup.py'
   workflow_dispatch:
 
@@ -15,7 +16,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: mtg-v22-bootstrap-shadow
+  group: mtg-v23-bootstrap-shadow
   cancel-in-progress: false
 
 jobs:
@@ -39,8 +40,8 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/tcg_shadow
       DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@127.0.0.1:5432/tcg_shadow
-      CERTIFIED_ARTIFACT_ID: '9026133384'
-      CERTIFIED_ARTIFACT_SHA256: '9680a8f2521e02a1ec070220fd13046d6431ebe7d88e096c83b3b7aad23749d3'
+      CERTIFIED_ARTIFACT_ID: '9026354085'
+      CERTIFIED_ARTIFACT_SHA256: '594b041b3055e8d7fe564cbb7138b044e8593131c939810ff104729e015b8845'
 
     steps:
       - name: Checkout catalog-v2
@@ -64,9 +65,9 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
-      - name: Compile loader and backup exporter
+      - name: Compile V2.3 loader and backup exporter
         working-directory: backend
-        run: python -m py_compile app/scripts/apply_mtg_v22_snapshot_live.py app/scripts/export_mtg_legacy_backup.py
+        run: python -m py_compile app/scripts/apply_mtg_v22_snapshot_live.py app/scripts/apply_mtg_v23_snapshot_live.py app/scripts/export_mtg_legacy_backup.py
 
       - name: Apply complete schema to disposable PostgreSQL
         working-directory: backend
@@ -140,7 +141,7 @@ jobs:
           $check$;
           SQL
 
-      - name: Download exact certified snapshot artifact
+      - name: Download exact certified V2.3 snapshot artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -157,6 +158,14 @@ jobs:
           unzip -q /tmp/mtg-certified.zip -d /tmp/mtg-certified
           manifest=$(find /tmp/mtg-certified -name manifest.json -type f -print -quit)
           test -n "$manifest"
+          python - "$manifest" <<'PY'
+          import json,sys
+          manifest=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert manifest['snapshot_schema_version']=='mtg-canonical-v2.3'
+          assert manifest['identifier_policy']['unique_source_external_pairs']==161275
+          assert manifest['identifier_policy']['unique_print_source_pairs']==161275
+          print({'status':'pass','snapshot_schema':manifest['snapshot_schema_version']})
+          PY
           dirname "$manifest" > /tmp/mtg-snapshot-dir.txt
           cat /tmp/mtg-snapshot-dir.txt
 
@@ -164,11 +173,11 @@ jobs:
         working-directory: backend
         run: python -u -m app.scripts.export_mtg_legacy_backup --output-dir /tmp/mtg-shadow-legacy-backup
 
-      - name: Run exact transactional bootstrap in shadow database
+      - name: Run exact transactional V2.3 bootstrap in shadow database
         working-directory: backend
         run: |
           snapshot_dir=$(cat /tmp/mtg-snapshot-dir.txt)
-          python -u -m app.scripts.apply_mtg_v22_snapshot_live \
+          python -u -m app.scripts.apply_mtg_v23_snapshot_live \
             --snapshot-dir "$snapshot_dir" \
             --output /tmp/mtg-shadow-apply-report.json
 
@@ -185,6 +194,7 @@ jobs:
             IF (SELECT COUNT(*) FROM sets WHERE game_id=mtg_id) <> 986 THEN RAISE EXCEPTION 'final MTG sets mismatch'; END IF;
             IF (SELECT COUNT(*) FROM cards WHERE game_id=mtg_id) <> 37624 THEN RAISE EXCEPTION 'final MTG cards mismatch'; END IF;
             IF (SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=mtg_id) <> 161275 THEN RAISE EXCEPTION 'final MTG prints mismatch'; END IF;
+            IF (SELECT COUNT(*) FROM print_identifiers pi JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=mtg_id AND pi.source='scryfall_finish') <> 161275 THEN RAISE EXCEPTION 'final exact identifiers mismatch'; END IF;
             IF (SELECT COUNT(*) FROM sets WHERE game_id=sentinel_id) <> 1 THEN RAISE EXCEPTION 'sentinel sets changed'; END IF;
             IF (SELECT COUNT(*) FROM cards WHERE game_id=sentinel_id) <> 1 THEN RAISE EXCEPTION 'sentinel cards changed'; END IF;
             IF (SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=sentinel_id) <> 1 THEN RAISE EXCEPTION 'sentinel prints changed'; END IF;
@@ -196,7 +206,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mtg-v22-bootstrap-shadow-${{ github.sha }}
+          name: mtg-v23-bootstrap-shadow-${{ github.sha }}
           path: |
             /tmp/mtg-shadow-apply-report.json
             /tmp/mtg-shadow-legacy-backup
