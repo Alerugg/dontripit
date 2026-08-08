@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,7 +33,10 @@ def _write(path: Path | None, payload: dict) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _exists(session, table_name: str) -> bool:
@@ -44,6 +48,12 @@ def _exists(session, table_name: str) -> bool:
     )
 
 
+def _quoted_table(table_name: str) -> str:
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", table_name):
+        raise ValueError(f"Unsafe internal table name: {table_name!r}")
+    return f'"{table_name}"'
+
+
 def _relation_stats(session, table_name: str) -> dict:
     if not _exists(session, table_name):
         return {
@@ -53,18 +63,17 @@ def _relation_stats(session, table_name: str) -> dict:
             "index_bytes": 0,
             "total_bytes": 0,
         }
-    row = session.execute(
-        text(
-            """
-            SELECT
-              (SELECT COUNT(*) FROM """ + table_name + """") AS rows,
-              pg_relation_size(:regclass) AS heap_bytes,
-              pg_indexes_size(:regclass) AS index_bytes,
-              pg_total_relation_size(:regclass) AS total_bytes
-            """
-        ),
-        {"regclass": table_name},
-    ).mappings().one()
+    quoted = _quoted_table(table_name)
+    sql = text(
+        f"""
+        SELECT
+          (SELECT COUNT(*) FROM {quoted}) AS rows,
+          pg_relation_size(:regclass) AS heap_bytes,
+          pg_indexes_size(:regclass) AS index_bytes,
+          pg_total_relation_size(:regclass) AS total_bytes
+        """
+    )
+    row = session.execute(sql, {"regclass": table_name}).mappings().one()
     return {
         "exists": True,
         "rows": int(row["rows"] or 0),
@@ -93,22 +102,28 @@ def _ygo_counts(session, game_id: int) -> dict:
         if not _exists(session, table_name):
             output[table_name] = 0
             continue
-        output[table_name] = int(session.execute(text(sql), {"game": game_id}).scalar_one() or 0)
+        output[table_name] = int(
+            session.execute(text(sql), {"game": game_id}).scalar_one() or 0
+        )
     return output
 
 
 def run(*, report_path: Path | None = None) -> dict:
     db.init_engine()
     with db.SessionLocal() as session:
-        game_id = session.execute(
-            text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")
-        ).scalar_one()
-        game_id = int(game_id)
+        game_id = int(
+            session.execute(
+                text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")
+            ).scalar_one()
+        )
         current_database_bytes = int(
             session.execute(text("SELECT pg_database_size(current_database())")).scalar_one()
         )
 
-        tables = sorted(set(SNAPSHOT) | {"search_documents", "card_search_profiles", "print_search_profiles"})
+        tables = sorted(
+            set(SNAPSHOT)
+            | {"search_documents", "card_search_profiles", "print_search_profiles"}
+        )
         relation_stats = {name: _relation_stats(session, name) for name in tables}
         ygo_counts = _ygo_counts(session, game_id)
         session.rollback()
@@ -130,7 +145,9 @@ def run(*, report_path: Path | None = None) -> dict:
             "estimated_increment_bytes": estimated_increment,
             "projected_peak_bytes": projected_peak,
             "projected_peak_mib": round(projected_peak / 1024 / 1024, 2),
-            "remaining_to_512_mib": round((NEON_LIMIT_BYTES - projected_peak) / 1024 / 1024, 2),
+            "remaining_to_512_mib": round(
+                (NEON_LIMIT_BYTES - projected_peak) / 1024 / 1024, 2
+            ),
             "within_512_mib": projected_peak < NEON_LIMIT_BYTES,
         }
 
@@ -150,9 +167,13 @@ def run(*, report_path: Path | None = None) -> dict:
         "neon_limit_mib": 512,
         "current_database_bytes": current_database_bytes,
         "current_database_mib": round(current_mib, 2),
-        "current_utilization_pct": round(current_database_bytes / NEON_LIMIT_BYTES * 100, 2),
+        "current_utilization_pct": round(
+            current_database_bytes / NEON_LIMIT_BYTES * 100, 2
+        ),
         "frozen_persisted_snapshot_jsonl_bytes": FROZEN_PERSISTED_JSONL_BYTES,
-        "frozen_persisted_snapshot_jsonl_mib": round(FROZEN_PERSISTED_JSONL_BYTES / 1024 / 1024, 2),
+        "frozen_persisted_snapshot_jsonl_mib": round(
+            FROZEN_PERSISTED_JSONL_BYTES / 1024 / 1024, 2
+        ),
         "snapshot_target_rows": SNAPSHOT,
         "current_yugioh_rows": ygo_counts,
         "relation_stats": relation_stats,
