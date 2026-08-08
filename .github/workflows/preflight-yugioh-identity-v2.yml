@@ -1,0 +1,49 @@
+name: Preflight Yu-Gi-Oh Identity V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/preflight-yugioh-identity-v2.yml'
+      - 'backend/app/scripts/preflight_yugioh_identity_v2.py'
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Run official-source identity preflight
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.preflight_yugioh_identity_v2 \
+            --report-path /tmp/yugioh-identity-v2-preflight.json \
+            | tee /tmp/yugioh-identity-v2-preflight.log
+      - name: Upload Yu-Gi-Oh identity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-identity-v2-preflight-${{ github.sha }}
+          path: |
+            /tmp/yugioh-identity-v2-preflight.json
+            /tmp/yugioh-identity-v2-preflight.log
+          retention-days: 90
+          if-no-files-found: warn
