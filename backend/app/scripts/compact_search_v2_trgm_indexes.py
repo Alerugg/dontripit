@@ -75,6 +75,14 @@ def _snapshot() -> dict:
     }
 
 
+def _run_autocommit(sql: str) -> None:
+    # PostgreSQL maintenance commands such as REINDEX ... CONCURRENTLY cannot
+    # run inside an explicit transaction block. Use SQLAlchemy's supported
+    # AUTOCOMMIT isolation mode rather than mutating the pooled wrapper object.
+    with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.exec_driver_sql(sql)
+
+
 def run(*, report_path: Path | None = None) -> dict:
     db.init_engine()
     before = _snapshot()
@@ -100,26 +108,12 @@ def run(*, report_path: Path | None = None) -> dict:
 
     completed: list[str] = []
     for index_name in TARGET_INDEXES:
-        raw = db.engine.raw_connection()
-        try:
-            raw.autocommit = True
-            cur = raw.cursor()
-            # Names are a fixed internal allow-list, never user input.
-            cur.execute(f'REINDEX INDEX CONCURRENTLY public."{index_name}"')
-            cur.close()
-            completed.append(index_name)
-        finally:
-            raw.close()
+        # Names are a fixed internal allow-list, never user input.
+        _run_autocommit(f'REINDEX INDEX CONCURRENTLY public."{index_name}"')
+        completed.append(index_name)
 
-    raw = db.engine.raw_connection()
-    try:
-        raw.autocommit = True
-        cur = raw.cursor()
-        cur.execute("ANALYZE public.card_search_profiles")
-        cur.execute("ANALYZE public.print_search_profiles")
-        cur.close()
-    finally:
-        raw.close()
+    _run_autocommit("ANALYZE public.card_search_profiles")
+    _run_autocommit("ANALYZE public.print_search_profiles")
 
     after = _snapshot()
     if after["counts"] != before["counts"]:
