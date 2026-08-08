@@ -7,7 +7,7 @@ on:
     paths:
       - '.github/workflows/expand-pokemon-variants-v2.yml'
       - 'backend/app/scripts/expand_pokemon_variants_v2.py'
-      - 'backend/app/scripts/expand_pokemon_variants_v2_copy_safe.py'
+      - 'backend/app/scripts/expand_pokemon_variants_v2_market_safe.py'
       - 'backend/app/scripts/preflight_pokemon_variants_v2.py'
       - 'backend/alembic/versions/20260808_21_align_print_identifier_uniqueness.py'
   workflow_dispatch:
@@ -72,7 +72,7 @@ jobs:
         working-directory: backend
         run: |
           set -euo pipefail
-          python -u -m app.scripts.expand_pokemon_variants_v2_copy_safe \
+          python -u -m app.scripts.expand_pokemon_variants_v2_market_safe \
             --snapshot /tmp/pokemon-rich-snapshot.jsonl \
             --manifest /tmp/pokemon-rich-manifest.json \
             --backup-path /tmp/pokemon-variants-before.json \
