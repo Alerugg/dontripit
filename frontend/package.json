@@ -6,7 +6,6 @@
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
-    "lint": "next lint",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
@@ -15,10 +14,8 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "autoprefixer": "10.4.14",
-    "eslint": "8.40.0",
-    "eslint-config-next": "13.4.2",
-    "postcss": "8.4.23",
-    "tailwindcss": "3.3.2"
+    "autoprefixer": "10.5.4",
+    "postcss": "8.5.26",
+    "tailwindcss": "3.4.17"
   }
 }
