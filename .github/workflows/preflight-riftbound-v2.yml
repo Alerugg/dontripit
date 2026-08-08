@@ -1,0 +1,169 @@
+name: Preflight Riftbound V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/preflight-riftbound-v2.yml'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/tests/test_riftbound_write_quarantine_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: riftbound-v2-preflight
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      RIFTBOUND_API_KEY: ${{ secrets.RIFTBOUND_API_KEY }}
+      RIFTBOUND_API_BASE_URL: ${{ secrets.RIFTBOUND_API_BASE_URL }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Certify legacy writer quarantine
+        run: pytest -q tests/test_riftbound_write_quarantine_v2.py
+
+      - name: Audit live Riftbound placeholder scope read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('No canonical Neon URL configured')
+          if url.startswith('postgresql+psycopg2://'):
+              url='postgresql://'+url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url='postgresql://'+url[len('postgres://'):]
+
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SET TRANSACTION READ ONLY')
+                  cur.execute("SELECT id FROM games WHERE slug='riftbound'")
+                  row=cur.fetchone()
+                  if not row:
+                      raise SystemExit('Riftbound game row missing')
+                  game_id=int(row[0])
+                  cur.execute("""
+                    SELECT s.id,s.code,s.name,s.riftbound_id,
+                           c.id,c.name,c.riftbound_id,c.card_key,
+                           p.id,p.collector_number,p.language,p.rarity,p.variant,p.riftbound_id,p.print_key,
+                           COALESCE((SELECT json_agg(json_build_object('url',i.url,'source',i.source,'primary',i.is_primary) ORDER BY i.id) FROM print_images i WHERE i.print_id=p.id),'[]'::json),
+                           COALESCE((SELECT json_agg(json_build_object('source',pi.source,'external_id',pi.external_id) ORDER BY pi.id) FROM print_identifiers pi WHERE pi.print_id=p.id),'[]'::json)
+                    FROM prints p
+                    JOIN cards c ON c.id=p.card_id
+                    JOIN sets s ON s.id=p.set_id
+                    WHERE c.game_id=%s
+                    ORDER BY p.id
+                  """,(game_id,))
+                  records=[]
+                  for r in cur.fetchall():
+                      records.append({
+                        'set':{'id':r[0],'code':r[1],'name':r[2],'riftbound_id':r[3]},
+                        'card':{'id':r[4],'name':r[5],'riftbound_id':r[6],'card_key':r[7]},
+                        'print':{'id':r[8],'collector_number':r[9],'language':r[10],'rarity':r[11],'variant':r[12],'riftbound_id':r[13],'print_key':r[14]},
+                        'images':r[15], 'identifiers':r[16],
+                      })
+                  def scalar(sql):
+                      cur.execute(sql,(game_id,)); return int(cur.fetchone()[0])
+                  deps={
+                    'sets':scalar('SELECT COUNT(*) FROM sets WHERE game_id=%s'),
+                    'cards':scalar('SELECT COUNT(*) FROM cards WHERE game_id=%s'),
+                    'prints':scalar('SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s'),
+                    'prices':scalar('SELECT COUNT(*) FROM prices WHERE game_id=%s'),
+                    'card_search_profiles':scalar('SELECT COUNT(*) FROM card_search_profiles WHERE game_id=%s'),
+                    'print_search_profiles':scalar('SELECT COUNT(*) FROM print_search_profiles WHERE game_id=%s'),
+                    'facets':scalar('SELECT COUNT(*) FROM facet_definitions WHERE game_id=%s'),
+                  }
+              conn.rollback()
+          finally:
+              conn.close()
+          report={'mode':'read_only','database_writes':0,'counts':deps,'records':records}
+          Path('/tmp/riftbound-live-scope.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Probe official Riot Riftbound API configuration read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import requests
+
+          key=(os.getenv('RIFTBOUND_API_KEY') or '').strip()
+          configured_base=(os.getenv('RIFTBOUND_API_BASE_URL') or '').strip().rstrip('/')
+          base=configured_base or 'https://europe.api.riotgames.com'
+          report={
+            'mode':'read_only',
+            'database_writes':0,
+            'api_key_configured':bool(key),
+            'base_url_configured':bool(configured_base),
+            'probe_base_host':base.split('://',1)[-1],
+            'official_endpoint':'/riftbound/content/v1/contents',
+          }
+          if key:
+              response=requests.get(
+                  base+'/riftbound/content/v1/contents',
+                  params={'locale':'en'},
+                  headers={'X-Riot-Token':key,'Accept':'application/json','User-Agent':'Dontripit/1.0'},
+                  timeout=30,
+              )
+              report['http_status']=response.status_code
+              if response.ok:
+                  payload=response.json()
+                  report['response_type']=type(payload).__name__
+                  if isinstance(payload,dict):
+                      report['top_level_keys']=sorted(payload.keys())
+                      sets=payload.get('sets') if isinstance(payload.get('sets'),list) else []
+                      report['set_count']=len(sets)
+                      report['source_card_rows']=sum(len(s.get('cards') or []) for s in sets if isinstance(s,dict))
+                      report['sample_set_ids']=[str(s.get('id') or '') for s in sets[:10] if isinstance(s,dict)]
+                  Path('/tmp/riftbound-official-probe.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+              else:
+                  report['body_preview']=response.text[:300]
+                  Path('/tmp/riftbound-official-probe.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+                  raise SystemExit(f"Official Riot probe rejected: HTTP {response.status_code}")
+          else:
+              report['status']='blocked_missing_official_api_key'
+              Path('/tmp/riftbound-official-probe.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riftbound-v2-preflight-${{ github.sha }}
+          path: |
+            /tmp/riftbound-live-scope.json
+            /tmp/riftbound-official-probe.json
+          retention-days: 90
+          if-no-files-found: warn
