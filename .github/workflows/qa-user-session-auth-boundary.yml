@@ -1,0 +1,61 @@
+name: QA User Session Auth Boundary
+
+on:
+  push:
+    branches:
+      - mvp-auth-routing-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-user-session-auth-boundary
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: mvp-auth-routing-fix
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile backend
+        working-directory: backend
+        run: python -m compileall -q app tests
+
+      - name: Run auth boundary contract tests
+        working-directory: backend
+        run: python -m unittest tests.test_user_session_middleware_contract -v
+
+      - name: Verify production app imports
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from app.main import create_app
+          app = create_app('sqlite:////tmp/dri-auth-boundary.db')
+          rules = {rule.rule for rule in app.url_map.iter_rules()}
+          for route in (
+              '/api/v2/auth/register',
+              '/api/v2/auth/login',
+              '/api/v2/auth/me',
+              '/api/v2/auth/logout',
+              '/api/v2/me/collection',
+              '/api/v2/me/wishlist',
+              '/api/v2/search',
+          ):
+              assert route in rules, route
+          print('App route import contract PASS')
+          PY
