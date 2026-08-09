@@ -13,23 +13,19 @@ import '../searchV2/FacetPicker.css'
 const GAME_HUB_COPY = {
   pokemon: {
     logo: '/games/pokemon/pokemon_logo.png',
-    intro: 'Encuentra una carta por nombre, número o set y abre sus versiones solo cuando quieras llegar a la impresión exacta.',
-    examples: ['Pikachu', 'Charizard', '151'],
+    intro: 'Busca primero la carta. Después, solo si hace falta, elige set, rareza, idioma o variante física.',
   },
   magic: {
     logo: '/games/magic/magic_logo.png',
-    intro: 'Busca la carta primero. Después, si lo necesitas, baja a set, idioma, finish y la impresión física exacta.',
-    examples: ['Black Lotus', 'Lightning Bolt', 'Sol Ring'],
+    intro: 'Empieza por el nombre que conoces y baja a la impresión concreta cuando set, finish o idioma realmente importen.',
   },
   onepiece: {
     logo: '/games/onepiece/onepiece_logo.png',
-    intro: 'Leaders, Characters, promos y variantes organizados para que encontrar una carta no se convierta en una investigación.',
-    examples: ['Luffy', 'Zoro', 'OP05-119'],
+    intro: 'Encuentra Leaders, Characters, promos y variantes sin tener que descifrar primero toda la estructura del catálogo.',
   },
   yugioh: {
     logo: '/games/yugioh/yugioh_logo.png',
-    intro: 'Empieza por la carta que conoces y llega a la edición exacta cuando rareza, set o código realmente importen.',
-    examples: ['Dark Magician', 'Blue-Eyes', 'Ash Blossom'],
+    intro: 'Busca la carta por nombre o código y afina después por set, rareza, atributo o edición concreta.',
   },
 }
 
@@ -46,7 +42,7 @@ function formatReleaseDate(item) {
 }
 
 export default function GameHubPage({ game }) {
-  const copy = GAME_HUB_COPY[game.slug] || { intro: game.description, examples: [] }
+  const copy = GAME_HUB_COPY[game.slug] || { intro: game.description }
   const [collections, setCollections] = useState([])
   const [collectionsLoading, setCollectionsLoading] = useState(true)
   const [collectionsError, setCollectionsError] = useState('')
@@ -69,7 +65,7 @@ export default function GameHubPage({ game }) {
       } catch (requestError) {
         if (!cancelled) {
           setCollections([])
-          setCollectionsError(requestError.message || 'No pudimos cargar las colecciones.')
+          setCollectionsError(requestError.message || 'No pudimos cargar los sets.')
         }
       } finally {
         if (!cancelled) setCollectionsLoading(false)
@@ -94,95 +90,74 @@ export default function GameHubPage({ game }) {
   return (
     <section className={`dri-game-hub dri-game-hub-${game.slug}`} style={{ '--game-accent': game.accent }}>
       <div className="app-shell dri-game-hub-shell">
-        <header className="dri-game-hub-hero">
-          <div className="dri-game-hub-copy">
-            <Link href="/" className="dri-game-back">← Todos los juegos</Link>
-            {copy.logo ? (
-              <div className="dri-game-hub-logo-wrap">
-                <img src={copy.logo} alt={game.name} className="dri-game-hub-logo" />
+        <header className="ux-game-intro">
+          <div>
+            <Link href="/dashboard#juegos" className="ux-back-link">← Todos los juegos</Link>
+            <div className="ux-game-intro-main">
+              {copy.logo ? (
+                <div className="ux-game-logo-wrap">
+                  <img src={copy.logo} alt={game.name} />
+                </div>
+              ) : <h1>{game.name}</h1>}
+              <div className="ux-game-intro-copy">
+                <span className="dri-kicker">{game.name}</span>
+                <h1>Busca una carta sin perderte en el catálogo.</h1>
+                <p>{copy.intro}</p>
               </div>
-            ) : <h1>{game.name}</h1>}
-            <p>{copy.intro}</p>
-            <div className="dri-game-hub-actions">
-              <a href="#buscar" className="dri-btn dri-btn-primary dri-btn-lg">Buscar cartas</a>
-              <a href="#colecciones" className="dri-btn dri-btn-ghost dri-btn-lg">Ver sets</a>
-            </div>
-          </div>
-
-          <div className="dri-game-hub-visual" aria-hidden="true">
-            <div className="dri-hub-search-preview">
-              <span>⌕</span>
-              <strong>{copy.examples?.[0] || 'Buscar una carta'}</strong>
-              <kbd>↵</kbd>
-            </div>
-            <div className="dri-hub-card-stack">
-              {(copy.examples || []).slice(0, 3).map((example, index) => (
-                <article key={example} className={`dri-hub-sample-card dri-hub-sample-${index + 1}`}>
-                  <div className="dri-hub-sample-art"><span>{String(game.name).slice(0, 2).toUpperCase()}</span></div>
-                  <small>{game.name}</small>
-                  <strong>{example}</strong>
-                </article>
-              ))}
             </div>
           </div>
         </header>
-
-        <nav className="dri-game-subnav" aria-label={`Secciones de ${game.name}`}>
-          <a href="#buscar">Buscar</a>
-          <a href="#colecciones">Sets</a>
-          <a href="#lanzamientos">Próximos</a>
-          <a href="#noticias">Noticias</a>
-        </nav>
 
         <div id="buscar" className="dri-hub-anchor">
           <OnePieceSearchV2Experience game={game} />
         </div>
 
-        <section id="lanzamientos" className="dri-hub-section dri-hub-anchor">
-          <div className="dri-hub-section-head">
-            <div>
-              <span className="dri-kicker">Próximos lanzamientos</span>
-              <h2>Lo siguiente que merece estar en tu radar.</h2>
+        <div className="ux-game-secondary">
+          <section id="lanzamientos" className="ux-upcoming-section dri-hub-anchor">
+            <div className="ux-section-head">
+              <div>
+                <span className="dri-kicker">Próximos lanzamientos</span>
+                <h2>Lo siguiente que merece estar en tu radar</h2>
+              </div>
             </div>
-            <span className="dri-region-note">Calendario regional en evolución</span>
+
+            {upcoming.length ? (
+              <div className="ux-upcoming-grid">
+                {upcoming.map((item) => {
+                  const code = String(item.code || item.set_code || '').toLowerCase()
+                  return (
+                    <Link key={`${code}-${item.name}`} href={`/games/${game.slug}/sets/${encodeURIComponent(code)}`} className="ux-upcoming-card">
+                      <span>{formatReleaseDate(item)}</span>
+                      <strong>{item.name || item.title}</strong>
+                      <small>{String(item.code || item.set_code || '').toUpperCase()}</small>
+                      <b>Ver set →</b>
+                    </Link>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="dri-soft-empty">
+                <strong>Calendario regional en preparación.</strong>
+                <p>Aquí mostraremos fechas oficiales separadas por región cuando la fuente esté validada.</p>
+              </div>
+            )}
+          </section>
+
+          <div id="colecciones" className="dri-hub-anchor">
+            {collectionsLoading ? (
+              <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" />
+            ) : null}
+            {!collectionsLoading && collectionsError ? (
+              <StatePanel title="No pudimos cargar los sets" description={collectionsError} error tone="error" />
+            ) : null}
+            {!collectionsLoading && !collectionsError ? (
+              <GameCollectionsList collections={collections} gameSlug={game.slug} />
+            ) : null}
           </div>
 
-          {upcoming.length ? (
-            <div className="dri-upcoming-grid">
-              {upcoming.map((item) => {
-                const code = String(item.code || item.set_code || '').toLowerCase()
-                return (
-                  <Link key={`${code}-${item.name}`} href={`/games/${game.slug}/sets/${encodeURIComponent(code)}`} className="dri-upcoming-card">
-                    <span>{formatReleaseDate(item)}</span>
-                    <strong>{item.name || item.title}</strong>
-                    <small>{String(item.code || item.set_code || '').toUpperCase()}</small>
-                    <b>Ver set →</b>
-                  </Link>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="dri-soft-empty">
-              <strong>Estamos preparando el calendario regional.</strong>
-              <p>Este bloque se alimentará de fuentes oficiales y distinguirá Japón, USA y Europa según cada TCG.</p>
-            </div>
-          )}
-        </section>
-
-        <div id="colecciones" className="dri-hub-anchor">
-          {collectionsLoading ? (
-            <StatePanel title="Cargando sets" description={`Preparando el catálogo de ${game.name}.`} tone="muted" />
-          ) : null}
-          {!collectionsLoading && collectionsError ? (
-            <StatePanel title="No pudimos cargar los sets" description={collectionsError} error tone="error" />
-          ) : null}
-          {!collectionsLoading && !collectionsError ? (
-            <GameCollectionsList collections={collections} gameSlug={game.slug} />
-          ) : null}
-        </div>
-
-        <div id="noticias" className="dri-hub-anchor">
-          <GameNewsGrid news={news} />
+          <div id="noticias" className="dri-hub-anchor">
+            <GameNewsGrid news={news} />
+          </div>
         </div>
       </div>
     </section>

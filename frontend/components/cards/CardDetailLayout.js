@@ -24,18 +24,7 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
   const primarySet = useMemo(() => card?.sets?.[0] || null, [card])
   const prints = useMemo(() => (Array.isArray(card?.prints) ? card.prints : []), [card])
   const variantCount = prints.length
-  const variantSummary = useMemo(() => {
-    if (!variantCount) {
-      return 'Todavía no hay variantes registradas para esta carta.'
-    }
-
-    if (variantCount === 1) {
-      return 'Esta carta tiene 1 variante disponible con su set y metadatos asociados.'
-    }
-
-    return `Esta carta tiene ${variantCount} variantes disponibles con su set y metadatos asociados.`
-  }, [variantCount])
-  const contextLabel = gameLabel
+  const setCount = Array.isArray(card?.sets) ? card.sets.length : 0
 
   return (
     <article className="detail-page panel">
@@ -53,7 +42,7 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
         <div className="panel-soft detail-summary-stack">
           <p className="eyebrow">Carta</p>
           <strong>{card.name}</strong>
-          <span>{contextLabel}</span>
+          <span>{gameLabel}</span>
         </div>
       </div>
 
@@ -64,60 +53,59 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
           {primarySet?.code ? (
             <Link href={getSetHref(gameSlug, primarySet.code)}>{primarySet.name || primarySet.code}</Link>
           ) : (
-            <span>{primarySet?.name || 'Colección'}</span>
+            <span>{primarySet?.name || 'Cartas'}</span>
           )}
           <span>→</span>
           <strong>{card.name}</strong>
         </nav>
 
         <div className="detail-title-block">
-          <p className="eyebrow">Carta</p>
+          <p className="eyebrow">Carta encontrada</p>
           <h1>{card.name}</h1>
-          <p className="detail-intro">
-            Vista principal de la carta con sus variantes, sets y metadatos listos para navegar con claridad.
-          </p>
+          <p className="detail-intro">Ahora elige la versión física que te interesa. Cada set, idioma o variante se guarda por separado en tu colección o wishlist.</p>
         </div>
 
         <section className="detail-stats-grid">
-          <DetailStat label="Card ID" value={card.id} />
           <DetailStat label="Juego" value={gameLabel} />
-          <DetailStat label="Idioma base" value={card.language} />
-          <DetailStat label="Variantes" value={variantCount} />
+          <DetailStat label="Versiones disponibles" value={variantCount} />
+          <DetailStat label="Sets relacionados" value={setCount} />
         </section>
 
-        <section className="detail-section-block panel-soft">
-          <div className="section-heading compact">
-            <p className="eyebrow">Colecciones</p>
-            <h2>Sets relacionados</h2>
-          </div>
-          <div className="chip-row">
-            {(card.sets || []).map((setItem) => (
-              <Link
-                key={setItem.id || setItem.code}
-                className="filter-chip active"
-                href={setItem.code ? getSetHref(gameSlug, setItem.code) : getGameExplorerHref(gameSlug)}
-              >
-                {setItem.code ? `${setItem.code} · ` : ''}
-                {setItem.name || 'Set'}
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="detail-section-block panel-soft">
-          <div className="section-heading compact">
-            <p className="eyebrow">Variantes</p>
-            <h2>Variantes</h2>
-          </div>
-          <p className="detail-meta">{variantSummary}</p>
-        </section>
+        {(card.sets || []).length ? (
+          <section className="detail-section-block panel-soft">
+            <div className="section-heading compact">
+              <p className="eyebrow">Aparece en</p>
+              <h2>Sets</h2>
+            </div>
+            <div className="chip-row">
+              {(card.sets || []).map((setItem) => (
+                <Link
+                  key={setItem.id || setItem.code}
+                  className="filter-chip active"
+                  href={setItem.code ? getSetHref(gameSlug, setItem.code) : getGameExplorerHref(gameSlug)}
+                >
+                  {setItem.code ? `${setItem.code} · ` : ''}
+                  {setItem.name || 'Set'}
+                </Link>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="detail-section-block">
           <div className="section-heading compact">
-            <p className="eyebrow">Variantes</p>
-            <h2>Ediciones, finishes e idiomas</h2>
-            <p>Las variantes viven dentro de la carta para evitar duplicados en búsqueda y mantener el contexto completo.</p>
+            <p className="eyebrow">Elige una versión</p>
+            <h2>¿Cuál tienes o cuál buscas?</h2>
+            <p>{variantCount ? `${variantCount} ${variantCount === 1 ? 'versión disponible' : 'versiones disponibles'}.` : 'Todavía no tenemos versiones registradas para esta carta.'}</p>
           </div>
+
+          {variantCount ? (
+            <div className="ux-detail-guide">
+              <span aria-hidden="true">→</span>
+              <div><strong>Siguiente paso:</strong> compara set, idioma y variante, abre la correcta y desde ahí añádela a tu colección o wishlist.</div>
+            </div>
+          ) : null}
+
           <VariantPicker prints={prints} gameSlug={gameSlug} />
         </section>
       </div>

@@ -12,10 +12,10 @@ const QUICK_FILTER_KEYS_BY_GAME = {
 }
 
 const QUICK_FILTER_COPY_BY_GAME = {
-  onepiece: 'Color, tipo y hits coleccionables a un toque.',
-  pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir todos los filtros.',
-  yugioh: 'Set, release, clase, atributo, arquetipo y rareza en los accesos más usados.',
-  magic: 'Set, identidad de color, tipo, rareza y finish sin recorrer todos los filtros.',
+  onepiece: 'Color, tipo o hit especial.',
+  pokemon: 'Tipo, rareza, regulación o acabado.',
+  yugioh: 'Set, clase, atributo o rareza.',
+  magic: 'Set, color, tipo, rareza o finish.',
 }
 
 function isEmpty(value) {
@@ -68,8 +68,7 @@ function DynamicFacetPicker({ gameSlug, facet, value, onChange }) {
   function choose(option) {
     const nextValue = option.value
     if (facet.multi_value) {
-      const next = current.includes(nextValue) ? current : [...current, nextValue]
-      onChange(next)
+      onChange(current.includes(nextValue) ? current : [...current, nextValue])
     } else {
       onChange(nextValue)
       setOpen(false)
@@ -242,7 +241,7 @@ export default function AdvancedSearchPanel({
   onToggle,
 }) {
   const quickFilterKeys = QUICK_FILTER_KEYS_BY_GAME[gameSlug] || new Set()
-  const quickFilterCopy = QUICK_FILTER_COPY_BY_GAME[gameSlug] || 'Los filtros más útiles de este juego, sin llenarte la pantalla.'
+  const quickFilterCopy = QUICK_FILTER_COPY_BY_GAME[gameSlug] || 'Elige solo lo que necesites.'
 
   const facetByKey = useMemo(() => {
     const entries = Object.values(groups).flat().map((facet) => [facet.key, facet])
@@ -267,12 +266,12 @@ export default function AdvancedSearchPanel({
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
       <div className="sv2-advanced-head">
         <div>
-          <p className="eyebrow">Búsqueda avanzada</p>
-          <h3>Afina solo cuando lo necesitas.</h3>
-          <p>Empieza simple y combina todos los filtros compatibles con este juego cuando busques una edición concreta.</p>
+          <p className="eyebrow">Opcional</p>
+          <h3>¿Buscas una versión concreta?</h3>
+          <p>Set, idioma, rareza, acabado y otros detalles están aquí cuando los necesites.</p>
         </div>
-        <button type="button" className="sv2-advanced-toggle" onClick={onToggle}>
-          {open ? 'Ocultar filtros' : 'Todos los filtros'}
+        <button type="button" className="sv2-advanced-toggle" onClick={onToggle} aria-expanded={open}>
+          {open ? 'Cerrar filtros' : 'Afinar búsqueda'}
           <span aria-hidden="true">{open ? '−' : '+'}</span>
         </button>
       </div>
@@ -281,11 +280,11 @@ export default function AdvancedSearchPanel({
         <div className="sv2-quick-filters">
           <div className="sv2-quick-heading">
             <div>
-              <strong>Filtros rápidos</strong>
+              <strong>Atajos útiles</strong>
               <span>{quickFilterCopy}</span>
             </div>
             <button type="button" className="sv2-quick-apply" onClick={onSearch} disabled={loading}>
-              {loading ? 'Filtrando…' : 'Ver resultados'}
+              {loading ? 'Buscando…' : 'Ver resultados'}
             </button>
           </div>
           <div className="sv2-quick-grid">
@@ -304,18 +303,18 @@ export default function AdvancedSearchPanel({
         </div>
       ) : null}
 
-      {activeEntries.length > 0 && (
+      {activeEntries.length > 0 ? (
         <div className="sv2-active-row">
-          <span className="sv2-active-label">Filtros activos</span>
+          <span className="sv2-active-label">Filtros elegidos</span>
           {activeEntries.map(([key, value]) => (
             <button key={key} type="button" className="sv2-active-filter" onClick={() => onChange(key, undefined)}>
               {facetByKey[key]?.label || key}: {formatActiveValue(value)} ×
             </button>
           ))}
         </div>
-      )}
+      ) : null}
 
-      {open && (
+      {open ? (
         <>
           <div className="sv2-facet-groups">
             {Object.entries(fullGroups).map(([groupName, facets]) => (
@@ -324,9 +323,7 @@ export default function AdvancedSearchPanel({
                 <div className="sv2-facet-grid">
                   {facets.map((facet) => (
                     <div key={`${facet.scope}-${facet.key}`} className={`sv2-facet sv2-facet-${facet.ui_type}`}>
-                      {facet.ui_type !== 'toggle' && (
-                        <span className="sv2-facet-label">{facet.label}</span>
-                      )}
+                      {facet.ui_type !== 'toggle' ? <span className="sv2-facet-label">{facet.label}</span> : null}
                       <FacetControl
                         gameSlug={gameSlug}
                         facet={facet}
@@ -342,14 +339,14 @@ export default function AdvancedSearchPanel({
 
           <div className="sv2-advanced-actions">
             <button type="button" className="sv2-secondary-btn" onClick={onReset} disabled={loading || activeEntries.length === 0}>
-              Limpiar todo
+              Limpiar
             </button>
             <button type="button" className="sv2-primary-btn" onClick={onSearch} disabled={loading}>
-              {loading ? 'Filtrando…' : 'Aplicar filtros'}
+              {loading ? 'Buscando…' : 'Aplicar filtros'}
             </button>
           </div>
         </>
-      )}
+      ) : null}
     </section>
   )
 }

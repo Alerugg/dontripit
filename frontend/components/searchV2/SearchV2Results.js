@@ -54,6 +54,7 @@ function CardResult({ item, gameSlug, query }) {
           {gameSlug === 'yugioh' && attrs.attribute ? badge(attrs.attribute) : null}
           {gameSlug === 'yugioh' && attrs.archetype ? badge(attrs.archetype) : null}
         </div>
+        <span className="sv2-result-action">Ver {variants === 1 ? 'la versión' : 'versiones'} →</span>
       </div>
     </Link>
   )
@@ -62,16 +63,18 @@ function CardResult({ item, gameSlug, query }) {
 function PrintResult({ item, gameSlug }) {
   const physical = item.attributes || {}
   const stamps = Array.isArray(physical.stamps) ? physical.stamps : []
+  const printId = item.print_id || item.id
+  const href = printId ? `/prints/${printId}` : `/games/${gameSlug}/cards/${item.card_id}`
 
   return (
-    <Link href={`/games/${gameSlug}/cards/${item.card_id}`} className="sv2-result-card sv2-result-card-print">
+    <Link href={href} className="sv2-result-card sv2-result-card-print">
       <div className="sv2-result-image-wrap">
         <ResultImage src={item.primary_image_url} name={item.name} gameSlug={gameSlug} />
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
           <h3>{item.name}</h3>
-          <span className="sv2-print-pill">Edición exacta</span>
+          <span className="sv2-print-pill">Versión concreta</span>
         </div>
         <p className="sv2-collector-line">
           <strong>{item.collector_number}</strong>
@@ -100,6 +103,7 @@ function PrintResult({ item, gameSlug }) {
         {gameSlug === 'yugioh' && Array.isArray(physical.release_names) && physical.release_names.length ? (
           <small className="sv2-release-line">{physical.release_names[0]}{physical.release_names.length > 1 ? ` +${physical.release_names.length - 1}` : ''}</small>
         ) : null}
+        <span className="sv2-result-action">Abrir esta versión →</span>
       </div>
     </Link>
   )
@@ -107,7 +111,7 @@ function PrintResult({ item, gameSlug }) {
 
 export default function SearchV2Results({ items = [], mode = 'normal', gameSlug, query = '', total = null }) {
   const exactPhysicalResults = mode === 'advanced' || (items.length > 0 && items.every((item) => item.type === 'print'))
-  const label = exactPhysicalResults ? 'Ediciones exactas' : 'Cartas'
+  const label = exactPhysicalResults ? 'Versiones que coinciden' : 'Cartas encontradas'
   const count = total ?? items.length
 
   return (
@@ -122,7 +126,7 @@ export default function SearchV2Results({ items = [], mode = 'normal', gameSlug,
       <div className="sv2-results-grid">
         {items.map((item) => (
           mode === 'advanced' || item.type === 'print'
-            ? <PrintResult key={`print-${item.print_id}`} item={item} gameSlug={gameSlug} />
+            ? <PrintResult key={`print-${item.print_id || item.id}`} item={item} gameSlug={gameSlug} />
             : <CardResult key={`card-${item.card_id}`} item={item} gameSlug={gameSlug} query={query} />
         ))}
       </div>
