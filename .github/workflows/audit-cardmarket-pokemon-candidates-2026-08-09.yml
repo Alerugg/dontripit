@@ -1,0 +1,51 @@
+name: Audit Pokémon Cardmarket Candidates 2026-08-09
+
+on:
+  push:
+    branches:
+      - audit-cardmarket-pokemon-candidates-2026-08-09
+    paths:
+      - 'backend/scripts/audit_cardmarket_pokemon_candidates.py'
+      - '.github/workflows/audit-cardmarket-pokemon-candidates-2026-08-09.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit-cardmarket-pokemon-candidates-2026-08-09
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download current Pokémon Cardmarket datasets
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json -o /tmp/products_pokemon.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json -o /tmp/prices_pokemon.json
+      - name: Audit exact candidate evidence
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/audit_cardmarket_pokemon_candidates.py --products /tmp/products_pokemon.json --prices /tmp/prices_pokemon.json --output /tmp/cardmarket-pokemon-candidates.json
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-pokemon-candidates-2026-08-09
+          path: /tmp/cardmarket-pokemon-candidates.json
+          if-no-files-found: error
+          retention-days: 30
