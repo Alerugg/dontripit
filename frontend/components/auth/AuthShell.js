@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
 import BrandMark from '../brand/BrandMark'
 
 function safeNext(value) {
@@ -12,11 +12,10 @@ function safeNext(value) {
   return target
 }
 
-export default function AuthShell({ mode = 'register' }) {
+export default function AuthShell({ mode = 'register', next = '/dashboard' }) {
   const register = mode === 'register'
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const nextPath = useMemo(() => safeNext(searchParams.get('next')), [searchParams])
+  const nextPath = safeNext(next)
   const switchHref = `${register ? '/login' : '/register'}${nextPath !== '/dashboard' ? `?next=${encodeURIComponent(nextPath)}` : ''}`
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
