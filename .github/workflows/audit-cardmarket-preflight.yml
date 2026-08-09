@@ -62,6 +62,29 @@ jobs:
                 LIMIT 20
               ''')).mappings().all()
               cm_identifiers=int(conn.execute(text("SELECT COUNT(*) FROM print_identifiers WHERE lower(source)='cardmarket'")).scalar_one())
+              cm_by_game=conn.execute(text('''
+                SELECT g.slug, COUNT(*) AS mapped_prints,
+                       MIN(pi.external_id) AS min_external_id,
+                       MAX(pi.external_id) AS max_external_id
+                FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE lower(pi.source)='cardmarket'
+                GROUP BY g.slug ORDER BY g.slug
+              ''')).mappings().all()
+              cm_samples=conn.execute(text('''
+                SELECT g.slug, pi.print_id, pi.external_id, c.name, p.collector_number, s.name AS set_name,
+                       p.finish, p.language
+                FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE lower(pi.source)='cardmarket'
+                ORDER BY g.slug, pi.print_id
+                LIMIT 12
+              ''')).mappings().all()
               source_rows=conn.execute(text('''
                 SELECT ps.id, ps.name, ps.currency,
                        COUNT(s.id) AS snapshots
@@ -82,6 +105,8 @@ jobs:
               'print_identifiers': [dict(row) for row in identifier_rows],
               'duplicate_source_external_id_sample': [dict(row) for row in duplicate_rows],
               'cardmarket_print_identifiers': cm_identifiers,
+              'cardmarket_by_game': [dict(row) for row in cm_by_game],
+              'cardmarket_mapping_samples': [dict(row) for row in cm_samples],
               'price_sources': [dict(row) for row in source_rows],
               'cardmarket_price_snapshots': cm_snapshots,
           }
