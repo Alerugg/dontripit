@@ -201,6 +201,8 @@ def test_unmapped_single_reuses_exact_mapping_auditor_evidence(client):
             number="OP05-060",
         )
         session.commit()
+        expected_print_id = int(print_row.id)
+        expected_card_id = int(card.id)
 
         summary, decisions = build_master_inventory(
             session,
@@ -211,8 +213,8 @@ def test_unmapped_single_reuses_exact_mapping_auditor_evidence(client):
     decision = decisions[0]
     assert decision.status == "exact_candidate_review_required"
     assert decision.entity_type == "print"
-    assert decision.entity_id == print_row.id
-    assert decision.evidence["candidate_card_id"] == card.id
+    assert decision.entity_id == expected_print_id
+    assert decision.evidence["candidate_card_id"] == expected_card_id
     assert summary["mapped"] == 0
     assert summary["unresolved"] == 1
     assert summary["ready"] is False
