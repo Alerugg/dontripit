@@ -1,3 +1,5 @@
+import { toApiGameSlug } from '../catalog/games'
+
 function toQuery(params = {}) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -17,7 +19,7 @@ async function readJson(response) {
 }
 
 export async function searchV2({ q, game, limit = 24 } = {}) {
-  const response = await fetch(`/api/search-v2${toQuery({ q, game, limit })}`, {
+  const response = await fetch(`/api/search-v2${toQuery({ q, game: toApiGameSlug(game || ''), limit })}`, {
     method: 'GET',
     cache: 'no-store',
   })
@@ -26,7 +28,7 @@ export async function searchV2({ q, game, limit = 24 } = {}) {
 }
 
 export async function suggestV2({ q, game, limit = 8 } = {}) {
-  const response = await fetch(`/api/search-v2/suggest${toQuery({ q, game, limit })}`, {
+  const response = await fetch(`/api/search-v2/suggest${toQuery({ q, game: toApiGameSlug(game || ''), limit })}`, {
     method: 'GET',
     cache: 'no-store',
   })
@@ -35,7 +37,7 @@ export async function suggestV2({ q, game, limit = 8 } = {}) {
 }
 
 export async function fetchFacetsV2(game) {
-  const response = await fetch(`/api/search-v2/facets${toQuery({ game })}`, {
+  const response = await fetch(`/api/search-v2/facets${toQuery({ game: toApiGameSlug(game || '') })}`, {
     method: 'GET',
     cache: 'no-store',
   })
@@ -43,7 +45,7 @@ export async function fetchFacetsV2(game) {
 }
 
 export async function fetchFacetValuesV2({ game, key, q = '', limit = 30 } = {}) {
-  const response = await fetch(`/api/search-v2/facet-values${toQuery({ game, key, q, limit })}`, {
+  const response = await fetch(`/api/search-v2/facet-values${toQuery({ game: toApiGameSlug(game || ''), key, q, limit })}`, {
     method: 'GET',
     cache: 'no-store',
   })
@@ -56,7 +58,7 @@ export async function advancedSearchV2({ game, q = '', filters = {}, limit = 50,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     cache: 'no-store',
-    body: JSON.stringify({ game, q, filters, limit, offset }),
+    body: JSON.stringify({ game: toApiGameSlug(game || ''), q, filters, limit, offset }),
   })
   return readJson(response)
 }
