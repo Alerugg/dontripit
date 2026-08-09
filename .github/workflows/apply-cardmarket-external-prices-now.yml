@@ -1,0 +1,66 @@
+name: Apply Cardmarket External Prices Now
+
+on:
+  push:
+    branches:
+      - apply-cardmarket-external-prices-now
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download official Cardmarket price guides
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket-prices
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+            game="${spec%%:*}"
+            game_id="${spec##*:}"
+            curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+              "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_${game_id}.json" \
+              -o "/tmp/cardmarket-prices/${game}.json"
+          done
+      - name: Dry-run all four current price guides
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket-prices/${game}.json" \
+              --game "$game" --report "/tmp/cardmarket-prices/${game}-dry.json"
+          done
+      - name: Apply all four current price guides
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket-prices/${game}.json" \
+              --game "$game" --apply --report "/tmp/cardmarket-prices/${game}-apply.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-external-price-sync
+          path: /tmp/cardmarket-prices/*-*.json
+          retention-days: 7
