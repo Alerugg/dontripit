@@ -9,12 +9,17 @@ def _site_url() -> str:
     return str(os.getenv("PUBLIC_SITE_URL") or "https://dontripit.com").rstrip("/")
 
 
-def send_password_reset_email(*, to_email: str, token: str) -> bool:
-    """Send a reset link through Resend without ever logging or persisting the raw token.
+def email_delivery_configured() -> bool:
+    """Return whether password-recovery email has the minimum required config.
 
-    Returns False when email delivery is not configured. Callers should keep the
-    public response generic to avoid account enumeration.
+    This is intentionally account-agnostic so callers can report a global
+    configuration problem without revealing whether a submitted email exists.
     """
+    return bool(str(os.getenv("RESEND_API_KEY") or "").strip() and str(os.getenv("AUTH_EMAIL_FROM") or "").strip())
+
+
+def send_password_reset_email(*, to_email: str, token: str) -> bool:
+    """Send a reset link through Resend without logging or persisting the raw token."""
     api_key = str(os.getenv("RESEND_API_KEY") or "").strip()
     from_address = str(os.getenv("AUTH_EMAIL_FROM") or "").strip()
     if not api_key or not from_address:
