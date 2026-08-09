@@ -1,0 +1,28 @@
+name: Test Public HUB MVP Auth
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/auth/middleware.py'
+      - 'backend/tests/test_public_hub_auth.py'
+      - '.github/workflows/test-public-hub-mvp.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run public HUB auth boundary tests
+        run: pytest -q tests/test_public_hub_auth.py
