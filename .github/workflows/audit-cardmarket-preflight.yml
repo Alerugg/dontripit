@@ -1,0 +1,89 @@
+name: Audit Cardmarket Pricing Preflight
+
+on:
+  push:
+    branches:
+      - cardmarket-pricing-v1
+    paths:
+      - '.github/workflows/audit-cardmarket-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install audit dependencies
+        run: python -m pip install --quiet 'sqlalchemy>=2,<3' psycopg2-binary
+      - name: Audit live Neon price and identifier state
+        run: |
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, text
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('No database URL configured')
+          if url.startswith('postgres://'):
+              url='postgresql://' + url[len('postgres://'):]
+          engine=create_engine(url, pool_pre_ping=True)
+          with engine.connect() as conn:
+              alembic=str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one())
+              db_size=int(conn.execute(text('SELECT pg_database_size(current_database())')).scalar_one())
+              game_rows=conn.execute(text('''
+                SELECT g.slug, COUNT(DISTINCT c.id) AS cards, COUNT(DISTINCT p.id) AS prints
+                FROM games g
+                LEFT JOIN cards c ON c.game_id=g.id
+                LEFT JOIN prints p ON p.card_id=c.id
+                GROUP BY g.slug ORDER BY g.slug
+              ''')).mappings().all()
+              identifier_rows=conn.execute(text('''
+                SELECT source, COUNT(*) AS rows, COUNT(DISTINCT external_id) AS external_ids,
+                       COUNT(DISTINCT print_id) AS prints
+                FROM print_identifiers
+                GROUP BY source ORDER BY source
+              ''')).mappings().all()
+              duplicate_rows=conn.execute(text('''
+                SELECT source, external_id, COUNT(*) AS n
+                FROM print_identifiers
+                GROUP BY source, external_id
+                HAVING COUNT(*) > 1
+                ORDER BY n DESC, source, external_id
+                LIMIT 20
+              ''')).mappings().all()
+              cm_identifiers=int(conn.execute(text("SELECT COUNT(*) FROM print_identifiers WHERE lower(source)='cardmarket'")).scalar_one())
+              source_rows=conn.execute(text('''
+                SELECT ps.id, ps.name, ps.currency,
+                       COUNT(s.id) AS snapshots
+                FROM price_sources ps
+                LEFT JOIN price_snapshots s ON s.source_id=ps.id
+                GROUP BY ps.id, ps.name, ps.currency
+                ORDER BY ps.name
+              ''')).mappings().all()
+              cm_snapshots=int(conn.execute(text('''
+                SELECT COUNT(*)
+                FROM price_snapshots s JOIN price_sources ps ON ps.id=s.source_id
+                WHERE lower(ps.name)='cardmarket'
+              ''')).scalar_one())
+          result={
+              'alembic_version': alembic,
+              'database_size_mib': round(db_size/1024/1024, 2),
+              'games': [dict(row) for row in game_rows],
+              'print_identifiers': [dict(row) for row in identifier_rows],
+              'duplicate_source_external_id_sample': [dict(row) for row in duplicate_rows],
+              'cardmarket_print_identifiers': cm_identifiers,
+              'price_sources': [dict(row) for row in source_rows],
+              'cardmarket_price_snapshots': cm_snapshots,
+          }
+          print(json.dumps(result, indent=2, sort_keys=True, default=str))
+          PY
