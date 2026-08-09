@@ -1,0 +1,264 @@
+name: Cardmarket Master Production Sync
+
+on:
+  schedule:
+    # Cardmarket publishes the Price Guide daily. Run after the existing
+    # Pokemon-only price job so the complete market mirror becomes canonical
+    # for source-level coverage and prices.
+    - cron: '20 4 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/sync-cardmarket-master-production.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cardmarket-master-production-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Require production database secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL_UNPOOLED:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+            echo 'Neither DATABASE_URL_UNPOOLED nor DATABASE_URL is configured'
+            exit 1
+          fi
+
+      - name: Compile Cardmarket production sync code
+        run: |
+          python -m compileall -q \
+            app/external_catalog_models.py \
+            app/jobs/cardmarket_master_inventory.py \
+            app/jobs/cardmarket_catalog_ingest.py \
+            app/jobs/cardmarket_prices.py \
+            app/jobs/cardmarket_external_prices.py \
+            scripts/sync_cardmarket_catalog.py \
+            scripts/sync_cardmarket_external_prices.py
+
+      - name: Upgrade Neon schema to current head
+        run: alembic upgrade head
+
+      - name: Download all official Cardmarket MVP feeds
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket-master
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+            game="${spec%%:*}"
+            game_id="${spec##*:}"
+            for group in singles nonsingles; do
+              curl --retry 5 --retry-delay 2 --fail --location --silent --show-error \
+                "https://downloads.s3.cardmarket.com/productCatalog/productList/products_${group}_${game_id}.json" \
+                -o "/tmp/cardmarket-master/${game}_${group}.json"
+              test -s "/tmp/cardmarket-master/${game}_${group}.json"
+            done
+            curl --retry 5 --retry-delay 2 --fail --location --silent --show-error \
+              "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_${game_id}.json" \
+              -o "/tmp/cardmarket-master/${game}_prices.json"
+            test -s "/tmp/cardmarket-master/${game}_prices.json"
+          done
+
+      - name: Validate complete source contracts before any market write
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
+          from app.jobs.cardmarket_prices import load_price_guide_bytes
+
+          specs = [('mtg', 1), ('yugioh', 3), ('pokemon', 6), ('onepiece', 18)]
+          global_ids = set()
+          summary = {}
+          for game, _ in specs:
+              feeds = {}
+              for file_group, product_group in [('singles', 'single'), ('nonsingles', 'non_single')]:
+                  feed = load_catalog_feed_bytes(
+                      Path(f'/tmp/cardmarket-master/{game}_{file_group}.json').read_bytes(),
+                      game_slug=game,
+                      product_group=product_group,
+                  )
+                  assert feed.raw_records > 0, f'{game}:{product_group}: empty catalog'
+                  assert feed.rejected_records == 0, f'{game}:{product_group}: rejected={feed.rejected_records}'
+                  ids = [row.product_id for row in feed.rows]
+                  assert len(ids) == feed.raw_records, f'{game}:{product_group}: accepted/raw mismatch'
+                  assert len(ids) == len(set(ids)), f'{game}:{product_group}: duplicate idProduct'
+                  collision = global_ids.intersection(ids)
+                  assert not collision, f'global idProduct collision: {sorted(collision)[:10]}'
+                  global_ids.update(ids)
+                  feeds[product_group] = feed
+
+              single_ids = {row.product_id for row in feeds['single'].rows}
+              sealed_ids = {row.product_id for row in feeds['non_single'].rows}
+              assert not (single_ids & sealed_ids), f'{game}: single/non-single overlap'
+
+              created_at, price_rows = load_price_guide_bytes(
+                  Path(f'/tmp/cardmarket-master/{game}_prices.json').read_bytes(),
+                  filename=f'{game}_prices.json',
+              )
+              price_ids = [row.product_id for row in price_rows]
+              assert price_ids, f'{game}: empty Price Guide'
+              assert len(price_ids) == len(set(price_ids)), f'{game}: duplicate Price Guide idProduct'
+              missing = set(price_ids) - (single_ids | sealed_ids)
+              assert not missing, f'{game}: Price Guide IDs missing from Product Catalogue: {sorted(missing)[:20]}'
+              summary[game] = {
+                  'singles': len(single_ids),
+                  'non_singles': len(sealed_ids),
+                  'catalog_total': len(single_ids | sealed_ids),
+                  'price_products': len(price_ids),
+                  'price_created_at': created_at.isoformat() if created_at else None,
+              }
+          print({'validated_official_cardmarket_feeds': summary, 'global_products': len(global_ids)})
+          PY
+
+      - name: Preflight full Cardmarket external catalog against Neon
+        run: |
+          set -euo pipefail
+          python scripts/sync_cardmarket_catalog.py \
+            --catalog mtg:single:/tmp/cardmarket-master/mtg_singles.json \
+            --catalog mtg:non_single:/tmp/cardmarket-master/mtg_nonsingles.json \
+            --catalog yugioh:single:/tmp/cardmarket-master/yugioh_singles.json \
+            --catalog yugioh:non_single:/tmp/cardmarket-master/yugioh_nonsingles.json \
+            --catalog pokemon:single:/tmp/cardmarket-master/pokemon_singles.json \
+            --catalog pokemon:non_single:/tmp/cardmarket-master/pokemon_nonsingles.json \
+            --catalog onepiece:single:/tmp/cardmarket-master/onepiece_singles.json \
+            --catalog onepiece:non_single:/tmp/cardmarket-master/onepiece_nonsingles.json \
+            --report /tmp/cardmarket-master/catalog-preflight.json
+
+      - name: Apply complete Cardmarket external catalog
+        run: |
+          set -euo pipefail
+          python scripts/sync_cardmarket_catalog.py \
+            --catalog mtg:single:/tmp/cardmarket-master/mtg_singles.json \
+            --catalog mtg:non_single:/tmp/cardmarket-master/mtg_nonsingles.json \
+            --catalog yugioh:single:/tmp/cardmarket-master/yugioh_singles.json \
+            --catalog yugioh:non_single:/tmp/cardmarket-master/yugioh_nonsingles.json \
+            --catalog pokemon:single:/tmp/cardmarket-master/pokemon_singles.json \
+            --catalog pokemon:non_single:/tmp/cardmarket-master/pokemon_nonsingles.json \
+            --catalog onepiece:single:/tmp/cardmarket-master/onepiece_singles.json \
+            --catalog onepiece:non_single:/tmp/cardmarket-master/onepiece_nonsingles.json \
+            --apply \
+            --report /tmp/cardmarket-master/catalog-apply.json
+
+      - name: Preflight all four Cardmarket Price Guides
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/sync_cardmarket_external_prices.py \
+              "/tmp/cardmarket-master/${game}_prices.json" \
+              --game "${game}" \
+              --report "/tmp/cardmarket-master/${game}-prices-preflight.json"
+          done
+
+      - name: Apply all four Cardmarket Price Guides
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/sync_cardmarket_external_prices.py \
+              "/tmp/cardmarket-master/${game}_prices.json" \
+              --game "${game}" \
+              --apply \
+              --report "/tmp/cardmarket-master/${game}-prices-apply.json"
+          done
+
+      - name: Prove Neon mirrors the current official Cardmarket catalog exactly
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
+
+          database_url = os.environ.get('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          engine = create_engine(database_url)
+          expected = {}
+          for game in ('mtg', 'yugioh', 'pokemon', 'onepiece'):
+              for file_group, product_group in [('singles', 'single'), ('nonsingles', 'non_single')]:
+                  feed = load_catalog_feed_bytes(
+                      Path(f'/tmp/cardmarket-master/{game}_{file_group}.json').read_bytes(),
+                      game_slug=game,
+                      product_group=product_group,
+                  )
+                  expected[(game, product_group)] = len(feed.rows)
+
+          with engine.connect() as connection:
+              rows = connection.execute(text('''
+                  SELECT g.slug, e.product_group, count(*)
+                  FROM external_catalog_products e
+                  JOIN games g ON g.id = e.game_id
+                  WHERE e.source = 'cardmarket'
+                    AND g.slug IN ('mtg','yugioh','pokemon','onepiece')
+                  GROUP BY g.slug, e.product_group
+                  ORDER BY g.slug, e.product_group
+              ''')).all()
+              actual = {(str(game), str(group)): int(count) for game, group, count in rows}
+
+              price_rows = connection.execute(text('''
+                  SELECT g.slug, count(*) AS snapshots, count(DISTINCT e.external_id) AS products
+                  FROM external_market_price_snapshots p
+                  JOIN external_catalog_products e ON e.id = p.external_product_id
+                  JOIN games g ON g.id = e.game_id
+                  WHERE e.source = 'cardmarket'
+                    AND g.slug IN ('mtg','yugioh','pokemon','onepiece')
+                    AND p.as_of = (
+                      SELECT max(p2.as_of)
+                      FROM external_market_price_snapshots p2
+                      JOIN external_catalog_products e2 ON e2.id = p2.external_product_id
+                      WHERE e2.game_id = e.game_id AND e2.source = 'cardmarket'
+                    )
+                  GROUP BY g.slug
+                  ORDER BY g.slug
+              ''')).all()
+
+          assert actual == expected, {'expected': expected, 'actual': actual}
+          proof = {
+              'catalog_exact_match': True,
+              'catalog_counts': {f'{game}:{group}': count for (game, group), count in sorted(actual.items())},
+              'latest_price_snapshots': [
+                  {'game': str(game), 'snapshots': int(snapshots), 'products': int(products)}
+                  for game, snapshots, products in price_rows
+              ],
+          }
+          print(json.dumps(proof, indent=2, sort_keys=True))
+          Path('/tmp/cardmarket-master/neon-proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+          PY
+
+      - name: Upload sync proof and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-master-sync-${{ github.run_id }}
+          path: /tmp/cardmarket-master/*.json
+          retention-days: 30
+          if-no-files-found: warn
