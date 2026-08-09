@@ -3,10 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.models import Card, Game, Print, PrintImage, Set
-from app.search_v2.normalization import (
-    compact_search_text,
-    normalize_onepiece_collector_number,
-)
+from app.search_v2.normalization import compact_search_text, normalize_onepiece_collector_number
 from app.search_v2_models import PrintSearchProfile
 
 
@@ -25,16 +22,21 @@ def exact_onepiece_collector_search(
     game: str | None,
     limit: int = 24,
 ) -> list[dict] | None:
-    """Return every exact physical One Piece print for a pure collector-code query.
+    """Return every exact physical edition for a pure One Piece collector code.
 
-    Normal/name search intentionally groups variants under a logical Card. A pure
-    collector-code search is different: collectors are asking for the physical
-    editions that carry that code, so collapsing by ``card_id`` hides legitimate
-    official artworks/reprints (for example OP05-119).
+    One Piece's certified canonical identity is collector-number based, so the
+    logical gameplay identity for OP05-119 is ``onepiece:op05-119``. That logical
+    Card can legitimately have many distinct official physical editions/artworks.
+    Normal/name search may group them for usability, but a pure collector-code
+    lookup must not collapse those editions into a single result.
+
+    The canonical ``card_key`` is deliberately the lookup anchor here rather than
+    a rebuildable Search V2 normalization field. Search projections can change;
+    the certified Card identity is the durable source of truth.
 
     ``None`` means the query is not a pure One Piece collector-code lookup and
-    the regular logical-card search should continue. An empty list is a valid
-    exact-code result with no matching physical print.
+    regular logical-card search should continue. An empty list is a valid exact
+    code lookup with no canonical match.
     """
     normalized_game = str(game or "").strip().lower() or None
     if normalized_game not in {None, "onepiece"}:
@@ -48,6 +50,8 @@ def exact_onepiece_collector_search(
         return None
 
     row_limit = _bounded_limit(limit)
+    canonical_card_key = f"onepiece:{collector}"
+
     stmt = (
         select(PrintSearchProfile, Print, Card, Set, Game)
         .join(Print, Print.id == PrintSearchProfile.print_id)
@@ -56,7 +60,7 @@ def exact_onepiece_collector_search(
         .join(Game, Game.id == PrintSearchProfile.game_id)
         .where(
             Game.slug == "onepiece",
-            PrintSearchProfile.normalized_collector_number == collector,
+            Card.card_key == canonical_card_key,
         )
         .order_by(
             Set.release_date.asc().nullslast(),
