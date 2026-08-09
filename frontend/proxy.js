@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 
-const PUBLIC_PATHS = new Set(['/', '/login', '/register', '/privacy', '/terms'])
+const PUBLIC_PATHS = new Set([
+  '/',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password',
+  '/privacy',
+  '/terms',
+])
 
 export function proxy(request) {
   const { pathname } = request.nextUrl
