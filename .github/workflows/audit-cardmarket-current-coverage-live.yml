@@ -1,0 +1,127 @@
+name: Audit Current Cardmarket Capture Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-current-coverage-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Measure only products seen in latest full Cardmarket capture
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          sql=text('''
+          WITH latest AS (
+            SELECT max(last_seen_at) AS seen_at
+            FROM external_catalog_products
+            WHERE source='cardmarket'
+          ),
+          cm AS (
+            SELECT e.id,e.external_id,e.game_id,e.product_group,e.website_path,g.slug,e.last_seen_at
+            FROM external_catalog_products e
+            JOIN games g ON g.id=e.game_id
+            CROSS JOIN latest l
+            WHERE e.source='cardmarket' AND e.last_seen_at=l.seen_at
+              AND g.slug IN ('pokemon','onepiece','mtg','yugioh')
+          ),
+          exact_print AS (
+            SELECT DISTINCT cm.id external_product_id
+            FROM cm
+            JOIN print_identifiers pi ON pi.source='cardmarket' AND pi.external_id=cm.external_id
+            JOIN prints p ON p.id=pi.print_id
+            JOIN cards c ON c.id=p.card_id AND c.game_id=cm.game_id
+            WHERE cm.product_group='single'
+          ),
+          exact_product AS (
+            SELECT DISTINCT cm.id external_product_id
+            FROM cm
+            JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=cm.external_id
+            JOIN product_variants pv ON pv.id=pi.product_variant_id
+            JOIN products p ON p.id=pv.product_id AND p.game_id=cm.game_id
+            WHERE cm.product_group='non_single'
+          ),
+          exact_all AS (
+            SELECT external_product_id FROM exact_print
+            UNION SELECT external_product_id FROM exact_product
+          ),
+          price_any AS (
+            SELECT DISTINCT p.external_product_id
+            FROM external_market_price_snapshots p
+            JOIN cm ON cm.id=p.external_product_id
+          )
+          SELECT cm.slug,cm.product_group,count(*) total,
+                 count(*) FILTER (WHERE x.external_product_id IS NOT NULL) exact_mapped,
+                 count(*) FILTER (WHERE pa.external_product_id IS NOT NULL) has_price_snapshot,
+                 count(*) FILTER (WHERE cm.website_path IS NOT NULL AND cm.website_path<>'') website_paths,
+                 max(cm.last_seen_at) seen_at
+          FROM cm
+          LEFT JOIN exact_all x ON x.external_product_id=cm.id
+          LEFT JOIN price_any pa ON pa.external_product_id=cm.id
+          GROUP BY cm.slug,cm.product_group
+          ORDER BY cm.slug,cm.product_group
+          ''')
+          with engine.connect() as conn:
+              rows=conn.execute(sql).mappings().all()
+              hist=conn.execute(text('''
+                WITH latest AS (SELECT max(last_seen_at) seen_at FROM external_catalog_products WHERE source='cardmarket')
+                SELECT count(*) FILTER (WHERE e.last_seen_at=l.seen_at) current_products,
+                       count(*) FILTER (WHERE e.last_seen_at<l.seen_at) historical_products,
+                       l.seen_at
+                FROM external_catalog_products e CROSS JOIN latest l
+                WHERE e.source='cardmarket'
+                GROUP BY l.seen_at
+              ''')).mappings().one()
+          coverage=[]
+          for r in rows:
+              d=dict(r); total=int(d['total']); mapped=int(d['exact_mapped']); priced=int(d['has_price_snapshot'])
+              d['total']=total; d['exact_mapped']=mapped; d['has_price_snapshot']=priced; d['website_paths']=int(d['website_paths'])
+              d['exact_mapping_pct']=round(mapped*100/total,4) if total else 0
+              d['price_coverage_pct']=round(priced*100/total,4) if total else 0
+              d['seen_at']=d['seen_at'].isoformat()
+              coverage.append(d)
+          report={
+            'mode':'read_only',
+            'source':'cardmarket',
+            'latest_capture':{
+              'seen_at':hist['seen_at'].isoformat(),
+              'current_products':int(hist['current_products']),
+              'historical_products_not_in_current_capture':int(hist['historical_products']),
+            },
+            'coverage':coverage,
+          }
+          Path('/tmp/cardmarket-current-coverage.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-current-coverage-${{ github.run_id }}
+          path: /tmp/cardmarket-current-coverage.json
+          retention-days: 30
+          if-no-files-found: error
