@@ -54,7 +54,7 @@ def test_mapping_coverage_is_reported_by_game_and_set(client):
 
         assert report["summary"]["total_prints"] == 23
         assert report["summary"]["mapped_prints"] == 11
-        assert report["summary"]["price_guide_supplied"] is False
+        assert report["summary"]["price_guides_supplied"] is False
         assert report["summary"]["write_mode"] == "disabled"
         pokemon = next(item for item in report["games"] if item["game"] == "pokemon")
         assert pokemon["total_prints"] == 15
@@ -83,7 +83,7 @@ def test_price_guide_counts_only_finish_compatible_candidates(client):
             CardmarketPriceRow(product_id=products[3][0], low=Decimal("9.00")),
         ]
 
-        report = build_cardmarket_coverage(session, rows)
+        report = build_cardmarket_coverage(session, {"pokemon": rows})
 
         assert report["summary"]["mapped_prints"] == 4
         assert report["summary"]["priced_candidates"] == 3
@@ -91,13 +91,13 @@ def test_price_guide_counts_only_finish_compatible_candidates(client):
         assert report["games"][0]["price_candidate_coverage"] == 0.75
 
 
-def test_mapped_product_missing_from_price_guide_is_counted(client):
+def test_mapped_product_missing_from_correct_game_price_guide_is_counted(client):
     with db.SessionLocal() as session:
         products = _seed_set(session, game_slug="yugioh", set_code="Y1", print_count=2, mapped=2)
         session.commit()
 
         rows = [CardmarketPriceRow(product_id=products[0][0], avg=Decimal("3.00"))]
-        report = build_cardmarket_coverage(session, rows)
+        report = build_cardmarket_coverage(session, {"yugioh": rows})
 
         assert report["summary"]["mapped_products_missing_from_price_guide"] == 1
         assert report["summary"]["priced_candidates"] == 1
@@ -113,7 +113,23 @@ def test_duplicate_price_rows_do_not_double_count_candidates(client):
             CardmarketPriceRow(product_id=product_id, low=Decimal("1.00")),
             CardmarketPriceRow(product_id=product_id, low=Decimal("99.00")),
         ]
-        report = build_cardmarket_coverage(session, rows)
+        report = build_cardmarket_coverage(session, {"mtg": rows})
 
         assert report["summary"]["duplicate_price_rows"] == 1
         assert report["summary"]["priced_candidates"] == 1
+
+
+def test_cross_game_product_id_does_not_count_as_price_candidate(client):
+    with db.SessionLocal() as session:
+        products = _seed_set(session, game_slug="pokemon", set_code="P1", print_count=1, mapped=1)
+        session.commit()
+
+        product_id = products[0][0]
+        magic_rows = [CardmarketPriceRow(product_id=product_id, low=Decimal("50.00"))]
+        report = build_cardmarket_coverage(session, {"mtg": magic_rows})
+
+        pokemon = next(item for item in report["games"] if item["game"] == "pokemon")
+        assert pokemon["mapped_prints"] == 1
+        assert pokemon["priced_candidates"] == 0
+        assert report["summary"]["mapped_products_cross_game_only"] == 1
+        assert report["summary"]["mapped_products_missing_from_price_guide"] == 0

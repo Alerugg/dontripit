@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.jobs.cardmarket_prices import CardmarketPriceRow
 from app.models import Game, Print, PrintIdentifier, Set
@@ -66,24 +66,29 @@ def _finish_has_price(row: CardmarketPriceRow, *, is_foil: bool) -> bool:
 
 def build_cardmarket_coverage(
     session,
-    price_rows: Iterable[CardmarketPriceRow] | None = None,
+    price_rows_by_game: dict[str, Iterable[CardmarketPriceRow]] | None = None,
 ) -> dict:
-    """Return read-only Cardmarket mapping and price-candidate coverage.
+    """Return read-only mapping and game-scoped price-candidate coverage.
 
-    The report measures Don’tRipIt internal Prints. Mapping coverage means a Print
-    has exactly one Cardmarket PrintIdentifier. Price candidate coverage additionally
-    requires that the supplied Price Guide contains finish-compatible metrics for the
-    mapped idProduct. It never assumes that 100% of internal Prints must exist on
-    Cardmarket; the metric is diagnostic, not a completeness guarantee.
+    Price Guides are keyed by the TCG they belong to. An idProduct found in the
+    Magic feed can therefore never make a Pokémon Print look price-ready, even if
+    a bad historical mapping reuses that numeric id. Mapping coverage itself is
+    diagnostic and does not claim every internal Print must exist on Cardmarket.
     """
-    price_by_product: dict[str, CardmarketPriceRow] = {}
+    normalized_feeds: dict[str, dict[str, CardmarketPriceRow]] = {}
     duplicate_price_rows = 0
-    if price_rows is not None:
-        for row in price_rows:
-            if row.product_id in price_by_product:
-                duplicate_price_rows += 1
-                continue
-            price_by_product[row.product_id] = row
+    unique_price_products = 0
+    if price_rows_by_game is not None:
+        for raw_game, rows in price_rows_by_game.items():
+            game = str(raw_game or "").strip().lower()
+            by_product: dict[str, CardmarketPriceRow] = {}
+            for row in rows:
+                if row.product_id in by_product:
+                    duplicate_price_rows += 1
+                    continue
+                by_product[row.product_id] = row
+            normalized_feeds[game] = by_product
+            unique_price_products += len(by_product)
 
     print_rows = session.execute(
         select(
@@ -112,11 +117,13 @@ def build_cardmarket_coverage(
     ambiguous_print_identifiers = 0
     mapped_products_missing_from_price_guide = 0
     mapped_products_wrong_finish = 0
+    mapped_products_cross_game_only = 0
 
     for print_id, is_foil, _set_id, set_code, set_name, game_slug in print_rows:
-        key = (str(game_slug), str(set_code), str(set_name))
+        game = str(game_slug)
+        key = (game, str(set_code), str(set_name))
         bucket_counts[key]["total"] += 1
-        per_game[str(game_slug)]["total"] += 1
+        per_game[game]["total"] += 1
 
         external_ids = external_by_print.get(int(print_id), [])
         if len(external_ids) > 1:
@@ -126,21 +133,30 @@ def build_cardmarket_coverage(
             continue
 
         bucket_counts[key]["mapped"] += 1
-        per_game[str(game_slug)]["mapped"] += 1
+        per_game[game]["mapped"] += 1
 
-        if price_rows is None:
+        if price_rows_by_game is None:
             continue
         product_id = external_ids[0]
-        price_row = price_by_product.get(product_id)
+        game_feed = normalized_feeds.get(game, {})
+        price_row = game_feed.get(product_id)
         if price_row is None:
-            mapped_products_missing_from_price_guide += 1
+            appears_elsewhere = any(
+                product_id in feed
+                for feed_game, feed in normalized_feeds.items()
+                if feed_game != game
+            )
+            if appears_elsewhere:
+                mapped_products_cross_game_only += 1
+            else:
+                mapped_products_missing_from_price_guide += 1
             continue
         if not _finish_has_price(price_row, is_foil=bool(is_foil)):
             mapped_products_wrong_finish += 1
             continue
 
         bucket_counts[key]["priced"] += 1
-        per_game[str(game_slug)]["priced"] += 1
+        per_game[game]["priced"] += 1
 
     buckets = [
         CoverageBucket(
@@ -195,11 +211,13 @@ def build_cardmarket_coverage(
             "priced_candidates": priced_candidates,
             "mapping_coverage": round(mapped_prints / total_prints, 4) if total_prints else 0.0,
             "price_candidate_coverage": round(priced_candidates / total_prints, 4) if total_prints else 0.0,
-            "price_guide_supplied": price_rows is not None,
-            "unique_price_products": len(price_by_product),
+            "price_guides_supplied": price_rows_by_game is not None,
+            "price_feed_games": sorted(normalized_feeds),
+            "unique_price_products": unique_price_products,
             "duplicate_price_rows": duplicate_price_rows,
             "ambiguous_print_identifiers": ambiguous_print_identifiers,
             "mapped_products_missing_from_price_guide": mapped_products_missing_from_price_guide,
+            "mapped_products_cross_game_only": mapped_products_cross_game_only,
             "mapped_products_wrong_finish": mapped_products_wrong_finish,
             "write_mode": "disabled",
         },
