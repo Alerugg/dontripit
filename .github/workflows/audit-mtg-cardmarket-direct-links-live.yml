@@ -1,0 +1,111 @@
+name: Audit MTG Direct Cardmarket Links Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-mtg-cardmarket-direct-links-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit Scryfall cardmarket_id evidence against current Cardmarket catalog
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from collections import defaultdict
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              rows=conn.execute(text('''
+                WITH latest AS (SELECT max(last_seen_at) seen_at FROM external_catalog_products WHERE source='cardmarket'),
+                current_cm AS (
+                  SELECT e.id,e.external_id FROM external_catalog_products e
+                  JOIN games g ON g.id=e.game_id CROSS JOIN latest l
+                  WHERE e.source='cardmarket' AND e.last_seen_at=l.seen_at
+                    AND g.slug='mtg' AND e.product_group='single'
+                )
+                SELECT p.id print_id,p.scryfall_id,p.variant,p.language,p.collector_number,
+                       s.code set_code,c.id card_id,c.name card_name,
+                       pa.attributes_json->>'cardmarket_id' cardmarket_id,
+                       cm.id external_product_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id AND g.slug='mtg'
+                JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='scryfall'
+                LEFT JOIN current_cm cm ON cm.external_id=pa.attributes_json->>'cardmarket_id'
+                WHERE pa.attributes_json ? 'cardmarket_id'
+                  AND pa.attributes_json->>'cardmarket_id' IS NOT NULL
+                  AND pa.attributes_json->>'cardmarket_id' <> ''
+              ''')).mappings().all()
+          groups=defaultdict(list)
+          for r in rows: groups[str(r['cardmarket_id'])].append(dict(r))
+          safe=[]; conflict=[]; absent=[]
+          for cmid,items in groups.items():
+              external_ids={r['external_product_id'] for r in items if r['external_product_id'] is not None}
+              signatures={(r['set_code'],r['collector_number'],r['card_id']) for r in items}
+              if not external_ids:
+                  absent.append({'cardmarket_id':cmid,'prints':len(items),'signatures':[list(x) for x in sorted(signatures,key=str)[:5]]})
+              elif len(external_ids)!=1 or len(signatures)!=1:
+                  conflict.append({
+                    'cardmarket_id':cmid,'prints':len(items),
+                    'external_product_ids':sorted(int(x) for x in external_ids),
+                    'signatures':[list(x) for x in sorted(signatures,key=str)[:10]],
+                    'sample_print_ids':[int(r['print_id']) for r in items[:10]],
+                  })
+              else:
+                  safe.append({
+                    'cardmarket_id':cmid,'external_product_id':int(next(iter(external_ids))),
+                    'prints':len(items),'print_ids':[int(r['print_id']) for r in items],
+                    'set_code':items[0]['set_code'],'collector_number':items[0]['collector_number'],
+                    'card_id':int(items[0]['card_id']),'card_name':items[0]['card_name'],
+                    'languages':sorted({str(r['language']) for r in items}),
+                    'finishes':sorted({str(r['variant']) for r in items}),
+                  })
+          report={
+            'mode':'read_only',
+            'evidence':'print_attributes.scryfall.cardmarket_id',
+            'prints_with_cardmarket_id':len(rows),
+            'distinct_cardmarket_ids':len(groups),
+            'safe_current_cardmarket_products':len(safe),
+            'safe_print_links':sum(x['prints'] for x in safe),
+            'cardmarket_ids_absent_from_current_catalog':len(absent),
+            'conflicting_cardmarket_ids':len(conflict),
+            'safe_coverage_samples':safe[:30],
+            'absent_samples':absent[:30],
+            'conflict_samples':conflict[:30],
+            'write_ready':len(conflict)==0,
+          }
+          Path('/tmp/mtg-cardmarket-direct-audit.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-cardmarket-direct-audit-${{ github.run_id }}
+          path: /tmp/mtg-cardmarket-direct-audit.json
+          retention-days: 30
+          if-no-files-found: error
