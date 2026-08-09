@@ -1,0 +1,83 @@
+name: Audit MTG Current Physical Print Keys
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-mtg-current-printkeys-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-mtg-current-printkeys
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build fresh current Scryfall physical snapshot
+        run: python -m app.scripts.build_mtg_v2_snapshot_v22 --output-dir /tmp/mtg-current-source
+      - name: Compare exact canonical print keys
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root=Path('/tmp/mtg-current-source')
+          manifest=json.loads((root/'manifest.json').read_text())
+          source_print_keys=set()
+          with (root/'prints.jsonl').open() as f:
+              for line in f:
+                  row=json.loads(line)
+                  source_print_keys.add(str(row['print_key']))
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          engine=create_engine(url)
+          with engine.connect() as conn:
+              game_id=conn.execute(text("SELECT id FROM games WHERE slug='mtg' LIMIT 1")).scalar_one()
+              db_print_keys={str(v) for v in conn.execute(text('''
+                  SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id
+                  WHERE c.game_id=:g AND p.print_key IS NOT NULL
+              '''),{'g':game_id}).scalars()}
+          missing=sorted(source_print_keys-db_print_keys)
+          stale=sorted(db_print_keys-source_print_keys)
+          report={
+              'mode':'read_only',
+              'source':manifest.get('source'),
+              'source_exact_prints':len(source_print_keys),
+              'neon_exact_prints':len(db_print_keys),
+              'source_prints_missing_in_neon':len(missing),
+              'neon_prints_not_in_current_source':len(stale),
+              'current_source_exactly_covered':len(missing)==0,
+              'exact_set_equality':not missing and not stale,
+              'missing_samples':missing[:100],
+              'stale_samples':stale[:100],
+          }
+          Path('/tmp/mtg-current-printkey-gap.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-current-printkey-gap-${{ github.run_id }}
+          path: /tmp/mtg-current-printkey-gap.json
+          retention-days: 30
+          if-no-files-found: error
