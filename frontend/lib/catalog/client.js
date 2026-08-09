@@ -97,6 +97,17 @@ export async function fetchNewsByGame(game, options = {}) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
+export async function fetchReleasesByGame(game, options = {}) {
+  const payload = await request('/api/catalog/releases', {
+    game: toApiGameSlug(game || ''),
+    region: options.region ?? '',
+    upcoming: options.upcoming === false ? 0 : 1,
+    limit: options.limit ?? 12,
+  })
+
+  return Array.isArray(payload) ? payload : payload?.items || []
+}
+
 export const RESULT_TYPE_OPTIONS = [
   { value: '', label: 'Todo' },
   { value: 'card', label: 'Cartas' },
