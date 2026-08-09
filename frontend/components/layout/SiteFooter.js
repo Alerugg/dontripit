@@ -7,7 +7,7 @@ const games = [
   ['Magic', '/games/magic'],
   ['One Piece', '/games/onepiece'],
   ['Yu-Gi-Oh!', '/games/yugioh'],
-  ['Riftbound', '/games/riftbound'],
+  ['Riftbound · próximamente', '/games/riftbound'],
 ]
 
 export default function SiteFooter() {
@@ -35,9 +35,9 @@ export default function SiteFooter() {
 
         <div className="dri-footer-column">
           <strong>Legal</strong>
-          <span>Privacidad · próximamente</span>
-          <span>Términos · próximamente</span>
-          <span>Cookies · próximamente</span>
+          <Link href="/privacy">Privacidad</Link>
+          <Link href="/terms">Términos del MVP</Link>
+          <span>Cookies · pendiente de configuración final</span>
         </div>
       </div>
 
