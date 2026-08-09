@@ -6,15 +6,20 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from app import db
+from app.email_delivery import send_password_reset_email
 from app.user_auth_service import (
+    consume_password_reset_token,
+    issue_password_reset_token,
     issue_session,
     normalize_email,
     password_hash,
     password_matches,
     public_user,
     resolve_session,
+    revoke_all_user_sessions,
     revoke_session,
     utcnow,
+    validate_new_password,
     validate_registration,
 )
 from app.user_models import User
@@ -133,6 +138,57 @@ def login_user():
                 "expires_at": user_session.expires_at.isoformat(),
             }
         )
+
+
+@user_auth_bp.post("/api/v2/auth/forgot-password")
+def forgot_password():
+    body = request.get_json(silent=True) or {}
+    email = normalize_email(body.get("email"))
+    generic = {
+        "ok": True,
+        "message": "Si existe una cuenta con ese correo, recibirás un enlace para cambiar tu contraseña.",
+    }
+    if not email or len(email) > 320 or "@" not in email:
+        return jsonify(generic)
+
+    with db.SessionLocal() as session:
+        user = session.execute(select(User).where(User.email == email, User.is_active.is_(True))).scalar_one_or_none()
+        if not user:
+            check_password_hash(_DUMMY_PASSWORD_HASH, "dontripit-password-reset-check")
+            return jsonify(generic)
+
+        raw_token, _ = issue_password_reset_token(session, user=user)
+        session.flush()
+        if not send_password_reset_email(to_email=user.email, token=raw_token):
+            session.rollback()
+            return jsonify({
+                "error": "password_reset_delivery_unavailable",
+                "message": "La recuperación por email está temporalmente en configuración. Inténtalo de nuevo en unos minutos.",
+            }), 503
+        session.commit()
+        return jsonify(generic)
+
+
+@user_auth_bp.post("/api/v2/auth/reset-password")
+def reset_password():
+    body = request.get_json(silent=True) or {}
+    raw_token = str(body.get("token") or "").strip()
+    try:
+        new_password = validate_new_password(body.get("password"))
+    except ValueError:
+        return jsonify({"error": "password_invalid", "message": "La nueva contraseña debe tener entre 8 y 200 caracteres."}), 400
+
+    with db.SessionLocal() as session:
+        resolved = consume_password_reset_token(session, raw_token)
+        if not resolved:
+            session.rollback()
+            return jsonify({"error": "reset_token_invalid", "message": "Este enlace ha caducado o ya fue utilizado."}), 400
+        user, reset_token = resolved
+        user.password_hash = password_hash(new_password)
+        reset_token.used_at = utcnow()
+        revoke_all_user_sessions(session, user.id)
+        session.commit()
+    return jsonify({"ok": True, "message": "Contraseña actualizada. Ya puedes iniciar sesión."})
 
 
 @user_auth_bp.get("/api/v2/auth/me")
