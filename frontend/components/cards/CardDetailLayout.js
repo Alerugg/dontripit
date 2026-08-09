@@ -10,7 +10,7 @@ import { getGameConfig, normalizeGameSlug } from '../../lib/catalog/games'
 function DetailStat({ label, value }) {
   if (!value && value !== false && value !== 0) return null
   return (
-    <div className="detail-stat panel-soft">
+    <div className="detail-stat panel-soft" style={{ display: 'block' }}>
       <span>{label}</span>
       <strong>{String(value)}</strong>
     </div>
