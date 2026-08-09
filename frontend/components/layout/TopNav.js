@@ -10,6 +10,8 @@ const primaryGames = [
   { href: '/riftbound', label: 'Riftbound' },
 ]
 
+const shopUrl = 'https://shop.dontripit.com'
+
 export default function TopNav() {
   return (
     <header className="top-nav top-nav-v2">
@@ -28,6 +30,9 @@ export default function TopNav() {
               {game.label}
             </Link>
           ))}
+          <a href={shopUrl} className="top-link top-link-v2">
+            Tienda
+          </a>
         </nav>
       </div>
     </header>
