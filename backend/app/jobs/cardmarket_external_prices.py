@@ -44,7 +44,11 @@ class ExternalPricePlan:
             "nonfoil_snapshots": self.nonfoil_snapshots,
             "foil_snapshots": self.foil_snapshots,
             "sealed_snapshots": self.sealed_snapshots,
-            "write_ready": self.duplicate_rows == 0 and self.cross_game_products == 0,
+            "write_ready": (
+                self.duplicate_rows == 0
+                and self.missing_external_products == 0
+                and self.cross_game_products == 0
+            ),
         }
 
 
@@ -226,6 +230,10 @@ def build_external_price_plan(
 def apply_external_price_plan(session, plan: ExternalPricePlan) -> dict:
     if plan.duplicate_rows:
         raise ValueError(f"Refusing Cardmarket price apply with {plan.duplicate_rows} duplicate feed rows")
+    if plan.missing_external_products:
+        raise ValueError(
+            f"Refusing Cardmarket price apply with {plan.missing_external_products} products missing from external catalog"
+        )
     if plan.cross_game_products:
         raise ValueError(f"Refusing Cardmarket price apply with {plan.cross_game_products} cross-game products")
     if not plan.snapshots:
