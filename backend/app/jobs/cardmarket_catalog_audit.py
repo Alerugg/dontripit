@@ -98,22 +98,27 @@ def _first(mapping: dict, *names: str) -> str:
 def _parse_product(raw: dict) -> ProductListRow | None:
     product_id = _first(raw, "idProduct", "product_id")
     name = _first(raw, "Name", "name")
-    expansion_id = _first(raw, "Expansion ID", "idExpansion", "expansion_id")
-    if not product_id or not name or not expansion_id:
+    if not product_id or not name:
         return None
     return ProductListRow(
         product_id=product_id,
         name=name,
         category_id=_first(raw, "Category ID", "idCategory", "category_id"),
         category=_first(raw, "Category", "category", "categoryName"),
-        expansion_id=expansion_id,
+        expansion_id=_first(raw, "Expansion ID", "idExpansion", "expansion_id"),
         date_added=_first(raw, "Date Added", "date_added", "dateAdded") or None,
         metacard_id=_first(raw, "idMetacard", "metacard_id") or None,
     )
 
 
 def load_product_list_bytes(content: bytes) -> list[ProductListRow]:
-    """Parse current Cardmarket Product List JSON plus legacy CSV/gzip exports."""
+    """Parse current Cardmarket Product List JSON plus legacy CSV/gzip exports.
+
+    A row is retained as long as Cardmarket gives us an idProduct and a name.
+    Optional identity hints such as expansion/category may be absent, especially
+    for non-single products; absence must become an auditable status later, not
+    an invisible parser drop.
+    """
     if content[:2] == b"\x1f\x8b":
         content = gzip.decompress(content)
 
@@ -192,7 +197,13 @@ def _collector_matches(candidate: str | None, hint: str | None) -> bool:
 
 
 def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str, dict], *, game_filter: str = "") -> tuple[dict, list[AuditDecision]]:
-    """Return evidence-only mapping decisions. This function never writes identifiers."""
+    """Return evidence-only mapping decisions. This function never writes identifiers.
+
+    When rows come from an official per-game Cardmarket feed, ``game_filter`` is
+    authoritative fallback provenance if the category label is absent or new.
+    A contradictory category/crosswalk is never silently filtered: it becomes an
+    explicit ``game_conflict`` decision.
+    """
     game_filter = str(game_filter or "").strip().lower()
 
     game_rows = session.execute(select(Game.id, Game.slug)).all()
@@ -264,13 +275,12 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
 
     for product in rows:
         inferred_game = infer_game_from_category(product.category)
-        mapping = crosswalk.get(product.expansion_id)
-        mapped_game = str((mapping or {}).get("game") or "").strip().lower() or inferred_game
+        mapping = crosswalk.get(product.expansion_id) if product.expansion_id else None
+        crosswalk_game = str((mapping or {}).get("game") or "").strip().lower() or None
+        mapped_game = crosswalk_game or inferred_game or (game_filter or None)
         set_code = str((mapping or {}).get("set_code") or "").strip() or None
         base_name, collector_hint = split_product_name_hints(product.name)
 
-        if game_filter and mapped_game != game_filter:
-            continue
         base = dict(
             product_id=product.product_id,
             name=product.name,
@@ -283,19 +293,28 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
             "base_name": base_name,
             "collector_hint": collector_hint,
             "metacard_id": product.metacard_id,
+            "category_game": inferred_game,
+            "crosswalk_game": crosswalk_game,
+            "feed_game": game_filter or None,
         }
 
         if duplicate_product_ids[product.product_id] > 1:
             decisions.append(AuditDecision(**base, status="duplicate_product_id", evidence={**product_evidence, "rows": duplicate_product_ids[product.product_id]}))
+            continue
+        if game_filter and inferred_game and inferred_game != game_filter:
+            decisions.append(AuditDecision(**base, status="game_conflict", evidence=product_evidence))
+            continue
+        if game_filter and crosswalk_game and crosswalk_game != game_filter:
+            decisions.append(AuditDecision(**base, status="game_conflict", evidence=product_evidence))
+            continue
+        if crosswalk_game and inferred_game and crosswalk_game != inferred_game:
+            decisions.append(AuditDecision(**base, status="game_conflict", evidence=product_evidence))
             continue
         if mapped_game is None:
             decisions.append(AuditDecision(**base, status="unsupported_category", evidence=product_evidence))
             continue
         if not mapping or not set_code:
             decisions.append(AuditDecision(**base, status="missing_expansion_crosswalk", evidence=product_evidence))
-            continue
-        if mapping.get("game") and inferred_game and mapping.get("game") != inferred_game:
-            decisions.append(AuditDecision(**base, status="game_conflict", evidence={**product_evidence, "category_game": inferred_game, "crosswalk_game": mapping.get("game")}))
             continue
 
         resolved_set = resolve_set(mapped_game, set_code)
