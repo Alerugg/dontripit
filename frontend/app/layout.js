@@ -1,18 +1,30 @@
 import './globals.css'
-import { Inter } from 'next/font/google'
+import './redesign.css'
+import { Manrope, Space_Grotesk } from 'next/font/google'
 
-const inter = Inter({ subsets: ['latin'] })
+const manrope = Manrope({
+  subsets: ['latin'],
+  variable: '--font-body',
+  display: 'swap',
+})
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
+})
+
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'Don’tRipIt'
 
 export const metadata = {
-  title: `${siteName} · Multi-game Catalog`,
-  description: 'Catálogo multi-juego para colección y marketplace de Don’tRipIt.',
+  title: `${siteName} · Tu colección TCG, sin caos`,
+  description: 'Busca cartas, guarda tu colección, crea wishlists y sigue noticias y próximos lanzamientos de tus TCG favoritos.',
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="es">
-      <body className={inter.className}>{children}</body>
+      <body className={`${manrope.variable} ${spaceGrotesk.variable}`}>{children}</body>
     </html>
   )
 }

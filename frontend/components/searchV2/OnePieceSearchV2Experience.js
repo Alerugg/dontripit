@@ -15,27 +15,33 @@ const SEARCH_COPY_BY_GAME = {
   onepiece: {
     examples: ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi'],
     placeholder: 'Luffy, OP05-119, red leader, Luffy OP05 English SEC…',
-    description: 'Nombre, número, set, idioma o una combinación natural. Los resultados normales agrupan variantes para no llenarte la pantalla de duplicados.',
-    empty: 'Prueba otro nombre, collector number o combina carta + set.',
+    description: 'Busca por nombre, número, set, idioma o como lo dirías normalmente. Si escribes un código exacto, te enseñamos cada edición física que lo usa por separado.',
+    empty: 'Prueba otro nombre, número de carta o combina carta + set.',
   },
   pokemon: {
     examples: ['Pikachu', 'Charizard', 'Pikachu 151', 'Fire Basic', 'SIR Holo', 'pikchu'],
     placeholder: 'Pikachu, Charizard, 151, Fire Basic, Special Illustration Rare…',
-    description: 'Nombre, collector number, set o una combinación natural. La búsqueda normal agrupa la carta; Advanced Search baja a rareza, tipo, etapa, regulación y variante física.',
-    empty: 'Prueba otro Pokémon, collector number, set o abre Advanced Search para filtrar la impresión exacta.',
+    description: 'Busca la carta de forma natural y, cuando lo necesites, baja hasta la edición exacta por rareza, tipo, etapa, regulación y variante física.',
+    empty: 'Prueba otro Pokémon, número, set o abre la búsqueda avanzada para precisar la edición.',
   },
   yugioh: {
     examples: ['Dark Magician', 'Blue-Eyes White Dragon', '2017-EN001', 'DARK Monster', 'ATK 3000', 'Extra Secret Rare'],
     placeholder: 'Dark Magician, Blue-Eyes White Dragon, 2017-EN001, DARK Monster…',
-    description: 'Nombre, código de impresión, release o una combinación natural. La búsqueda normal agrupa reimpresiones por carta; Advanced Search baja al Print exacto por rareza, clase, atributo, tipo y estadísticas.',
-    empty: 'Prueba otro nombre, código de impresión, release o abre Advanced Search para combinar filtros Yu-Gi-Oh!.',
+    description: 'Nombre, código de impresión, release o una combinación natural. La búsqueda avanzada permite llegar a la edición exacta por rareza, clase, atributo, tipo y estadísticas.',
+    empty: 'Prueba otro nombre, código de impresión, release o combina filtros de Yu-Gi-Oh!.',
+  },
+  magic: {
+    examples: ['Black Lotus', 'Sol Ring', 'Lightning Bolt', 'Commander', 'foil mythic', 'blue instant'],
+    placeholder: 'Black Lotus, Sol Ring, set, artista, foil, color, mana value…',
+    description: 'Busca por nombre, set o texto natural. Después combina identidad de color, tipo, mana value, rareza, finish, artista, frame, promo y más para encontrar la edición concreta.',
+    empty: 'Prueba otro nombre, set o abre la búsqueda avanzada para combinar filtros de Magic.',
   },
 }
 
 const DEFAULT_SEARCH_COPY = {
   examples: [],
   placeholder: 'Nombre, número, set o combinación natural…',
-  description: 'Busca por identidad y usa Advanced Search para bajar a la impresión física exacta.',
+  description: 'Busca de forma simple y abre todos los filtros cuando quieras llegar a una edición física exacta.',
   empty: 'Prueba otro nombre, número o set.',
 }
 
@@ -144,7 +150,7 @@ export default function OnePieceSearchV2Experience({ game }) {
       } catch (requestError) {
         if (!cancelled) {
           setNormalItems([])
-          setError(requestError.message || 'No pudimos ejecutar Search V2.')
+          setError(requestError.message || 'No pudimos ejecutar la búsqueda.')
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -243,8 +249,8 @@ export default function OnePieceSearchV2Experience({ game }) {
       <section className="game-section panel-soft sv2-search-shell" style={{ '--game-accent': game.accent }}>
         <SectionHeader
           compact
-          eyebrow="Search V2"
-          title="Busca como piensas, no como está organizada una base de datos."
+          eyebrow="Buscar cartas"
+          title="Escribe lo que sabes. Afina solo si hace falta."
           description={searchCopy.description}
         />
 
@@ -255,6 +261,10 @@ export default function OnePieceSearchV2Experience({ game }) {
           suggestions={suggestions}
           suggestionsLoading={suggestionsLoading}
           onSuggestionSelect={(item) => {
+            if (item.type === 'print' && item.collector_number) {
+              submitNormal(item.collector_number)
+              return
+            }
             if (item.card_id) {
               router.push(`/games/${game.slug}/cards/${item.card_id}?q=${encodeURIComponent(item.name || '')}`)
               return
@@ -291,11 +301,11 @@ export default function OnePieceSearchV2Experience({ game }) {
 
       {advancedRan ? (
         <>
-          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando la impresión física exacta…" /> : null}
+          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando la edición física exacta…" /> : null}
           {!advancedLoading && advancedError ? <StatePanel title="No pudimos filtrar" description={advancedError} error /> : null}
           {!advancedLoading && !advancedError && advancedItems.length === 0 ? (
             <StatePanel
-              title="Sin prints para esta combinación"
+              title="Sin ediciones para esta combinación"
               description={hasActiveAdvancedFilters ? 'Prueba quitando uno de los filtros activos.' : 'Añade al menos un filtro o una búsqueda.'}
               tone="muted"
             />
@@ -304,11 +314,11 @@ export default function OnePieceSearchV2Experience({ game }) {
             <>
               <SearchV2Results items={advancedItems} mode="advanced" gameSlug={game.slug} query={advancedQuery} total={advancedTotal} />
               {advancedPageCount > 1 ? (
-                <nav className="sv2-pagination" aria-label="Paginación de prints">
+                <nav className="sv2-pagination" aria-label="Paginación de ediciones">
                   <button type="button" disabled={advancedPage <= 1 || advancedLoading} onClick={() => runAdvanced(advancedPage - 1, { reuseApplied: true })}>
                     ← Anterior
                   </button>
-                  <span>Página <strong>{advancedPage}</strong> de {advancedPageCount} · {advancedTotal.toLocaleString()} prints</span>
+                  <span>Página <strong>{advancedPage}</strong> de {advancedPageCount} · {advancedTotal.toLocaleString()} ediciones</span>
                   <button type="button" disabled={advancedPage >= advancedPageCount || advancedLoading} onClick={() => runAdvanced(advancedPage + 1, { reuseApplied: true })}>
                     Siguiente →
                   </button>
@@ -319,7 +329,7 @@ export default function OnePieceSearchV2Experience({ game }) {
         </>
       ) : (
         <>
-          {submittedQuery && loading ? <StatePanel title="Buscando" description={`Buscando “${submittedQuery}” con Search V2…`} /> : null}
+          {submittedQuery && loading ? <StatePanel title="Buscando" description={`Buscando “${submittedQuery}”…`} /> : null}
           {submittedQuery && !loading && error ? <StatePanel title="No pudimos buscar" description={error} error /> : null}
           {submittedQuery && !loading && !error && normalItems.length === 0 ? (
             <StatePanel title="Sin resultados" description={searchCopy.empty} tone="muted" />

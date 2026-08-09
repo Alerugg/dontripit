@@ -21,6 +21,8 @@ from app.routes.health import health_bp
 from app.routes.search import search_bp
 from app.routes.search_v2 import search_v2_bp
 from app.routes.prices import prices_bp
+from app.routes.user_auth import user_auth_bp
+from app.routes.user_library import user_library_bp
 
 
 def create_app(database_url: str | None = None) -> Flask:
@@ -45,6 +47,8 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(catalog_bp)
     flask_app.register_blueprint(search_bp)
     flask_app.register_blueprint(search_v2_bp)
+    flask_app.register_blueprint(user_auth_bp)
+    flask_app.register_blueprint(user_library_bp)
     flask_app.register_blueprint(docs_bp)
     flask_app.register_blueprint(admin_metrics_bp)
     flask_app.register_blueprint(admin_bp)
