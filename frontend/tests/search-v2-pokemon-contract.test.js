@@ -9,10 +9,17 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('Pokémon game route uses the V2 explorer', () => {
+test('Pokémon game route uses the shared redesigned hub without losing Search V2', () => {
   const page = source('app/games/[slug]/page.js')
-  assert.match(page, /PokemonExplorerV2Page/)
-  assert.match(page, /game\.slug === 'pokemon'/)
+  const hub = source('components/games/GameHubPage.js')
+
+  assert.match(page, /GameHubPage/)
+  assert.match(page, /game\.slug === 'riftbound'/)
+  assert.match(page, /<GameHubPage game=\{game\}/)
+  assert.match(hub, /OnePieceSearchV2Experience/)
+  assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
+  assert.match(hub, /pokemon:/)
+  assert.match(hub, /Pikachu/)
 })
 
 test('shared Search V2 experience exposes Pokémon-native examples', () => {
