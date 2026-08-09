@@ -1,16 +1,50 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import BrandMark from '../brand/BrandMark'
 
 export default function AuthShell({ mode = 'register' }) {
   const register = mode === 'register'
-  const [message, setMessage] = useState('')
+  const router = useRouter()
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault()
-    setMessage('Vista previa del flujo. La conexión real se activará con Neon Auth antes de pasar este rediseño a producción.')
+    setError('')
+    setSubmitting(true)
+    const form = new FormData(event.currentTarget)
+    const payload = register
+      ? {
+          name: form.get('name'),
+          email: form.get('email'),
+          password: form.get('password'),
+          terms_accepted: form.get('terms_accepted') === 'on',
+          marketing_consent: form.get('marketing_consent') === 'on',
+        }
+      : {
+          email: form.get('email'),
+          password: form.get('password'),
+          remember: form.get('remember') === 'on',
+        }
+
+    try {
+      const response = await fetch(register ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.message || 'No pudimos completar el acceso. Inténtalo de nuevo.')
+      router.push('/dashboard')
+      router.refresh()
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -21,12 +55,12 @@ export default function AuthShell({ mode = 'register' }) {
           <span className="dri-kicker">Una cuenta. Todos tus TCG.</span>
           <h1>{register ? 'Empieza tu colección en serio.' : 'Bienvenido de vuelta.'}</h1>
           <p>
-            Busca cartas, guarda versiones exactas, crea wishlists y sigue próximos lanzamientos desde un único sitio.
+            Busca cartas, guarda ediciones exactas, crea wishlists y sigue tu colección desde un único sitio.
           </p>
           <ul>
-            <li><span>✓</span> Acceso completo gratuito al inicio</li>
-            <li><span>✓</span> Portfolio y wishlist sincronizados</li>
-            <li><span>✓</span> Noticias y lanzamientos por juego</li>
+            <li><span>✓</span> Acceso gratuito durante el MVP</li>
+            <li><span>✓</span> Colección y wishlist sincronizadas</li>
+            <li><span>✓</span> Cada edición física guardada por separado</li>
           </ul>
         </div>
         <small>Don’tRipIt · Hecho para coleccionistas</small>
@@ -38,49 +72,48 @@ export default function AuthShell({ mode = 'register' }) {
           <span className="dri-kicker">{register ? 'Crear cuenta' : 'Iniciar sesión'}</span>
           <h2>{register ? 'Tu colección empieza aquí.' : 'Continúa donde lo dejaste.'}</h2>
           <p className="dri-auth-intro">
-            {register ? 'Solo necesitamos lo básico. Podrás completar tu perfil después.' : 'Introduce tu correo y contraseña para entrar.'}
+            {register ? 'Solo necesitamos lo básico. Podrás organizar tu colección inmediatamente.' : 'Introduce tu correo y contraseña para entrar.'}
           </p>
 
           <form className="dri-auth-form" onSubmit={onSubmit}>
             {register ? (
               <label>
                 <span>Nombre</span>
-                <input type="text" name="name" autoComplete="name" placeholder="Tu nombre" required />
+                <input type="text" name="name" autoComplete="name" placeholder="Tu nombre" minLength={2} maxLength={120} required />
               </label>
             ) : null}
             <label>
               <span>Correo electrónico</span>
-              <input type="email" name="email" autoComplete="email" placeholder="tu@email.com" required />
+              <input type="email" name="email" autoComplete="email" placeholder="tu@email.com" maxLength={320} required />
             </label>
             <label>
               <span>Contraseña</span>
-              <input type="password" name="password" autoComplete={register ? 'new-password' : 'current-password'} placeholder="8 caracteres o más" minLength={8} required />
+              <input type="password" name="password" autoComplete={register ? 'new-password' : 'current-password'} placeholder="8 caracteres o más" minLength={8} maxLength={200} required />
             </label>
 
             {register ? (
               <div className="dri-auth-consents">
                 <label className="dri-checkbox-row">
-                  <input type="checkbox" required />
-                  <span>Acepto los términos y la política de privacidad.</span>
+                  <input type="checkbox" name="terms_accepted" required />
+                  <span>Acepto los <Link href="/terms">términos</Link> y la <Link href="/privacy">política de privacidad</Link>.</span>
                 </label>
                 <label className="dri-checkbox-row">
                   <input type="checkbox" name="marketing_consent" />
-                  <span>Quiero recibir novedades, lanzamientos y contenido de Don’tRipIt por email. <em>Opcional.</em></span>
+                  <span>Quiero recibir novedades y lanzamientos de Don’tRipIt por email. <em>Opcional.</em></span>
                 </label>
               </div>
             ) : (
               <div className="dri-auth-helper-row">
-                <label className="dri-checkbox-row"><input type="checkbox" /> <span>Recordarme</span></label>
-                <button type="button" className="dri-link-button">¿Olvidaste tu contraseña?</button>
+                <label className="dri-checkbox-row"><input type="checkbox" name="remember" /> <span>Mantener mi sesión</span></label>
               </div>
             )}
 
-            <button type="submit" className="dri-btn dri-btn-primary dri-btn-lg dri-auth-submit">
-              {register ? 'Crear mi cuenta' : 'Entrar'}
+            {error ? <p className="dri-auth-preview-note" role="alert">{error}</p> : null}
+
+            <button type="submit" className="dri-btn dri-btn-primary dri-btn-lg dri-auth-submit" disabled={submitting}>
+              {submitting ? 'Un momento…' : register ? 'Crear mi cuenta' : 'Entrar'}
             </button>
           </form>
-
-          {message ? <p className="dri-auth-preview-note">{message}</p> : null}
 
           <p className="dri-auth-switch">
             {register ? '¿Ya tienes una cuenta?' : '¿Aún no tienes cuenta?'}{' '}
