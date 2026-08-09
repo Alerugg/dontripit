@@ -67,6 +67,11 @@ jobs:
                 SELECT g.slug AS game,
                        COUNT(*) AS snapshots,
                        COUNT(DISTINCT ps.entity_id) AS priced_prints,
+                       COUNT(DISTINCT ps.entity_id) FILTER (WHERE ps.price_mid IS NOT NULL) AS conservative_priced_prints,
+                       COUNT(*) FILTER (WHERE ps.price_low IS NOT NULL) AS with_low,
+                       COUNT(*) FILTER (WHERE ps.price_mid IS NOT NULL) AS with_mid,
+                       COUNT(*) FILTER (WHERE ps.price_market IS NOT NULL) AS with_trend,
+                       COUNT(*) FILTER (WHERE ps.price_last IS NOT NULL) AS with_average,
                        MAX(ps.as_of) AS newest_snapshot
                 FROM price_snapshots ps
                 JOIN price_sources src ON src.id = ps.source_id
@@ -77,6 +82,32 @@ jobs:
                 GROUP BY g.slug
                 ORDER BY g.slug
               ''')).mappings().all()
+
+              sample = conn.execute(text('''
+                SELECT p.id AS print_id,
+                       c.name AS card_name,
+                       s.code AS set_code,
+                       p.collector_number,
+                       p.language,
+                       p.is_foil,
+                       p.variant,
+                       ps.price_low,
+                       ps.price_mid,
+                       ps.price_market,
+                       ps.price_last,
+                       ps.as_of
+                FROM price_snapshots ps
+                JOIN price_sources src ON src.id = ps.source_id
+                JOIN prints p ON p.id = ps.entity_id AND ps.entity_type = 'print'
+                JOIN cards c ON c.id = p.card_id
+                JOIN sets s ON s.id = p.set_id
+                JOIN games g ON g.id = c.game_id
+                WHERE lower(src.name) = 'cardmarket'
+                  AND g.slug = 'pokemon'
+                  AND ps.price_mid IS NOT NULL
+                ORDER BY ps.as_of DESC, p.id ASC
+                LIMIT 1
+              ''')).mappings().first()
 
               duplicate_external_ids = conn.execute(text('''
                 SELECT COUNT(*)
@@ -109,10 +140,15 @@ jobs:
           for game, row in by_game.items():
               total_prints = int(row.get('total_prints') or 0)
               mapped_prints = int(row.get('mapped_prints') or 0)
+              priced_prints = int(row.get('priced_prints') or 0)
+              conservative_priced = int(row.get('conservative_priced_prints') or 0)
               row['mapping_coverage_pct'] = round((mapped_prints / total_prints * 100), 2) if total_prints else 0.0
+              row['price_coverage_of_mapped_pct'] = round((priced_prints / mapped_prints * 100), 2) if mapped_prints else 0.0
+              row['conservative_coverage_of_priced_pct'] = round((conservative_priced / priced_prints * 100), 2) if priced_prints else 0.0
 
           print(json.dumps({
               'games': by_game,
+              'sample_conservative_pokemon_print': dict(sample) if sample else None,
               'duplicate_cardmarket_external_ids': int(duplicate_external_ids),
               'prints_with_multiple_cardmarket_product_ids': int(duplicate_print_ids),
               'write_mode': 'disabled',
