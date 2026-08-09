@@ -1,0 +1,83 @@
+name: Audit One Piece Neon Official Release Aliases
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-neon-release-aliases.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Extract Bandai release names linked to each canonical set
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              rows=conn.execute(text('''
+                SELECT s.id set_id,s.code set_code,s.name set_name,
+                       r.id release_id,r.external_id release_external_id,r.name release_name,
+                       r.language,r.region,count(*) appearances,
+                       count(DISTINCT p.id) prints
+                FROM print_releases pr
+                JOIN prints p ON p.id=pr.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id AND g.slug='onepiece'
+                JOIN sets s ON s.id=p.set_id
+                JOIN catalog_releases r ON r.id=pr.release_id
+                WHERE r.source='onepiece_official'
+                GROUP BY s.id,s.code,s.name,r.id,r.external_id,r.name,r.language,r.region
+                ORDER BY s.code,count(*) DESC,r.name
+              ''')).mappings().all()
+              set_totals=conn.execute(text('''
+                SELECT s.id,s.code,s.name,count(*) prints
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id AND g.slug='onepiece'
+                JOIN sets s ON s.id=p.set_id GROUP BY s.id,s.code,s.name ORDER BY s.code
+              ''')).mappings().all()
+          by_set=defaultdict(list)
+          for r in rows:
+              d=dict(r); d['appearances']=int(d['appearances']); d['prints']=int(d['prints']); d['release_id']=int(d['release_id']); d['set_id']=int(d['set_id'])
+              by_set[str(r['set_code'])].append(d)
+          result={}
+          for s in set_totals:
+              code=str(s['code']); total=int(s['prints']); aliases=by_set.get(code,[])
+              result[code]={
+                'set_id':int(s['id']),'set_name':s['name'],'print_count':total,
+                'official_release_aliases':aliases,
+                'high_coverage_aliases':[x for x in aliases if x['prints'] >= max(5, int(total*0.5))],
+              }
+          report={'mode':'read_only','source':'Neon canonical provenance from onepiece_official','sets':result,'set_count':len(result)}
+          Path('/tmp/onepiece-neon-release-aliases.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'set_count':len(result),'preview':{k:{'set_name':v['set_name'],'print_count':v['print_count'],'aliases':v['official_release_aliases'][:5]} for k,v in list(result.items())[:20]}},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-neon-release-aliases-${{ github.run_id }}
+          path: /tmp/onepiece-neon-release-aliases.json
+          retention-days: 30
+          if-no-files-found: error
