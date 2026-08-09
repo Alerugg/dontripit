@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from app import db
-from app.email_delivery import send_password_reset_email
+from app.email_delivery import email_delivery_configured, send_password_reset_email
 from app.user_auth_service import (
     consume_password_reset_token,
     issue_password_reset_token,
@@ -148,6 +148,16 @@ def forgot_password():
         "ok": True,
         "message": "Si existe una cuenta con ese correo, recibirás un enlace para cambiar tu contraseña.",
     }
+    unavailable = {
+        "error": "password_reset_delivery_unavailable",
+        "message": "La recuperación por email está temporalmente en configuración. Inténtalo de nuevo más tarde.",
+    }
+
+    # Configuration availability is global, never account-specific. This keeps
+    # the response honest without revealing whether a submitted email exists.
+    if not email_delivery_configured():
+        return jsonify(unavailable), 503
+
     if not email or len(email) > 320 or "@" not in email:
         return jsonify(generic)
 
@@ -160,11 +170,10 @@ def forgot_password():
         raw_token, _ = issue_password_reset_token(session, user=user)
         session.flush()
         if not send_password_reset_email(to_email=user.email, token=raw_token):
+            # Do not expose provider failures only for existing accounts.
+            # Roll back the unusable token and keep the public response generic.
             session.rollback()
-            return jsonify({
-                "error": "password_reset_delivery_unavailable",
-                "message": "La recuperación por email está temporalmente en configuración. Inténtalo de nuevo en unos minutos.",
-            }), 503
+            return jsonify(generic)
         session.commit()
         return jsonify(generic)
 
