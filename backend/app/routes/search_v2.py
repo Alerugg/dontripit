@@ -8,6 +8,7 @@ from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.mtg_advanced import advanced_mtg_search
 from app.search_v2.mtg_facet_values import mtg_facet_values
 from app.search_v2.mtg_query import normal_mtg_search
+from app.search_v2.onepiece_exact_collector import exact_onepiece_collector_search
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
@@ -22,6 +23,14 @@ SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh", "mtg"}
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
+    exact_onepiece = exact_onepiece_collector_search(
+        session,
+        query=query,
+        game=game,
+        limit=limit,
+    )
+    if exact_onepiece is not None:
+        return exact_onepiece
     if game == "pokemon":
         return normal_pokemon_search(session, query=query, limit=limit)
     if game == "yugioh":
@@ -29,6 +38,20 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
     if game == "mtg":
         return normal_mtg_search(session, query=query, limit=limit)
     return normal_search(session, query=query, game_slug=game, limit=limit)
+
+
+def _suggestion_row(row: dict) -> dict:
+    matched = row.get("matched_print") or row
+    return {
+        "type": row.get("type") or "card",
+        "card_id": row["card_id"],
+        "print_id": row.get("print_id") or matched.get("print_id"),
+        "name": row["name"],
+        "game": row["game"],
+        "collector_number": matched.get("collector_number"),
+        "set_code": matched.get("set_code"),
+        "image_url": matched.get("primary_image_url"),
+    }
 
 
 @search_v2_bp.get("/api/v2/search")
@@ -53,20 +76,9 @@ def search_v2_suggest():
     limit = min(max(request.args.get("limit", default=8, type=int) or 8, 1), 15)
 
     with db.SessionLocal() as session:
-        cards = _normal_search_for_game(session, query=q, game=game, limit=limit)
+        rows = _normal_search_for_game(session, query=q, game=game, limit=limit)
 
-    items = [
-        {
-            "type": "card",
-            "card_id": row["card_id"],
-            "name": row["name"],
-            "game": row["game"],
-            "collector_number": (row.get("matched_print") or {}).get("collector_number"),
-            "set_code": (row.get("matched_print") or {}).get("set_code"),
-            "image_url": (row.get("matched_print") or {}).get("primary_image_url"),
-        }
-        for row in cards
-    ]
+    items = [_suggestion_row(row) for row in rows]
     return jsonify({"query": q, "game": game, "items": items})
 
 
