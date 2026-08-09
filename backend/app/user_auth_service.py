@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from app.user_models import User, UserSession
+from app.user_models import User, UserPasswordResetToken, UserSession
 
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -34,6 +34,13 @@ def validate_registration(*, name: str | None, email: str | None, password: str 
     if len(clean_password) < 8 or len(clean_password) > 200:
         raise ValueError("password_invalid")
     return clean_name, clean_email, clean_password
+
+
+def validate_new_password(password: str | None) -> str:
+    clean_password = str(password or "")
+    if len(clean_password) < 8 or len(clean_password) > 200:
+        raise ValueError("password_invalid")
+    return clean_password
 
 
 def password_hash(password: str) -> str:
@@ -74,6 +81,49 @@ def issue_session(session, *, user: User, remember: bool, user_agent: str | None
     )
     session.add(row)
     return raw_token, row
+
+
+def issue_password_reset_token(session, *, user: User) -> tuple[str, UserPasswordResetToken]:
+    now = utcnow()
+    session.execute(delete(UserPasswordResetToken).where(UserPasswordResetToken.user_id == user.id))
+    raw_token = secrets.token_urlsafe(48)
+    row = UserPasswordResetToken(
+        user_id=user.id,
+        token_hash=_token_hash(raw_token),
+        expires_at=now + timedelta(minutes=45),
+    )
+    session.add(row)
+    return raw_token, row
+
+
+def consume_password_reset_token(session, raw_token: str | None) -> tuple[User, UserPasswordResetToken] | None:
+    token = str(raw_token or "").strip()
+    if not token:
+        return None
+    now = utcnow()
+    row = session.execute(
+        select(UserPasswordResetToken, User)
+        .join(User, User.id == UserPasswordResetToken.user_id)
+        .where(
+            UserPasswordResetToken.token_hash == _token_hash(token),
+            UserPasswordResetToken.used_at.is_(None),
+            User.is_active.is_(True),
+        )
+    ).first()
+    if not row:
+        return None
+    reset_token, user = row
+    expires_at = reset_token.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not expires_at or expires_at <= now:
+        session.delete(reset_token)
+        return None
+    return user, reset_token
+
+
+def revoke_all_user_sessions(session, user_id: int) -> None:
+    session.execute(delete(UserSession).where(UserSession.user_id == user_id))
 
 
 def resolve_session(session, raw_token: str | None) -> tuple[User, UserSession] | None:
