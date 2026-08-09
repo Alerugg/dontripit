@@ -23,26 +23,30 @@ def _database_url() -> str:
 def main() -> None:
     engine = create_engine(_database_url(), pool_pre_ping=True, future=True)
 
-    # First prove the exact One Piece behavior on committed catalog data.
+    # The certified One Piece identity is collector-number based. Prove that the
+    # canonical logical Card exists and owns multiple physical editions before
+    # exercising the new exact-code behavior.
     with engine.connect() as conn:
-        normalized_count = int(
-            conn.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM print_search_profiles psp
-                    JOIN games g ON g.id = psp.game_id
-                    WHERE g.slug = 'onepiece'
-                      AND psp.normalized_collector_number = 'OP05-119'
-                    """
-                )
-            ).scalar_one()
+        canonical = conn.execute(
+            text(
+                """
+                SELECT c.id, c.name, COUNT(p.id) AS physical_editions
+                FROM cards c
+                JOIN prints p ON p.card_id = c.id
+                WHERE c.card_key = 'onepiece:op05-119'
+                GROUP BY c.id, c.name
+                """
+            )
+        ).first()
+    if not canonical:
+        raise SystemExit("Canonical card onepiece:op05-119 is missing")
+    if int(canonical.physical_editions) < 2:
+        raise SystemExit(
+            f"Canonical OP05-119 owns fewer than 2 physical editions: {canonical.physical_editions}"
         )
-    if normalized_count < 2:
-        raise SystemExit(f"OP05-119 still collapses to fewer than 2 physical editions in Search V2 data: {normalized_count}")
 
-    # Then exercise auth + exact-print collection writes inside an outer
-    # transaction that is always rolled back. No smoke user survives this run.
+    # Exercise auth + exact-print collection writes inside an outer transaction
+    # that is always rolled back. No smoke user survives this run.
     connection = engine.connect()
     transaction = connection.begin()
     SmokeSession = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False, future=True)
@@ -58,11 +62,18 @@ def main() -> None:
         )
         if exact is None or len(exact) < 2:
             raise SystemExit(f"Exact One Piece search returned an invalid result set: {0 if exact is None else len(exact)}")
+        if len(exact) != int(canonical.physical_editions):
+            raise SystemExit(
+                f"Exact One Piece search does not expose every canonical physical edition: "
+                f"search={len(exact)} canonical={canonical.physical_editions}"
+            )
         print_ids = [int(row["print_id"]) for row in exact]
         if len(print_ids) != len(set(print_ids)):
             raise SystemExit("Exact One Piece search returned duplicate physical print IDs")
         if any(row.get("type") != "print" for row in exact):
             raise SystemExit("Exact One Piece collector search must return physical print rows")
+        if any(row.get("card_key") != "onepiece:op05-119" for row in exact):
+            raise SystemExit("Exact One Piece search escaped the canonical OP05-119 identity")
 
         password = f"Smoke-{secrets.token_urlsafe(18)}"
         user = User(
@@ -115,6 +126,7 @@ def main() -> None:
 
         print(
             {
+                "op05_119_name": canonical.name,
                 "op05_119_physical_editions": len(exact),
                 "op05_119_print_ids_unique": len(set(print_ids)),
                 "session_hash_only": True,
