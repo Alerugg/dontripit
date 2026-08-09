@@ -8,12 +8,14 @@ const QUICK_FILTER_KEYS_BY_GAME = {
   onepiece: new Set(['color', 'card_type', 'promo', 'sp', 'treasure_rare']),
   pokemon: new Set(['types', 'stage', 'rarity', 'regulation_mark', 'finish', 'stamp']),
   yugioh: new Set(['set', 'release', 'card_class', 'attribute', 'archetype', 'rarity']),
+  magic: new Set(['set', 'color_identity', 'card_type', 'rarity', 'finish']),
 }
 
 const QUICK_FILTER_COPY_BY_GAME = {
   onepiece: 'Color, tipo y hits coleccionables a un toque.',
   pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir todos los filtros.',
   yugioh: 'Set, release, clase, atributo, arquetipo y rareza en los accesos más usados.',
+  magic: 'Set, identidad de color, tipo, rareza y finish sin recorrer todos los filtros.',
 }
 
 function isEmpty(value) {
@@ -265,12 +267,12 @@ export default function AdvancedSearchPanel({
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
       <div className="sv2-advanced-head">
         <div>
-          <p className="eyebrow">Filtros avanzados</p>
+          <p className="eyebrow">Búsqueda avanzada</p>
           <h3>Afina solo cuando lo necesitas.</h3>
-          <p>Empieza simple y añade set, rareza, idioma o variante física únicamente si hacen falta.</p>
+          <p>Empieza simple y combina todos los filtros compatibles con este juego cuando busques una edición concreta.</p>
         </div>
         <button type="button" className="sv2-advanced-toggle" onClick={onToggle}>
-          {open ? 'Ocultar filtros' : 'Más filtros'}
+          {open ? 'Ocultar filtros' : 'Todos los filtros'}
           <span aria-hidden="true">{open ? '−' : '+'}</span>
         </button>
       </div>
@@ -340,7 +342,7 @@ export default function AdvancedSearchPanel({
 
           <div className="sv2-advanced-actions">
             <button type="button" className="sv2-secondary-btn" onClick={onReset} disabled={loading || activeEntries.length === 0}>
-              Limpiar
+              Limpiar todo
             </button>
             <button type="button" className="sv2-primary-btn" onClick={onSearch} disabled={loading}>
               {loading ? 'Filtrando…' : 'Aplicar filtros'}
