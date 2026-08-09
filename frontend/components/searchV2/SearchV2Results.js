@@ -71,12 +71,13 @@ function PrintResult({ item, gameSlug }) {
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
           <h3>{item.name}</h3>
-          <span className="sv2-print-pill">Versión exacta</span>
+          <span className="sv2-print-pill">Edición exacta</span>
         </div>
         <p className="sv2-collector-line">
           <strong>{item.collector_number}</strong>
           {item.set_code ? <span>{String(item.set_code).toUpperCase()}</span> : null}
         </p>
+        {item.set_name ? <small className="sv2-release-line">{item.set_name}</small> : null}
         <div className="sv2-badges">
           {badge(item.rarity)}
           {badge(item.language?.toUpperCase())}
@@ -105,7 +106,8 @@ function PrintResult({ item, gameSlug }) {
 }
 
 export default function SearchV2Results({ items = [], mode = 'normal', gameSlug, query = '', total = null }) {
-  const label = mode === 'advanced' ? 'Versiones exactas' : 'Cartas'
+  const exactPhysicalResults = mode === 'advanced' || (items.length > 0 && items.every((item) => item.type === 'print'))
+  const label = exactPhysicalResults ? 'Ediciones exactas' : 'Cartas'
   const count = total ?? items.length
 
   return (
@@ -119,7 +121,7 @@ export default function SearchV2Results({ items = [], mode = 'normal', gameSlug,
       </div>
       <div className="sv2-results-grid">
         {items.map((item) => (
-          mode === 'advanced'
+          mode === 'advanced' || item.type === 'print'
             ? <PrintResult key={`print-${item.print_id}`} item={item} gameSlug={gameSlug} />
             : <CardResult key={`card-${item.card_id}`} item={item} gameSlug={gameSlug} query={query} />
         ))}
