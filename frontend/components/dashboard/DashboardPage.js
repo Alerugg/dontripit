@@ -38,7 +38,7 @@ export default function DashboardPage() {
   const [selectedGame, setSelectedGame] = useState('onepiece')
   const [searchQuery, setSearchQuery] = useState('')
   const [user, setUser] = useState(null)
-  const [collection, setCollection] = useState({ items: [], count: 0, known_value_eur: 0 })
+  const [collection, setCollection] = useState({ items: [], count: 0, known_value_eur: 0, valuation_coverage_count: 0 })
   const [wishlist, setWishlist] = useState({ items: [], count: 0 })
   const [loading, setLoading] = useState(true)
 
@@ -58,7 +58,7 @@ export default function DashboardPage() {
         const [me, own, wish] = await Promise.all(responses.map((response) => response.json().catch(() => ({}))))
         if (!cancelled) {
           setUser(me.user || null)
-          setCollection(own.items ? own : { items: [], count: 0, known_value_eur: 0 })
+          setCollection(own.items ? own : { items: [], count: 0, known_value_eur: 0, valuation_coverage_count: 0 })
           setWishlist(wish.items ? wish : { items: [], count: 0 })
         }
       } finally {
@@ -122,7 +122,7 @@ export default function DashboardPage() {
           <div className="ux-stat"><span>Versiones distintas</span><strong>{collection.count || 0}</strong></div>
           <div className="ux-stat"><span>Cartas totales</span><strong>{pieces}</strong></div>
           <div className="ux-stat"><span>En wishlist</span><strong>{wishlist.count || 0}</strong></div>
-          <div className="ux-stat"><span>Valor con precio*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)}</strong></div>
+          <div className="ux-stat"><span>Valor conservador*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)}</strong></div>
         </section>
 
         <section id="juegos" className="ux-section">
@@ -160,7 +160,7 @@ export default function DashboardPage() {
           </section>
         ) : null}
 
-        <p className="detail-meta" style={{ marginTop: 28 }}>*El valor solo suma cartas que ya tienen un precio con fuente registrada. No inventamos precios para rellenar huecos.</p>
+        <p className="detail-meta" style={{ marginTop: 28 }}>*Suma solo versiones con valoración conservadora Cardmarket en EUR: {collection.valuation_coverage_count || 0} de {collection.count || 0}. Las demás quedan fuera hasta tener un dato verificable.</p>
       </section>
     </main>
   )
