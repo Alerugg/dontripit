@@ -6,18 +6,24 @@ import TopNav from '../layout/TopNav'
 import FallbackImage from '../common/FallbackImage'
 import './LibraryPage.css'
 
-function money(price) {
-  if (!price?.value || !price?.currency) return null
+function money(value, currency = 'EUR') {
+  if (value === null || value === undefined || !currency) return null
   try {
-    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: price.currency, maximumFractionDigits: 2 }).format(price.value)
+    return new Intl.NumberFormat('es-ES', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value))
   } catch {
-    return `${price.value} ${price.currency}`
+    return `${value} ${currency}`
   }
 }
 
 function LibraryCard({ item, kind, onRemove, onQuantity }) {
   const print = item.print || {}
-  const latest = money(item.latest_price)
+  const price = item.latest_price || null
+  const conservative = money(price?.conservative, price?.currency)
+  const observed = money(price?.value, price?.currency)
+  const trend = money(price?.trend, price?.currency)
+  const average = money(price?.average, price?.currency)
+  const minimum = money(price?.minimum, price?.currency)
+
   return (
     <article className="library-card">
       <Link href={`/prints/${print.id}`} className="library-card-media">
@@ -34,10 +40,27 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
         <p className="library-card-meta">
           {[print.set_code?.toUpperCase(), print.collector_number, print.language?.toUpperCase(), print.rarity, print.variant !== 'default' ? print.variant : null].filter(Boolean).join(' · ')}
         </p>
+
         <div className="library-price">
-          <strong>{latest || 'Sin precio verificado'}</strong>
-          <small>{latest ? `${item.latest_price?.source || 'Fuente registrada'}${item.latest_price?.as_of ? ` · ${new Date(item.latest_price.as_of).toLocaleDateString('es-ES')}` : ''}` : 'La incluiremos en el valor cuando exista una fuente fiable.'}</small>
+          <span className="library-price-label">{conservative ? 'Valor conservador' : observed ? 'Precio observado' : 'Precio'}</span>
+          <strong>{conservative || observed || 'Sin precio verificado'}</strong>
+          {price ? (
+            <>
+              {(minimum || trend || average) ? (
+                <small className="library-price-metrics">
+                  {[minimum ? `Mín ${minimum}` : null, trend ? `Tend ${trend}` : null, average ? `Media ${average}` : null].filter(Boolean).join(' · ')}
+                </small>
+              ) : null}
+              <small>
+                {price.source || 'Fuente registrada'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}
+                {!conservative ? ' · No suma al valor conservador' : ''}
+              </small>
+            </>
+          ) : (
+            <small>La valoraremos cuando exista un precio fiable para esta versión exacta.</small>
+          )}
         </div>
+
         <div className="library-card-actions">
           {kind === 'collection' ? (
             <>
@@ -55,7 +78,7 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
 
 export default function LibraryPage({ kind = 'collection' }) {
   const isCollection = kind === 'collection'
-  const [data, setData] = useState({ items: [], count: 0, known_value_eur: 0 })
+  const [data, setData] = useState({ items: [], count: 0, known_value_eur: 0, valuation_coverage_count: 0 })
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
 
@@ -130,11 +153,15 @@ export default function LibraryPage({ kind = 'collection' }) {
           <div className="library-summary">
             <div className="library-stat"><span>{isCollection ? 'Versiones distintas' : 'En wishlist'}</span><strong>{data.count || 0}</strong></div>
             {isCollection ? <div className="library-stat"><span>Cartas totales</span><strong>{pieces}</strong></div> : null}
-            {isCollection ? <div className="library-stat"><span>Valor con precio*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(data.known_value_eur || 0)}</strong></div> : null}
+            {isCollection ? <div className="library-stat"><span>Valor conservador*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(data.known_value_eur || 0)}</strong></div> : null}
           </div>
         </header>
 
-        {isCollection ? <p className="detail-meta">*Solo suma cartas que ya tienen un precio en EUR con fuente registrada.</p> : null}
+        {isCollection ? (
+          <p className="detail-meta">
+            *Usa el valor conservador Cardmarket de cada versión exacta. Cobertura actual: {data.valuation_coverage_count || 0} de {data.count || 0} versiones. Las cartas sin esa métrica no se estiman ni se suman.
+          </p>
+        ) : null}
         {message ? <div className="library-message">{message}</div> : null}
         {loading ? <div className="library-loading">Cargando tus cartas…</div> : null}
 
