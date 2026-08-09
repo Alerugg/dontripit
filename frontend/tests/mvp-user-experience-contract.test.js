@@ -27,8 +27,9 @@ test('collection and wishlist use exact physical print IDs', () => {
   const actions = source('components/library/LibraryActions.js')
   const library = source('components/library/LibraryPage.js')
   assert.match(actions, /print_id: Number\(printId\)/)
-  assert.match(actions, /\/api\/library\/collection/)
-  assert.match(actions, /\/api\/library\/wishlist/)
+  assert.match(actions, /\/api\/library\/\$\{kind\}/)
+  assert.match(actions, /add\('collection'\)/)
+  assert.match(actions, /add\('wishlist'\)/)
   assert.match(library, /item\.print\.id/)
 })
 
