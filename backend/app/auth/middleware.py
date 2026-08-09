@@ -48,8 +48,29 @@ def _extract_admin_header_key() -> str | None:
     return token or None
 
 
+def _is_user_session_route(path: str) -> bool:
+    """Routes whose credential is a Don’tRipIt user session, not a catalog API key.
+
+    Register/login are intentionally public identity endpoints and are IP-rate
+    limited below. ``/auth/me``, logout and ``/me/*`` enforce the opaque user
+    bearer token inside their route handlers. Keeping these paths out of the
+    catalog API-key guard prevents a valid user session from being mistaken for
+    an API-product key.
+    """
+    if path in {
+        "/api/v2/auth/register",
+        "/api/v2/auth/login",
+        "/api/v2/auth/me",
+        "/api/v2/auth/logout",
+    }:
+        return True
+    return path.startswith("/api/v2/me/")
+
+
 def _required_scope(path: str) -> str | None:
     if not path.startswith("/api/"):
+        return None
+    if _is_user_session_route(path):
         return None
     if path in {"/api/health", "/api/v1/health"}:
         return None
@@ -117,6 +138,31 @@ def register_api_product_middleware(flask_app: Flask) -> None:
         g.api_key_prefix = None
 
         path = request.path
+
+        # User identity and personal-library APIs have a different trust model
+        # from the developer/catalog API. Public auth is IP-rate-limited; private
+        # user routes validate the bearer session in their own handlers. Never
+        # interpret a user bearer token as a catalog API key.
+        if _is_user_session_route(path):
+            auth_entry = path in {"/api/v2/auth/register", "/api/v2/auth/login"}
+            default_limit = 15 if auth_entry else 120
+            env_name = "USER_AUTH_IP_RATE_LIMIT_RPM" if auth_entry else "USER_SESSION_IP_RATE_LIMIT_RPM"
+            limit = max(1, int(os.getenv(env_name, str(default_limit))))
+            rate = _rate_limit(f"user:{_client_ip()}:{'auth' if auth_entry else 'session'}", limit)
+            if rate.blocked:
+                response = jsonify({"error": "rate_limited"})
+                response.status_code = 429
+                _set_headers(response, "user", rate.limit, rate.remaining, None, None)
+                return response
+            g.api_meta = {
+                "plan": "user",
+                "rate_limit": rate.limit,
+                "rate_remaining": rate.remaining,
+                "quota_limit": None,
+                "quota_used": None,
+            }
+            return None
+
         required_scope = _required_scope(path)
         if required_scope is None:
             return None
