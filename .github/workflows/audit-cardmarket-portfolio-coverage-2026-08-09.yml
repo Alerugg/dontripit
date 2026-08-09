@@ -1,0 +1,84 @@
+name: Audit Cardmarket Portfolio Coverage 2026-08-09
+
+on:
+  push:
+    branches:
+      - audit-cardmarket-portfolio-coverage-2026-08-09
+    paths:
+      - '.github/workflows/audit-cardmarket-portfolio-coverage-2026-08-09.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install read-only audit dependencies
+        run: python -m pip install --quiet 'sqlalchemy>=2,<3' psycopg2-binary
+      - name: Audit latest Cardmarket snapshot metrics
+        run: |
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, text
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('No database URL configured')
+          if url.startswith('postgres://'):
+              url='postgresql://' + url[len('postgres://'):]
+          engine=create_engine(url, pool_pre_ping=True)
+          with engine.connect() as conn:
+              as_of=conn.execute(text('''
+                SELECT MAX(s.as_of)
+                FROM price_snapshots s
+                JOIN price_sources ps ON ps.id=s.source_id
+                WHERE lower(ps.name)='cardmarket'
+              ''')).scalar_one()
+              if not as_of:
+                  raise SystemExit('No Cardmarket snapshots found')
+              summary=dict(conn.execute(text('''
+                SELECT
+                  COUNT(*) AS snapshots,
+                  COUNT(*) FILTER (WHERE s.price_mid IS NOT NULL) AS conservative,
+                  COUNT(*) FILTER (WHERE s.price_low IS NOT NULL) AS minimum,
+                  COUNT(*) FILTER (WHERE s.price_market IS NOT NULL) AS trend,
+                  COUNT(*) FILTER (WHERE s.price_last IS NOT NULL) AS average,
+                  COUNT(*) FILTER (WHERE s.raw_json->>'finish'='foil') AS foil,
+                  COUNT(*) FILTER (WHERE s.raw_json->>'finish'='nonfoil') AS nonfoil,
+                  COUNT(*) FILTER (WHERE s.raw_json->>'finish'='foil' AND s.price_mid IS NOT NULL) AS foil_conservative,
+                  COUNT(*) FILTER (WHERE s.raw_json->>'finish'='nonfoil' AND s.price_mid IS NOT NULL) AS nonfoil_conservative
+                FROM price_snapshots s
+                JOIN price_sources ps ON ps.id=s.source_id
+                WHERE lower(ps.name)='cardmarket' AND s.as_of=:as_of
+              '''), {'as_of':as_of}).mappings().one())
+              samples=[dict(r) for r in conn.execute(text('''
+                SELECT s.entity_id AS print_id, c.name AS card_name, st.code AS set_code,
+                       p.collector_number, p.is_foil, s.price_low, s.price_mid,
+                       s.price_market, s.price_last, s.currency
+                FROM price_snapshots s
+                JOIN price_sources ps ON ps.id=s.source_id
+                JOIN prints p ON p.id=s.entity_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN sets st ON st.id=p.set_id
+                WHERE lower(ps.name)='cardmarket'
+                  AND s.as_of=:as_of
+                  AND s.price_mid IS NOT NULL
+                ORDER BY s.entity_id
+                LIMIT 12
+              '''), {'as_of':as_of}).mappings().all()]
+          summary['as_of']=as_of.isoformat()
+          summary['conservative_coverage']=round(summary['conservative']/summary['snapshots'],4) if summary['snapshots'] else 0
+          result={'summary':summary,'conservative_samples':samples}
+          print('CARDMARKET_PORTFOLIO_COVERAGE='+json.dumps(result,default=str,separators=(',',':')))
+          PY
