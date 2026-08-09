@@ -27,11 +27,12 @@ function getInternalConfig() {
   return { ok: true, baseUrl, apiKey, allowPublic }
 }
 
-async function _fetchInternal(url, { method, body, apiKey, signal }) {
+async function _fetchInternal(url, { method, body, apiKey, signal, headers = {} }) {
   const response = await fetch(url.toString(), {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...headers,
       ...(apiKey ? { 'X-API-Key': apiKey } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -43,7 +44,7 @@ async function _fetchInternal(url, { method, body, apiKey, signal }) {
   return { response, payload }
 }
 
-export async function callInternalApi(path, { method = 'GET', params = {}, body } = {}) {
+export async function callInternalApi(path, { method = 'GET', params = {}, body, headers = {} } = {}) {
   const config = getInternalConfig()
   if (!config.ok) {
     return {
@@ -73,6 +74,7 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
       body,
       apiKey: config.apiKey,
       signal: controller.signal,
+      headers,
     })
 
     if (!response.ok) {
