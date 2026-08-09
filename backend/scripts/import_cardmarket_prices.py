@@ -14,7 +14,7 @@ from app.jobs.cardmarket_prices import apply_import_plan, build_import_plan, loa
 
 def _read_source(value: str) -> tuple[str, bytes]:
     if value.startswith(("https://", "http://")):
-        req = request.Request(value, headers={"User-Agent": "Dontripit-Cardmarket-Price-Importer/1.0"})
+        req = request.Request(value, headers={"User-Agent": "Dontripit-Cardmarket-Price-Importer/1.1"})
         with request.urlopen(req, timeout=60) as response:
             content = response.read()
         if not content:
@@ -29,11 +29,16 @@ def _read_source(value: str) -> tuple[str, bytes]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Preflight and optionally import Cardmarket daily prices using exact PrintIdentifier mappings only."
+        description="Preflight and optionally import Cardmarket daily prices using exact game-scoped PrintIdentifier mappings only."
     )
     parser.add_argument("source", help="Local JSON/CSV file or direct downloadable URL")
+    parser.add_argument("--game", choices=["pokemon", "mtg", "yugioh", "onepiece"], help="TCG represented by this Cardmarket Price Guide")
     parser.add_argument("--apply", action="store_true", help="Write exact mapped snapshots after preflight. Default is dry-run.")
     args = parser.parse_args()
+
+    if args.apply and not args.game:
+        print("REFUSED: --game is required with --apply so a Price Guide cannot cross TCG boundaries.", file=sys.stderr)
+        return 2
 
     database_url = os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL")
     if not database_url:
@@ -46,11 +51,14 @@ def main() -> int:
         raise SystemExit("No Cardmarket price rows were parsed; refusing to continue")
 
     with db.SessionLocal() as session:
-        plan = build_import_plan(session, rows, as_of=created_at)
+        plan = build_import_plan(session, rows, as_of=created_at, game_slug=args.game)
         print(json.dumps({"mode": "apply" if args.apply else "dry-run", **plan.summary()}, indent=2, sort_keys=True))
 
         if plan.ambiguous:
-            print(f"REFUSED: {plan.ambiguous} Cardmarket product IDs map to multiple Prints.", file=sys.stderr)
+            print(f"REFUSED: {plan.ambiguous} Cardmarket product IDs map to multiple Prints in the selected game.", file=sys.stderr)
+            return 2
+        if plan.cross_game_mappings:
+            print(f"REFUSED: {plan.cross_game_mappings} Cardmarket product IDs map only to Prints from another game.", file=sys.stderr)
             return 2
         if plan.duplicate_feed_rows:
             print(f"REFUSED: {plan.duplicate_feed_rows} duplicate Cardmarket product rows in source.", file=sys.stderr)
