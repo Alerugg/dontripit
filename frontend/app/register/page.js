@@ -4,6 +4,7 @@ export const metadata = {
   title: 'Crear cuenta · Don’tRipIt',
 }
 
-export default function RegisterPage() {
-  return <AuthShell mode="register" />
+export default async function RegisterPage({ searchParams }) {
+  const params = await searchParams
+  return <AuthShell mode="register" next={params?.next || '/dashboard'} />
 }
