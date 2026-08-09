@@ -9,13 +9,20 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('Yu-Gi-Oh game route uses the V2 explorer', () => {
+test('Yu-Gi-Oh game route uses the shared redesigned hub without losing Search V2', () => {
   const page = source('app/games/[slug]/page.js')
-  assert.match(page, /YugiohExplorerV2Page/)
-  assert.match(page, /game\.slug === 'yugioh'/)
+  const hub = source('components/games/GameHubPage.js')
+
+  assert.match(page, /GameHubPage/)
+  assert.match(page, /game\.slug === 'riftbound'/)
+  assert.match(page, /<GameHubPage game=\{game\}/)
+  assert.match(hub, /OnePieceSearchV2Experience/)
+  assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
+  assert.match(hub, /yugioh:/)
+  assert.match(hub, /Dark Magician/)
 })
 
-test('Yu-Gi-Oh V2 explorer exposes certified counts', () => {
+test('Yu-Gi-Oh V2 explorer retains certified counts as non-user-facing evidence', () => {
   const explorer = source('components/games/YugiohExplorerV2Page.js')
   assert.match(explorer, /14\.479 Cards/)
   assert.match(explorer, /44\.226 Prints/)
@@ -48,10 +55,10 @@ test('Yu-Gi-Oh result cards surface source-backed evidence only', () => {
   assert.match(results, /DEF/)
 })
 
-test('backend Search V2 dispatcher explicitly routes Yu-Gi-Oh modules', () => {
+test('backend Search V2 dispatcher explicitly routes Yu-Gi-Oh alongside other certified games', () => {
   const routes = source('../backend/app/routes/search_v2.py')
   assert.match(routes, /normal_yugioh_search/)
   assert.match(routes, /advanced_yugioh_search/)
   assert.match(routes, /yugioh_facet_values/)
-  assert.match(routes, /\{"onepiece", "pokemon", "yugioh"\}/)
+  assert.match(routes, /SEARCH_V2_ADVANCED_GAMES\s*=\s*\{[^}]*"onepiece"[^}]*"pokemon"[^}]*"yugioh"[^}]*"mtg"[^}]*\}/)
 })
