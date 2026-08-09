@@ -1,0 +1,104 @@
+name: Repair Production Internal API Key
+
+on:
+  push:
+    branches:
+      - mvp-launch-2026-08-09
+    paths:
+      - '.github/workflows/repair-production-internal-api-key.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-production-internal-api-key
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      API_URL: https://dontripit-api-nnkpoc7z6-alejandro-ruggeris-projects.vercel.app
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout MVP branch
+        uses: actions/checkout@v4
+        with:
+          ref: mvp-launch-2026-08-09
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify required secrets without exposing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$INTERNAL_API_KEY" || { echo 'INTERNAL_API_KEY secret is missing'; exit 2; }
+          test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}" || { echo 'Database URL secret is missing'; exit 2; }
+          echo "Required secrets are present. Values are not printed."
+
+      - name: Inspect credential match and register idempotently
+        run: |
+          python - <<'PY'
+          import hashlib, os
+          from sqlalchemy import create_engine, select, text
+          from sqlalchemy.orm import sessionmaker
+          from app.auth.service import ensure_active_api_key
+          from app.models import ApiKey, ApiPlan
+
+          raw = os.environ['INTERNAL_API_KEY'].strip()
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          engine = create_engine(url, pool_pre_ping=True, future=True)
+          Session = sessionmaker(bind=engine, future=True)
+          digest = hashlib.sha256(raw.encode()).hexdigest()
+          with Session() as session:
+              before = session.execute(
+                  select(ApiKey.id, ApiKey.is_active, ApiPlan.name, ApiKey.label)
+                  .join(ApiPlan, ApiPlan.id == ApiKey.plan_id)
+                  .where(ApiKey.key_hash == digest)
+              ).first()
+              print({'candidate_present_before': bool(before), 'candidate_active_before': bool(before and before.is_active), 'candidate_plan_before': before.name if before else None})
+              row = ensure_active_api_key(session, raw, plan_name='internal', label='vercel-frontend-internal')
+              after = session.execute(
+                  select(ApiKey.id, ApiKey.is_active, ApiPlan.name, ApiKey.label)
+                  .join(ApiPlan, ApiPlan.id == ApiKey.plan_id)
+                  .where(ApiKey.id == row.id)
+              ).one()
+              print({'candidate_present_after': True, 'candidate_active_after': bool(after.is_active), 'candidate_plan_after': after.name, 'candidate_label_after': after.label})
+              counts = session.execute(text('SELECT COUNT(*), COUNT(*) FILTER (WHERE is_active) FROM api_keys')).one()
+              print({'api_keys_total': int(counts[0]), 'api_keys_active': int(counts[1])})
+          PY
+
+      - name: Verify candidate against production API
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE=$(curl -sS -o /tmp/api-key-check.json -w '%{http_code}' \
+            -H "X-API-Key: ${INTERNAL_API_KEY}" \
+            "${API_URL}/api/v2/search?q=Pikachu&game=pokemon&limit=1")
+          echo "Production API credential check HTTP ${CODE}"
+          if [ "$CODE" != "200" ]; then
+            cat /tmp/api-key-check.json
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          payload=json.load(open('/tmp/api-key-check.json'))
+          assert isinstance(payload.get('items'), list)
+          print('Production API credential accepted: PASS')
+          PY
