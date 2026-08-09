@@ -1,0 +1,52 @@
+name: Audit Cardmarket Public Price Preflight V2
+
+on:
+  push:
+    branches:
+      - cardmarket-live-price-preflight-v2
+    paths:
+      - 'backend/scripts/preflight_cardmarket_public_prices_v2.py'
+      - '.github/workflows/audit-cardmarket-public-price-preflight-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  price-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download current public Cardmarket Price Guides
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket-prices
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json -o /tmp/cardmarket-prices/prices_magic.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json -o /tmp/cardmarket-prices/prices_pokemon.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_3.json -o /tmp/cardmarket-prices/prices_yugioh.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json -o /tmp/cardmarket-prices/prices_onepiece.json
+      - name: Run game-scoped exact-only dry-run against Neon
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/preflight_cardmarket_public_prices_v2.py /tmp/cardmarket-prices --output /tmp/cardmarket-price-preflight-v2.json
+      - name: Upload preflight report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-public-price-preflight-v2
+          path: /tmp/cardmarket-price-preflight-v2.json
+          if-no-files-found: error
+          retention-days: 14
