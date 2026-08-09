@@ -14,26 +14,68 @@ function MetaLine({ label, value }) {
   return <p><strong>{label}:</strong> {String(value)}</p>
 }
 
+function money(value, currency = 'EUR') {
+  if (value === null || value === undefined) return '—'
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(Number(value))
+  } catch {
+    return `${value} ${currency}`
+  }
+}
+
+function PriceMetric({ label, value, currency, featured = false }) {
+  return (
+    <div className={`ux-price-metric ${featured ? 'is-featured' : ''}`}>
+      <span>{label}</span>
+      <strong>{money(value, currency)}</strong>
+    </div>
+  )
+}
+
 function PriceBlock({ price }) {
   if (!price) {
     return (
-      <section className="panel-soft identifiers">
+      <section className="panel-soft identifiers ux-price-panel">
         <p className="eyebrow">Precio</p>
-        <h2>Sin precio verificado todavía</h2>
-        <p className="detail-meta">No mostramos una estimación si no tenemos una fuente y una fecha asociadas a esta edición exacta.</p>
+        <h2>Sin precio Cardmarket verificado</h2>
+        <p className="detail-meta">No mostramos una estimación si no tenemos un precio asociado a esta versión física exacta, con fuente y fecha.</p>
       </section>
     )
   }
-  const formatted = new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: price.currency || 'EUR',
-    maximumFractionDigits: 2,
-  }).format(Number(price.value || 0))
+
+  const currency = price.currency || 'EUR'
+  const isFoil = price.finish === 'foil'
+  const hasConservative = price.conservative !== null && price.conservative !== undefined
+
   return (
-    <section className="panel-soft identifiers">
-      <p className="eyebrow">Precio observado</p>
-      <h2>{formatted}</h2>
-      <p className="detail-meta">{price.source ? `Fuente: ${price.source}` : 'Fuente registrada'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
+    <section className="panel-soft identifiers ux-price-panel">
+      <div className="ux-price-heading">
+        <div>
+          <p className="eyebrow">Cardmarket</p>
+          <h2>{hasConservative ? 'Valor conservador' : 'Precio disponible'}</h2>
+        </div>
+        {hasConservative ? <strong className="ux-price-main">{money(price.conservative, currency)}</strong> : null}
+      </div>
+
+      <div className="ux-price-grid">
+        <PriceMetric label="Mínimo" value={price.minimum} currency={currency} />
+        <PriceMetric label="Conservador" value={price.conservative} currency={currency} featured />
+        <PriceMetric label="Tendencia" value={price.trend} currency={currency} />
+        <PriceMetric label="Media" value={price.average} currency={currency} />
+      </div>
+
+      <p className="detail-meta ux-price-explainer">
+        {hasConservative
+          ? isFoil
+            ? 'Conservador = Foil Low de Cardmarket (condición EX+).'
+            : 'Conservador = Low Price EX+ de Cardmarket.'
+          : 'Este snapshot no contiene una métrica conservadora; por eso no entra en el valor de tu portfolio.'}
+      </p>
+      <p className="detail-meta">Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
     </section>
   )
 }
