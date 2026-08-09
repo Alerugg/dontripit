@@ -13,35 +13,35 @@ import './SearchV2.css'
 
 const SEARCH_COPY_BY_GAME = {
   onepiece: {
-    examples: ['Luffy', 'Zoro', 'OP05-119', 'Luffy OP05', 'red leader', 'monky lufi'],
-    placeholder: 'Luffy, OP05-119, red leader, Luffy OP05 English SEC…',
-    description: 'Busca por nombre, número, set, idioma o como lo dirías normalmente. Si escribes un código exacto, te enseñamos cada edición física que lo usa por separado.',
-    empty: 'Prueba otro nombre, número de carta o combina carta + set.',
+    examples: ['Luffy', 'Zoro', 'OP05-119'],
+    placeholder: 'Luffy, Zoro, OP05-119…',
+    description: 'Nombre, número o set. Empieza con lo que recuerdes y afina después solo si necesitas una versión concreta.',
+    empty: 'Prueba otro nombre, número de carta o set.',
   },
   pokemon: {
-    examples: ['Pikachu', 'Charizard', 'Pikachu 151', 'Fire Basic', 'SIR Holo', 'pikchu'],
-    placeholder: 'Pikachu, Charizard, 151, Fire Basic, Special Illustration Rare…',
-    description: 'Busca la carta de forma natural y, cuando lo necesites, baja hasta la edición exacta por rareza, tipo, etapa, regulación y variante física.',
-    empty: 'Prueba otro Pokémon, número, set o abre la búsqueda avanzada para precisar la edición.',
+    examples: ['Pikachu', 'Charizard', '151'],
+    placeholder: 'Pikachu, Charizard, 151…',
+    description: 'Busca por nombre, número o set. Rareza, idioma y acabado quedan para después si realmente importan.',
+    empty: 'Prueba otro Pokémon, número o set.',
   },
   yugioh: {
-    examples: ['Dark Magician', 'Blue-Eyes White Dragon', '2017-EN001', 'DARK Monster', 'ATK 3000', 'Extra Secret Rare'],
-    placeholder: 'Dark Magician, Blue-Eyes White Dragon, 2017-EN001, DARK Monster…',
-    description: 'Nombre, código de impresión, release o una combinación natural. La búsqueda avanzada permite llegar a la edición exacta por rareza, clase, atributo, tipo y estadísticas.',
-    empty: 'Prueba otro nombre, código de impresión, release o combina filtros de Yu-Gi-Oh!.',
+    examples: ['Dark Magician', 'Blue-Eyes', '2017-EN001'],
+    placeholder: 'Dark Magician, Blue-Eyes, 2017-EN001…',
+    description: 'Empieza por el nombre o código que conoces. Después puedes precisar set, rareza o edición.',
+    empty: 'Prueba otro nombre, código o set.',
   },
   magic: {
-    examples: ['Black Lotus', 'Sol Ring', 'Lightning Bolt', 'Commander', 'foil mythic', 'blue instant'],
-    placeholder: 'Black Lotus, Sol Ring, set, artista, foil, color, mana value…',
-    description: 'Busca por nombre, set o texto natural. Después combina identidad de color, tipo, mana value, rareza, finish, artista, frame, promo y más para encontrar la edición concreta.',
-    empty: 'Prueba otro nombre, set o abre la búsqueda avanzada para combinar filtros de Magic.',
+    examples: ['Black Lotus', 'Sol Ring', 'Lightning Bolt'],
+    placeholder: 'Black Lotus, Sol Ring, Lightning Bolt…',
+    description: 'Busca primero la carta. Si hace falta, afina luego por set, idioma, rareza, finish o artista.',
+    empty: 'Prueba otro nombre o set.',
   },
 }
 
 const DEFAULT_SEARCH_COPY = {
   examples: [],
-  placeholder: 'Nombre, número, set o combinación natural…',
-  description: 'Busca de forma simple y abre todos los filtros cuando quieras llegar a una edición física exacta.',
+  placeholder: 'Nombre, número o set…',
+  description: 'Busca primero la carta y afina solo si necesitas una versión física concreta.',
   empty: 'Prueba otro nombre, número o set.',
 }
 
@@ -109,7 +109,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   }, [game.slug])
 
   useEffect(() => {
-    if (query.trim().length < 2) {
+    if (query.trim().length < 1) {
       setSuggestions([])
       return undefined
     }
@@ -218,7 +218,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     } catch (requestError) {
       setAdvancedItems([])
       setAdvancedTotal(0)
-      setAdvancedError(requestError.message || 'No pudimos aplicar los filtros avanzados.')
+      setAdvancedError(requestError.message || 'No pudimos aplicar los filtros.')
     } finally {
       setAdvancedLoading(false)
     }
@@ -249,8 +249,8 @@ export default function OnePieceSearchV2Experience({ game }) {
       <section className="game-section panel-soft sv2-search-shell" style={{ '--game-accent': game.accent }}>
         <SectionHeader
           compact
-          eyebrow="Buscar cartas"
-          title="Escribe lo que sabes. Afina solo si hace falta."
+          eyebrow="Buscar"
+          title="Encuentra la carta"
           description={searchCopy.description}
         />
 
@@ -261,8 +261,9 @@ export default function OnePieceSearchV2Experience({ game }) {
           suggestions={suggestions}
           suggestionsLoading={suggestionsLoading}
           onSuggestionSelect={(item) => {
-            if (item.type === 'print' && item.collector_number) {
-              submitNormal(item.collector_number)
+            const exactPrintId = item.print_id || (item.type === 'print' ? item.id : null)
+            if (exactPrintId) {
+              router.push(`/prints/${exactPrintId}`)
               return
             }
             if (item.card_id) {
@@ -277,7 +278,7 @@ export default function OnePieceSearchV2Experience({ game }) {
 
         {searchCopy.examples.length > 0 ? (
           <div className="sv2-example-row">
-            <span>Prueba:</span>
+            <span>Ejemplos:</span>
             {searchCopy.examples.map((example) => (
               <button key={example} type="button" onClick={() => submitNormal(example)}>{example}</button>
             ))}
@@ -301,12 +302,12 @@ export default function OnePieceSearchV2Experience({ game }) {
 
       {advancedRan ? (
         <>
-          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando la edición física exacta…" /> : null}
+          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando versiones que coincidan…" /> : null}
           {!advancedLoading && advancedError ? <StatePanel title="No pudimos filtrar" description={advancedError} error /> : null}
           {!advancedLoading && !advancedError && advancedItems.length === 0 ? (
             <StatePanel
-              title="Sin ediciones para esta combinación"
-              description={hasActiveAdvancedFilters ? 'Prueba quitando uno de los filtros activos.' : 'Añade al menos un filtro o una búsqueda.'}
+              title="No encontramos esa combinación"
+              description={hasActiveAdvancedFilters ? 'Prueba quitando uno de los filtros.' : 'Añade un filtro o una búsqueda.'}
               tone="muted"
             />
           ) : null}
@@ -314,11 +315,11 @@ export default function OnePieceSearchV2Experience({ game }) {
             <>
               <SearchV2Results items={advancedItems} mode="advanced" gameSlug={game.slug} query={advancedQuery} total={advancedTotal} />
               {advancedPageCount > 1 ? (
-                <nav className="sv2-pagination" aria-label="Paginación de ediciones">
+                <nav className="sv2-pagination" aria-label="Paginación de versiones">
                   <button type="button" disabled={advancedPage <= 1 || advancedLoading} onClick={() => runAdvanced(advancedPage - 1, { reuseApplied: true })}>
                     ← Anterior
                   </button>
-                  <span>Página <strong>{advancedPage}</strong> de {advancedPageCount} · {advancedTotal.toLocaleString()} ediciones</span>
+                  <span>Página <strong>{advancedPage}</strong> de {advancedPageCount} · {advancedTotal.toLocaleString()} versiones</span>
                   <button type="button" disabled={advancedPage >= advancedPageCount || advancedLoading} onClick={() => runAdvanced(advancedPage + 1, { reuseApplied: true })}>
                     Siguiente →
                   </button>

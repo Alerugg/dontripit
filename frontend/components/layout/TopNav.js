@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import BrandMark from '../brand/BrandMark'
 
 const shopUrl = 'https://shop.dontripit.com'
@@ -12,7 +13,14 @@ const publicNavItems = [
   { href: '/#news', label: 'Novedades' },
 ]
 
+const memberNavItems = [
+  { href: '/dashboard#buscar', label: 'Buscar' },
+  { href: '/collection', label: 'Colección' },
+  { href: '/wishlist', label: 'Wishlist' },
+]
+
 export default function TopNav() {
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -34,13 +42,13 @@ export default function TopNav() {
     window.location.assign('/')
   }
 
-  const navItems = user
-    ? [
-        { href: '/dashboard', label: 'Inicio' },
-        { href: '/collection', label: 'Mi colección' },
-        { href: '/wishlist', label: 'Wishlist' },
-      ]
-    : publicNavItems
+  const navItems = user ? memberNavItems : publicNavItems
+
+  function isActive(item) {
+    if (!user) return false
+    if (item.href.startsWith('/dashboard')) return pathname === '/dashboard'
+    return pathname === item.href || pathname.startsWith(`${item.href}/`)
+  }
 
   return (
     <header className="dri-nav">
@@ -51,17 +59,17 @@ export default function TopNav() {
 
         <nav className="dri-nav-links" aria-label="Navegación principal">
           {navItems.map((item) => (
-            <Link key={item.href} href={item.href} className="dri-nav-link">
+            <Link key={item.href} href={item.href} className={`dri-nav-link ${isActive(item) ? 'is-active' : ''}`}>
               {item.label}
             </Link>
           ))}
-          <a href={shopUrl} className="dri-nav-link">Tienda</a>
+          {!user ? <a href={shopUrl} className="dri-nav-link">Tienda</a> : null}
         </nav>
 
         <div className="dri-nav-actions">
           {authChecked && user ? (
             <>
-              <Link href="/dashboard" className="dri-btn dri-btn-primary">{user.name?.split(' ')[0] || 'Mi cuenta'}</Link>
+              <a href={shopUrl} className="dri-btn dri-btn-ghost">Tienda</a>
               <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
             </>
           ) : authChecked ? (
@@ -93,10 +101,7 @@ export default function TopNav() {
             <a href={shopUrl}>Tienda</a>
             <div className="dri-mobile-menu-actions">
               {user ? (
-                <>
-                  <Link href="/dashboard" className="dri-btn dri-btn-primary" onClick={() => setOpen(false)}>Mi cuenta</Link>
-                  <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
-                </>
+                <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
               ) : (
                 <>
                   <Link href="/login" className="dri-btn dri-btn-ghost" onClick={() => setOpen(false)}>Entrar</Link>

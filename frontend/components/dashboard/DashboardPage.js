@@ -2,29 +2,41 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import TopNav from '../layout/TopNav'
 import FallbackImage from '../common/FallbackImage'
 import { GAME_CATALOG } from '../../lib/catalog/games'
 import './DashboardPage.css'
+
+const SEARCH_EXAMPLES = {
+  pokemon: 'Pikachu, Charizard, 151…',
+  magic: 'Black Lotus, Sol Ring, Commander…',
+  onepiece: 'Luffy, Zoro, OP05-119…',
+  yugioh: 'Dark Magician, Blue-Eyes, 2017-EN001…',
+}
 
 function GameCard({ game }) {
   const soon = game.slug === 'riftbound'
   return (
     <Link
       href={soon ? '#' : `/games/${game.slug}`}
-      className={`dashboard-game-card ${soon ? 'is-soon' : ''}`}
+      className={`ux-game-card ${soon ? 'is-soon' : ''}`}
       style={{ '--game-accent': game.accent }}
       aria-disabled={soon}
     >
       <span className="dri-kicker">{soon ? 'Próximamente' : game.eyebrow}</span>
       <h3>{game.name}</h3>
-      <p>{soon ? 'Estamos esperando el acceso de producción adecuado antes de abrir el catálogo.' : 'Busca por nombre, número, set y filtros propios del juego.'}</p>
-      <strong>{soon ? 'En preparación' : 'Abrir catálogo →'}</strong>
+      <p>{soon ? 'Lo abriremos cuando tengamos la fuente de producción correcta.' : 'Busca cartas y llega a la versión física exacta solo cuando lo necesites.'}</p>
+      <strong>{soon ? 'En preparación' : 'Explorar →'}</strong>
     </Link>
   )
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
+  const activeGames = useMemo(() => GAME_CATALOG.filter((game) => game.slug !== 'riftbound'), [])
+  const [selectedGame, setSelectedGame] = useState('onepiece')
+  const [searchQuery, setSearchQuery] = useState('')
   const [user, setUser] = useState(null)
   const [collection, setCollection] = useState({ items: [], count: 0, known_value_eur: 0 })
   const [wishlist, setWishlist] = useState({ items: [], count: 0 })
@@ -59,49 +71,85 @@ export default function DashboardPage() {
 
   const pieces = useMemo(() => collection.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [collection])
   const recent = collection.items.slice(0, 6)
+  const selectedGameConfig = activeGames.find((game) => game.slug === selectedGame) || activeGames[0]
+
+  function submitSearch(event) {
+    event.preventDefault()
+    const q = searchQuery.trim()
+    const destination = `/games/${selectedGame}${q ? `?q=${encodeURIComponent(q)}` : ''}#buscar`
+    router.push(destination)
+  }
 
   return (
     <main>
       <TopNav />
-      <section className="dashboard-shell">
-        <div className="dashboard-hero">
-          <section className="dashboard-welcome">
-            <span className="dri-kicker">Tu Don’tRipIt</span>
-            <h1>{loading ? 'Preparando tu colección…' : `Hola, ${user?.name?.split(' ')[0] || 'coleccionista'}.`}</h1>
-            <p>Busca rápido cuando quieras una carta. Afina cuando necesites una edición concreta. Y guarda exactamente la versión física que tienes o quieres.</p>
-            <div className="detail-actions">
-              <Link href="/games/onepiece" className="dri-btn dri-btn-primary">Buscar cartas</Link>
-              <Link href="/collection" className="dri-btn dri-btn-ghost">Mi colección</Link>
+      <section className="ux-dashboard">
+        <section id="buscar" className="ux-search-hero">
+          <div className="ux-search-copy">
+            <span className="dri-kicker">{loading ? 'Preparando tu espacio…' : `Hola, ${user?.name?.split(' ')[0] || 'coleccionista'}`}</span>
+            <h1>¿Qué carta buscas?</h1>
+            <p>Elige el juego y escribe lo que recuerdes: nombre, número o set. Don’tRipIt se ocupa de llevarte después a la versión correcta.</p>
+
+            <div className="ux-game-tabs" aria-label="Selecciona un juego">
+              {activeGames.map((game) => (
+                <button
+                  key={game.slug}
+                  type="button"
+                  className={`ux-game-tab ${selectedGame === game.slug ? 'is-active' : ''}`}
+                  onClick={() => setSelectedGame(game.slug)}
+                >
+                  {game.name}
+                </button>
+              ))}
+              <button type="button" className="ux-game-tab" disabled>Riftbound · Próximamente</button>
             </div>
-          </section>
 
-          <aside className="dashboard-summary-panel">
-            <div className="dashboard-metric"><span>Ediciones</span><strong>{collection.count || 0}</strong></div>
-            <div className="dashboard-metric"><span>Cartas físicas</span><strong>{pieces}</strong></div>
-            <div className="dashboard-metric"><span>Wishlist</span><strong>{wishlist.count || 0}</strong></div>
-            <div className="dashboard-metric"><span>Valor conocido*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)}</strong></div>
-          </aside>
-        </div>
-
-        <section className="dashboard-section">
-          <div className="dashboard-section-head">
-            <div><span className="dri-kicker">Elige tu juego</span><h2>¿Qué quieres buscar hoy?</h2></div>
+            <form className="ux-main-search" onSubmit={submitSearch}>
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={`Busca en ${selectedGameConfig?.name || 'tu TCG'}…`}
+                aria-label={`Buscar cartas en ${selectedGameConfig?.name || 'el juego seleccionado'}`}
+                autoComplete="off"
+              />
+              <button type="submit" className="dri-btn dri-btn-primary">Buscar</button>
+            </form>
+            <small className="ux-search-hint">Ejemplos: {SEARCH_EXAMPLES[selectedGame] || 'nombre, número o set'}</small>
           </div>
-          <div className="dashboard-game-grid">
+        </section>
+
+        <section className="ux-overview" aria-label="Resumen de tu cuenta">
+          <div className="ux-stat"><span>Versiones distintas</span><strong>{collection.count || 0}</strong></div>
+          <div className="ux-stat"><span>Cartas totales</span><strong>{pieces}</strong></div>
+          <div className="ux-stat"><span>En wishlist</span><strong>{wishlist.count || 0}</strong></div>
+          <div className="ux-stat"><span>Valor con precio*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)}</strong></div>
+        </section>
+
+        <section id="juegos" className="ux-section">
+          <div className="ux-section-head">
+            <div>
+              <span className="dri-kicker">Explorar por juego</span>
+              <h2>Entra solo cuando quieras navegar sin una búsqueda concreta.</h2>
+            </div>
+          </div>
+          <div className="ux-game-grid">
             {GAME_CATALOG.map((game) => <GameCard key={game.slug} game={game} />)}
           </div>
         </section>
 
         {recent.length ? (
-          <section className="dashboard-section">
-            <div className="dashboard-section-head">
-              <div><span className="dri-kicker">Recientes</span><h2>Lo último que guardaste</h2></div>
-              <Link href="/collection" className="home-inline-link">Ver toda mi colección →</Link>
+          <section className="ux-section">
+            <div className="ux-section-head">
+              <div>
+                <span className="dri-kicker">Tu colección</span>
+                <h2>Lo último que guardaste</h2>
+              </div>
+              <Link href="/collection" className="home-inline-link">Ver colección completa →</Link>
             </div>
-            <div className="dashboard-recent-grid">
+            <div className="ux-recent-grid">
               {recent.map((item) => (
-                <Link key={item.id} href={`/prints/${item.print.id}`} className="dashboard-recent-card">
-                  <div className="dashboard-recent-image">
+                <Link key={item.id} href={`/prints/${item.print.id}`} className="ux-recent-card">
+                  <div className="ux-recent-image">
                     <FallbackImage src={item.print.image_url} alt={item.print.card_name} className="detail-image" placeholderClassName="image-fallback" label={item.print.game} />
                   </div>
                   <strong>{item.print.card_name}</strong>
@@ -112,7 +160,7 @@ export default function DashboardPage() {
           </section>
         ) : null}
 
-        <p className="detail-meta" style={{ marginTop: 28 }}>*El valor conocido solo utiliza precios con fuente registrada; Don’tRipIt no inventa precios para completar huecos.</p>
+        <p className="detail-meta" style={{ marginTop: 28 }}>*El valor solo suma cartas que ya tienen un precio con fuente registrada. No inventamos precios para rellenar huecos.</p>
       </section>
     </main>
   )

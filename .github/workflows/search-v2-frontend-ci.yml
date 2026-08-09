@@ -5,26 +5,13 @@ on:
     branches:
       - catalog-v2
     paths:
-      - 'frontend/package.json'
-      - 'frontend/package-lock.json'
-      - 'frontend/next.config.js'
-      - 'frontend/components/search/**'
-      - 'frontend/components/searchV2/**'
-      - 'frontend/components/games/OnePieceExplorerV2Page.js'
-      - 'frontend/app/games/**'
-      - 'frontend/app/cards/**'
-      - 'frontend/app/prints/**'
-      - 'frontend/app/tcg/**'
-      - 'frontend/app/play/**'
-      - 'frontend/app/explorer/**'
-      - 'frontend/app/api/search-v2/**'
-      - 'frontend/app/api/catalog/cards/**'
-      - 'frontend/app/api/catalog/prints/**'
-      - 'frontend/app/api/catalog/news/**'
-      - 'frontend/app/api/build-info/**'
-      - 'frontend/lib/searchV2/**'
-      - 'frontend/lib/news/**'
-      - 'frontend/tests/**'
+      - 'frontend/**'
+      - '.github/workflows/search-v2-frontend-ci.yml'
+  pull_request:
+    branches:
+      - catalog-v2
+    paths:
+      - 'frontend/**'
       - '.github/workflows/search-v2-frontend-ci.yml'
   workflow_dispatch:
 

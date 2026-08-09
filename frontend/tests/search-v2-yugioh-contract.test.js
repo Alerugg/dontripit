@@ -9,7 +9,7 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('Yu-Gi-Oh game route uses the shared redesigned hub without losing Search V2', () => {
+test('Yu-Gi-Oh game route uses the shared search-first hub without losing Search V2', () => {
   const page = source('app/games/[slug]/page.js')
   const hub = source('components/games/GameHubPage.js')
 
@@ -19,7 +19,8 @@ test('Yu-Gi-Oh game route uses the shared redesigned hub without losing Search V
   assert.match(hub, /OnePieceSearchV2Experience/)
   assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
   assert.match(hub, /yugioh:/)
-  assert.match(hub, /Dark Magician/)
+  assert.match(hub, /Busca una carta sin perderte en el catálogo/)
+  assert.doesNotMatch(hub, /dri-hub-card-stack/)
 })
 
 test('Yu-Gi-Oh V2 explorer retains certified counts as non-user-facing evidence', () => {
@@ -29,11 +30,11 @@ test('Yu-Gi-Oh V2 explorer retains certified counts as non-user-facing evidence'
   assert.match(explorer, /20 facets · 19 activos/)
 })
 
-test('shared Search V2 experience exposes Yu-Gi-Oh-native examples', () => {
+test('shared Search V2 experience exposes concise Yu-Gi-Oh-native examples', () => {
   const experience = source('components/searchV2/OnePieceSearchV2Experience.js')
   assert.match(experience, /yugioh:/)
   assert.match(experience, /Dark Magician/)
-  assert.match(experience, /Blue-Eyes White Dragon/)
+  assert.match(experience, /Blue-Eyes/)
   assert.match(experience, /2017-EN001/)
 })
 

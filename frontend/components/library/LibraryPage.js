@@ -35,15 +35,15 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
           {[print.set_code?.toUpperCase(), print.collector_number, print.language?.toUpperCase(), print.rarity, print.variant !== 'default' ? print.variant : null].filter(Boolean).join(' · ')}
         </p>
         <div className="library-price">
-          <strong>{latest || 'Precio pendiente'}</strong>
-          <small>{latest ? `${item.latest_price?.source || 'Fuente registrada'}${item.latest_price?.as_of ? ` · ${new Date(item.latest_price.as_of).toLocaleDateString('es-ES')}` : ''}` : 'No mostramos estimaciones sin fuente verificada.'}</small>
+          <strong>{latest || 'Sin precio verificado'}</strong>
+          <small>{latest ? `${item.latest_price?.source || 'Fuente registrada'}${item.latest_price?.as_of ? ` · ${new Date(item.latest_price.as_of).toLocaleDateString('es-ES')}` : ''}` : 'La incluiremos en el valor cuando exista una fuente fiable.'}</small>
         </div>
         <div className="library-card-actions">
           {kind === 'collection' ? (
             <>
               <span className="library-qty">Tienes {item.quantity}</span>
-              <button type="button" className="dri-btn dri-btn-ghost" onClick={() => onQuantity(item, Math.max(1, item.quantity - 1))} disabled={item.quantity <= 1}>−</button>
-              <button type="button" className="dri-btn dri-btn-ghost" onClick={() => onQuantity(item, item.quantity + 1)}>+</button>
+              <button type="button" className="dri-btn dri-btn-ghost" onClick={() => onQuantity(item, Math.max(1, item.quantity - 1))} disabled={item.quantity <= 1} aria-label="Restar una carta">−</button>
+              <button type="button" className="dri-btn dri-btn-ghost" onClick={() => onQuantity(item, item.quantity + 1)} aria-label="Sumar una carta">+</button>
             </>
           ) : null}
           <button type="button" className="dri-btn dri-btn-ghost" onClick={() => onRemove(item)}>Quitar</button>
@@ -119,27 +119,31 @@ export default function LibraryPage({ kind = 'collection' }) {
       <section className="library-shell">
         <header className="library-hero">
           <div>
-            <span className="dri-kicker">Tu espacio</span>
-            <h1>{isCollection ? 'Mi colección' : 'Mi wishlist'}</h1>
-            <p>{isCollection ? 'Cada arte, idioma y edición física vive por separado. Así sabes exactamente qué tienes.' : 'Guarda exactamente la edición que buscas. Sin confundir una carta con otra variante.'}</p>
+            <span className="dri-kicker">{isCollection ? 'Tu colección' : 'Tu wishlist'}</span>
+            <h1>{isCollection ? 'Mi colección' : 'Wishlist'}</h1>
+            <p>{isCollection ? 'Tus cartas, separadas por la versión física que realmente tienes.' : 'Las versiones que quieres encontrar, sin mezclarlas con otras ediciones.'}</p>
+            <div className="ux-library-actions">
+              <Link href="/dashboard#buscar" className="dri-btn dri-btn-primary">Buscar cartas</Link>
+              <Link href={isCollection ? '/wishlist' : '/collection'} className="dri-btn dri-btn-ghost">{isCollection ? 'Ver wishlist' : 'Ver colección'}</Link>
+            </div>
           </div>
           <div className="library-summary">
-            <div className="library-stat"><span>{isCollection ? 'Ediciones' : 'Deseos'}</span><strong>{data.count || 0}</strong></div>
-            {isCollection ? <div className="library-stat"><span>Cartas físicas</span><strong>{pieces}</strong></div> : null}
-            {isCollection ? <div className="library-stat"><span>Valor conocido*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(data.known_value_eur || 0)}</strong></div> : null}
+            <div className="library-stat"><span>{isCollection ? 'Versiones distintas' : 'En wishlist'}</span><strong>{data.count || 0}</strong></div>
+            {isCollection ? <div className="library-stat"><span>Cartas totales</span><strong>{pieces}</strong></div> : null}
+            {isCollection ? <div className="library-stat"><span>Valor con precio*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(data.known_value_eur || 0)}</strong></div> : null}
           </div>
         </header>
 
-        {isCollection ? <p className="detail-meta">*Solo suma precios en EUR con una fuente registrada. Las cartas sin precio verificado no se estiman.</p> : null}
+        {isCollection ? <p className="detail-meta">*Solo suma cartas que ya tienen un precio en EUR con fuente registrada.</p> : null}
         {message ? <div className="library-message">{message}</div> : null}
-        {loading ? <div className="library-loading">Cargando tu colección…</div> : null}
+        {loading ? <div className="library-loading">Cargando tus cartas…</div> : null}
 
         {!loading && !data.items?.length ? (
           <div className="library-empty">
             <span className="dri-kicker">Empieza por una carta</span>
-            <h2>{isCollection ? 'Tu colección está esperando.' : 'Tu wishlist está vacía.'}</h2>
-            <p>Busca una carta, abre la edición exacta que te interesa y guárdala con un toque.</p>
-            <Link href="/dashboard" className="dri-btn dri-btn-primary">Explorar cartas</Link>
+            <h2>{isCollection ? 'Tu colección está vacía.' : 'Tu wishlist está vacía.'}</h2>
+            <p>Busca una carta, elige la versión que te interesa y guárdala.</p>
+            <Link href="/dashboard#buscar" className="dri-btn dri-btn-primary">Buscar cartas</Link>
           </div>
         ) : null}
 

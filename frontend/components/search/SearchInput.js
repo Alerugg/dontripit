@@ -20,7 +20,7 @@ export default function SearchInput({
   const [activeIndex, setActiveIndex] = useState(-1)
   const [dropdownWidth, setDropdownWidth] = useState(0)
   const hasSuggestions = suggestions.length > 0
-  const hasMeaningfulQuery = (value || '').trim().length >= 2
+  const hasMeaningfulQuery = (value || '').trim().length >= 1
 
   useEffect(() => {
     if (!value?.trim()) {
@@ -34,17 +34,13 @@ export default function SearchInput({
       setActiveIndex(-1)
       return
     }
-
-    if (activeIndex >= suggestions.length) {
-      setActiveIndex(suggestions.length - 1)
-    }
+    if (activeIndex >= suggestions.length) setActiveIndex(suggestions.length - 1)
   }, [activeIndex, suggestions])
 
   useEffect(() => {
     function syncDropdownWidth() {
       setDropdownWidth(inputRowRef.current?.offsetWidth || 0)
     }
-
     syncDropdownWidth()
     window.addEventListener('resize', syncDropdownWidth)
     return () => window.removeEventListener('resize', syncDropdownWidth)
@@ -57,14 +53,12 @@ export default function SearchInput({
         setActiveIndex(-1)
       }
     }
-
     function handleKeyDown(event) {
       if (event.key === 'Escape') {
         setIsOpen(false)
         setActiveIndex(-1)
       }
     }
-
     document.addEventListener('mousedown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
     return () => {
@@ -74,9 +68,7 @@ export default function SearchInput({
   }, [])
 
   function handleKeyDown(event) {
-    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length === 0) {
-      return
-    }
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length === 0) return
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()
@@ -99,7 +91,6 @@ export default function SearchInput({
         setIsOpen(false)
         return
       }
-
       onSubmit?.()
       setIsOpen(false)
     }
@@ -125,13 +116,14 @@ export default function SearchInput({
           aria-expanded={isOpen}
           aria-controls={listId}
           aria-autocomplete="list"
+          autoComplete="off"
         />
         <button type="button" className={`primary-btn search-submit search-submit-${variant}`} onClick={() => { onSubmit?.(); setIsOpen(false) }}>
           Buscar
         </button>
       </div>
 
-      {isOpen && (
+      {isOpen ? (
         <div
           className={`suggestions-popover panel-soft suggestions-popover-${variant}`}
           role="presentation"
@@ -140,18 +132,16 @@ export default function SearchInput({
           <div className="suggestions-header">
             <div className="suggestions-heading">
               <strong>Sugerencias</strong>
-              {variant === 'pilot' ? <small>Atajo rápido al explorer</small> : null}
+              <small>Elige una si coincide con lo que buscas</small>
             </div>
-            <button type="button" className="suggestions-close" onClick={() => setIsOpen(false)} aria-label="Cerrar sugerencias">
-              ×
-            </button>
+            <button type="button" className="suggestions-close" onClick={() => setIsOpen(false)} aria-label="Cerrar sugerencias">×</button>
           </div>
 
-          {!hasMeaningfulQuery && <p className="suggestions-empty">Escribe al menos 2 caracteres para sugerencias más precisas.</p>}
-          {hasMeaningfulQuery && suggestionsLoading && <p className="suggestions-empty">Buscando cartas, sets y prints…</p>}
-          {hasMeaningfulQuery && !suggestionsLoading && !hasSuggestions && <p className="suggestions-empty">Sin sugerencias. Prueba con otro nombre, collector number o set.</p>}
+          {!hasMeaningfulQuery ? <p className="suggestions-empty">Empieza a escribir para buscar.</p> : null}
+          {hasMeaningfulQuery && suggestionsLoading ? <p className="suggestions-empty">Buscando coincidencias…</p> : null}
+          {hasMeaningfulQuery && !suggestionsLoading && !hasSuggestions ? <p className="suggestions-empty">Sin sugerencias todavía. Puedes pulsar Buscar igualmente.</p> : null}
 
-          {hasMeaningfulQuery && !suggestionsLoading && hasSuggestions && (
+          {hasMeaningfulQuery && !suggestionsLoading && hasSuggestions ? (
             <ul id={listId} className="suggestions-list" role="listbox">
               {suggestions.map((item, index) => (
                 <SuggestionRow
@@ -167,9 +157,9 @@ export default function SearchInput({
                 />
               ))}
             </ul>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

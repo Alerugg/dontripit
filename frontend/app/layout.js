@@ -1,6 +1,7 @@
 import './globals.css'
 import './redesign.css'
 import './dark-collector.css'
+import './ux-v3.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 
 const manrope = Manrope({
