@@ -20,11 +20,21 @@ test('live news uses official sources only', () => {
   assert.match(news, /region/)
 })
 
-test('unknown publication dates stay unknown instead of becoming now', () => {
+test('unknown publication dates stay unknown and copy dates are never promoted', () => {
   const news = source('lib/news/service.js')
-  assert.match(news, /published_at:\s*extractPublishedAt\(context\)/)
+  assert.match(news, /extractStructuredPublishedAt/)
+  assert.match(news, /<time\\b\[\^>\]\*datetime=/)
+  assert.match(news, /published_at:\s*extractStructuredPublishedAt\(context\)/)
   assert.match(news, /published_at:\s*item\.published_at \|\| null/)
   assert.doesNotMatch(news, /published_at:\s*new Date\(\)\.toISOString\(\)/)
+  assert.doesNotMatch(news, /monthFirst|dayFirst/)
+})
+
+test('generic navigation anchors are rejected as news titles', () => {
+  const news = source('lib/news/service.js')
+  assert.match(news, /GENERIC_LINK_TITLES/)
+  assert.match(news, /'learn more'/)
+  assert.match(news, /!GENERIC_LINK_TITLES\.has\(normalized\)/)
 })
 
 test('verified release calendar requires provenance fields', () => {

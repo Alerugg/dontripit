@@ -1,9 +1,15 @@
 const CACHE_TTL_MS = 10 * 60 * 1000
 const cache = new Map()
 
-const XML_ITEM_REGEX = /<item\b[\s\S]*?<\/item>/gi
-const XML_ENTRY_REGEX = /<entry\b[\s\S]*?<\/entry>/gi
-const MONTHS = 'January|February|March|April|May|June|July|August|September|October|November|December'
+const GENERIC_LINK_TITLES = new Set([
+  'learn more',
+  'read more',
+  'more',
+  'view more',
+  'view all',
+  'see more',
+  'click here',
+])
 
 function decodeHtml(value = '') {
   return String(value || '')
@@ -14,6 +20,8 @@ function decodeHtml(value = '') {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -22,64 +30,17 @@ function stripTags(value = '') {
   return decodeHtml(String(value || '').replace(/<[^>]+>/g, ' '))
 }
 
-function firstTag(block, tags) {
-  for (const tag of tags) {
-    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i')
-    const match = block.match(regex)
-    if (match?.[1]) return match[1]
-  }
-  return ''
-}
-
-function extractFeedLink(block) {
-  const atomLink = block.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>(?:<\/link>)?/i)
-  if (atomLink?.[1]) return decodeHtml(atomLink[1])
-  return decodeHtml(firstTag(block, ['link']))
-}
-
 function toIsoDate(value) {
   if (!value) return null
   const parsed = Date.parse(value)
   return Number.isNaN(parsed) ? null : new Date(parsed).toISOString()
 }
 
-function extractPublishedAt(block = '') {
+function extractStructuredPublishedAt(block = '') {
+  // Only trust semantic publication markup. A random date in article copy may be
+  // a release/event date and must never become the article's publication date.
   const datetime = block.match(/<time\b[^>]*datetime=["']([^"']+)["'][^>]*>/i)?.[1]
-  if (datetime) return toIsoDate(decodeHtml(datetime))
-
-  const plain = stripTags(block)
-  const monthFirst = plain.match(new RegExp(`\\b(${MONTHS})\\s+\\d{1,2},\\s+20\\d{2}\\b`, 'i'))?.[0]
-  if (monthFirst) return toIsoDate(monthFirst)
-
-  const dayFirst = plain.match(new RegExp(`\\b\\d{1,2}\\s+(${MONTHS})\\s+20\\d{2}\\b`, 'i'))?.[0]
-  if (dayFirst) return toIsoDate(dayFirst)
-
-  const iso = plain.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0]
-  return toIsoDate(iso)
-}
-
-function parseFeed(xml = '') {
-  const blocks = xml.trim().match(XML_ITEM_REGEX) || xml.trim().match(XML_ENTRY_REGEX) || []
-  return blocks.map((block) => {
-    const title = stripTags(firstTag(block, ['title']))
-    const excerpt = stripTags(firstTag(block, ['description', 'summary', 'content']))
-    const href = extractFeedLink(block)
-    const published_at = toIsoDate(decodeHtml(firstTag(block, ['pubDate', 'published', 'updated'])))
-    if (!title || !href) return null
-    return { title, excerpt, href, published_at }
-  }).filter(Boolean)
-}
-
-async function fetchRssFeed(url) {
-  const response = await fetch(url, {
-    headers: {
-      'user-agent': 'dontripit-news-bot/3.0',
-      accept: 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
-    },
-    next: { revalidate: 600 },
-  })
-  if (!response.ok) throw new Error(`RSS fetch failed (${response.status}) for ${url}`)
-  return parseFeed(await response.text())
+  return datetime ? toIsoDate(decodeHtml(datetime)) : null
 }
 
 function absolutize(baseUrl, href = '') {
@@ -99,10 +60,17 @@ function uniqueByHref(items = []) {
   })
 }
 
+function isUsefulTitle(title = '') {
+  const normalized = String(title || '').trim().toLowerCase()
+  return normalized.length >= 8
+    && normalized.length <= 220
+    && !GENERIC_LINK_TITLES.has(normalized)
+}
+
 async function fetchOfficialHtmlNews(url, { hrefFilter }) {
   const response = await fetch(url, {
     headers: {
-      'user-agent': 'dontripit-news-bot/3.0',
+      'user-agent': 'dontripit-news-bot/3.1',
       accept: 'text/html,application/xhtml+xml',
     },
     next: { revalidate: 600 },
@@ -117,7 +85,7 @@ async function fetchOfficialHtmlNews(url, { hrefFilter }) {
     if (!hrefFilter(href)) return null
 
     const title = stripTags(match[2])
-    if (!title || title.length < 8 || title.length > 220) return null
+    if (!isUsefulTitle(title)) return null
 
     const index = match.index || 0
     const context = html.slice(Math.max(0, index - 700), Math.min(html.length, index + match[0].length + 1300))
@@ -127,8 +95,7 @@ async function fetchOfficialHtmlNews(url, { hrefFilter }) {
       title,
       href,
       excerpt: stripTags(paragraph?.[1] || ''),
-      // Never replace an unknown source date with the current date.
-      published_at: extractPublishedAt(context),
+      published_at: extractStructuredPublishedAt(context),
     }
   }).filter(Boolean))
 }
@@ -188,9 +155,6 @@ async function getMtgNews() {
 }
 
 async function getYugiohNews() {
-  // Europe is the first official regional feed for the MVP because Don’tRipIt is
-  // currently operating from Spain. Other official regions can be added without
-  // mixing their dates or product calendars into this stream.
   const entries = await fetchOfficialHtmlNews('https://www.yugioh-card.com/eu/category/news/', {
     hrefFilter: (href) => /yugioh-card\.com\/eu\//i.test(href)
       && !/\/(?:category|product|events?|privacy|contact|about)\/?(?:$|[?#])/i.test(href),
@@ -228,6 +192,6 @@ export async function getNewsByGame(game, limit = 6) {
 }
 
 export const __test__ = {
-  extractPublishedAt,
-  parseFeed,
+  extractStructuredPublishedAt,
+  isUsefulTitle,
 }
