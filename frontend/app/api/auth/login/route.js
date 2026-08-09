@@ -4,7 +4,11 @@ import { setSessionCookie } from '../../../../lib/auth/serverSession'
 
 export async function POST(request) {
   const body = await request.json().catch(() => ({}))
-  const upstream = await callInternalApi('/api/v2/auth/login', { method: 'POST', body })
+  const upstream = await callInternalApi('/api/v2/auth/login', {
+    method: 'POST',
+    body,
+    timeoutMs: 30000,
+  })
   if (!upstream.ok) {
     return NextResponse.json(
       upstream.payload || { error: 'login_failed', message: 'No pudimos iniciar sesión.' },
