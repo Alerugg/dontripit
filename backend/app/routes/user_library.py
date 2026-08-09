@@ -52,34 +52,98 @@ def _print_exists(session, print_id: int) -> bool:
     return session.execute(select(Print.id).where(Print.id == print_id)).scalar_one_or_none() is not None
 
 
+def _snapshot_payload(snapshot) -> dict:
+    low, mid, market, last, currency, as_of, source, raw_json = snapshot
+    source_name = str(source or "")
+    is_cardmarket = source_name.lower() == "cardmarket"
+
+    # Portfolio valuation is intentionally stricter than display pricing.
+    # Cardmarket's imported `price_mid` is the finish-safe conservative metric:
+    # LOWEX+ for non-foil and Foil Low (EX+) for foil. Other sources can still be
+    # shown, but are not mixed into the conservative EUR portfolio total.
+    conservative = mid if is_cardmarket else None
+    display_value = conservative
+    display_kind = "conservative" if conservative is not None else None
+    if display_value is None and market is not None:
+        display_value = market
+        display_kind = "trend"
+    if display_value is None and last is not None:
+        display_value = last
+        display_kind = "average"
+    if display_value is None and low is not None:
+        display_value = low
+        display_kind = "minimum"
+
+    finish = raw_json.get("finish") if isinstance(raw_json, dict) else None
+    return {
+        "value": float(display_value) if display_value is not None else None,
+        "valuation_value": float(conservative) if conservative is not None else None,
+        "minimum": float(low) if low is not None else None,
+        "conservative": float(conservative) if conservative is not None else None,
+        "trend": float(market) if market is not None else None,
+        "average": float(last) if last is not None else None,
+        "currency": currency,
+        "source": source_name,
+        "as_of": as_of.isoformat() if as_of else None,
+        "kind": display_kind,
+        "finish": finish,
+        "portfolio_method": "cardmarket_low_ex_plus_or_foil_low" if conservative is not None else None,
+    }
+
+
 def _latest_price(session, print_id: int) -> dict | None:
+    columns = (
+        PriceSnapshot.price_low,
+        PriceSnapshot.price_mid,
+        PriceSnapshot.price_market,
+        PriceSnapshot.price_last,
+        PriceSnapshot.currency,
+        PriceSnapshot.as_of,
+        PriceSource.name,
+        PriceSnapshot.raw_json,
+    )
+
+    # Prefer Cardmarket for the collector-facing valuation because its semantics
+    # are explicit and EUR-native. If unavailable, retain the newest other
+    # verified snapshot for display only, never for the conservative total.
     snapshot = session.execute(
-        select(
-            PriceSnapshot.price_market,
-            PriceSnapshot.price_last,
-            PriceSnapshot.currency,
-            PriceSnapshot.as_of,
-            PriceSource.name,
-        )
+        select(*columns)
         .join(PriceSource, PriceSource.id == PriceSnapshot.source_id)
         .where(
             PriceSnapshot.entity_type == "print",
             PriceSnapshot.entity_id == print_id,
-            or_(PriceSnapshot.price_market.is_not(None), PriceSnapshot.price_last.is_not(None)),
+            PriceSource.name == "cardmarket",
+            or_(
+                PriceSnapshot.price_low.is_not(None),
+                PriceSnapshot.price_mid.is_not(None),
+                PriceSnapshot.price_market.is_not(None),
+                PriceSnapshot.price_last.is_not(None),
+            ),
         )
         .order_by(PriceSnapshot.as_of.desc())
         .limit(1)
     ).first()
     if snapshot:
-        market, last, currency, as_of, source = snapshot
-        value = market if market is not None else last
-        return {
-            "value": float(value),
-            "currency": currency,
-            "source": source,
-            "as_of": as_of.isoformat() if as_of else None,
-            "kind": "market" if market is not None else "last",
-        }
+        return _snapshot_payload(snapshot)
+
+    snapshot = session.execute(
+        select(*columns)
+        .join(PriceSource, PriceSource.id == PriceSnapshot.source_id)
+        .where(
+            PriceSnapshot.entity_type == "print",
+            PriceSnapshot.entity_id == print_id,
+            or_(
+                PriceSnapshot.price_low.is_not(None),
+                PriceSnapshot.price_mid.is_not(None),
+                PriceSnapshot.price_market.is_not(None),
+                PriceSnapshot.price_last.is_not(None),
+            ),
+        )
+        .order_by(PriceSnapshot.as_of.desc())
+        .limit(1)
+    ).first()
+    if snapshot:
+        return _snapshot_payload(snapshot)
 
     observed = session.execute(
         select(Price.price, Price.currency, Price.captured_at, PriceSource.name)
@@ -92,10 +156,17 @@ def _latest_price(session, print_id: int) -> dict | None:
         value, currency, captured_at, source = observed
         return {
             "value": float(value),
+            "valuation_value": None,
+            "minimum": None,
+            "conservative": None,
+            "trend": None,
+            "average": None,
             "currency": currency,
             "source": source,
             "as_of": captured_at.isoformat() if captured_at else None,
             "kind": "observed",
+            "finish": None,
+            "portfolio_method": None,
         }
     return None
 
@@ -175,12 +246,24 @@ def get_collection():
         rows = _joined_rows(session, UserCollectionItem, user.id)
         items = [_collection_payload(session, *row) for row in rows]
         session.commit()
+
+    valued_items = [
+        item for item in items
+        if item.get("latest_price")
+        and item["latest_price"].get("currency") == "EUR"
+        and item["latest_price"].get("valuation_value") is not None
+    ]
     priced_value = sum(
-        (item["latest_price"]["value"] * item["quantity"])
-        for item in items
-        if item.get("latest_price") and item["latest_price"].get("currency") == "EUR"
+        item["latest_price"]["valuation_value"] * item["quantity"]
+        for item in valued_items
     )
-    return jsonify({"items": items, "count": len(items), "known_value_eur": round(priced_value, 2)})
+    return jsonify({
+        "items": items,
+        "count": len(items),
+        "known_value_eur": round(priced_value, 2),
+        "valuation_coverage_count": len(valued_items),
+        "valuation_method": "cardmarket_low_ex_plus_or_foil_low",
+    })
 
 
 @user_library_bp.post("/api/v2/me/collection")
