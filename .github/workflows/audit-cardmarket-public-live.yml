@@ -95,6 +95,8 @@ jobs:
 
       - name: Run read-only audit against Neon
         working-directory: backend
+        env:
+          PYTHONPATH: .
         run: |
           rm -rf /tmp/cardmarket-report
           python scripts/run_cardmarket_public_audit.py /tmp/cardmarket --output /tmp/cardmarket-report --min-samples 3
