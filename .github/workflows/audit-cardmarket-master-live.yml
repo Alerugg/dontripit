@@ -2,19 +2,6 @@ name: Audit Cardmarket Master Live
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cardmarket-live-master-audit-v1
-    paths:
-      - '.github/workflows/audit-cardmarket-master-live.yml'
-      - 'backend/app/jobs/cardmarket_catalog_audit.py'
-      - 'backend/app/jobs/cardmarket_expansion_crosswalk.py'
-      - 'backend/app/jobs/cardmarket_master_inventory.py'
-      - 'backend/app/jobs/cardmarket_set_bootstrap.py'
-      - 'backend/scripts/derive_cardmarket_expansion_crosswalk.py'
-      - 'backend/scripts/bootstrap_cardmarket_set_families.py'
-      - 'backend/scripts/audit_cardmarket_master_inventory.py'
-      - 'backend/tests/test_cardmarket_set_bootstrap.py'
 
 permissions:
   contents: read
