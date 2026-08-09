@@ -4,6 +4,7 @@ export const metadata = {
   title: 'Entrar · Don’tRipIt',
 }
 
-export default function LoginPage() {
-  return <AuthShell mode="login" />
+export default async function LoginPage({ searchParams }) {
+  const params = await searchParams
+  return <AuthShell mode="login" next={params?.next || '/dashboard'} />
 }
