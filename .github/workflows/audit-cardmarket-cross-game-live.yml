@@ -1,0 +1,52 @@
+name: Audit Cardmarket Cross-Game Live
+
+on:
+  push:
+    branches:
+      - cardmarket-cross-game-audit-v1
+    paths:
+      - 'backend/scripts/audit_cardmarket_cross_game_mappings.py'
+      - '.github/workflows/audit-cardmarket-cross-game-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-game-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download official Cardmarket Product Lists
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket-products
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json -o /tmp/cardmarket-products/products_magic.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json -o /tmp/cardmarket-products/products_pokemon.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json -o /tmp/cardmarket-products/products_yugioh.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json -o /tmp/cardmarket-products/products_onepiece.json
+      - name: Audit existing mappings against current Product Lists
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/audit_cardmarket_cross_game_mappings.py /tmp/cardmarket-products --output /tmp/cardmarket-cross-game.json
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-cross-game-audit
+          path: /tmp/cardmarket-cross-game.json
+          if-no-files-found: error
+          retention-days: 30
