@@ -36,6 +36,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dontripit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,6 +80,34 @@ jobs:
           echo "$heads"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -q '20260809_28'
+
+      - name: Run full Alembic chain on PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/dontripit_test
+        run: |
+          set -euo pipefail
+          alembic upgrade head
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect, text
+
+          engine = create_engine(os.environ['DATABASE_URL'])
+          with engine.connect() as connection:
+              version = connection.execute(text('select version_num from alembic_version')).scalar_one()
+          assert version == '20260809_28', version
+
+          tables = set(inspect(engine).get_table_names())
+          required = {
+              'external_catalog_products',
+              'external_catalog_print_links',
+              'external_catalog_product_variant_links',
+              'external_market_price_snapshots',
+          }
+          missing = sorted(required - tables)
+          assert not missing, f'missing external market tables: {missing}'
+          print({'alembic_version': version, 'external_tables': sorted(required)})
+          PY
 
       - name: Run external catalog and price identity tests
         working-directory: backend
