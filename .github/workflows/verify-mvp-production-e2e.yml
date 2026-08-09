@@ -1,0 +1,174 @@
+name: Verify MVP Production E2E
+
+on:
+  push:
+    branches:
+      - mvp-launch-2026-08-09
+    paths:
+      - '.github/workflows/verify-mvp-production-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-mvp-production-e2e
+  cancel-in-progress: true
+
+jobs:
+  production-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BASE_URL: https://dontripit.com
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Prepare disposable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          EMAIL="mvp-prod-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.invalid"
+          PASSWORD="Smoke-${GITHUB_RUN_ID}-$(openssl rand -hex 12)Aa!"
+          echo "SMOKE_EMAIL=${EMAIL}" >> "$GITHUB_ENV"
+          echo "SMOKE_PASSWORD=${PASSWORD}" >> "$GITHUB_ENV"
+          echo "COOKIE_JAR=/tmp/dri-cookies.txt" >> "$GITHUB_ENV"
+
+      - name: Verify public landing and account gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOME_CODE=$(curl -sS -L -o /tmp/home.html -w '%{http_code}' "${BASE_URL}/")
+          test "$HOME_CODE" = "200"
+          grep -qi "Don.tRipIt" /tmp/home.html
+
+          GATE_CODE=$(curl -sS -o /tmp/gate.html -D /tmp/gate.headers -w '%{http_code}' "${BASE_URL}/games/onepiece")
+          case "$GATE_CODE" in
+            301|302|303|307|308) ;;
+            *) echo "Expected account redirect, got HTTP ${GATE_CODE}"; cat /tmp/gate.headers; exit 1 ;;
+          esac
+          grep -qi '^location:.*\/register' /tmp/gate.headers
+          echo "Public landing + account gate PASS"
+
+      - name: Register and resolve session
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/register.json <<JSON
+          {"name":"MVP Production Smoke","email":"${SMOKE_EMAIL}","password":"${SMOKE_PASSWORD}","terms_accepted":true,"marketing_consent":false}
+          JSON
+
+          REGISTER_CODE=$(curl -sS -c "$COOKIE_JAR" -o /tmp/register-response.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/register.json \
+            "${BASE_URL}/api/auth/register")
+          test "$REGISTER_CODE" = "201" || { cat /tmp/register-response.json; exit 1; }
+          grep -q 'dri_session' "$COOKIE_JAR"
+
+          ME_CODE=$(curl -sS -b "$COOKIE_JAR" -o /tmp/me.json -w '%{http_code}' "${BASE_URL}/api/auth/me")
+          test "$ME_CODE" = "200" || { cat /tmp/me.json; exit 1; }
+          python - <<'PY'
+          import json, os
+          payload=json.load(open('/tmp/me.json'))
+          assert payload['user']['email'] == os.environ['SMOKE_EMAIL']
+          assert payload['user']['name'] == 'MVP Production Smoke'
+          PY
+          echo "Registration + HttpOnly session PASS"
+
+      - name: Verify authenticated app and exact One Piece search
+        shell: bash
+        run: |
+          set -euo pipefail
+          GAME_CODE=$(curl -sS -L -b "$COOKIE_JAR" -o /tmp/game.html -w '%{http_code}' "${BASE_URL}/games/onepiece")
+          test "$GAME_CODE" = "200"
+          grep -qi 'One Piece' /tmp/game.html
+
+          SEARCH_CODE=$(curl -sS -b "$COOKIE_JAR" -o /tmp/search.json -w '%{http_code}' \
+            "${BASE_URL}/api/search-v2?q=OP05-119&game=onepiece&limit=24")
+          test "$SEARCH_CODE" = "200" || { cat /tmp/search.json; exit 1; }
+          python - <<'PY'
+          import json
+          payload=json.load(open('/tmp/search.json'))
+          items=payload.get('items') or []
+          assert len(items) == 9, f"Expected 9 OP05-119 physical editions, got {len(items)}"
+          assert all(item.get('type') == 'print' for item in items)
+          ids=[int(item['print_id']) for item in items]
+          assert len(ids) == len(set(ids)) == 9
+          open('/tmp/print_id','w').write(str(ids[0]))
+          PY
+          echo "OP05-119 exact physical search 9/9 PASS"
+
+      - name: Verify collection and wishlist round trip
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRINT_ID=$(cat /tmp/print_id)
+
+          COLLECTION_CODE=$(curl -sS -b "$COOKIE_JAR" -o /tmp/add-collection.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "{\"print_id\":${PRINT_ID},\"quantity\":2}" \
+            "${BASE_URL}/api/library/collection")
+          test "$COLLECTION_CODE" = "200" || { cat /tmp/add-collection.json; exit 1; }
+
+          WISHLIST_CODE=$(curl -sS -b "$COOKIE_JAR" -o /tmp/add-wishlist.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "{\"print_id\":${PRINT_ID},\"priority\":1}" \
+            "${BASE_URL}/api/library/wishlist")
+          test "$WISHLIST_CODE" = "200" || { cat /tmp/add-wishlist.json; exit 1; }
+
+          curl -sS -b "$COOKIE_JAR" "${BASE_URL}/api/library/collection" -o /tmp/collection.json
+          curl -sS -b "$COOKIE_JAR" "${BASE_URL}/api/library/wishlist" -o /tmp/wishlist.json
+          python - <<'PY'
+          import json
+          print_id=int(open('/tmp/print_id').read())
+          own=json.load(open('/tmp/collection.json'))
+          wish=json.load(open('/tmp/wishlist.json'))
+          assert own.get('count') == 1
+          assert own['items'][0]['print']['id'] == print_id
+          assert own['items'][0]['quantity'] == 2
+          assert wish.get('count') == 1
+          assert wish['items'][0]['print']['id'] == print_id
+          PY
+
+          PRINT_CODE=$(curl -sS -L -b "$COOKIE_JAR" -o /tmp/print.html -w '%{http_code}' "${BASE_URL}/prints/${PRINT_ID}")
+          test "$PRINT_CODE" = "200"
+          echo "Collection + wishlist + exact print detail PASS"
+
+      - name: Verify logout invalidates browser session
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOGOUT_CODE=$(curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST -o /tmp/logout.json -w '%{http_code}' "${BASE_URL}/api/auth/logout")
+          test "$LOGOUT_CODE" = "200"
+          ME_CODE=$(curl -sS -b "$COOKIE_JAR" -o /tmp/me-after.json -w '%{http_code}' "${BASE_URL}/api/auth/me")
+          test "$ME_CODE" = "401" || { cat /tmp/me-after.json; exit 1; }
+          echo "Logout invalidation PASS"
+
+      - name: Install cleanup driver
+        if: always()
+        run: python -m pip install --quiet 'sqlalchemy>=2.0,<3' psycopg2-binary
+
+      - name: Delete disposable smoke account
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SMOKE_EMAIL:-}"
+          test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgres://'):
+              url='postgresql://' + url[len('postgres://'):]
+          engine=create_engine(url, pool_pre_ping=True)
+          email=os.environ['SMOKE_EMAIL']
+          with engine.begin() as conn:
+              before=int(conn.execute(text('SELECT COUNT(*) FROM users WHERE email=:email'), {'email': email}).scalar_one())
+              conn.execute(text('DELETE FROM users WHERE email=:email'), {'email': email})
+              after=int(conn.execute(text('SELECT COUNT(*) FROM users WHERE email=:email'), {'email': email}).scalar_one())
+          if after != 0:
+              raise SystemExit(f'Failed to delete smoke account {email}')
+          print(f'Disposable account cleanup PASS (found={before}, remaining={after})')
+          PY
