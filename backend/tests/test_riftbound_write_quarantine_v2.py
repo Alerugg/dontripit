@@ -7,6 +7,7 @@ from app.ingest.registry import WRITE_QUARANTINED_CONNECTORS, get_connector, is_
 from app.jobs import schedule
 
 
+# Re-run marker: production traffic moved from Railway to Vercel on 2026-08-09.
 def test_riftbound_generic_writer_is_quarantined():
     assert is_connector_write_quarantined("riftbound") is True
     assert "riftbound" in WRITE_QUARANTINED_CONNECTORS
