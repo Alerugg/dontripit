@@ -1,0 +1,164 @@
+name: Apply MTG Direct Cardmarket Links
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-mtg-cardmarket-direct-links.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-mtg-cardmarket-direct-links
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Preflight and apply only structurally unambiguous Scryfall cardmarket_id links
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import execute_values, Json
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url); conn.autocommit=False
+          try:
+            with conn.cursor() as cur:
+              cur.execute("SELECT id FROM games WHERE slug='mtg' LIMIT 1")
+              game_id=int(cur.fetchone()[0])
+              cur.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'")
+              latest_seen=cur.fetchone()[0]
+              cur.execute('''
+                SELECT p.id,p.scryfall_id,p.variant,p.language,p.collector_number,
+                       s.code,c.id,c.name,pa.attributes_json->>'cardmarket_id',cm.id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id AND c.game_id=%s
+                JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='scryfall'
+                LEFT JOIN external_catalog_products cm
+                  ON cm.source='cardmarket' AND cm.game_id=%s AND cm.product_group='single'
+                 AND cm.last_seen_at=%s AND cm.external_id=pa.attributes_json->>'cardmarket_id'
+                WHERE pa.attributes_json ? 'cardmarket_id'
+                  AND pa.attributes_json->>'cardmarket_id' IS NOT NULL
+                  AND pa.attributes_json->>'cardmarket_id' <> ''
+              ''',(game_id,game_id,latest_seen))
+              groups=defaultdict(list)
+              for row in cur.fetchall():
+                print_id,scryfall_id,variant,language,collector,set_code,card_id,card_name,cmid,external_product_id=row
+                groups[str(cmid)].append({
+                  'print_id':int(print_id),'scryfall_id':str(scryfall_id),'variant':str(variant),
+                  'language':str(language),'collector_number':str(collector),'set_code':str(set_code),
+                  'card_id':int(card_id),'card_name':str(card_name),'external_product_id':external_product_id,
+                })
+
+              safe=[]; conflicts=[]; absent=[]
+              for cmid,items in groups.items():
+                external_ids={int(x['external_product_id']) for x in items if x['external_product_id'] is not None}
+                signatures={(x['set_code'],x['collector_number'],x['card_id']) for x in items}
+                if not external_ids:
+                  absent.append(cmid); continue
+                if len(external_ids)!=1 or len(signatures)!=1:
+                  conflicts.append(cmid); continue
+                ext_id=next(iter(external_ids))
+                safe.append((cmid,ext_id,items))
+
+              # Any pre-existing accepted link outside the exact expected set is a hard blocker.
+              expected_by_external={ext:{x['print_id'] for x in items} for _,ext,items in safe}
+              if expected_by_external:
+                cur.execute('''
+                  SELECT l.external_product_id,l.print_id
+                  FROM external_catalog_print_links l
+                  WHERE l.external_product_id=ANY(%s)
+                    AND l.link_status IN ('accepted','mapped','exact')
+                ''',(list(expected_by_external),))
+                unexpected=[]
+                for ext,pid in cur.fetchall():
+                  if int(pid) not in expected_by_external.get(int(ext),set()):
+                    unexpected.append((int(ext),int(pid)))
+                if unexpected:
+                  raise AssertionError(f'Unexpected pre-existing accepted MTG Cardmarket links: {unexpected[:20]}')
+
+              rows=[]
+              for cmid,ext,items in safe:
+                signature=[items[0]['set_code'],items[0]['collector_number'],items[0]['card_id']]
+                for item in items:
+                  evidence={
+                    'source':'scryfall',
+                    'source_field':'cardmarket_id',
+                    'cardmarket_id':cmid,
+                    'scryfall_id':item['scryfall_id'],
+                    'canonical_signature':signature,
+                    'language':item['language'],
+                    'finish':item['variant'],
+                  }
+                  rows.append((ext,item['print_id'],'scryfall_cardmarket_id','exact','accepted',False,Json(evidence)))
+              execute_values(cur,'''
+                INSERT INTO external_catalog_print_links
+                  (external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence)
+                VALUES %s
+                ON CONFLICT (external_product_id,print_id) DO UPDATE SET
+                  mapping_method=EXCLUDED.mapping_method,
+                  confidence=EXCLUDED.confidence,
+                  link_status=EXCLUDED.link_status,
+                  evidence=EXCLUDED.evidence,
+                  updated_at=now()
+              ''',rows,page_size=2000)
+
+              cur.execute('''
+                SELECT count(*),count(DISTINCT l.external_product_id)
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                  AND l.mapping_method='scryfall_cardmarket_id' AND l.link_status='accepted'
+              ''',(game_id,))
+              applied_links,applied_products=map(int,cur.fetchone())
+              expected_links=sum(len(items) for _,_,items in safe)
+              if applied_links!=expected_links or applied_products!=len(safe):
+                raise AssertionError(f'Postcondition mismatch links={applied_links}/{expected_links} products={applied_products}/{len(safe)}')
+              report={
+                'mode':'apply','game':'mtg','mapping_method':'scryfall_cardmarket_id',
+                'source_distinct_cardmarket_ids':len(groups),
+                'safe_products':len(safe),'safe_print_links':expected_links,
+                'conflicting_products_quarantined':len(conflicts),
+                'absent_current_products_quarantined':len(absent),
+                'applied_products':applied_products,'applied_print_links':applied_links,
+                'conflict_samples':conflicts[:50],'absent_samples':absent[:50],
+              }
+            conn.commit()
+          except Exception:
+            conn.rollback(); raise
+          finally:
+            conn.close()
+          Path('/tmp/mtg-cardmarket-links-apply.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-cardmarket-links-apply-${{ github.run_id }}
+          path: /tmp/mtg-cardmarket-links-apply.json
+          retention-days: 90
+          if-no-files-found: warn
