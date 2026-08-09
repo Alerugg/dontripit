@@ -239,16 +239,16 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
             decisions.append(AuditDecision(**base, status="set_not_unique_or_missing"))
             continue
         set_id, canonical_set_code = resolved_set
+        resolved_base = {**base, "set_code": canonical_set_code}
         candidates = [item for item in prints_for_set(set_id) if item["name_key"] == normalize_name(product.name)]
         distinct_print_ids = sorted({item["print_id"] for item in candidates})
 
         if not distinct_print_ids:
-            decisions.append(AuditDecision(**base, set_code=canonical_set_code, status="name_no_match"))
+            decisions.append(AuditDecision(**resolved_base, status="name_no_match"))
             continue
         if len(distinct_print_ids) > 1:
             decisions.append(AuditDecision(
-                **base,
-                set_code=canonical_set_code,
+                **resolved_base,
                 status="physical_ambiguity",
                 evidence={
                     "candidate_count": len(distinct_print_ids),
@@ -262,10 +262,10 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
         existing_for_product = external_to_prints.get(product.product_id, set())
         existing_for_print = print_to_externals.get(print_id, set())
         if existing_for_product and existing_for_product != {print_id}:
-            decisions.append(AuditDecision(**base, set_code=canonical_set_code, status="external_id_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"mapped_print_ids": sorted(existing_for_product)}))
+            decisions.append(AuditDecision(**resolved_base, status="external_id_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"mapped_print_ids": sorted(existing_for_product)}))
             continue
         if existing_for_print and existing_for_print != {product.product_id}:
-            decisions.append(AuditDecision(**base, set_code=canonical_set_code, status="print_identifier_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"existing_external_ids": sorted(existing_for_print)}))
+            decisions.append(AuditDecision(**resolved_base, status="print_identifier_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"existing_external_ids": sorted(existing_for_print)}))
             continue
         if existing_for_product == {print_id}:
             status = "already_mapped"
@@ -273,8 +273,7 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
             status = "exact_candidate_review_required"
 
         decisions.append(AuditDecision(
-            **base,
-            set_code=canonical_set_code,
+            **resolved_base,
             status=status,
             print_id=print_id,
             card_id=candidate["card_id"],
