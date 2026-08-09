@@ -11,7 +11,7 @@ from typing import Iterable
 
 from sqlalchemy import select
 
-from app.models import PriceSnapshot, PriceSource, Print, PrintIdentifier
+from app.models import Card, Game, PriceSnapshot, PriceSource, Print, PrintIdentifier
 
 
 CARDMARKET_SOURCE = "cardmarket"
@@ -44,18 +44,22 @@ class ImportPlan:
     mapped_exact: int
     unmapped: int
     ambiguous: int
+    cross_game_mappings: int
     duplicate_feed_rows: int
     missing_finish_prices: int
+    game_slug: str | None
     snapshots: tuple[dict, ...]
 
     def summary(self) -> dict:
         return {
             "as_of": self.as_of.isoformat(),
+            "game": self.game_slug,
             "total_rows": self.total_rows,
             "unique_products": self.unique_products,
             "mapped_exact": self.mapped_exact,
             "unmapped": self.unmapped,
             "ambiguous": self.ambiguous,
+            "cross_game_mappings": self.cross_game_mappings,
             "duplicate_feed_rows": self.duplicate_feed_rows,
             "missing_finish_prices": self.missing_finish_prices,
             "snapshot_count": len(self.snapshots),
@@ -127,12 +131,7 @@ def _parse_created_at(value) -> datetime | None:
 
 
 def load_price_guide_bytes(content: bytes, *, filename: str = "") -> tuple[datetime | None, list[CardmarketPriceRow]]:
-    """Parse current Cardmarket JSON exports and legacy CSV exports.
-
-    Cardmarket's downloadable files have changed shape over time. We accept the
-    current JSON object (``priceGuides`` + ``createdAt``), a bare JSON array,
-    and the documented legacy CSV column names. Unknown columns are ignored.
-    """
+    """Parse current Cardmarket JSON exports and legacy CSV exports."""
     stripped = content.lstrip()
     rows: list[CardmarketPriceRow] = []
     created_at: datetime | None = None
@@ -171,7 +170,7 @@ def load_price_guide_file(path: str | Path) -> tuple[datetime | None, list[Cardm
     return load_price_guide_bytes(source.read_bytes(), filename=source.name)
 
 
-def _snapshot_payload(row: CardmarketPriceRow, *, print_id: int, is_foil: bool) -> dict | None:
+def _snapshot_payload(row: CardmarketPriceRow, *, print_id: int, is_foil: bool, feed_game: str | None = None) -> dict | None:
     if is_foil:
         low = row.foil_low
         safe_low = row.foil_low
@@ -193,6 +192,7 @@ def _snapshot_payload(row: CardmarketPriceRow, *, print_id: int, is_foil: bool) 
     compact = {
         "idProduct": row.product_id,
         "finish": finish,
+        "feed_game": feed_game,
         "low_ex_plus": str(safe_low) if safe_low is not None else None,
         "avg1": str(avg1) if avg1 is not None else None,
         "avg7": str(avg7) if avg7 is not None else None,
@@ -213,11 +213,18 @@ def _snapshot_payload(row: CardmarketPriceRow, *, print_id: int, is_foil: bool) 
     }
 
 
-def build_import_plan(session, rows: Iterable[CardmarketPriceRow], *, as_of: datetime | None = None) -> ImportPlan:
+def build_import_plan(
+    session,
+    rows: Iterable[CardmarketPriceRow],
+    *,
+    as_of: datetime | None = None,
+    game_slug: str | None = None,
+) -> ImportPlan:
     as_of = as_of or datetime.now(timezone.utc)
     if as_of.tzinfo is None:
         as_of = as_of.replace(tzinfo=timezone.utc)
     as_of = as_of.astimezone(timezone.utc)
+    game_slug = str(game_slug or "").strip().lower() or None
 
     rows = list(rows)
     by_product: dict[str, CardmarketPriceRow] = {}
@@ -229,26 +236,36 @@ def build_import_plan(session, rows: Iterable[CardmarketPriceRow], *, as_of: dat
         by_product[row.product_id] = row
 
     identifiers = session.execute(
-        select(PrintIdentifier.external_id, Print.id, Print.is_foil)
+        select(PrintIdentifier.external_id, Print.id, Print.is_foil, Game.slug)
         .join(Print, Print.id == PrintIdentifier.print_id)
+        .join(Card, Card.id == Print.card_id)
+        .join(Game, Game.id == Card.game_id)
         .where(PrintIdentifier.source == CARDMARKET_SOURCE)
     ).all()
-    mapped: dict[str, list[tuple[int, bool]]] = {}
-    for external_id, print_id, is_foil in identifiers:
-        mapped.setdefault(str(external_id), []).append((int(print_id), bool(is_foil)))
+    mapped: dict[str, list[tuple[int, bool, str]]] = {}
+    for external_id, print_id, is_foil, mapped_game in identifiers:
+        mapped.setdefault(str(external_id), []).append((int(print_id), bool(is_foil), str(mapped_game)))
 
     snapshots: list[dict] = []
-    exact = unmapped = ambiguous = missing_finish = 0
+    exact = unmapped = ambiguous = cross_game = missing_finish = 0
     for product_id, row in by_product.items():
-        candidates = mapped.get(product_id, [])
+        all_candidates = mapped.get(product_id, [])
+        if game_slug:
+            candidates = [candidate for candidate in all_candidates if candidate[2] == game_slug]
+            if all_candidates and not candidates:
+                cross_game += 1
+                continue
+        else:
+            candidates = all_candidates
+
         if not candidates:
             unmapped += 1
             continue
         if len(candidates) != 1:
             ambiguous += 1
             continue
-        print_id, is_foil = candidates[0]
-        payload = _snapshot_payload(row, print_id=print_id, is_foil=is_foil)
+        print_id, is_foil, mapped_game = candidates[0]
+        payload = _snapshot_payload(row, print_id=print_id, is_foil=is_foil, feed_game=game_slug or mapped_game)
         if payload is None:
             missing_finish += 1
             continue
@@ -262,14 +279,18 @@ def build_import_plan(session, rows: Iterable[CardmarketPriceRow], *, as_of: dat
         mapped_exact=exact,
         unmapped=unmapped,
         ambiguous=ambiguous,
+        cross_game_mappings=cross_game,
         duplicate_feed_rows=duplicates,
         missing_finish_prices=missing_finish,
+        game_slug=game_slug,
         snapshots=tuple(snapshots),
     )
 
 
 def apply_import_plan(session, plan: ImportPlan) -> dict:
     """Idempotently upsert a preflighted exact-only plan into PriceSnapshot."""
+    if plan.cross_game_mappings:
+        raise ValueError("Refusing Cardmarket import plan with cross-game mappings")
     source = session.execute(select(PriceSource).where(PriceSource.name == CARDMARKET_SOURCE)).scalar_one_or_none()
     if source is None:
         source = PriceSource(
