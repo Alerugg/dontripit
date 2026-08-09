@@ -9,7 +9,7 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('Pokémon game route uses the shared redesigned hub without losing Search V2', () => {
+test('Pokémon game route uses the shared search-first hub without losing Search V2', () => {
   const page = source('app/games/[slug]/page.js')
   const hub = source('components/games/GameHubPage.js')
 
@@ -19,15 +19,16 @@ test('Pokémon game route uses the shared redesigned hub without losing Search V
   assert.match(hub, /OnePieceSearchV2Experience/)
   assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
   assert.match(hub, /pokemon:/)
-  assert.match(hub, /Pikachu/)
+  assert.match(hub, /Busca una carta sin perderte en el catálogo/)
+  assert.doesNotMatch(hub, /dri-hub-card-stack/)
 })
 
-test('shared Search V2 experience exposes Pokémon-native examples', () => {
+test('shared Search V2 experience exposes concise Pokémon-native examples', () => {
   const experience = source('components/searchV2/OnePieceSearchV2Experience.js')
   assert.match(experience, /pokemon:/)
   assert.match(experience, /Pikachu/)
   assert.match(experience, /Charizard/)
-  assert.match(experience, /Special Illustration Rare/)
+  assert.match(experience, /151/)
 })
 
 test('Pokémon quick filters are game-specific and source-backed', () => {
@@ -36,6 +37,7 @@ test('Pokémon quick filters are game-specific and source-backed', () => {
     assert.ok(panel.includes(`'${key}'`), `missing Pokémon quick filter ${key}`)
   }
   assert.match(panel, /QUICK_FILTER_KEYS_BY_GAME/)
+  assert.match(panel, /Afinar búsqueda/)
 })
 
 test('exact Pokémon print cards surface physical identity badges', () => {
