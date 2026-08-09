@@ -1,0 +1,112 @@
+name: Refresh One Piece and Yu-Gi-Oh Canonical V2
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-onepiece-yugioh-canonical-v2
+  cancel-in-progress: false
+
+jobs:
+  onepiece:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_SOURCE: remote
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Incrementally refresh canonical Bandai source with transient retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if python -m app.ingest.run onepiece --fixture false --incremental true; then ok=1; break; fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 20)); fi
+          done
+          test "$ok" -eq 1
+      - name: Prove Bandai current source is fully covered after refresh
+        run: |
+          python - <<'PY'
+          import json,os
+          from sqlalchemy import create_engine,text
+          from app.ingest.connectors.onepiece_v2 import OnePieceV2Connector
+          payload=OnePieceV2Connector()._load_official_cardlist_remote(limit=None)
+          src_cards={str(c['id']) for c in payload['cards']}
+          src_sets={str(s['code']).lower() for s in payload['sets']}
+          src_prints={(str(p['set_code']).lower(),str(p['collector_number']).upper(),'en',str(p.get('variant') or 'default').lower()) for c in payload['cards'] for p in c.get('prints',[])}
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+            gid=conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
+            db_cards={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
+            db_sets={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
+            db_prints={(str(a).lower(),str(b).upper(),str(c or '').lower(),str(d or 'default').lower()) for a,b,c,d in conn.execute(text('''SELECT s.code,p.collector_number,p.language,p.variant FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE c.game_id=:g'''),{'g':gid}).all()}
+          proof={'source_cards':len(src_cards),'source_sets':len(src_sets),'source_prints':len(src_prints),'missing_cards':len(src_cards-db_cards),'missing_sets':len(src_sets-db_sets),'missing_prints':len(src_prints-db_prints),'physical_conflicts':len((payload.get('diagnostics') or {}).get('physical_identity_conflicts') or [])}
+          if proof['missing_cards'] or proof['missing_sets'] or proof['missing_prints'] or proof['physical_conflicts']: raise AssertionError(proof)
+          print(json.dumps(proof,indent=2,sort_keys=True))
+          PY
+
+  yugioh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Incrementally refresh current Yu-Gi-Oh V2 source
+        run: python -m app.ingest.run ygoprodeck_yugioh --fixture false --incremental true
+      - name: Build fresh canonical source and prove current coverage
+        run: |
+          rm -rf /tmp/ygo-current
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+          root=Path('/tmp/ygo-current')
+          def vals(file,key):
+            return {str(json.loads(x)[key]) for x in (root/file).read_text().splitlines() if x.strip()}
+          sc=vals('cards.jsonl','card_key'); ss={x.lower() for x in vals('sets.jsonl','code')}; sp=vals('prints.jsonl','print_key')
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+            gid=conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+            dc={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
+            ds={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
+            dp={str(v) for v in conn.execute(text('''SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=:g AND p.print_key IS NOT NULL'''),{'g':gid}).scalars()}
+          proof={'source_cards':len(sc),'source_sets':len(ss),'source_prints':len(sp),'missing_cards':len(sc-dc),'missing_sets':len(ss-ds),'missing_prints':len(sp-dp)}
+          if any(proof[k] for k in ('missing_cards','missing_sets','missing_prints')): raise AssertionError(proof)
+          print(json.dumps(proof,indent=2,sort_keys=True))
+          PY
