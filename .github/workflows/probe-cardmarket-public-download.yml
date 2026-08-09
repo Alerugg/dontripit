@@ -1,0 +1,43 @@
+name: Probe Cardmarket Public Download
+
+on:
+  push:
+    branches:
+      - cardmarket-pricing-v1
+    paths:
+      - '.github/workflows/probe-cardmarket-public-download.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe one official Cardmarket price-guide page
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://www.cardmarket.com/en/Pokemon/Data/Price-Guide'
+          CODE=$(curl -L -A 'Mozilla/5.0 (compatible; Dontripit/1.0; +https://dontripit.com)' \
+            --max-time 30 -sS -o /tmp/cardmarket.html -w '%{http_code}' "$URL" || true)
+          echo "HTTP=${CODE} bytes=$(wc -c </tmp/cardmarket.html 2>/dev/null || echo 0)"
+          if [ "$CODE" != "200" ]; then
+            echo 'Official page did not permit this automated probe; no retry/flood.'
+            exit 0
+          fi
+          python - <<'PY'
+          import html, re
+          text=open('/tmp/cardmarket.html', encoding='utf-8', errors='ignore').read()
+          hrefs=[]
+          for raw in re.findall(r'href=["\']([^"\']+)', text, flags=re.I):
+              href=html.unescape(raw)
+              low=href.lower()
+              if any(token in low for token in ('price_guide', 'price-guide', '.json', '.csv', 'download')):
+                  hrefs.append(href)
+          for href in dict.fromkeys(hrefs):
+              print(href)
+          print(f'candidate_links={len(dict.fromkeys(hrefs))}')
+          PY
