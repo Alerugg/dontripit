@@ -1,13 +1,23 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useMemo, useState } from 'react'
 import BrandMark from '../brand/BrandMark'
+
+function safeNext(value) {
+  const target = String(value || '').trim()
+  if (!target.startsWith('/') || target.startsWith('//')) return '/dashboard'
+  if (target.startsWith('/login') || target.startsWith('/register')) return '/dashboard'
+  return target
+}
 
 export default function AuthShell({ mode = 'register' }) {
   const register = mode === 'register'
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const nextPath = useMemo(() => safeNext(searchParams.get('next')), [searchParams])
+  const switchHref = `${register ? '/login' : '/register'}${nextPath !== '/dashboard' ? `?next=${encodeURIComponent(nextPath)}` : ''}`
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -38,7 +48,7 @@ export default function AuthShell({ mode = 'register' }) {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.message || 'No pudimos completar el acceso. Inténtalo de nuevo.')
-      router.push('/dashboard')
+      router.replace(nextPath)
       router.refresh()
     } catch (requestError) {
       setError(requestError.message)
@@ -117,7 +127,7 @@ export default function AuthShell({ mode = 'register' }) {
 
           <p className="dri-auth-switch">
             {register ? '¿Ya tienes una cuenta?' : '¿Aún no tienes cuenta?'}{' '}
-            <Link href={register ? '/login' : '/register'}>{register ? 'Entrar' : 'Crear cuenta gratis'}</Link>
+            <Link href={switchHref}>{register ? 'Entrar' : 'Crear cuenta gratis'}</Link>
           </p>
         </div>
       </section>
