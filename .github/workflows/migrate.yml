@@ -1,14 +1,19 @@
-name: Neon Migrations
+name: Neon Migrations (Manual Production)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neon-production-migrations
+  cancel-in-progress: false
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: backend
@@ -16,25 +21,20 @@ jobs:
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
     steps:
-      - name: Checkout repository
+      - name: Checkout production branch
         uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      
-      - name: Debug env (no secrets)
-        run: |
-          python - <<'PY'
-          import os
-          print("DATABASE_URL_UNPOOLED set?", bool(os.getenv("DATABASE_URL_UNPOOLED")))
-          print("DATABASE_URL set?", bool(os.getenv("DATABASE_URL")))
-          PY
+        run: python -m pip install -r requirements.txt
 
       - name: Run Alembic migrations
         run: alembic upgrade head
