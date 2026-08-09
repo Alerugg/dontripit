@@ -63,7 +63,21 @@ jobs:
         env:
           DATABASE_URL: sqlite:////tmp/dri-tests.db
           API_KEY_REQUIRED: 'false'
-        run: pytest -q
+        shell: bash
+        run: |
+          set +e
+          pytest -q --tb=short > pytest-output.txt 2>&1
+          STATUS=$?
+          cat pytest-output.txt
+          exit $STATUS
+      - name: Upload pytest failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-failure
+          path: backend/pytest-output.txt
+          if-no-files-found: error
+          retention-days: 1
 
   frontend:
     runs-on: ubuntu-latest
