@@ -1,0 +1,86 @@
+name: Audit One Piece Official Set Release Aliases
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-official-set-release-aliases.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Extract official Bandai release labels by canonical set code
+        run: |
+          python - <<'PY'
+          import json
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          from app.ingest.connectors.onepiece_v2 import OnePieceV2Connector
+
+          payload=OnePieceV2Connector()._load_official_cardlist_remote(limit=None)
+          release_by_id={str(r['external_id']):r for r in payload.get('releases') or []}
+          by_set=defaultdict(lambda: {'prints':0,'release_appearances':Counter(),'source_examples':[]})
+          for card in payload.get('cards') or []:
+              for p in card.get('prints') or []:
+                  code=str(p.get('set_code') or '').strip().upper()
+                  if not code: continue
+                  rec=by_set[code]; rec['prints']+=1
+                  for appearance in p.get('release_appearances') or []:
+                      rid=str(appearance['release_external_id'])
+                      name=str(appearance.get('release_name') or release_by_id.get(rid,{}).get('name') or '')
+                      rec['release_appearances'][(rid,name)]+=1
+                  if len(rec['source_examples'])<5:
+                      rec['source_examples'].append({
+                        'collector_number':p.get('collector_number'),'variant':p.get('variant'),
+                        'card_name':card.get('name'),
+                        'release_names':[x.get('release_name') for x in p.get('release_appearances') or []][:10],
+                      })
+          official_sets={str(s['code']).upper():s for s in payload.get('sets') or []}
+          result={}
+          for code,rec in sorted(by_set.items()):
+              releases=[
+                {'release_external_id':rid,'name':name,'appearances':count}
+                for (rid,name),count in rec['release_appearances'].most_common()
+              ]
+              result[code]={
+                'canonical_set':official_sets.get(code),
+                'print_count':rec['prints'],
+                'official_release_aliases':releases,
+                'source_examples':rec['source_examples'],
+              }
+          report={
+            'mode':'read_only','source':'Bandai official via OnePieceV2Connector',
+            'canonical_sets':len(result),'official_releases':len(release_by_id),
+            'sets':result,
+          }
+          Path('/tmp/onepiece-official-set-release-aliases.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({
+            'canonical_sets':len(result),'official_releases':len(release_by_id),
+            'preview':{k:{'canonical_set':v['canonical_set'],'aliases':v['official_release_aliases'][:5]} for k,v in list(result.items())[:20]}
+          },indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-official-set-release-aliases-${{ github.run_id }}
+          path: /tmp/onepiece-official-set-release-aliases.json
+          retention-days: 30
+          if-no-files-found: error
