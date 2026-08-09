@@ -26,6 +26,7 @@ class ProductListRow:
     category: str
     expansion_id: str
     date_added: str | None = None
+    metacard_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,28 @@ def normalize_name(value: str) -> str:
     return text
 
 
+def normalize_collector(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC", str(value or "")).casefold())
+
+
+def split_product_name_hints(name: str) -> tuple[str, str | None]:
+    """Split a terminal parenthetical collector hint from the Cardmarket name.
+
+    Current Cardmarket Product List rows can encode a collector/card number in
+    the product name, e.g. ``Roronoa Zoro (OP01-001)``. We only treat the final
+    parenthetical as a collector hint when it contains a digit. Other legitimate
+    card-name parentheses remain part of the name.
+    """
+    raw = str(name or "").strip()
+    match = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", raw)
+    if not match:
+        return raw, None
+    base, hint = match.group(1).strip(), match.group(2).strip()
+    if not base or not hint or not re.search(r"\d", hint) or len(hint) > 64:
+        return raw, None
+    return base, hint
+
+
 def _first(mapping: dict, *names: str) -> str:
     normalized = {str(key).strip().casefold(): value for key, value in mapping.items()}
     for name in names:
@@ -72,30 +95,55 @@ def _first(mapping: dict, *names: str) -> str:
     return ""
 
 
+def _parse_product(raw: dict) -> ProductListRow | None:
+    product_id = _first(raw, "idProduct", "product_id")
+    name = _first(raw, "Name", "name")
+    expansion_id = _first(raw, "Expansion ID", "idExpansion", "expansion_id")
+    if not product_id or not name or not expansion_id:
+        return None
+    return ProductListRow(
+        product_id=product_id,
+        name=name,
+        category_id=_first(raw, "Category ID", "idCategory", "category_id"),
+        category=_first(raw, "Category", "category", "categoryName"),
+        expansion_id=expansion_id,
+        date_added=_first(raw, "Date Added", "date_added", "dateAdded") or None,
+        metacard_id=_first(raw, "idMetacard", "metacard_id") or None,
+    )
+
+
 def load_product_list_bytes(content: bytes) -> list[ProductListRow]:
-    """Parse Cardmarket's product-list CSV, accepting the documented gzip export."""
+    """Parse current Cardmarket Product List JSON plus legacy CSV/gzip exports."""
     if content[:2] == b"\x1f\x8b":
         content = gzip.decompress(content)
+
+    stripped = content.lstrip()
+    rows: list[ProductListRow] = []
+    if stripped.startswith((b"{", b"[")):
+        payload = json.loads(content.decode("utf-8-sig"))
+        if isinstance(payload, dict):
+            raw_rows = payload.get("products") or payload.get("data") or []
+        elif isinstance(payload, list):
+            raw_rows = payload
+        else:
+            raise ValueError("Unsupported Cardmarket Product List JSON root")
+        if not isinstance(raw_rows, list):
+            raise ValueError("Cardmarket Product List JSON products must be a list")
+        for raw in raw_rows:
+            if isinstance(raw, dict):
+                parsed = _parse_product(raw)
+                if parsed:
+                    rows.append(parsed)
+        return rows
+
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
-        raise ValueError("Cardmarket product list has no CSV header")
-
-    rows: list[ProductListRow] = []
+        raise ValueError("Cardmarket Product List CSV has no header")
     for raw in reader:
-        product_id = _first(raw, "idProduct", "product_id")
-        name = _first(raw, "Name", "name")
-        expansion_id = _first(raw, "Expansion ID", "idExpansion", "expansion_id")
-        if not product_id or not name or not expansion_id:
-            continue
-        rows.append(ProductListRow(
-            product_id=product_id,
-            name=name,
-            category_id=_first(raw, "Category ID", "idCategory", "category_id"),
-            category=_first(raw, "Category", "category"),
-            expansion_id=expansion_id,
-            date_added=_first(raw, "Date Added", "date_added") or None,
-        ))
+        parsed = _parse_product(raw)
+        if parsed:
+            rows.append(parsed)
     return rows
 
 
@@ -131,6 +179,16 @@ def load_expansion_crosswalk(path: str | Path) -> dict[str, dict]:
                 "set_code": str(raw_value.get("set_code") or "").strip(),
             }
     return result
+
+
+def _collector_matches(candidate: str | None, hint: str | None) -> bool:
+    if not hint:
+        return True
+    candidate_key = normalize_collector(candidate)
+    hint_key = normalize_collector(hint)
+    if not candidate_key or not hint_key:
+        return False
+    return candidate_key == hint_key or hint_key.endswith(candidate_key)
 
 
 def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str, dict], *, game_filter: str = "") -> tuple[dict, list[AuditDecision]]:
@@ -209,6 +267,7 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
         mapping = crosswalk.get(product.expansion_id)
         mapped_game = str((mapping or {}).get("game") or "").strip().lower() or inferred_game
         set_code = str((mapping or {}).get("set_code") or "").strip() or None
+        base_name, collector_hint = split_product_name_hints(product.name)
 
         if game_filter and mapped_game != game_filter:
             continue
@@ -220,37 +279,46 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
             game=mapped_game,
             set_code=set_code,
         )
+        product_evidence = {
+            "base_name": base_name,
+            "collector_hint": collector_hint,
+            "metacard_id": product.metacard_id,
+        }
 
         if duplicate_product_ids[product.product_id] > 1:
-            decisions.append(AuditDecision(**base, status="duplicate_product_id", evidence={"rows": duplicate_product_ids[product.product_id]}))
+            decisions.append(AuditDecision(**base, status="duplicate_product_id", evidence={**product_evidence, "rows": duplicate_product_ids[product.product_id]}))
             continue
         if mapped_game is None:
-            decisions.append(AuditDecision(**base, status="unsupported_category"))
+            decisions.append(AuditDecision(**base, status="unsupported_category", evidence=product_evidence))
             continue
         if not mapping or not set_code:
-            decisions.append(AuditDecision(**base, status="missing_expansion_crosswalk"))
+            decisions.append(AuditDecision(**base, status="missing_expansion_crosswalk", evidence=product_evidence))
             continue
         if mapping.get("game") and inferred_game and mapping.get("game") != inferred_game:
-            decisions.append(AuditDecision(**base, status="game_conflict", evidence={"category_game": inferred_game, "crosswalk_game": mapping.get("game")}))
+            decisions.append(AuditDecision(**base, status="game_conflict", evidence={**product_evidence, "category_game": inferred_game, "crosswalk_game": mapping.get("game")}))
             continue
 
         resolved_set = resolve_set(mapped_game, set_code)
         if resolved_set is None:
-            decisions.append(AuditDecision(**base, status="set_not_unique_or_missing"))
+            decisions.append(AuditDecision(**base, status="set_not_unique_or_missing", evidence=product_evidence))
             continue
         set_id, canonical_set_code = resolved_set
         resolved_base = {**base, "set_code": canonical_set_code}
-        candidates = [item for item in prints_for_set(set_id) if item["name_key"] == normalize_name(product.name)]
+
+        name_candidates = [item for item in prints_for_set(set_id) if item["name_key"] == normalize_name(base_name)]
+        candidates = [item for item in name_candidates if _collector_matches(item["collector_number"], collector_hint)]
         distinct_print_ids = sorted({item["print_id"] for item in candidates})
 
         if not distinct_print_ids:
-            decisions.append(AuditDecision(**resolved_base, status="name_no_match"))
+            status = "collector_no_match" if name_candidates and collector_hint else "name_no_match"
+            decisions.append(AuditDecision(**resolved_base, status=status, evidence={**product_evidence, "name_candidate_count": len(name_candidates)}))
             continue
         if len(distinct_print_ids) > 1:
             decisions.append(AuditDecision(
                 **resolved_base,
                 status="physical_ambiguity",
                 evidence={
+                    **product_evidence,
                     "candidate_count": len(distinct_print_ids),
                     "candidates": candidates[:20],
                 },
@@ -262,15 +330,12 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
         existing_for_product = external_to_prints.get(product.product_id, set())
         existing_for_print = print_to_externals.get(print_id, set())
         if existing_for_product and existing_for_product != {print_id}:
-            decisions.append(AuditDecision(**resolved_base, status="external_id_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"mapped_print_ids": sorted(existing_for_product)}))
+            decisions.append(AuditDecision(**resolved_base, status="external_id_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={**product_evidence, "mapped_print_ids": sorted(existing_for_product)}))
             continue
         if existing_for_print and existing_for_print != {product.product_id}:
-            decisions.append(AuditDecision(**resolved_base, status="print_identifier_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={"existing_external_ids": sorted(existing_for_print)}))
+            decisions.append(AuditDecision(**resolved_base, status="print_identifier_conflict", print_id=print_id, card_id=candidate["card_id"], evidence={**product_evidence, "existing_external_ids": sorted(existing_for_print)}))
             continue
-        if existing_for_product == {print_id}:
-            status = "already_mapped"
-        else:
-            status = "exact_candidate_review_required"
+        status = "already_mapped" if existing_for_product == {print_id} else "exact_candidate_review_required"
 
         decisions.append(AuditDecision(
             **resolved_base,
@@ -278,7 +343,9 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
             print_id=print_id,
             card_id=candidate["card_id"],
             evidence={
+                **product_evidence,
                 "name_match": "normalized_exact",
+                "collector_match": bool(collector_hint),
                 "collector_number": candidate["collector_number"],
                 "language": candidate["language"],
                 "is_foil": candidate["is_foil"],
@@ -294,6 +361,7 @@ def audit_product_list(session, rows: list[ProductListRow], crosswalk: dict[str,
         "already_mapped": counts.get("already_mapped", 0),
         "physical_ambiguity": counts.get("physical_ambiguity", 0),
         "missing_expansion_crosswalk": counts.get("missing_expansion_crosswalk", 0),
+        "collector_no_match": counts.get("collector_no_match", 0),
         "status_counts": dict(sorted(counts.items())),
         "write_mode": "disabled",
     }
