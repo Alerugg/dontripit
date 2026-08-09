@@ -29,7 +29,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,20 +57,24 @@ jobs:
             tests/test_cardmarket_catalog_audit.py \
             tests/test_cardmarket_master_inventory.py
 
-      - name: Download current official Pokémon Cardmarket catalogs
+      - name: Download current official Cardmarket catalogs for all MVP games
         shell: bash
         run: |
           set -euo pipefail
-          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
-            https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json \
-            -o /tmp/products_singles_6.json
-          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
-            https://downloads.s3.cardmarket.com/productCatalog/productList/products_nonsingles_6.json \
-            -o /tmp/products_nonsingles_6.json
-          test -s /tmp/products_singles_6.json
-          test -s /tmp/products_nonsingles_6.json
+          # Official Cardmarket game IDs: Magic=1, Yu-Gi-Oh!=3, Pokémon=6, One Piece=18.
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+            game="${spec%%:*}"
+            game_id="${spec##*:}"
+            for group in singles nonsingles; do
+              target="/tmp/${game}_${group}.json"
+              curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+                "https://downloads.s3.cardmarket.com/productCatalog/productList/products_${group}_${game_id}.json" \
+                -o "$target"
+              test -s "$target"
+            done
+          done
 
-      - name: Verify official catalog contract without database access
+      - name: Verify official multi-TCG catalog contract without database access
         working-directory: backend
         env:
           PYTHONPATH: .
@@ -79,30 +83,45 @@ jobs:
           from pathlib import Path
           from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
 
-          feeds = [
-              load_catalog_feed_bytes(
-                  Path('/tmp/products_singles_6.json').read_bytes(),
-                  game_slug='pokemon',
-                  product_group='single',
-              ),
-              load_catalog_feed_bytes(
-                  Path('/tmp/products_nonsingles_6.json').read_bytes(),
-                  game_slug='pokemon',
-                  product_group='non_single',
-              ),
+          specs = [
+              ('mtg', 1),
+              ('yugioh', 3),
+              ('pokemon', 6),
+              ('onepiece', 18),
           ]
-          for feed in feeds:
-              ids = [row.product_id for row in feed.rows]
-              assert feed.raw_records > 0, f'{feed.product_group}: empty official catalog'
-              assert feed.rejected_records == 0, f'{feed.product_group}: rejected={feed.rejected_records}'
-              assert len(ids) == feed.raw_records, f'{feed.product_group}: accepted/raw mismatch'
-              assert len(ids) == len(set(ids)), f'{feed.product_group}: duplicate idProduct inside feed'
-              assert all(row.name for row in feed.rows), f'{feed.product_group}: missing name'
-              print({
-                  'game': feed.game_slug,
-                  'group': feed.product_group,
-                  'created_at': feed.created_at.isoformat() if feed.created_at else None,
-                  'rows': feed.raw_records,
-                  'rejected': feed.rejected_records,
-              })
+          totals = {}
+          for game, _game_id in specs:
+              feeds = {}
+              for file_group, product_group in [('singles', 'single'), ('nonsingles', 'non_single')]:
+                  feed = load_catalog_feed_bytes(
+                      Path(f'/tmp/{game}_{file_group}.json').read_bytes(),
+                      game_slug=game,
+                      product_group=product_group,
+                  )
+                  ids = [row.product_id for row in feed.rows]
+                  assert feed.raw_records > 0, f'{game}:{product_group}: empty official catalog'
+                  assert feed.rejected_records == 0, f'{game}:{product_group}: rejected={feed.rejected_records}'
+                  assert len(ids) == feed.raw_records, f'{game}:{product_group}: accepted/raw mismatch'
+                  assert len(ids) == len(set(ids)), f'{game}:{product_group}: duplicate idProduct inside feed'
+                  assert all(row.name for row in feed.rows), f'{game}:{product_group}: missing name'
+                  feeds[product_group] = feed
+                  print({
+                      'game': game,
+                      'group': product_group,
+                      'created_at': feed.created_at.isoformat() if feed.created_at else None,
+                      'rows': feed.raw_records,
+                      'rejected': feed.rejected_records,
+                  })
+
+              single_ids = {row.product_id for row in feeds['single'].rows}
+              non_single_ids = {row.product_id for row in feeds['non_single'].rows}
+              overlap = single_ids & non_single_ids
+              assert not overlap, f'{game}: idProduct overlap between single/non-single feeds: {list(sorted(overlap))[:10]}'
+              totals[game] = {
+                  'singles': feeds['single'].raw_records,
+                  'non_singles': feeds['non_single'].raw_records,
+                  'total': feeds['single'].raw_records + feeds['non_single'].raw_records,
+              }
+
+          print({'official_catalog_totals': totals})
           PY
