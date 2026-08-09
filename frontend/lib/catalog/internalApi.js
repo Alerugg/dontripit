@@ -1,4 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 12000
+const MAX_TIMEOUT_MS = 30000
 
 function getInternalConfig() {
   const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
@@ -13,9 +14,6 @@ function getInternalConfig() {
     }
   }
 
-  // Production/internal traffic continues to require the shared API key. The
-  // explicit opt-in exists for isolated full-stack QA where the local Flask app
-  // is deliberately started with PUBLIC_API_ENABLED=true. It is off by default.
   if (!apiKey && !allowPublic) {
     return {
       ok: false,
@@ -44,7 +42,13 @@ async function _fetchInternal(url, { method, body, apiKey, signal, headers = {} 
   return { response, payload }
 }
 
-export async function callInternalApi(path, { method = 'GET', params = {}, body, headers = {} } = {}) {
+export async function callInternalApi(path, {
+  method = 'GET',
+  params = {},
+  body,
+  headers = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
   const config = getInternalConfig()
   if (!config.ok) {
     return {
@@ -65,8 +69,12 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body,
     url.searchParams.set(key, String(value))
   })
 
+  const requestedTimeout = Number(timeoutMs)
+  const resolvedTimeout = Number.isFinite(requestedTimeout)
+    ? Math.min(MAX_TIMEOUT_MS, Math.max(1000, requestedTimeout))
+    : DEFAULT_TIMEOUT_MS
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), resolvedTimeout)
 
   try {
     const { response, payload } = await _fetchInternal(url, {

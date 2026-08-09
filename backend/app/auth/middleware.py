@@ -51,15 +51,17 @@ def _extract_admin_header_key() -> str | None:
 def _is_user_session_route(path: str) -> bool:
     """Routes whose credential is a Don’tRipIt user session, not a catalog API key.
 
-    Register/login are intentionally public identity endpoints and are IP-rate
-    limited below. ``/auth/me``, logout and ``/me/*`` enforce the opaque user
-    bearer token inside their route handlers. Keeping these paths out of the
-    catalog API-key guard prevents a valid user session from being mistaken for
-    an API-product key.
+    Registration, login and password recovery are public identity endpoints and
+    are IP-rate-limited below. ``/auth/me``, logout and ``/me/*`` enforce the
+    opaque user bearer token inside their route handlers. Keeping these paths
+    out of the catalog API-key guard prevents a valid user session or password
+    reset request from being mistaken for an API-product request.
     """
     if path in {
         "/api/v2/auth/register",
         "/api/v2/auth/login",
+        "/api/v2/auth/forgot-password",
+        "/api/v2/auth/reset-password",
         "/api/v2/auth/me",
         "/api/v2/auth/logout",
     }:
@@ -144,7 +146,12 @@ def register_api_product_middleware(flask_app: Flask) -> None:
         # user routes validate the bearer session in their own handlers. Never
         # interpret a user bearer token as a catalog API key.
         if _is_user_session_route(path):
-            auth_entry = path in {"/api/v2/auth/register", "/api/v2/auth/login"}
+            auth_entry = path in {
+                "/api/v2/auth/register",
+                "/api/v2/auth/login",
+                "/api/v2/auth/forgot-password",
+                "/api/v2/auth/reset-password",
+            }
             default_limit = 15 if auth_entry else 120
             env_name = "USER_AUTH_IP_RATE_LIMIT_RPM" if auth_entry else "USER_SESSION_IP_RATE_LIMIT_RPM"
             limit = max(1, int(os.getenv(env_name, str(default_limit))))

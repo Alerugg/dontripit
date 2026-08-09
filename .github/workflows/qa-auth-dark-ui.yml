@@ -1,0 +1,103 @@
+name: QA auth recovery and dark collector UI
+
+on:
+  push:
+    branches:
+      - auth-cardmarket-dark-ui
+    paths:
+      - 'backend/app/**'
+      - 'backend/alembic/**'
+      - 'backend/tests/test_user_auth_mvp.py'
+      - 'frontend/**'
+      - '.github/workflows/qa-auth-dark-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Compile backend
+        working-directory: backend
+        run: python -m compileall -q app
+      - name: Verify Flask imports and routes
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite:////tmp/dri-auth-qa.db
+          API_KEY_REQUIRED: 'false'
+        run: |
+          python - <<'PY'
+          from app import create_app
+          app=create_app()
+          routes={rule.rule for rule in app.url_map.iter_rules()}
+          required={
+            '/api/v2/auth/register',
+            '/api/v2/auth/login',
+            '/api/v2/auth/forgot-password',
+            '/api/v2/auth/reset-password',
+            '/api/v2/auth/me',
+          }
+          missing=required-routes
+          assert not missing, f'Missing auth routes: {sorted(missing)}'
+          print(f'Flask route load PASS ({len(routes)} routes)')
+          PY
+      - name: Verify Alembic has one head
+        working-directory: backend
+        run: |
+          HEADS=$(alembic heads | grep -c '(head)')
+          test "$HEADS" = "1"
+          alembic heads
+      - name: Run auth recovery regression tests
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite:////tmp/dri-auth-tests.db
+          API_KEY_REQUIRED: 'false'
+        run: pytest -q tests/test_user_auth_mvp.py --tb=short
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Security audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
+      - name: Run frontend contracts
+        working-directory: frontend
+        run: npm test
+      - name: Build production frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_BASE_URL: https://example.invalid
+          INTERNAL_API_ALLOW_PUBLIC: 'true'
+        run: npm run build
+      - name: Protect dark search-first contract
+        working-directory: frontend
+        run: |
+          grep -q "import './dark-collector.css'" app/layout.js
+          grep -q "color-scheme: dark" app/dark-collector.css
+          grep -q "explorer-search-panel" app/dark-collector.css
+          grep -q "¿Olvidaste tu contraseña?" components/auth/AuthShell.js
+          test -f app/forgot-password/page.js
+          test -f app/reset-password/page.js
+          echo 'Dark UI + recovery UX contract PASS'

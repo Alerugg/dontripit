@@ -114,6 +114,7 @@ export default function AuthShell({ mode = 'register', next = '/dashboard' }) {
             ) : (
               <div className="dri-auth-helper-row">
                 <label className="dri-checkbox-row"><input type="checkbox" name="remember" /> <span>Mantener mi sesión</span></label>
+                <Link href="/forgot-password" className="dri-auth-recovery-link">¿Olvidaste tu contraseña?</Link>
               </div>
             )}
 
