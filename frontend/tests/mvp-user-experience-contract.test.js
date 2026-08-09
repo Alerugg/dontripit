@@ -40,7 +40,8 @@ test('exact One Piece collector results render as separate physical editions', (
   assert.match(results, /item\.type === 'print'/)
   assert.match(results, /Ediciones exactas/)
   assert.match(backendRoute, /exact_onepiece_collector_search/)
-  assert.match(exactSearch, /normalized_collector_number == collector/)
+  assert.match(exactSearch, /canonical_card_key = f"onepiece:\{collector\}"/)
+  assert.match(exactSearch, /Card\.card_key == canonical_card_key/)
   assert.doesNotMatch(exactSearch, /PARTITION BY card_id/)
 })
 
