@@ -10,8 +10,11 @@ on:
       - 'backend/app/jobs/cardmarket_catalog_audit.py'
       - 'backend/app/jobs/cardmarket_expansion_crosswalk.py'
       - 'backend/app/jobs/cardmarket_master_inventory.py'
+      - 'backend/app/jobs/cardmarket_set_bootstrap.py'
       - 'backend/scripts/derive_cardmarket_expansion_crosswalk.py'
+      - 'backend/scripts/bootstrap_cardmarket_set_families.py'
       - 'backend/scripts/audit_cardmarket_master_inventory.py'
+      - 'backend/tests/test_cardmarket_set_bootstrap.py'
 
 permissions:
   contents: read
@@ -19,7 +22,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -37,6 +40,10 @@ jobs:
         working-directory: backend
         run: python -m pip install -r requirements.txt
 
+      - name: Test set-family bootstrap safety
+        working-directory: backend
+        run: pytest -q tests/test_cardmarket_set_bootstrap.py
+
       - name: Refuse to run without Neon connection secret
         shell: bash
         run: |
@@ -50,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/cardmarket-master/catalogs /tmp/cardmarket-master/crosswalks /tmp/cardmarket-master/reports
+          mkdir -p /tmp/cardmarket-master/catalogs /tmp/cardmarket-master/crosswalks /tmp/cardmarket-master/bootstrap /tmp/cardmarket-master/reports
           for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
             game="${spec%%:*}"
             game_id="${spec##*:}"
@@ -76,6 +83,20 @@ jobs:
               --report "/tmp/cardmarket-master/reports/${game}_crosswalk_report.json" \
               --proposals "/tmp/cardmarket-master/crosswalks/${game}.json" \
               > "/tmp/cardmarket-master/reports/${game}_crosswalk_stdout.json"
+          done
+
+      - name: Bootstrap expansion to canonical set-family proposals
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/bootstrap_cardmarket_set_families.py \
+              "/tmp/cardmarket-master/catalogs/${game}_singles.json" \
+              --game "$game" \
+              --report "/tmp/cardmarket-master/reports/${game}_bootstrap_report.json" \
+              --proposals "/tmp/cardmarket-master/bootstrap/${game}.json" \
+              > "/tmp/cardmarket-master/reports/${game}_bootstrap_stdout.json"
           done
 
       - name: Run reverse master inventory against live Neon
@@ -111,13 +132,17 @@ jobs:
           root = Path('/tmp/cardmarket-master')
           master = json.loads((root / 'reports/master_inventory.json').read_text())
           crosswalk = {}
+          bootstrap = {}
           for game in ('mtg', 'yugioh', 'pokemon', 'onepiece'):
-              payload = json.loads((root / f'reports/{game}_crosswalk_report.json').read_text())
-              crosswalk[game] = payload['summary']
+              crosswalk_payload = json.loads((root / f'reports/{game}_crosswalk_report.json').read_text())
+              bootstrap_payload = json.loads((root / f'reports/{game}_bootstrap_report.json').read_text())
+              crosswalk[game] = crosswalk_payload['summary']
+              bootstrap[game] = bootstrap_payload['summary']
 
           compact = {
               'master': master['summary'],
               'crosswalk_inference': crosswalk,
+              'set_family_bootstrap': bootstrap,
           }
           rendered = json.dumps(compact, indent=2, sort_keys=True)
           (root / 'reports/compact_summary.json').write_text(rendered + '\n')
@@ -139,7 +164,9 @@ jobs:
           path: |
             /tmp/cardmarket-master/reports/compact_summary.json
             /tmp/cardmarket-master/reports/*_crosswalk_report.json
+            /tmp/cardmarket-master/reports/*_bootstrap_report.json
             /tmp/cardmarket-master/crosswalks/*.json
+            /tmp/cardmarket-master/bootstrap/*.json
             /tmp/cardmarket-master/reports/master_inventory.json.gz
             /tmp/cardmarket-master/reports/master_decisions.csv.gz
           if-no-files-found: error
