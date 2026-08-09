@@ -56,8 +56,10 @@ test('search suggestions start from the first character', () => {
 test('price UI refuses to invent missing values', () => {
   const printPage = source('app/prints/[id]/page.js')
   const library = source('components/library/LibraryPage.js')
-  assert.match(printPage, /Sin precio verificado todavía/)
-  assert.match(printPage, /fuente y una fecha/)
+  assert.match(printPage, /Sin precio Cardmarket verificado/)
+  assert.match(printPage, /No mostramos una estimación/)
+  assert.match(printPage, /fuente y fecha/)
   assert.match(library, /Sin precio verificado/)
-  assert.match(library, /fuente fiable/)
+  assert.match(library, /No suma al valor conservador/)
+  assert.match(library, /no se estiman ni se suman/)
 })
