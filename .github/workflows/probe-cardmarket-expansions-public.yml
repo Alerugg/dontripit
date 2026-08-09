@@ -1,0 +1,86 @@
+name: Probe Cardmarket Expansion Metadata
+
+on:
+  push:
+    branches:
+      - cardmarket-onepiece-seed-crosswalk-v1
+    paths:
+      - '.github/workflows/probe-cardmarket-expansions-public.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Probe public Games endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --location --silent --show-error \
+            -H 'Accept: application/json' \
+            -H 'User-Agent: Dontripit-Cardmarket-Audit/1.0' \
+            -o /tmp/games.json \
+            -w '%{http_code}' \
+            https://apiv2.cardmarket.com/ws/v2.0/output.json/games || true)
+          echo "GAMES_HTTP=$code"
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('/tmp/games.json')
+          if not p.exists():
+              print('GAMES_BODY=missing')
+              raise SystemExit(0)
+          text=p.read_text(encoding='utf-8', errors='replace')
+          try:
+              data=json.loads(text)
+          except Exception:
+              print('GAMES_BODY_PREFIX='+text[:500].replace('\n',' '))
+              raise SystemExit(0)
+          games=data.get('game') or data.get('games') or [] if isinstance(data,dict) else []
+          if isinstance(games,dict): games=[games]
+          compact=[]
+          for g in games:
+              name=str(g.get('name') or g.get('enName') or '')
+              if 'one piece' in name.lower():
+                  compact.append(g)
+          print('ONEPIECE_GAME='+json.dumps(compact,separators=(',',':'),sort_keys=True))
+          PY
+
+      - name: Probe likely One Piece expansion endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Product category/game exports use 18 for One Piece; verify endpoint behavior without auth.
+          code=$(curl --location --silent --show-error \
+            -H 'Accept: application/json' \
+            -H 'User-Agent: Dontripit-Cardmarket-Audit/1.0' \
+            -o /tmp/expansions.json \
+            -w '%{http_code}' \
+            https://apiv2.cardmarket.com/ws/v2.0/output.json/games/18/expansions || true)
+          echo "EXPANSIONS_HTTP=$code"
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('/tmp/expansions.json')
+          if not p.exists():
+              print('EXPANSIONS_BODY=missing')
+              raise SystemExit(0)
+          text=p.read_text(encoding='utf-8', errors='replace')
+          try:
+              data=json.loads(text)
+          except Exception:
+              print('EXPANSIONS_BODY_PREFIX='+text[:700].replace('\n',' '))
+              raise SystemExit(0)
+          exps=data.get('expansion') or data.get('expansions') or [] if isinstance(data,dict) else []
+          if isinstance(exps,dict): exps=[exps]
+          wanted={5229,5230,5263,5484,5624,5803,5896,5979,6090,6160,6264,6372,6609}
+          found=[]
+          for e in exps:
+              try: eid=int(e.get('idExpansion'))
+              except Exception: continue
+              if eid in wanted:
+                  found.append({k:e.get(k) for k in ('idExpansion','enName','abbreviation','releaseDate','isReleased','idGame')})
+          print('EXPANSION_COUNT='+str(len(exps)))
+          print('MATCHED_EXPANSIONS='+json.dumps(found,separators=(',',':'),sort_keys=True))
+          PY
