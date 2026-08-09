@@ -57,8 +57,12 @@ jobs:
                   raise AssertionError(preflight)
               if preflight['accepted_links'] < 140000:
                   raise AssertionError(f"Unexpected accepted MTG link regression: {preflight}")
-              if preflight['priceable_prints'] < 120000:
-                  raise AssertionError(f"Unexpected MTG priceable Print regression: {preflight}")
+              # Cardmarket does not publish a finish-specific price block for every
+              # mapped foil/variant. Those Prints must remain unpriced rather than
+              # borrowing a nonfoil/other-finish price. Current certified floor is
+              # intentionally below observed coverage and acts only as a regression gate.
+              if preflight['priceable_prints'] < 80000:
+                  raise AssertionError(f"Unexpected MTG finish-specific price regression: {preflight}")
               result = apply_link_price_projection_plan(session, plan)
               session.commit()
 
@@ -97,7 +101,7 @@ jobs:
                 GROUP BY latest.as_of
               ''')).mappings().one()
           proof={k:(v.isoformat() if hasattr(v,'isoformat') else int(v)) for k,v in dict(row).items()}
-          if proof['prints'] < 120000:
+          if proof['prints'] < 80000 or proof['valued'] != proof['prints']:
               raise AssertionError(proof)
           Path('/tmp/mtg-cardmarket-price-proof.json').write_text(json.dumps(proof,indent=2,sort_keys=True)+'\n')
           print(json.dumps(proof,indent=2,sort_keys=True))
