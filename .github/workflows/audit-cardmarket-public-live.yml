@@ -1,0 +1,108 @@
+name: Audit Cardmarket Public Live
+
+on:
+  push:
+    branches:
+      - cardmarket-live-public-audit-v1
+    paths:
+      - 'backend/scripts/run_cardmarket_public_audit.py'
+      - '.github/workflows/audit-cardmarket-public-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+
+      - name: Download current public Cardmarket datasets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json \
+            -o /tmp/cardmarket/products_magic.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json \
+            -o /tmp/cardmarket/products_pokemon.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json \
+            -o /tmp/cardmarket/products_yugioh.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json \
+            -o /tmp/cardmarket/products_onepiece.json
+
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json \
+            -o /tmp/cardmarket/prices_magic.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json \
+            -o /tmp/cardmarket/prices_pokemon.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_3.json \
+            -o /tmp/cardmarket/prices_yugioh.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json \
+            -o /tmp/cardmarket/prices_onepiece.json
+
+          test -s /tmp/cardmarket/products_magic.json
+          test -s /tmp/cardmarket/products_pokemon.json
+          test -s /tmp/cardmarket/products_yugioh.json
+          test -s /tmp/cardmarket/products_onepiece.json
+          test -s /tmp/cardmarket/prices_magic.json
+          test -s /tmp/cardmarket/prices_pokemon.json
+          test -s /tmp/cardmarket/prices_yugioh.json
+          test -s /tmp/cardmarket/prices_onepiece.json
+          du -h /tmp/cardmarket/*
+
+      - name: Validate downloaded JSON shapes
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('/tmp/cardmarket')
+          for path in sorted(root.glob('products_*.json')):
+              payload=json.loads(path.read_text(encoding='utf-8-sig'))
+              products=payload.get('products') if isinstance(payload, dict) else None
+              if not isinstance(products, list) or not products:
+                  raise SystemExit(f'{path.name}: missing products list')
+              print(f'{path.name}: {len(products)} products')
+          for path in sorted(root.glob('prices_*.json')):
+              payload=json.loads(path.read_text(encoding='utf-8-sig'))
+              guides=payload.get('priceGuides') if isinstance(payload, dict) else None
+              if not isinstance(guides, list) or not guides:
+                  raise SystemExit(f'{path.name}: missing priceGuides list')
+              print(f'{path.name}: {len(guides)} price rows; createdAt={payload.get("createdAt")}')
+          PY
+
+      - name: Run read-only audit against Neon
+        working-directory: backend
+        run: |
+          rm -rf /tmp/cardmarket-report
+          python scripts/run_cardmarket_public_audit.py /tmp/cardmarket --output /tmp/cardmarket-report --min-samples 3
+
+      - name: Upload detailed audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-public-live-audit
+          path: /tmp/cardmarket-report
+          if-no-files-found: error
+          retention-days: 14
