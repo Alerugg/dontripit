@@ -22,7 +22,7 @@ const gamePresentation = {
   },
   riftbound: {
     logo: '/games/riftbound/riftbound_logo.png',
-    note: 'Preparado para catálogo, próximos lanzamientos y noticias de Europa.',
+    note: 'Próximamente. Abriremos el catálogo cuando el acceso de producción esté listo.',
   },
 }
 
@@ -72,11 +72,11 @@ export default function PublicHome() {
           </div>
 
           <div className="dri-trust-line">
-            <span>Gratis al inicio</span>
+            <span>Gratis durante el MVP</span>
             <i />
-            <span>5 TCG en una cuenta</span>
+            <span>4 TCG disponibles</span>
             <i />
-            <span>Sin tablas imposibles</span>
+            <span>Riftbound próximamente</span>
           </div>
         </div>
 
@@ -157,6 +157,7 @@ export default function PublicHome() {
           <div className="dri-game-grid">
             {GAME_CATALOG.map((game) => {
               const presentation = gamePresentation[game.slug]
+              const isComingSoon = game.slug === 'riftbound'
               return (
                 <Link
                   key={game.slug}
@@ -168,7 +169,7 @@ export default function PublicHome() {
                     {presentation?.logo ? <img src={presentation.logo} alt={game.name} className="dri-game-logo" /> : <strong>{game.name}</strong>}
                   </div>
                   <p>{presentation?.note || game.description}</p>
-                  <span className="dri-game-card-link">Explorar <b aria-hidden="true">→</b></span>
+                  <span className="dri-game-card-link">{isComingSoon ? 'Próximamente' : 'Explorar'} <b aria-hidden="true">→</b></span>
                 </Link>
               )
             })}
