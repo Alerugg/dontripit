@@ -1,0 +1,44 @@
+name: Audit production email delivery config
+
+on:
+  push:
+    branches:
+      - audit-email-delivery-config
+    paths:
+      - '.github/workflows/audit-email-delivery-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check global password-recovery delivery availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE=$(curl -sS -o /tmp/forgot.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"dontripit-config-probe-does-not-exist@example.invalid"}' \
+            'https://api.dontripit.com/api/v2/auth/forgot-password')
+          echo "HTTP=${CODE}"
+          python - <<'PY'
+          import json
+          payload=json.load(open('/tmp/forgot.json'))
+          code=int(open('/tmp/http-code','r').read()) if False else None
+          print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+          if payload.get('error') in {'missing_api_key','invalid_api_key'}:
+              raise SystemExit('Password recovery is still colliding with catalog API auth')
+          PY
+          if [ "$CODE" = "200" ]; then
+            echo 'EMAIL_DELIVERY_CONFIG=present'
+          elif [ "$CODE" = "503" ]; then
+            echo 'EMAIL_DELIVERY_CONFIG=missing'
+          else
+            echo "Unexpected forgot-password status: ${CODE}"
+            cat /tmp/forgot.json
+            exit 1
+          fi
