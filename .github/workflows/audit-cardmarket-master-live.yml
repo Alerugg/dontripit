@@ -1,0 +1,160 @@
+name: Audit Cardmarket Master Live
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+
+      - name: Test set-family bootstrap safety
+        working-directory: backend
+        run: pytest -q tests/test_cardmarket_set_bootstrap.py
+
+      - name: Refuse to run without Neon connection secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL_UNPOOLED:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+            echo 'No DATABASE_URL_UNPOOLED or DATABASE_URL secret configured' >&2
+            exit 1
+          fi
+
+      - name: Download all official Cardmarket MVP catalogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cardmarket-master/catalogs /tmp/cardmarket-master/crosswalks /tmp/cardmarket-master/bootstrap /tmp/cardmarket-master/reports
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+            game="${spec%%:*}"
+            game_id="${spec##*:}"
+            for group in singles nonsingles; do
+              target="/tmp/cardmarket-master/catalogs/${game}_${group}.json"
+              curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+                "https://downloads.s3.cardmarket.com/productCatalog/productList/products_${group}_${game_id}.json" \
+                -o "$target"
+              test -s "$target"
+            done
+          done
+
+      - name: Derive evidence-only expansion crosswalk proposals
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/derive_cardmarket_expansion_crosswalk.py \
+              "/tmp/cardmarket-master/catalogs/${game}_singles.json" \
+              --game "$game" \
+              --min-samples 3 \
+              --report "/tmp/cardmarket-master/reports/${game}_crosswalk_report.json" \
+              --proposals "/tmp/cardmarket-master/crosswalks/${game}.json" \
+              > "/tmp/cardmarket-master/reports/${game}_crosswalk_stdout.json"
+          done
+
+      - name: Bootstrap expansion to canonical set-family proposals
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/bootstrap_cardmarket_set_families.py \
+              "/tmp/cardmarket-master/catalogs/${game}_singles.json" \
+              --game "$game" \
+              --report "/tmp/cardmarket-master/reports/${game}_bootstrap_report.json" \
+              --proposals "/tmp/cardmarket-master/bootstrap/${game}.json" \
+              > "/tmp/cardmarket-master/reports/${game}_bootstrap_stdout.json"
+          done
+
+      - name: Run reverse master inventory against live Neon
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/audit_cardmarket_master_inventory.py \
+            --catalog mtg:single:/tmp/cardmarket-master/catalogs/mtg_singles.json \
+            --catalog mtg:non_single:/tmp/cardmarket-master/catalogs/mtg_nonsingles.json \
+            --catalog yugioh:single:/tmp/cardmarket-master/catalogs/yugioh_singles.json \
+            --catalog yugioh:non_single:/tmp/cardmarket-master/catalogs/yugioh_nonsingles.json \
+            --catalog pokemon:single:/tmp/cardmarket-master/catalogs/pokemon_singles.json \
+            --catalog pokemon:non_single:/tmp/cardmarket-master/catalogs/pokemon_nonsingles.json \
+            --catalog onepiece:single:/tmp/cardmarket-master/catalogs/onepiece_singles.json \
+            --catalog onepiece:non_single:/tmp/cardmarket-master/catalogs/onepiece_nonsingles.json \
+            --crosswalk mtg:/tmp/cardmarket-master/crosswalks/mtg.json \
+            --crosswalk yugioh:/tmp/cardmarket-master/crosswalks/yugioh.json \
+            --crosswalk pokemon:/tmp/cardmarket-master/crosswalks/pokemon.json \
+            --crosswalk onepiece:/tmp/cardmarket-master/crosswalks/onepiece.json \
+            --report /tmp/cardmarket-master/reports/master_inventory.json \
+            --decisions-csv /tmp/cardmarket-master/reports/master_decisions.csv \
+            > /tmp/cardmarket-master/reports/master_stdout.json
+
+      - name: Build compact audit summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('/tmp/cardmarket-master')
+          master = json.loads((root / 'reports/master_inventory.json').read_text())
+          crosswalk = {}
+          bootstrap = {}
+          for game in ('mtg', 'yugioh', 'pokemon', 'onepiece'):
+              crosswalk_payload = json.loads((root / f'reports/{game}_crosswalk_report.json').read_text())
+              bootstrap_payload = json.loads((root / f'reports/{game}_bootstrap_report.json').read_text())
+              crosswalk[game] = crosswalk_payload['summary']
+              bootstrap[game] = bootstrap_payload['summary']
+
+          compact = {
+              'master': master['summary'],
+              'crosswalk_inference': crosswalk,
+              'set_family_bootstrap': bootstrap,
+          }
+          rendered = json.dumps(compact, indent=2, sort_keys=True)
+          (root / 'reports/compact_summary.json').write_text(rendered + '\n')
+          print(rendered)
+          PY
+
+      - name: Compress full decision backlog
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip -9 /tmp/cardmarket-master/reports/master_inventory.json
+          gzip -9 /tmp/cardmarket-master/reports/master_decisions.csv
+          rm -f /tmp/cardmarket-master/reports/*_stdout.json
+
+      - name: Upload read-only audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-master-live-audit
+          path: |
+            /tmp/cardmarket-master/reports/compact_summary.json
+            /tmp/cardmarket-master/reports/*_crosswalk_report.json
+            /tmp/cardmarket-master/reports/*_bootstrap_report.json
+            /tmp/cardmarket-master/crosswalks/*.json
+            /tmp/cardmarket-master/bootstrap/*.json
+            /tmp/cardmarket-master/reports/master_inventory.json.gz
+            /tmp/cardmarket-master/reports/master_decisions.csv.gz
+          if-no-files-found: error
+          retention-days: 14
