@@ -9,8 +9,8 @@ function badge(value) {
 }
 
 function ResultImage({ src, name, gameSlug }) {
-  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug || 'TCG'
-  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : undefined
+  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug === 'magic' ? 'Magic' : gameSlug || 'TCG'
+  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : gameSlug === 'magic' ? 'MTG' : undefined
   return (
     <FallbackImage
       src={src}
@@ -26,6 +26,8 @@ function ResultImage({ src, name, gameSlug }) {
 function CardResult({ item, gameSlug, query }) {
   const matched = item.matched_print || {}
   const attrs = item.attributes || {}
+  const variants = Number(item.variant_count || 1)
+
   return (
     <Link
       href={`/games/${gameSlug}/cards/${item.card_id}?q=${encodeURIComponent(query || item.name || '')}`}
@@ -37,7 +39,7 @@ function CardResult({ item, gameSlug, query }) {
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
           <h3>{item.name}</h3>
-          <span className="sv2-variant-count">{item.variant_count || 1} print{item.variant_count === 1 ? '' : 's'}</span>
+          <span className="sv2-variant-count">{variants} {variants === 1 ? 'versión' : 'versiones'}</span>
         </div>
         <p className="sv2-collector-line">
           <strong>{matched.collector_number}</strong>
@@ -60,6 +62,7 @@ function CardResult({ item, gameSlug, query }) {
 function PrintResult({ item, gameSlug }) {
   const physical = item.attributes || {}
   const stamps = Array.isArray(physical.stamps) ? physical.stamps : []
+
   return (
     <Link href={`/games/${gameSlug}/cards/${item.card_id}`} className="sv2-result-card sv2-result-card-print">
       <div className="sv2-result-image-wrap">
@@ -68,7 +71,7 @@ function PrintResult({ item, gameSlug }) {
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
           <h3>{item.name}</h3>
-          <span className="sv2-print-pill">Exact print</span>
+          <span className="sv2-print-pill">Versión exacta</span>
         </div>
         <p className="sv2-collector-line">
           <strong>{item.collector_number}</strong>
@@ -102,15 +105,17 @@ function PrintResult({ item, gameSlug }) {
 }
 
 export default function SearchV2Results({ items = [], mode = 'normal', gameSlug, query = '', total = null }) {
-  const label = mode === 'advanced' ? 'Exact prints' : 'Cards'
+  const label = mode === 'advanced' ? 'Versiones exactas' : 'Cartas'
+  const count = total ?? items.length
+
   return (
     <section className="sv2-results">
       <div className="sv2-results-head">
         <div>
-          <p className="eyebrow">Resultados V2</p>
+          <p className="eyebrow">Resultados</p>
           <h2>{label}</h2>
         </div>
-        <p>{total ?? items.length} resultado{(total ?? items.length) === 1 ? '' : 's'}</p>
+        <p>{count} resultado{count === 1 ? '' : 's'}</p>
       </div>
       <div className="sv2-results-grid">
         {items.map((item) => (

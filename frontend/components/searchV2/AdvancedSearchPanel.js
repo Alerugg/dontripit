@@ -11,9 +11,9 @@ const QUICK_FILTER_KEYS_BY_GAME = {
 }
 
 const QUICK_FILTER_COPY_BY_GAME = {
-  onepiece: 'Color, tipo y hits coleccionables sin abrir el panel completo.',
-  pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir el panel completo.',
-  yugioh: 'Set, release, clase, atributo, arquetipo y rareza sin abrir el panel completo.',
+  onepiece: 'Color, tipo y hits coleccionables a un toque.',
+  pokemon: 'Tipo, etapa, rareza, regulación y variante física sin abrir todos los filtros.',
+  yugioh: 'Set, release, clase, atributo, arquetipo y rareza en los accesos más usados.',
 }
 
 function isEmpty(value) {
@@ -240,7 +240,7 @@ export default function AdvancedSearchPanel({
   onToggle,
 }) {
   const quickFilterKeys = QUICK_FILTER_KEYS_BY_GAME[gameSlug] || new Set()
-  const quickFilterCopy = QUICK_FILTER_COPY_BY_GAME[gameSlug] || 'Accesos rápidos a los filtros más usados de este juego.'
+  const quickFilterCopy = QUICK_FILTER_COPY_BY_GAME[gameSlug] || 'Los filtros más útiles de este juego, sin llenarte la pantalla.'
 
   const facetByKey = useMemo(() => {
     const entries = Object.values(groups).flat().map((facet) => [facet.key, facet])
@@ -265,12 +265,12 @@ export default function AdvancedSearchPanel({
     <section className={`sv2-advanced ${open ? 'is-open' : ''}`}>
       <div className="sv2-advanced-head">
         <div>
-          <p className="eyebrow">Advanced Search</p>
-          <h3>Encuentra la impresión exacta.</h3>
-          <p>Combina identidad, características de carta y atributos de coleccionismo.</p>
+          <p className="eyebrow">Filtros avanzados</p>
+          <h3>Afina solo cuando lo necesitas.</h3>
+          <p>Empieza simple y añade set, rareza, idioma o variante física únicamente si hacen falta.</p>
         </div>
         <button type="button" className="sv2-advanced-toggle" onClick={onToggle}>
-          {open ? 'Cerrar filtros' : 'Advanced Search'}
+          {open ? 'Ocultar filtros' : 'Más filtros'}
           <span aria-hidden="true">{open ? '−' : '+'}</span>
         </button>
       </div>
@@ -279,11 +279,11 @@ export default function AdvancedSearchPanel({
         <div className="sv2-quick-filters">
           <div className="sv2-quick-heading">
             <div>
-              <strong>Quick filters</strong>
+              <strong>Filtros rápidos</strong>
               <span>{quickFilterCopy}</span>
             </div>
             <button type="button" className="sv2-quick-apply" onClick={onSearch} disabled={loading}>
-              {loading ? 'Filtrando…' : 'Ver prints'}
+              {loading ? 'Filtrando…' : 'Ver resultados'}
             </button>
           </div>
           <div className="sv2-quick-grid">
@@ -304,7 +304,7 @@ export default function AdvancedSearchPanel({
 
       {activeEntries.length > 0 && (
         <div className="sv2-active-row">
-          <span className="sv2-active-label">Activos</span>
+          <span className="sv2-active-label">Filtros activos</span>
           {activeEntries.map(([key, value]) => (
             <button key={key} type="button" className="sv2-active-filter" onClick={() => onChange(key, undefined)}>
               {facetByKey[key]?.label || key}: {formatActiveValue(value)} ×
@@ -323,9 +323,7 @@ export default function AdvancedSearchPanel({
                   {facets.map((facet) => (
                     <div key={`${facet.scope}-${facet.key}`} className={`sv2-facet sv2-facet-${facet.ui_type}`}>
                       {facet.ui_type !== 'toggle' && (
-                        <span className="sv2-facet-label">
-                          {facet.label}
-                        </span>
+                        <span className="sv2-facet-label">{facet.label}</span>
                       )}
                       <FacetControl
                         gameSlug={gameSlug}
@@ -345,7 +343,7 @@ export default function AdvancedSearchPanel({
               Limpiar
             </button>
             <button type="button" className="sv2-primary-btn" onClick={onSearch} disabled={loading}>
-              {loading ? 'Filtrando…' : 'Buscar prints'}
+              {loading ? 'Filtrando…' : 'Aplicar filtros'}
             </button>
           </div>
         </>
