@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 
 from app import db
@@ -14,19 +15,19 @@ from app.jobs.cardmarket_prices import (
 from app.models import Card, Game, PriceSnapshot, PriceSource, Print, PrintIdentifier, Set
 
 
-def _seed_print(session, *, product_id: str, foil: bool, number: str, variant: str):
-    game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+def _seed_print(session, *, product_id: str, foil: bool, number: str, variant: str, game_slug: str = "pokemon"):
+    game = session.execute(select(Game).where(Game.slug == game_slug)).scalar_one_or_none()
     if game is None:
-        game = Game(slug="pokemon", name="Pokémon")
+        game = Game(slug=game_slug, name=game_slug.upper())
         session.add(game)
         session.flush()
-        set_row = Set(game_id=game.id, code="TST", name="Test Set")
+    set_row = session.execute(select(Set).where(Set.game_id == game.id, Set.code == "TST")).scalar_one_or_none()
+    if set_row is None:
+        set_row = Set(game_id=game.id, code="TST", name=f"{game_slug} Test Set")
         session.add(set_row)
         session.flush()
-    else:
-        set_row = session.execute(select(Set).where(Set.game_id == game.id)).scalar_one()
 
-    card = Card(game_id=game.id, name=f"Card {number} {variant}", card_key=f"test:{number}:{variant}")
+    card = Card(game_id=game.id, name=f"Card {number} {variant}", card_key=f"{game_slug}:test:{number}:{variant}")
     session.add(card)
     session.flush()
     print_row = Print(
@@ -36,7 +37,7 @@ def _seed_print(session, *, product_id: str, foil: bool, number: str, variant: s
         language="en",
         is_foil=foil,
         variant=variant,
-        print_key=f"pokemon:test:{number}:{variant}",
+        print_key=f"{game_slug}:test:{number}:{variant}",
     )
     session.add(print_row)
     session.flush()
@@ -64,13 +65,15 @@ def test_current_json_shape_selects_finish_specific_prices(client):
         foil = _seed_print(session, product_id="222", foil=True, number="2", variant="holo")
         session.commit()
 
-        plan = build_import_plan(session, rows, as_of=created_at)
+        plan = build_import_plan(session, rows, as_of=created_at, game_slug="pokemon")
         assert plan.summary()["mapped_exact"] == 2
+        assert plan.cross_game_mappings == 0
         by_print = {item["entity_id"]: item for item in plan.snapshots}
         assert by_print[normal.id]["price_low"] == Decimal("4.00")
         assert by_print[normal.id]["price_market"] == Decimal("8.00")
         assert by_print[normal.id]["price_last"] == Decimal("9.00")
         assert by_print[normal.id]["raw_json"]["finish"] == "nonfoil"
+        assert by_print[normal.id]["raw_json"]["feed_game"] == "pokemon"
         assert by_print[foil.id]["price_low"] == Decimal("5.00")
         assert by_print[foil.id]["price_market"] == Decimal("6.00")
         assert by_print[foil.id]["price_last"] == Decimal("7.00")
@@ -84,7 +87,7 @@ def test_legacy_csv_preserves_low_ex_plus_as_portfolio_safe_value(client):
     with db.SessionLocal() as session:
         normal = _seed_print(session, product_id="333", foil=False, number="3", variant="normal")
         session.commit()
-        plan = build_import_plan(session, rows, as_of=datetime(2026, 8, 9, tzinfo=timezone.utc))
+        plan = build_import_plan(session, rows, as_of=datetime(2026, 8, 9, tzinfo=timezone.utc), game_slug="pokemon")
         snapshot = plan.snapshots[0]
         assert snapshot["entity_id"] == normal.id
         assert snapshot["price_low"] == Decimal("3.00")
@@ -109,13 +112,38 @@ def test_unmapped_ambiguous_duplicate_and_wrong_finish_are_never_priced(client):
         _seed_print(session, product_id="444", foil=False, number="4", variant="normal")
         session.commit()
 
-        plan = build_import_plan(session, rows, as_of=datetime(2026, 8, 9, tzinfo=timezone.utc))
+        plan = build_import_plan(session, rows, as_of=datetime(2026, 8, 9, tzinfo=timezone.utc), game_slug="pokemon")
         assert plan.duplicate_feed_rows == 1
         assert plan.ambiguous == 1
+        assert plan.cross_game_mappings == 0
         assert plan.missing_finish_prices == 1
         assert plan.unmapped == 1
         assert plan.mapped_exact == 1
         assert [item["raw_json"]["idProduct"] for item in plan.snapshots] == ["444"]
+
+
+def test_game_scope_blocks_product_id_mapped_to_another_tcg(client):
+    payload = b'''{"createdAt":"2026-08-09T03:00:00Z","priceGuides":[
+      {"idProduct": 999, "avg": 50, "low": 40, "trend": 45}
+    ]}'''
+    created_at, rows = load_price_guide_bytes(payload)
+
+    with db.SessionLocal() as session:
+        pokemon_print = _seed_print(session, product_id="999", foil=False, number="9", variant="normal", game_slug="pokemon")
+        session.commit()
+
+        mtg_plan = build_import_plan(session, rows, as_of=created_at, game_slug="mtg")
+        assert mtg_plan.mapped_exact == 0
+        assert mtg_plan.cross_game_mappings == 1
+        assert mtg_plan.snapshots == ()
+        with pytest.raises(ValueError, match="cross-game"):
+            apply_import_plan(session, mtg_plan)
+
+        pokemon_plan = build_import_plan(session, rows, as_of=created_at, game_slug="pokemon")
+        assert pokemon_plan.mapped_exact == 1
+        assert pokemon_plan.cross_game_mappings == 0
+        assert pokemon_plan.snapshots[0]["entity_id"] == pokemon_print.id
+        assert pokemon_plan.snapshots[0]["raw_json"]["feed_game"] == "pokemon"
 
 
 def test_apply_is_idempotent_for_same_cardmarket_capture(client):
@@ -127,7 +155,7 @@ def test_apply_is_idempotent_for_same_cardmarket_capture(client):
     with db.SessionLocal() as session:
         _seed_print(session, product_id="888", foil=False, number="8", variant="normal")
         session.commit()
-        plan = build_import_plan(session, rows, as_of=created_at)
+        plan = build_import_plan(session, rows, as_of=created_at, game_slug="pokemon")
         first = apply_import_plan(session, plan)
         session.commit()
         second = apply_import_plan(session, plan)
@@ -141,3 +169,4 @@ def test_apply_is_idempotent_for_same_cardmarket_capture(client):
         snapshot = session.execute(select(PriceSnapshot)).scalar_one()
         assert snapshot.price_mid == Decimal("5.00")
         assert snapshot.price_market == Decimal("8.00")
+        assert snapshot.raw_json["feed_game"] == "pokemon"
