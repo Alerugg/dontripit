@@ -287,10 +287,19 @@ def build_import_plan(
     )
 
 
+def _snapshot_row(source_id: int, plan: ImportPlan, payload: dict) -> dict:
+    return {
+        "source_id": source_id,
+        "as_of": plan.as_of,
+        **payload,
+    }
+
+
 def apply_import_plan(session, plan: ImportPlan) -> dict:
-    """Idempotently upsert a preflighted exact-only plan into PriceSnapshot."""
+    """Idempotently upsert a preflighted exact-only plan with bounded DB round-trips."""
     if plan.cross_game_mappings:
         raise ValueError("Refusing Cardmarket import plan with cross-game mappings")
+
     source = session.execute(select(PriceSource).where(PriceSource.name == CARDMARKET_SOURCE)).scalar_one_or_none()
     if source is None:
         source = PriceSource(
@@ -303,22 +312,27 @@ def apply_import_plan(session, plan: ImportPlan) -> dict:
     elif source.currency != CARDMARKET_CURRENCY:
         raise ValueError(f"Cardmarket price source has unexpected currency {source.currency!r}")
 
-    inserted = updated = 0
-    for payload in plan.snapshots:
-        existing = session.execute(
-            select(PriceSnapshot).where(
-                PriceSnapshot.entity_type == "print",
-                PriceSnapshot.entity_id == payload["entity_id"],
-                PriceSnapshot.source_id == source.id,
-                PriceSnapshot.currency == CARDMARKET_CURRENCY,
-                PriceSnapshot.as_of == plan.as_of,
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            session.add(PriceSnapshot(source_id=source.id, as_of=plan.as_of, **payload))
-            inserted += 1
-            continue
-        for field in (
+    if not plan.snapshots:
+        return {**plan.summary(), "inserted": 0, "updated": 0}
+
+    existing_ids = set(session.execute(
+        select(PriceSnapshot.entity_id).where(
+            PriceSnapshot.entity_type == "print",
+            PriceSnapshot.source_id == source.id,
+            PriceSnapshot.currency == CARDMARKET_CURRENCY,
+            PriceSnapshot.as_of == plan.as_of,
+        )
+    ).scalars().all())
+
+    inserted = sum(1 for payload in plan.snapshots if payload["entity_id"] not in existing_ids)
+    updated = len(plan.snapshots) - inserted
+    rows = [_snapshot_row(source.id, plan, payload) for payload in plan.snapshots]
+
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        update_fields = (
             "price_low",
             "price_mid",
             "price_high",
@@ -326,8 +340,43 @@ def apply_import_plan(session, plan: ImportPlan) -> dict:
             "price_last",
             "quantity",
             "raw_json",
-        ):
-            setattr(existing, field, payload[field])
-        updated += 1
+        )
+        chunk_size = 500
+        for offset in range(0, len(rows), chunk_size):
+            chunk = rows[offset:offset + chunk_size]
+            statement = pg_insert(PriceSnapshot).values(chunk)
+            statement = statement.on_conflict_do_update(
+                constraint="uq_price_snapshot_identity",
+                set_={field: getattr(statement.excluded, field) for field in update_fields},
+            )
+            session.execute(statement)
+    else:
+        existing_rows = session.execute(
+            select(PriceSnapshot).where(
+                PriceSnapshot.entity_type == "print",
+                PriceSnapshot.source_id == source.id,
+                PriceSnapshot.currency == CARDMARKET_CURRENCY,
+                PriceSnapshot.as_of == plan.as_of,
+            )
+        ).scalars().all()
+        existing_by_id = {row.entity_id: row for row in existing_rows}
+        new_rows = []
+        for row_data in rows:
+            existing = existing_by_id.get(row_data["entity_id"])
+            if existing is None:
+                new_rows.append(PriceSnapshot(**row_data))
+                continue
+            for field in (
+                "price_low",
+                "price_mid",
+                "price_high",
+                "price_market",
+                "price_last",
+                "quantity",
+                "raw_json",
+            ):
+                setattr(existing, field, row_data[field])
+        if new_rows:
+            session.add_all(new_rows)
 
     return {**plan.summary(), "inserted": inserted, "updated": updated}
