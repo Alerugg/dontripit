@@ -1,0 +1,49 @@
+name: Fix Cardmarket Cross-Game 477604
+
+on:
+  push:
+    branches:
+      - fix-cardmarket-cross-game-477604
+    paths:
+      - 'backend/scripts/remove_bad_cardmarket_mapping_477604.py'
+      - '.github/workflows/fix-cardmarket-cross-game-477604.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guarded-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download current Magic and Pokémon Product Lists
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json -o /tmp/products_magic.json
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json -o /tmp/products_pokemon.json
+      - name: Re-validate and remove only the proven bad mapping
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/remove_bad_cardmarket_mapping_477604.py --magic-products /tmp/products_magic.json --pokemon-products /tmp/products_pokemon.json --report /tmp/cardmarket-mapping-fix.json
+      - name: Upload fix report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-mapping-fix-477604
+          path: /tmp/cardmarket-mapping-fix.json
+          if-no-files-found: error
+          retention-days: 30
