@@ -33,16 +33,24 @@ test('collection and wishlist use exact physical print IDs', () => {
   assert.match(library, /item\.print\.id/)
 })
 
-test('exact One Piece collector results render as separate physical editions', () => {
+test('exact collector results preserve physical identity and open the exact print', () => {
   const results = source('components/searchV2/SearchV2Results.js')
   const backendRoute = source('../backend/app/routes/search_v2.py')
   const exactSearch = source('../backend/app/search_v2/onepiece_exact_collector.py')
   assert.match(results, /item\.type === 'print'/)
-  assert.match(results, /Ediciones exactas/)
+  assert.match(results, /Versiones que coinciden/)
+  assert.match(results, /`\/prints\/\$\{printId\}`/)
   assert.match(backendRoute, /exact_onepiece_collector_search/)
   assert.match(exactSearch, /canonical_card_key = f"onepiece:\{collector\}"/)
   assert.match(exactSearch, /Card\.card_key == canonical_card_key/)
   assert.doesNotMatch(exactSearch, /PARTITION BY card_id/)
+})
+
+test('search suggestions start from the first character', () => {
+  const input = source('components/search/SearchInput.js')
+  const experience = source('components/searchV2/OnePieceSearchV2Experience.js')
+  assert.match(input, /trim\(\)\.length >= 1/)
+  assert.match(experience, /query\.trim\(\)\.length < 1/)
 })
 
 test('price UI refuses to invent missing values', () => {
@@ -50,5 +58,6 @@ test('price UI refuses to invent missing values', () => {
   const library = source('components/library/LibraryPage.js')
   assert.match(printPage, /Sin precio verificado todavía/)
   assert.match(printPage, /fuente y una fecha/)
-  assert.match(library, /No mostramos estimaciones sin fuente verificada/)
+  assert.match(library, /Sin precio verificado/)
+  assert.match(library, /fuente fiable/)
 })
