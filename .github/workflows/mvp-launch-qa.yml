@@ -89,8 +89,9 @@ jobs:
 
       - name: Verify MVP UX contracts
         run: |
-          grep -q "Tu colección" frontend/components/dashboard/DashboardPage.js
+          grep -q "Mi colección" frontend/components/dashboard/DashboardPage.js
           grep -q "Mi wishlist" frontend/components/library/LibraryPage.js
           grep -q "dri_session" frontend/proxy.js
           grep -q "Ediciones exactas" frontend/components/searchV2/SearchV2Results.js
+          grep -q "marketing_consent" frontend/components/auth/AuthShell.js
           ! grep -q "Vista previa del flujo" frontend/components/auth/AuthShell.js
