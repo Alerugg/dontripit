@@ -1,0 +1,120 @@
+name: Audit Live Cardmarket Coverage 2026-08-09
+
+on:
+  push:
+    branches:
+      - audit-live-cardmarket-coverage-20260809
+    paths:
+      - '.github/workflows/audit-live-cardmarket-coverage-20260809.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install read-only audit dependency
+        run: python -m pip install --quiet 'sqlalchemy>=2,<3' psycopg2-binary
+      - name: Query aggregated Cardmarket coverage only
+        run: |
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, text
+
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('database secret unavailable')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+
+          engine = create_engine(url, pool_pre_ping=True)
+          with engine.connect() as conn:
+              mappings = conn.execute(text('''
+                SELECT g.slug AS game,
+                       COUNT(*) AS mapping_rows,
+                       COUNT(DISTINCT pi.print_id) AS mapped_prints,
+                       COUNT(DISTINCT pi.external_id) AS product_ids
+                FROM print_identifiers pi
+                JOIN prints p ON p.id = pi.print_id
+                JOIN cards c ON c.id = p.card_id
+                JOIN games g ON g.id = c.game_id
+                WHERE lower(pi.source) = 'cardmarket'
+                GROUP BY g.slug
+                ORDER BY g.slug
+              ''')).mappings().all()
+
+              totals = conn.execute(text('''
+                SELECT g.slug AS game,
+                       COUNT(DISTINCT p.id) AS total_prints,
+                       COUNT(DISTINCT c.id) AS total_cards
+                FROM games g
+                LEFT JOIN cards c ON c.game_id = g.id
+                LEFT JOIN prints p ON p.card_id = c.id
+                GROUP BY g.slug
+                ORDER BY g.slug
+              ''')).mappings().all()
+
+              snapshots = conn.execute(text('''
+                SELECT g.slug AS game,
+                       COUNT(*) AS snapshots,
+                       COUNT(DISTINCT ps.entity_id) AS priced_prints,
+                       MAX(ps.as_of) AS newest_snapshot
+                FROM price_snapshots ps
+                JOIN price_sources src ON src.id = ps.source_id
+                JOIN prints p ON p.id = ps.entity_id AND ps.entity_type = 'print'
+                JOIN cards c ON c.id = p.card_id
+                JOIN games g ON g.id = c.game_id
+                WHERE lower(src.name) = 'cardmarket'
+                GROUP BY g.slug
+                ORDER BY g.slug
+              ''')).mappings().all()
+
+              duplicate_external_ids = conn.execute(text('''
+                SELECT COUNT(*)
+                FROM (
+                  SELECT external_id
+                  FROM print_identifiers
+                  WHERE lower(source) = 'cardmarket'
+                  GROUP BY external_id
+                  HAVING COUNT(DISTINCT print_id) > 1
+                ) x
+              ''')).scalar_one()
+
+              duplicate_print_ids = conn.execute(text('''
+                SELECT COUNT(*)
+                FROM (
+                  SELECT print_id
+                  FROM print_identifiers
+                  WHERE lower(source) = 'cardmarket'
+                  GROUP BY print_id
+                  HAVING COUNT(DISTINCT external_id) > 1
+                ) x
+              ''')).scalar_one()
+
+          by_game = {row['game']: dict(row) for row in totals}
+          for row in mappings:
+              by_game.setdefault(row['game'], {}).update(dict(row))
+          for row in snapshots:
+              by_game.setdefault(row['game'], {}).update(dict(row))
+
+          for game, row in by_game.items():
+              total_prints = int(row.get('total_prints') or 0)
+              mapped_prints = int(row.get('mapped_prints') or 0)
+              row['mapping_coverage_pct'] = round((mapped_prints / total_prints * 100), 2) if total_prints else 0.0
+
+          print(json.dumps({
+              'games': by_game,
+              'duplicate_cardmarket_external_ids': int(duplicate_external_ids),
+              'prints_with_multiple_cardmarket_product_ids': int(duplicate_print_ids),
+              'write_mode': 'disabled',
+          }, indent=2, sort_keys=True, default=str))
+          PY
