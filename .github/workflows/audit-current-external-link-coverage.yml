@@ -1,0 +1,79 @@
+name: Audit Current External Link Coverage
+
+on:
+  push:
+    branches:
+      - audit-current-external-link-coverage
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install database driver
+        run: pip install psycopg2-binary==2.9.9
+      - name: Audit current Cardmarket catalog, accepted links and latest prices
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor() as c:
+              c.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'")
+              latest=c.fetchone()[0]
+              report={'latest_catalog_seen_at':latest.isoformat() if latest else None,'games':{}}
+              for game in ('pokemon','onepiece','yugioh','mtg'):
+                c.execute("SELECT id FROM games WHERE slug=%s",(game,)); gid=c.fetchone()[0]
+                c.execute("""SELECT product_group,count(*) FROM external_catalog_products
+                  WHERE source='cardmarket' AND game_id=%s AND last_seen_at=%s GROUP BY product_group""",(gid,latest))
+                groups=dict(c.fetchall())
+                c.execute("""SELECT count(DISTINCT e.id) FROM external_catalog_products e
+                  JOIN external_catalog_print_links l ON l.external_product_id=e.id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.last_seen_at=%s
+                    AND l.link_status IN ('accepted','mapped','exact')""",(gid,latest))
+                linked_singles=int(c.fetchone()[0])
+                c.execute("""SELECT count(DISTINCT e.id) FROM external_catalog_products e
+                  JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.last_seen_at=%s
+                    AND l.link_status IN ('accepted','mapped','exact')""",(gid,latest))
+                linked_sealed=int(c.fetchone()[0])
+                c.execute("""SELECT max(p.as_of) FROM external_market_price_snapshots p
+                  JOIN external_catalog_products e ON e.id=p.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s""",(gid,))
+                latest_price=c.fetchone()[0]
+                priced=0; priced_sealed=0
+                if latest_price:
+                  c.execute("""SELECT count(DISTINCT e.id),count(DISTINCT e.id) FILTER (WHERE e.product_group='non_single')
+                    FROM external_catalog_products e JOIN external_market_price_snapshots p ON p.external_product_id=e.id
+                    WHERE e.source='cardmarket' AND e.game_id=%s AND p.as_of=%s""",(gid,latest_price))
+                  priced,priced_sealed=map(int,c.fetchone())
+                singles=int(groups.get('single',0)); sealed=int(groups.get('non_single',0)); total=singles+sealed
+                report['games'][game]={
+                  'single_products':singles,'non_single_products':sealed,'total_products':total,
+                  'accepted_single_products_linked':linked_singles,'accepted_non_single_products_linked':linked_sealed,
+                  'single_link_coverage_pct':round(100*linked_singles/singles,4) if singles else 0,
+                  'non_single_link_coverage_pct':round(100*linked_sealed/sealed,4) if sealed else 0,
+                  'latest_price_as_of':latest_price.isoformat() if latest_price else None,
+                  'products_priced_at_latest_capture':priced,'non_single_products_priced_at_latest_capture':priced_sealed,
+                }
+              print(json.dumps(report,indent=2,sort_keys=True))
+              open('/tmp/external-link-coverage.json','w').write(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          finally: conn.close()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: external-link-coverage
+          path: /tmp/external-link-coverage.json
+          retention-days: 7
