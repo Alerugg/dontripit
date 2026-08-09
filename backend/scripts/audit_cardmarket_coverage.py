@@ -16,22 +16,27 @@ def main() -> int:
         description="Read-only Cardmarket mapping/price coverage report by game and set."
     )
     parser.add_argument("--price-guide", help="Optional official Cardmarket Price Guide JSON/CSV to measure price-ready coverage")
+    parser.add_argument("--game", choices=["pokemon", "mtg", "yugioh", "onepiece"], help="TCG represented by --price-guide")
     parser.add_argument("--report", help="Optional JSON output path")
     args = parser.parse_args()
+
+    if bool(args.price_guide) != bool(args.game):
+        raise SystemExit("--price-guide and --game must be supplied together")
 
     database_url = os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL")
     if not database_url:
         raise SystemExit("DATABASE_URL_UNPOOLED or DATABASE_URL is required")
     db.init_engine(database_url)
 
-    price_rows = None
+    feeds = None
     if args.price_guide:
         _created_at, price_rows = load_price_guide_file(args.price_guide)
         if not price_rows:
             raise SystemExit("No Cardmarket Price Guide rows parsed; refusing to continue")
+        feeds = {args.game: price_rows}
 
     with db.SessionLocal() as session:
-        report = build_cardmarket_coverage(session, price_rows)
+        report = build_cardmarket_coverage(session, feeds)
         session.rollback()
 
     rendered = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False)
