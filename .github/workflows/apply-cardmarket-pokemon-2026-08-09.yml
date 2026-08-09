@@ -1,0 +1,51 @@
+name: Apply Cardmarket Pokémon 2026-08-09
+
+on:
+  push:
+    branches:
+      - cardmarket-apply-pokemon-2026-08-09
+    paths:
+      - 'backend/scripts/apply_cardmarket_pokemon_once.py'
+      - '.github/workflows/apply-cardmarket-pokemon-2026-08-09.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guarded-apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Download official Pokémon Cardmarket Price Guide
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json \
+            -o /tmp/prices_pokemon.json
+          test -s /tmp/prices_pokemon.json
+      - name: Guarded preflight and commit to Neon
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/apply_cardmarket_pokemon_once.py /tmp/prices_pokemon.json --report /tmp/cardmarket-pokemon-apply.json
+      - name: Upload apply report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-pokemon-apply-2026-08-09
+          path: /tmp/cardmarket-pokemon-apply.json
+          if-no-files-found: error
+          retention-days: 30
