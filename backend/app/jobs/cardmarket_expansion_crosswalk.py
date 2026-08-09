@@ -63,7 +63,7 @@ def derive_expansion_crosswalk(
             continue
         by_product[product.product_id] = product
 
-    mapped_rows = session.execute(
+    mapped_query = (
         select(
             PrintIdentifier.external_id,
             Print.id,
@@ -74,7 +74,10 @@ def derive_expansion_crosswalk(
         .join(Set, Set.id == Print.set_id)
         .join(Game, Game.id == Set.game_id)
         .where(PrintIdentifier.source == CARDMARKET_SOURCE)
-    ).all()
+    )
+    if game_filter:
+        mapped_query = mapped_query.where(Game.slug == game_filter)
+    mapped_rows = session.execute(mapped_query).all()
 
     evidence_by_expansion: dict[str, list[dict]] = defaultdict(list)
     missing_from_product_list = 0
@@ -88,8 +91,6 @@ def derive_expansion_crosswalk(
         category_game = infer_game_from_category(product.category)
         if category_game and category_game != str(game_slug):
             category_conflicts += 1
-        if game_filter and str(game_slug) != game_filter:
-            continue
 
         evidence_by_expansion[product.expansion_id].append({
             "product_id": str(external_id),
@@ -182,6 +183,7 @@ def derive_expansion_crosswalk(
         "conflicting_internal_sets": status_counts.get("conflicting_internal_sets", 0),
         "category_game_conflict": status_counts.get("category_game_conflict", 0),
         "minimum_samples": min_samples,
+        "game_filter": game_filter or None,
         "write_mode": "disabled",
     }
     return summary, decisions, proposals
