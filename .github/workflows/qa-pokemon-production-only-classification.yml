@@ -1,0 +1,108 @@
+name: QA Pokemon Production Only Classification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-pokemon-production-only-classification.yml'
+      - 'backend/app/pokemon_source_inventory.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Classify identities retained beyond current TCGdex global card list
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          from app.pokemon_source_inventory import load_inventory
+
+          inv=load_inventory(); current_ids=set(inv.physical_cards)
+          set_live={x['set_id']:x for x in inv.physical_sets}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT c.id card_pk,c.tcgdex_id,c.name,c.card_key,s.id set_pk,s.tcgdex_id set_tcgdex_id,s.code set_code,s.name set_name,
+                     p.id print_id,p.collector_number,p.variant,p.rarity,p.is_foil,
+                     pa.source attribute_source,pa.source_version,
+                     EXISTS(SELECT 1 FROM print_images pi WHERE pi.print_id=p.id AND pi.is_primary=true) has_primary_image,
+                     EXISTS(SELECT 1 FROM external_print_links epl WHERE epl.print_id=p.id AND epl.provider='cardmarket' AND epl.status='accepted') has_cardmarket_link
+              FROM cards c JOIN games g ON g.id=c.game_id
+              JOIN prints p ON p.card_id=c.id JOIN sets s ON s.id=p.set_id
+              LEFT JOIN print_attributes pa ON pa.print_id=p.id
+              WHERE g.slug='pokemon'
+              ORDER BY s.tcgdex_id,c.tcgdex_id,p.id
+            ''')
+            rows=[dict(x) for x in c.fetchall()]
+            c.execute("SELECT id,tcgdex_id,code,name FROM sets s JOIN games g ON g.id=s.game_id WHERE g.slug='pokemon' AND s.tcgdex_id='sv1'")
+            sv1=c.fetchone(); sv1_refs=[]
+            if sv1:
+              c.execute('''
+                SELECT tc.table_name,kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+                JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema
+                WHERE tc.constraint_type='FOREIGN KEY' AND ccu.table_schema='public' AND ccu.table_name='sets' AND ccu.column_name='id'
+                ORDER BY tc.table_name,kcu.column_name
+              ''')
+              for fk in c.fetchall():
+                table=fk['table_name'];col=fk['column_name']
+                c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=%s',(sv1['id'],))
+                n=int(c.fetchone()['n'])
+                if n:sv1_refs.append({'table':table,'column':col,'rows':n})
+          conn.close()
+
+          card_rows=defaultdict(list)
+          for r in rows: card_rows[str(r['tcgdex_id'])].append(r)
+          prod_only={cid:rs for cid,rs in card_rows.items() if cid and cid not in current_ids}
+          by_set=defaultdict(lambda:{'cards':set(),'prints':0,'images':0,'cardmarket':0,'collectors':[],'source_versions':Counter()})
+          for cid,rs in prod_only.items():
+            for r in rs:
+              s=by_set[r['set_tcgdex_id']];s['cards'].add(cid);s['prints']+=1;s['images']+=int(r['has_primary_image']);s['cardmarket']+=int(r['has_cardmarket_link']);s['collectors'].append(r['collector_number'])
+              if r.get('source_version'):s['source_versions'][r['source_version']]+=1
+          groups=[]
+          for sid,data in sorted(by_set.items()):
+            live=set_live.get(sid) or {}
+            groups.append({
+              'set_id':sid,'set_name':(next(iter(prod_only[next(cid for cid,rs in prod_only.items() if rs[0]['set_tcgdex_id']==sid)]))['set_name'] if False else (next(r['set_name'] for rs in prod_only.values() for r in rs if r['set_tcgdex_id']==sid))),
+              'production_only_cards':len(data['cards']),'production_only_prints':data['prints'],'with_primary_image':data['images'],'with_cardmarket_link':data['cardmarket'],
+              'collector_sample':sorted(set(data['collectors']))[:30],
+              'source_versions':dict(data['source_versions']),
+              'live_set_exists':bool(live),'live_declared_total':live.get('declared_total'),'live_set_endpoint_cards':live.get('set_endpoint_cards'),
+              'live_global_cards_in_set':sum(1 for x in inv.physical_cards.values() if x.get('set_id')==sid),
+            })
+          details=[]
+          for cid,rs in sorted(prod_only.items()):
+            first=rs[0]
+            details.append({'tcgdex_id':cid,'name':first['name'],'set_id':first['set_tcgdex_id'],'set_name':first['set_name'],'print_count':len(rs),'collectors':sorted({r['collector_number'] for r in rs}),'has_any_image':any(r['has_primary_image'] for r in rs),'has_any_cardmarket':any(r['has_cardmarket_link'] for r in rs),'source_versions':sorted({r['source_version'] for r in rs if r.get('source_version')})})
+          report={'production_only_cards':len(prod_only),'production_only_prints':sum(len(x) for x in prod_only.values()),'groups':groups,'details':details,'legacy_sv1_set':dict(sv1) if sv1 else None,'legacy_sv1_references':sv1_refs,'legacy_sv1_safe_to_delete':bool(sv1) and not sv1_refs}
+          print(json.dumps({k:v for k,v in report.items() if k!='details'},indent=2,ensure_ascii=False,default=str))
+          print('detail_sample',json.dumps(details[:30],indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/pokemon-production-only-classification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-production-only-classification-${{ github.run_id }}
+          path: /tmp/pokemon-production-only-classification.json
+          retention-days: 90
+          if-no-files-found: warn
