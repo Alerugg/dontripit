@@ -35,7 +35,7 @@ jobs:
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
-          CANONICAL_RE = re.compile(r'^(?:OP|ST|EB|PRB)\d{1,2}-\d{3}(?:_p\d+)?$|^P-\d{3}(?:_p\d+)?$', re.I)
+          CANONICAL_RE = re.compile(r'^(?:(?:OP|ST|EB)\d{2}-\d{3}(?:_[pr]\d+)?|P-\d{3}(?:_[pr]\d+)?)$', re.I)
           ACCEPTED = ('accepted', 'mapped', 'exact')
           UNSUPPORTED_FINISH = ('etched', 'glossy')
           report = {'game':'onepiece','set_code':'OP-15','mode':'read_only_live_db_audit','status':'started'}
