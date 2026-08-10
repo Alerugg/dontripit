@@ -15,8 +15,7 @@ function normalizeOnePieceSetCode(query, game) {
   const match = String(query || '').trim().match(/^(OP|ST|EB|PRB)[\s_-]?(\d{1,3})$/i)
   if (!match) return null
   const [, prefix, rawNumber] = match
-  const width = prefix.toUpperCase() === 'PRB' ? 2 : 2
-  return `${prefix.toLowerCase()}-${String(Number(rawNumber)).padStart(width, '0')}`
+  return `${prefix.toLowerCase()}-${String(Number(rawNumber)).padStart(2, '0')}`
 }
 
 function toItems(payload) {
@@ -129,7 +128,7 @@ export async function GET(request) {
         timeoutMs: 15000,
       })
   const sealedPromise = setCode
-    ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
+    ? callInternalApi(`/api/v1/market/sets/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}/products`, {
         params: { limit, offset, category },
         timeoutMs: 15000,
       })
@@ -156,8 +155,9 @@ export async function GET(request) {
   let marketByPrint = new Map()
   if (singles.length) {
     const ids = singles.map((item) => item.print_id).filter(Boolean)
-    const marketUpstream = await callInternalApi('/api/v1/market/prints/cardmarket-batch', {
-      params: { ids: ids.join(',') },
+    const marketUpstream = await callInternalApi('/api/v1/market/prints/cardmarket/batch', {
+      method: 'POST',
+      body: { print_ids: ids },
       timeoutMs: 15000,
     })
     if (marketUpstream.ok) {
@@ -169,7 +169,13 @@ export async function GET(request) {
 
   const enrichedSingles = singles.map((item) => ({
     ...item,
-    market: marketByPrint.get(String(item.print_id)) || null,
+    market: marketByPrint.get(String(item.print_id)) || {
+      print_id: item.print_id,
+      status: 'unavailable',
+      reference: null,
+      price: null,
+      reason: 'cardmarket_reference_request_unavailable',
+    },
   }))
 
   const singlesTotal = Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)
