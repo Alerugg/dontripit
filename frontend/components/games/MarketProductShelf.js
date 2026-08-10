@@ -13,6 +13,13 @@ function money(value, currency = 'EUR') {
   }
 }
 
+function cardmarketHref(path = '') {
+  const value = String(path || '').trim()
+  if (!value) return ''
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://www.cardmarket.com${value.startsWith('/') ? value : `/${value}`}`
+}
+
 export default function MarketProductShelf({ products = [], gameName = 'TCG' }) {
   const current = products.filter((item) => item.listing_status === 'available_verified').slice(0, 8)
   if (!current.length) return null
@@ -21,16 +28,17 @@ export default function MarketProductShelf({ products = [], gameName = 'TCG' }) 
     <section className="v4-market-section dri-hub-anchor" id="sellado">
       <div className="v4-section-heading v4-section-heading-small">
         <div>
-          <span className="v4-overline"><i /> Cardmarket</span>
-          <h2>Producto sellado disponible</h2>
+          <span className="v4-overline"><i /> Producto sellado</span>
+          <h2>Disponible actualmente en Cardmarket</h2>
         </div>
-        <p>Disponibilidad observada en el último feed. La identidad canónica se muestra por separado.</p>
+        <p>Mostramos productos observados en el último catálogo de Cardmarket. Solo afirmamos identidad Don’tRipIt cuando la correspondencia es exacta.</p>
       </div>
 
       <div className="v4-market-grid">
         {current.map((item) => {
           const price = money(item.price_low ?? item.price_market ?? item.price_mid, item.currency || 'EUR')
           const verified = item.identity_status === 'verified'
+          const href = cardmarketHref(item.website_path)
           const content = (
             <>
               <div className="v4-market-image">
@@ -42,21 +50,22 @@ export default function MarketProductShelf({ products = [], gameName = 'TCG' }) 
                 />
               </div>
               <div className="v4-market-copy">
-                <span className="v4-market-status">Disponible verificado</span>
+                <span className="v4-market-status">En catálogo Cardmarket</span>
                 <h3>{item.name}</h3>
                 <p>{item.category || 'Producto sellado'}</p>
                 <div>
                   <strong>{price || 'Sin precio actual'}</strong>
-                  <small>{verified ? 'Identidad confirmada' : 'Correspondencia pendiente'}</small>
+                  <small>{verified ? 'Versión identificada en Don’tRipIt' : 'Identidad interna pendiente'}</small>
                 </div>
+                {href ? <b className="v4-market-link-label">Ver en Cardmarket ↗</b> : null}
               </div>
             </>
           )
 
-          return item.website_path ? (
+          return href ? (
             <a
               key={item.external_id}
-              href={item.website_path}
+              href={href}
               target="_blank"
               rel="noopener noreferrer"
               className="v4-market-card"
