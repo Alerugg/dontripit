@@ -1,0 +1,162 @@
+name: Audit One Piece Bandai Structured Fields Global
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-bandai-structured-fields-global.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare Bandai structured gameplay fields with production search projection
+        run: |
+          python - <<'PY'
+          import json,os,re,requests,unicodedata
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from bs4 import BeautifulSoup
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          BASE='https://en.onepiece-cardgame.com/cardlist/'
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 bandai-field-parity'})
+          root=http.get(BASE,timeout=30); root.raise_for_status(); root_soup=BeautifulSoup(root.text,'html.parser')
+          selector=root_soup.find('select',{'name':'series'})
+          series=[((o.get('value') or '').strip(),' '.join(o.stripped_strings)) for o in selector.find_all('option') if (o.get('value') or '').strip().isdigit()]
+          if len(series)!=59: raise AssertionError(f'Official series count changed: {len(series)}')
+
+          def txt(node, selector):
+            x=node.select_one(selector)
+            if not x:return None
+            h=x.find('h3')
+            if h:h.extract()
+            v=' '.join(x.stripped_strings).strip()
+            return v or None
+          def parse_int(v):
+            if v is None:return None
+            m=re.search(r'-?\d+',str(v).replace(',',''))
+            return int(m.group()) if m else None
+          def norm_text(v):
+            if v is None:return None
+            s=unicodedata.normalize('NFKC',str(v)).replace('’',"'").replace('“','"').replace('”','"').replace('−','-')
+            return re.sub(r'\s+',' ',s).strip() or None
+          def norm_list(v):
+            if v is None:return []
+            if isinstance(v,list): items=v
+            else: items=re.split(r'\s*/\s*|\s*;\s*',str(v))
+            return sorted(norm_text(x) for x in items if norm_text(x))
+          def get_info(dl):
+            info=dl.select_one('.infoCol')
+            spans=[x.get_text(' ',strip=True) for x in info.find_all('span')] if info else []
+            return (spans+[None,None,None])[:3]
+          def attr_value(dl):
+            x=dl.select_one('.attribute')
+            if not x:return None
+            alts=[i.get('alt') for i in x.find_all('img') if i.get('alt')]
+            if alts:return alts
+            raw=txt(dl,'.attribute')
+            return [raw] if raw else []
+          def color_value(dl):
+            raw=txt(dl,'.color')
+            if not raw:return []
+            return [x.strip() for x in re.split(r'[/,]',raw) if x.strip()]
+          def block_value(dl):
+            x=dl.select_one('.block')
+            if not x:return None
+            img=x.find('img')
+            alt=(img.get('alt') if img else None)
+            if alt:
+              m=re.search(r'([0-9X]+)',alt,re.I)
+              if m:return m.group(1).upper()
+            raw=txt(dl,'.block')
+            if raw:
+              m=re.search(r'([0-9X]+)',raw,re.I)
+              return m.group(1).upper() if m else raw
+            return None
+
+          official_by_file={}
+          duplicate_conflicts=[]
+          for sid,label in series:
+            rr=http.get(BASE,params={'series':sid},timeout=30); rr.raise_for_status(); ss=BeautifulSoup(rr.text,'html.parser')
+            for dl in ss.select('dl.modalCol'):
+              img=dl.select_one('.frontCol img'); src=((img.get('data-src') or img.get('src') or '') if img else '')
+              fn=src.split('?',1)[0].rsplit('/',1)[-1] if src else None
+              if not fn:continue
+              collector,rarity,card_type=get_info(dl)
+              name=(dl.select_one('.cardName').get_text(' ',strip=True) if dl.select_one('.cardName') else None)
+              life=txt(dl,'.life'); cost=txt(dl,'.cost')
+              row={'filename':fn,'collector_number':collector,'rarity':rarity,'card_type':card_type,'name':name,
+                   'life':parse_int(life),'cost':parse_int(cost),'attribute':attr_value(dl),'power':parse_int(txt(dl,'.power')),
+                   'counter':parse_int(txt(dl,'.counter')),'color':color_value(dl),'block':block_value(dl),
+                   'traits':norm_list(txt(dl,'.feature')),'effect':norm_text(txt(dl,'.text')),'trigger':norm_text(txt(dl,'.trigger'))}
+              old=official_by_file.get(fn)
+              if old:
+                comparable={k:v for k,v in row.items() if k!='filename'}
+                oldc={k:v for k,v in old.items() if k!='filename'}
+                if comparable!=oldc: duplicate_conflicts.append({'filename':fn})
+              else: official_by_file[fn]=row
+          if duplicate_conflicts: raise AssertionError(f'Official duplicate file metadata conflicts: {len(duplicate_conflicts)}')
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT p.id print_id,p.collector_number,p.rarity,c.name,pi.url,psp.attributes_json
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+              JOIN print_images pi ON pi.print_id=p.id AND pi.is_primary=true
+              LEFT JOIN print_search_profiles psp ON psp.print_id=p.id
+              WHERE g.slug='onepiece' AND lower(coalesce(p.language,''))='en'
+            '''); db=[dict(x) for x in c.fetchall()]
+          conn.close()
+          db_by_file={urlparse(str(x['url'])).path.rsplit('/',1)[-1]:x for x in db}
+
+          fields=['collector_number','rarity','name','card_type','life','cost','attribute','power','counter','color','block','traits','effect','trigger']
+          mismatches=Counter(); missing_profile=0; details=[]; compared=0
+          for fn,off in official_by_file.items():
+            row=db_by_file.get(fn)
+            if not row: continue
+            attrs=row.get('attributes_json') or {}
+            if not row.get('attributes_json'): missing_profile+=1
+            dbvals={
+              'collector_number':row.get('collector_number'),'rarity':row.get('rarity'),'name':row.get('name'),
+              'card_type':attrs.get('card_type'),'life':attrs.get('life'),'cost':attrs.get('cost'),
+              'attribute':attrs.get('attribute') or [],'power':attrs.get('power'),'counter':attrs.get('counter'),
+              'color':attrs.get('color') or [],'block':attrs.get('block'),'traits':attrs.get('traits') or [],
+              'effect':attrs.get('effect'),'trigger':attrs.get('trigger')}
+            field_bad=[]
+            for f in fields:
+              a,b=off.get(f),dbvals.get(f)
+              if f in ('attribute','color','traits'):
+                equal=norm_list(a)==norm_list(b)
+              elif f in ('effect','trigger','name','card_type','collector_number','rarity','block'):
+                equal=norm_text(a)==norm_text(b)
+              else:
+                equal=a==b
+              if not equal:
+                mismatches[f]+=1; field_bad.append(f)
+            compared+=1
+            if field_bad: details.append({'filename':fn,'print_id':row['print_id'],'fields':field_bad})
+          report={'official_unique_files':len(official_by_file),'db_primary_files':len(db_by_file),'compared':compared,'profiles_missing':missing_profile,
+                  'mismatch_prints':len(details),'mismatches_by_field':dict(mismatches),'mismatch_sample':details[:100]}
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          Path('/tmp/onepiece-bandai-structured-fields-global.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-bandai-structured-fields-${{ github.run_id }}
+          path: /tmp/onepiece-bandai-structured-fields-global.json
+          retention-days: 90
+          if-no-files-found: warn
