@@ -1,0 +1,151 @@
+name: Audit One Piece Official Parity Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-official-parity-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare official cardlist series and production One Piece sets
+        run: |
+          python - <<'PY'
+          import json,os,re,requests
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          from bs4 import BeautifulSoup
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          BASE='https://en.onepiece-cardgame.com/cardlist/'
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 official-parity-audit'})
+          r=http.get(BASE,timeout=30); r.raise_for_status(); soup=BeautifulSoup(r.text,'html.parser')
+
+          # Collect every numeric series option exposed by Bandai cardlist. Keep label verbatim.
+          series=[]
+          seen=set()
+          for opt in soup.find_all('option'):
+              val=(opt.get('value') or '').strip()
+              label=' '.join(opt.stripped_strings).strip()
+              m=re.search(r'(?:series=)?(\d{4,})',val)
+              if m and m.group(1) not in seen:
+                  seen.add(m.group(1)); series.append({'series':m.group(1),'label':label,'raw_value':val})
+          # Fallback: hrefs/JS values in source.
+          if not series:
+              for sid in sorted(set(re.findall(r'[?&]series=(\d{4,})',r.text))):
+                  series.append({'series':sid,'label':'','raw_value':sid})
+
+          def parse_cards(html):
+              # Card list pages expose each physical card image path and a visible code|rarity|type tuple.
+              img_re=re.compile(r'/images/cardlist/card/([^\"\'<>]+?\.png)',re.I)
+              filenames=[]; fseen=set()
+              for fn in img_re.findall(html):
+                  fn=fn.rsplit('/',1)[-1]
+                  if fn not in fseen:
+                      fseen.add(fn); filenames.append(fn)
+              visible=[]
+              text=BeautifulSoup(html,'html.parser').get_text('\n')
+              for m in re.finditer(r'\b((?:OP|ST|EB|PRB|P)-?\d{1,2}-?\d{3}|P-\d{3})\s*\|\s*([^|\n]+)\|\s*([^\n]+)',text,re.I):
+                  visible.append({'collector':m.group(1).upper().replace('OP-','OP').replace('ST-','ST').replace('EB-','EB').replace('PRB-','PRB'), 'rarity':m.group(2).strip(), 'card_type':m.group(3).strip()})
+              return filenames,visible
+
+          # Fetch series pages and infer normalized set codes from physical filenames/card codes.
+          official=[]
+          for item in series:
+              rr=http.get(BASE,params={'series':item['series']},timeout=30); rr.raise_for_status()
+              files,visible=parse_cards(rr.text)
+              collectors=[]
+              for fn in files:
+                  base=fn[:-4]
+                  collector=base.split('_',1)[0].upper()
+                  collectors.append(collector)
+              prefixes=Counter()
+              for c in collectors:
+                  m=re.match(r'^((?:OP|ST|EB|PRB)\d{1,2}|P)-',c)
+                  if m: prefixes[m.group(1)] += 1
+              primary=prefixes.most_common(1)[0][0] if prefixes else None
+              official.append({**item,'url':rr.url,'result_count_files':len(files),'visible_rows':len(visible),'primary_code':primary,'prefix_counts':dict(prefixes),'filenames':files,'visible':visible})
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SELECT id FROM games WHERE slug='onepiece'"); gid=int(c.fetchone()['id'])
+              c.execute('''
+                SELECT s.id,s.code,s.name,s.release_date,count(p.id) print_count,
+                       count(distinct p.collector_number) collector_count
+                FROM sets s
+                LEFT JOIN prints p ON p.set_id=s.id
+                LEFT JOIN cards ca ON ca.id=p.card_id
+                WHERE s.game_id=%s
+                GROUP BY s.id,s.code,s.name,s.release_date
+                ORDER BY s.code,s.id
+              ''',(gid,)); dbsets=[dict(x) for x in c.fetchall()]
+              c.execute('''
+                SELECT s.code,p.id print_id,p.collector_number,p.variant,p.rarity,p.language,p.primary_image_url,
+                       ca.name,pa.attributes_json
+                FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='official_onepiece'
+                WHERE ca.game_id=%s AND lower(p.language)='en'
+              ''',(gid,)); dbprints=[dict(x) for x in c.fetchall()]
+          conn.close()
+
+          def normcode(x):
+              return re.sub(r'[^A-Z0-9]','',str(x or '').upper())
+          db_by_code=defaultdict(list)
+          for s in dbsets: db_by_code[normcode(s['code'])].append(s)
+          prints_by_code=defaultdict(list)
+          for p in dbprints: prints_by_code[normcode(p['code'])].append(p)
+
+          comparisons=[]
+          matched_db_codes=set()
+          for o in official:
+              code=normcode(o['primary_code']) if o['primary_code'] else None
+              candidates=db_by_code.get(code,[]) if code else []
+              if len(candidates)==1:
+                  s=candidates[0]; matched_db_codes.add(code)
+                  dbfiles=set()
+                  for p in prints_by_code.get(code,[]):
+                      url=str(p.get('primary_image_url') or '')
+                      if '/images/cardlist/card/' in url:
+                          dbfiles.add(url.rsplit('/',1)[-1])
+                  offiles=set(o['filenames'])
+                  missing=sorted(offiles-dbfiles); extra=sorted(dbfiles-offiles)
+                  comparisons.append({'series':o['series'],'official_label':o['label'],'code':o['primary_code'],'official_physical_images':len(offiles),'db_print_count':int(s['print_count'] or 0),'db_collector_count':int(s['collector_count'] or 0),'db_set_name':s['name'],'missing_official_images_in_db':missing,'extra_db_official_images':extra,'status':'exact' if not missing and not extra and len(offiles)==int(s['print_count'] or 0) else 'different'})
+              else:
+                  comparisons.append({'series':o['series'],'official_label':o['label'],'code':o['primary_code'],'official_physical_images':o['result_count_files'],'db_candidates':len(candidates),'status':'missing_set' if not candidates else 'ambiguous_set'})
+
+          db_only=[]
+          for s in dbsets:
+              code=normcode(s['code'])
+              if code and code not in matched_db_codes:
+                  db_only.append({'id':s['id'],'code':s['code'],'name':s['name'],'print_count':int(s['print_count'] or 0),'collector_count':int(s['collector_count'] or 0)})
+
+          summary=Counter(x['status'] for x in comparisons)
+          report={'official_series_discovered':len(official),'db_sets':len(dbsets),'status_counts':dict(summary),'comparisons':comparisons,'db_only_sets':db_only,'official_series':[{k:v for k,v in o.items() if k not in ('filenames','visible')} for o in official]}
+          Path('/tmp/onepiece-official-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('comparisons','db_only_sets','official_series')},indent=2))
+          print('DIFFERENCES')
+          for x in comparisons:
+              if x['status']!='exact': print(json.dumps({k:v for k,v in x.items() if k not in ('missing_official_images_in_db','extra_db_official_images')}|{'missing_count':len(x.get('missing_official_images_in_db',[])),'extra_count':len(x.get('extra_db_official_images',[]))},ensure_ascii=False))
+          print('DB_ONLY_COUNT',len(db_only))
+          print(json.dumps(db_only[:100],ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-official-parity-${{ github.run_id }}
+          path: /tmp/onepiece-official-parity.json
+          retention-days: 90
