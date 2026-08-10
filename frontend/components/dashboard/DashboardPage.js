@@ -125,7 +125,7 @@ export default function DashboardPage() {
           <div className="ux-stat"><span>Versiones guardadas</span><strong>{collection.count || 0}</strong><small>Cada edición cuenta una vez</small></div>
           <div className="ux-stat"><span>Cartas totales</span><strong>{pieces}</strong><small>Incluye cantidades repetidas</small></div>
           <div className="ux-stat"><span>Wishlist</span><strong>{wishlist.count || 0}</strong><small>Versiones que estás buscando</small></div>
-          <div className="ux-stat"><span>Valor conocido</span><strong>{valueLabel}</strong><small>Cobertura de precio: {coverage}%</small></div>
+          <div className="ux-stat"><span>Valor conservador*</span><strong>{valueLabel}</strong><small>Cobertura de precio: {collection.valuation_coverage_count || 0} de {collection.count || 0} versiones ({coverage}%). Las demás no se estiman.</small></div>
         </section>
 
         {!loading && collection.count === 0 ? (
