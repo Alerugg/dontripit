@@ -1,0 +1,85 @@
+name: Audit OP15 Special Official Sets
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-op15-special-official-sets.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Extract official duplicate print set labels and Cardmarket expansion names
+        run: |
+          python - <<'PY'
+          import json,os,re
+          from pathlib import Path
+          from urllib.parse import urlencode
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          targets=[
+            {'collector':'OP15-036','name':'Ryuma','print_id':42532,'variant':'r1','cardmarket_id':'883418','cm_expansion':'6552'},
+            {'collector':'OP15-075','name':'El Thor','print_id':42579,'variant':'p1','cardmarket_id':'883395','cm_expansion':'6552'},
+            {'collector':'OP15-108','name':'Nami','print_id':42618,'variant':'p1','cardmarket_id':'883935','cm_expansion':'5303'},
+          ]
+          http=requests.Session(); http.headers.update({'User-Agent':'Mozilla/5.0 DontRipIt exact-print-verifier'})
+          official=[]
+          for target in targets:
+            url='https://en.onepiece-cardgame.com/cardlist/?'+urlencode({'freewords':target['collector']})
+            r=http.get(url,timeout=25); r.raise_for_status()
+            soup=BeautifulSoup(r.text,'html.parser')
+            text='\n'.join(line.strip() for line in soup.get_text('\n').splitlines() if line.strip())
+            positions=[m.start() for m in re.finditer(re.escape(target['collector']),text,re.I)]
+            snippets=[]
+            for pos in positions:
+              snippets.append(text[max(0,pos-250):pos+1200])
+            img_sources=[]
+            for img in soup.find_all('img'):
+              src=img.get('src') or img.get('data-src')
+              alt=img.get('alt') or ''
+              if src and (target['collector'].lower() in src.lower() or target['name'].lower() in alt.lower()):
+                img_sources.append({'src':src,'alt':alt})
+            official.append({**target,'official_url':url,'status':r.status_code,'occurrences':len(positions),'snippets':snippets,'matching_images':img_sources})
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Inspect schema and expansion rows without assuming optional columns.
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='external_catalog_expansions' ORDER BY ordinal_position")
+            expansion_columns=[row['column_name'] for row in cur.fetchall()]
+            expansions=[]
+            if expansion_columns:
+              select_cols=[c for c in ('id','source','game_id','external_id','name','category','last_seen_at','metadata') if c in expansion_columns]
+              cur.execute(f"SELECT {','.join(select_cols)} FROM external_catalog_expansions WHERE source='cardmarket' AND external_id=ANY(%s) ORDER BY external_id",(['6552','5303'],))
+              expansions=[dict(r) for r in cur.fetchall()]
+            cur.execute('''
+              SELECT e.external_id,e.name,e.expansion_external_id,e.category,e.website_path,e.last_seen_at
+              FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+              WHERE e.source='cardmarket' AND g.slug='onepiece' AND e.external_id=ANY(%s)
+              ORDER BY e.external_id
+            ''',(['883418','883395','883935'],))
+            products=[dict(r) for r in cur.fetchall()]
+          conn.close()
+
+          report={'official':official,'expansion_columns':expansion_columns,'cardmarket_expansions':expansions,'cardmarket_products':products}
+          print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/op15-special-official-sets.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op15-special-official-sets-${{ github.run_id }}
+          path: /tmp/op15-special-official-sets.json
+          retention-days: 90
