@@ -11,6 +11,7 @@ def health():
     return jsonify(
         {
             "ok": True,
-            "revision": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION") or "unknown",
+            "revision": os.getenv("VERCEL_GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION") or "unknown",
+            "runtime": "vercel" if os.getenv("VERCEL") == "1" else "local",
         }
     )
