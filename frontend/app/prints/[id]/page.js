@@ -7,7 +7,8 @@ import FallbackImage from '../../../components/common/FallbackImage'
 import StatePanel from '../../../components/catalog/StatePanel'
 import LibraryActions from '../../../components/library/LibraryActions'
 import { fetchPrintById } from '../../../lib/catalog/client'
-import { getCardHref, getGameExplorerHref } from '../../../lib/catalog/routes'
+import { getCardHref, getGameExplorerHref, getSetHref } from '../../../lib/catalog/routes'
+import './PrintDetailPage.css'
 
 function MetaLine({ label, value }) {
   if (!value && value !== false && value !== 0) return null
@@ -42,13 +43,12 @@ function PriceBlock({ price }) {
       <section className="panel-soft identifiers ux-price-panel">
         <p className="eyebrow">Precio</p>
         <h2>Sin precio Cardmarket verificado</h2>
-        <p className="detail-meta">No mostramos una estimación si no tenemos un precio asociado a esta versión física exacta, con fuente y fecha.</p>
+        <p className="detail-meta">Todavía no tenemos un precio asociado de forma segura a esta versión exacta. Preferimos mostrarlo claramente antes que usar el precio de otra edición.</p>
       </section>
     )
   }
 
   const currency = price.currency || 'EUR'
-  const isFoil = price.finish === 'foil'
   const hasConservative = price.conservative !== null && price.conservative !== undefined
 
   return (
@@ -70,12 +70,10 @@ function PriceBlock({ price }) {
 
       <p className="detail-meta ux-price-explainer">
         {hasConservative
-          ? isFoil
-            ? 'Conservador = Foil Low de Cardmarket (condición EX+).'
-            : 'Conservador = Low Price EX+ de Cardmarket.'
+          ? 'El valor conservador es la referencia que usamos para el portfolio cuando Cardmarket dispone de la métrica compatible con esta edición.'
           : 'Este snapshot no contiene una métrica conservadora; por eso no entra en el valor de tu portfolio.'}
       </p>
-      <p className="detail-meta">Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
+      <p className="detail-meta">Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
     </section>
   )
 }
@@ -114,23 +112,26 @@ export default function PrintDetailPage({ params }) {
     }
 
     loadPrint()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [id])
+
+  const gameSlug = printDetail?.game || printDetail?.card?.game || 'pokemon'
+  const cardId = printDetail?.card?.id || ''
+  const cardHref = getCardHref(gameSlug, cardId)
+  const setHref = printDetail?.set_code ? getSetHref(gameSlug, printDetail.set_code) : getGameExplorerHref(gameSlug)
+  const finishLabel = printDetail?.foil || printDetail?.is_foil ? 'Foil' : 'No foil'
+  const variantLabel = printDetail?.variant && printDetail.variant !== 'default' ? printDetail.variant : null
 
   return (
     <main>
       <TopNav />
 
       <section className="detail-shell">
-        <Link href={getCardHref(printDetail?.game || printDetail?.card?.game, printDetail?.card?.id || '')} className="back-link">← Volver a la carta</Link>
-
-        {loading && <StatePanel title="Cargando edición" description="Preparando la versión física exacta." />}
-        {!loading && error && <StatePanel title="No pudimos cargar esta edición" description={error} error />}
+        {loading && <StatePanel title="Cargando versión" description="Preparando la edición física exacta." />}
+        {!loading && error && <StatePanel title="No pudimos cargar esta versión" description={error} error />}
 
         {!loading && !error && printDetail && (
-          <article className="panel detail-page">
+          <article className="detail-page">
             <div className="detail-media-column">
               <div className="detail-media detail-media-card">
                 <FallbackImage
@@ -138,7 +139,7 @@ export default function PrintDetailPage({ params }) {
                   alt={printDetail.card?.name || 'Carta'}
                   className="detail-image"
                   placeholderClassName="catalog-placeholder image-fallback"
-                  label={printDetail.game || printDetail.card?.game || 'TCG'}
+                  label={gameSlug}
                 />
               </div>
               <PriceBlock price={price} />
@@ -146,36 +147,47 @@ export default function PrintDetailPage({ params }) {
 
             <div className="detail-content">
               <nav className="detail-breadcrumbs" aria-label="breadcrumb">
-                <Link href={getGameExplorerHref(printDetail.game || printDetail.card?.game || 'pokemon')}>{printDetail.game || printDetail.card?.game || 'TCG'}</Link>
+                <Link href={getGameExplorerHref(gameSlug)}>{gameSlug}</Link>
                 <span>→</span>
-                <span>{printDetail.set_name || printDetail.set_code || 'Colección'}</span>
+                <Link href={setHref}>{printDetail.set_name || printDetail.set_code || 'Set'}</Link>
                 <span>→</span>
-                <Link href={getCardHref(printDetail.game || printDetail.card?.game, printDetail.card?.id || '')}>{printDetail.card?.name || 'Carta'}</Link>
+                <Link href={cardHref}>{printDetail.card?.name || 'Carta'}</Link>
               </nav>
 
-              <div className="detail-title-block">
-                <p className="eyebrow">Edición exacta</p>
-                <h1>{printDetail.card?.name || 'Carta'}</h1>
-                <p className="detail-intro">{[printDetail.set_code, printDetail.collector_number ? `#${printDetail.collector_number}` : null, printDetail.language?.toUpperCase(), printDetail.rarity].filter(Boolean).join(' · ')}</p>
+              <div className="dri-exact-head">
+                <div className="dri-exact-head-copy detail-title-block">
+                  <p className="eyebrow">Versión exacta</p>
+                  <h1>{printDetail.card?.name || 'Carta'}</h1>
+                  <p className="detail-intro">
+                    {[printDetail.set_code?.toUpperCase?.() || printDetail.set_code, printDetail.collector_number ? `#${printDetail.collector_number}` : null, printDetail.language?.toUpperCase(), printDetail.rarity, finishLabel, variantLabel].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <span className="dri-exact-status">Identidad física</span>
               </div>
 
-              <LibraryActions printId={printDetail.id} />
+              <section className="dri-exact-actions">
+                <div className="dri-exact-actions-copy">
+                  <p className="eyebrow">Tu colección</p>
+                  <h2>¿Esta es la versión correcta?</h2>
+                  <p>Guárdala aquí. Las acciones se aplican a esta edición concreta, no solo al nombre de la carta.</p>
+                </div>
+                <LibraryActions printId={printDetail.id} />
+              </section>
 
               <section className="meta-grid panel-soft">
                 <MetaLine label="Set" value={printDetail.set_name} />
-                <MetaLine label="Código" value={printDetail.set_code} />
+                <MetaLine label="Código" value={printDetail.set_code?.toUpperCase?.() || printDetail.set_code} />
                 <MetaLine label="Número" value={printDetail.collector_number} />
                 <MetaLine label="Rareza" value={printDetail.rarity} />
-                <MetaLine label="Variante" value={printDetail.variant} />
-                <MetaLine label="Foil" value={printDetail.foil ? 'Sí' : 'No'} />
+                <MetaLine label="Variante" value={variantLabel} />
+                <MetaLine label="Acabado" value={finishLabel} />
                 <MetaLine label="Idioma" value={printDetail.language?.toUpperCase()} />
               </section>
 
-              <section className="panel-soft identifiers">
-                <p className="eyebrow">Por qué importa</p>
-                <h2>Esta es la edición que guardas</h2>
-                <p className="detail-meta">Don’tRipIt diferencia cada versión física para que tu colección y wishlist no mezclen artes, finishes o reimpresiones distintas.</p>
-              </section>
+              <div className="dri-exact-navigation">
+                <Link href={cardHref} className="dri-btn dri-btn-ghost">← Ver las demás versiones</Link>
+                <Link href={setHref} className="dri-btn dri-btn-ghost">Ver el set completo</Link>
+              </div>
             </div>
           </article>
         )}
