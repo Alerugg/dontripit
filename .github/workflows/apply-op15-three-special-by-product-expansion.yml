@@ -1,0 +1,182 @@
+name: Apply OP15 Final Three By Commercial Expansion
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-op15-three-special-by-product-expansion.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Validate official alternate set and exact Cardmarket commercial expansion
+        run: |
+          python - <<'PY'
+          import json,os,re
+          from pathlib import Path
+          from urllib.parse import urlencode
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import Json,RealDictCursor,execute_values
+
+          targets=[
+            {
+              'collector':'OP15-036','name':'Ryuma','print_id':42532,'variant':'r1',
+              'official_other_set':'STARTER DECK -GREEN Roronoa Zoro- [ST-32]',
+              'cardmarket_expansion':'6649','cardmarket_id':'900296',
+              'anchor_non_single':'Starter Deck: Green Roronoa Zoro Deck Pack',
+            },
+            {
+              'collector':'OP15-075','name':'El Thor','print_id':42579,'variant':'p1',
+              'official_other_set':'Premium Card Collection -Best Selection Vol.6-',
+              'cardmarket_expansion':'5267','cardmarket_id':'900752',
+              'anchor_non_single':'Premium Card Collection - Best Selection Vol.6',
+            },
+            {
+              'collector':'OP15-108','name':'Nami','print_id':42618,'variant':'p1',
+              'official_other_set':'Premium Card Collection -Best Selection Vol.6-',
+              'cardmarket_expansion':'5267','cardmarket_id':'900753',
+              'anchor_non_single':'Premium Card Collection - Best Selection Vol.6',
+            },
+          ]
+
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 exact-commercial-expansion-verifier'})
+          official=[]
+          for target in targets:
+            url='https://en.onepiece-cardgame.com/cardlist/?'+urlencode({'freewords':target['collector']})
+            r=http.get(url,timeout=25); r.raise_for_status()
+            soup=BeautifulSoup(r.text,'html.parser')
+            text='\n'.join(line.strip() for line in soup.get_text('\n').splitlines() if line.strip())
+            result_match=re.search(r'(\d+)\s+results',text,re.I)
+            result_count=int(result_match.group(1)) if result_match else None
+            if result_count != 2:
+              raise AssertionError({'collector':target['collector'],'official_result_count':result_count})
+            if "-ADVENTURE ON KAMI'S ISLAND- [OP15-EB04]" not in text:
+              raise AssertionError({'collector':target['collector'],'official_base_missing':True})
+            if target['official_other_set'] not in text:
+              raise AssertionError({'collector':target['collector'],'official_alternate_missing':target['official_other_set']})
+            official.append({'url':url,'result_count':result_count,'alternate_set':target['official_other_set']})
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
+          report={'mode':'apply_verified_commercial_expansion','targets':[]}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece'"); gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT id FROM sets WHERE game_id=%s AND lower(code)='op-15'",(gid,)); set_id=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'"); latest=cur.fetchone()['latest']
+              values=[]
+              for target,off in zip(targets,official):
+                # Canonical target must be the exact second physical print of this collector.
+                cur.execute('''
+                  SELECT p.id print_id,p.variant,p.collector_number,p.language,c.name card_name,
+                         EXISTS(SELECT 1 FROM print_releases pr WHERE pr.print_id=p.id AND pr.release_id=66) in_release_66
+                  FROM prints p JOIN cards c ON c.id=p.card_id
+                  WHERE p.set_id=%s AND c.game_id=%s AND upper(p.collector_number)=%s
+                  ORDER BY p.id
+                ''',(set_id,gid,target['collector']))
+                prints=[dict(r) for r in cur.fetchall()]
+                if len(prints)!=2:
+                  raise AssertionError({'collector':target['collector'],'canonical_print_count':len(prints),'prints':prints})
+                alt=[p for p in prints if int(p['print_id'])==target['print_id']]
+                base=[p for p in prints if int(p['print_id'])!=target['print_id']]
+                if len(alt)!=1 or len(base)!=1:
+                  raise AssertionError({'collector':target['collector'],'canonical_partition_failed':prints})
+                if str(alt[0].get('variant') or 'default').lower()!=target['variant'] or bool(alt[0]['in_release_66']):
+                  raise AssertionError({'collector':target['collector'],'alternate_identity_wrong':alt[0]})
+                if str(base[0].get('variant') or 'default').lower()!='default' or not bool(base[0]['in_release_66']):
+                  raise AssertionError({'collector':target['collector'],'base_identity_wrong':base[0]})
+
+                # Commercial expansion is anchored by the actual sealed/product listing.
+                cur.execute('''
+                  SELECT id,external_id,name,expansion_external_id,product_group,last_seen_at
+                  FROM external_catalog_products
+                  WHERE source='cardmarket' AND game_id=%s AND product_group='non_single'
+                    AND last_seen_at=%s AND expansion_external_id=%s AND lower(name)=lower(%s)
+                ''',(gid,latest,target['cardmarket_expansion'],target['anchor_non_single']))
+                anchors=[dict(r) for r in cur.fetchall()]
+                if len(anchors)!=1:
+                  raise AssertionError({'collector':target['collector'],'commercial_anchor_count':len(anchors),'anchors':anchors})
+
+                # The collector must occur exactly once inside that proven Cardmarket expansion.
+                cur.execute('''
+                  SELECT id external_product_id,external_id,name,expansion_external_id,last_seen_at,website_path
+                  FROM external_catalog_products
+                  WHERE source='cardmarket' AND game_id=%s AND product_group='single'
+                    AND last_seen_at=%s AND expansion_external_id=%s AND name ILIKE %s
+                  ORDER BY id
+                ''',(gid,latest,target['cardmarket_expansion'],f"%({target['collector']})"))
+                candidates=[dict(r) for r in cur.fetchall()]
+                if len(candidates)!=1:
+                  raise AssertionError({'collector':target['collector'],'expansion_single_candidates':candidates})
+                product=candidates[0]
+                if str(product['external_id'])!=target['cardmarket_id']:
+                  raise AssertionError({'collector':target['collector'],'cardmarket_id':product['external_id'],'expected':target['cardmarket_id']})
+
+                # Existing base mapping must remain exact; target must be conflict-free globally.
+                base_print_id=int(base[0]['print_id']); alt_print_id=int(alt[0]['print_id']); target_eid=int(product['external_product_id'])
+                cur.execute('''
+                  SELECT l.external_product_id,l.print_id,l.mapping_method,l.confidence,l.link_status,e.external_id,e.expansion_external_id
+                  FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')
+                    AND (l.print_id=ANY(%s) OR l.external_product_id=%s)
+                  ORDER BY l.print_id,l.external_product_id
+                ''',(gid,[base_print_id,alt_print_id],target_eid))
+                links=[dict(r) for r in cur.fetchall()]
+                base_links=[l for l in links if int(l['print_id'])==base_print_id]
+                if len(base_links)!=1 or str(base_links[0].get('confidence'))!='exact':
+                  raise AssertionError({'collector':target['collector'],'base_exact_link_not_unique':base_links})
+                conflicts=[l for l in links if (int(l['print_id'])==alt_print_id and int(l['external_product_id'])!=target_eid) or (int(l['external_product_id'])==target_eid and int(l['print_id'])!=alt_print_id)]
+                if conflicts:
+                  raise AssertionError({'collector':target['collector'],'conflicts':conflicts})
+
+                evidence={
+                  'source':'onepiece_official+cardmarket_current_catalog',
+                  'mapping_basis':['official_exactly_two_physical_entries','official_alternate_product_set','cardmarket_commercial_expansion_anchor','unique_collector_inside_expansion','base_print_already_exact','global_no_conflict'],
+                  'collector_number':target['collector'],'canonical_variant':target['variant'],
+                  'official_cardlist_url':off['url'],'official_other_set':target['official_other_set'],
+                  'cardmarket_expansion_external_id':target['cardmarket_expansion'],'cardmarket_id_product':target['cardmarket_id'],
+                  'cardmarket_anchor_non_single_id':str(anchors[0]['external_id']),'cardmarket_anchor_non_single_name':anchors[0]['name'],
+                  'base_print_id':base_print_id,'base_cardmarket_id_product':str(base_links[0]['external_id']),
+                }
+                values.append((target_eid,alt_print_id,'op_commercial_expansion_exact','exact','accepted',False,Json(evidence)))
+                report['targets'].append({
+                  'collector':target['collector'],'print_id':alt_print_id,'variant':target['variant'],
+                  'cardmarket_id':target['cardmarket_id'],'external_product_id':target_eid,
+                  'expansion_external_id':target['cardmarket_expansion'],'commercial_anchor':anchors[0]['name'],
+                  'official_other_set':target['official_other_set'],'base_print_id':base_print_id,
+                })
+
+              execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
+                ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',values,page_size=20)
+              cur.execute('''SELECT count(*) links,count(DISTINCT print_id) prints,count(DISTINCT external_product_id) products
+                FROM external_catalog_print_links WHERE mapping_method='op_commercial_expansion_exact' AND link_status='accepted' AND print_id=ANY(%s)''',([t['print_id'] for t in targets],))
+              stored=dict(cur.fetchone())
+              if tuple(int(stored[k]) for k in ('links','prints','products'))!=(3,3,3):
+                raise AssertionError({'stored':stored})
+              report['stored']={k:int(v) for k,v in stored.items()}
+            conn.commit()
+          except Exception:
+            conn.rollback(); raise
+          finally:
+            conn.close()
+
+          print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/op15-final-three-commercial-expansion.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op15-final-three-commercial-expansion-${{ github.run_id }}
+          path: /tmp/op15-final-three-commercial-expansion.json
+          retention-days: 90
