@@ -56,6 +56,19 @@ jobs:
                   ids=[int(r['print_id']) for r in prints]
 
                   cur.execute('''
+                    SELECT g.slug,e.product_group,count(*) products,max(e.last_seen_at) last_seen_at,
+                           max(p.as_of) latest_price_as_of,
+                           count(DISTINCT p.external_product_id) FILTER (WHERE p.as_of IS NOT NULL) products_with_any_snapshot
+                    FROM games g
+                    LEFT JOIN external_catalog_products e ON e.game_id=g.id AND e.source='cardmarket'
+                    LEFT JOIN external_market_price_snapshots p ON p.external_product_id=e.id
+                    WHERE g.slug IN ('mtg','yugioh','pokemon','onepiece','riftbound')
+                    GROUP BY g.slug,e.product_group
+                    ORDER BY g.slug,e.product_group
+                  ''')
+                  external_catalog=[dict(r) for r in cur.fetchall()]
+
+                  cur.execute('''
                       WITH latest_prices AS (
                           SELECT external_product_id,currency,price_variant,price_low,price_mid,price_market,price_last,as_of AS price_as_of,
                                  ROW_NUMBER() OVER(PARTITION BY external_product_id,currency,price_variant ORDER BY as_of DESC,id DESC) rn
@@ -126,7 +139,9 @@ jobs:
                               'coverage_percent':round(priced/total*100,2) if total else 0}
 
                   games=[]
-                  for game,c in by_game.items(): games.append(row('game',c,game=game))
+                  supported=('mtg','yugioh','pokemon','onepiece','riftbound')
+                  for game in supported:
+                      games.append(row('game',by_game[game],game=game))
                   games.sort(key=lambda x:(x['coverage_percent'],x['game']))
 
                   languages=[]
@@ -143,6 +158,7 @@ jobs:
                       'mapped_unpriced_prints':int(totals['mapped_unpriced']),
                       'unmapped_prints':int(totals['unmapped']),'ambiguous_prints':int(totals['ambiguous']),
                       'priced_coverage_percent':round(priced/total*100,2),
+                      'external_catalog':external_catalog,
                       'games':games,'languages':languages,'sets':sets,'gaps':gaps
                   }
           finally:
@@ -151,7 +167,7 @@ jobs:
           out=Path('/tmp/all-games-cardmarket-live-audit.json')
           out.write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
           compact={k:v for k,v in report.items() if k not in ('languages','sets','gaps')}
-          print(json.dumps(compact,indent=2,ensure_ascii=False))
+          print(json.dumps(compact,indent=2,ensure_ascii=False,default=str))
           print('\nTOP 60 SET GAPS:')
           print(json.dumps(report['sets'][:60],indent=2,ensure_ascii=False))
           print('\nFIRST 200 GAPS:')
@@ -175,6 +191,9 @@ jobs:
           print('\n### By game')
           for g in r['games']:
               print(f"- `{g['game']}`: {g['priced']}/{g['total']} priced ({g['coverage_percent']}%); unmapped={g['unmapped']}; mapped_unpriced={g['mapped_unpriced']}; ambiguous={g['ambiguous']}")
+          print('\n### Cardmarket external catalog freshness')
+          for x in r['external_catalog']:
+              print(f"- `{x['slug']} {x.get('product_group')}`: products={x['products']}; last_seen={x.get('last_seen_at')}; latest_price={x.get('latest_price_as_of')}")
           print('\n### Largest set/language gaps')
           shown=0
           for s in r['sets']:
