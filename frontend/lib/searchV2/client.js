@@ -27,13 +27,15 @@ export async function searchV2({ q, game, limit = 24 } = {}) {
   return payload?.items || []
 }
 
-export async function federatedSearchV2({ q, game, page = 1, limit = 24, category = '' } = {}) {
+export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 'all', category = '', region = '' } = {}) {
   const response = await fetch(`/api/search-v2/federated${toQuery({
     q,
     game: toApiGameSlug(game || ''),
     page,
     limit,
+    kind,
     category,
+    region,
   })}`, {
     method: 'GET',
     cache: 'no-store',
