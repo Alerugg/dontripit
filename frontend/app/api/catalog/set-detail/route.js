@@ -8,20 +8,34 @@ function toItems(payload) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
-function normalizePrint(item = {}, resolved = null) {
-  const catalog = resolved?.catalog || null
-  const cardName = catalog?.card_name || item.card_name || item.card?.name || item.name || item.title || ''
-  const setName = catalog?.set_name || item.set_name || item.set_code || ''
+function normalizePrint(item = {}, searchProfile = null) {
+  const profile = searchProfile || null
+  const cardName = profile?.name || item.card_name || item.card?.name || item.name || item.title || ''
+  const setName = profile?.set_name || item.set_name || item.set_code || ''
+  const exactVariant = profile?.exact_variant || item.variant || null
+  const family = profile?.variant_family || null
+  const finish = profile?.attributes?.finish || (item.is_foil ? 'foil' : 'non-foil')
+
   return {
     ...item,
-    ...(catalog || {}),
-    id: catalog?.id || item.id,
+    ...(profile || {}),
+    id: profile?.print_id || item.id,
+    print_id: profile?.print_id || item.id,
+    card_id: profile?.card_id || item.card_id,
     type: 'print',
     name: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
     title: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
     set_name: setName,
+    set_code: profile?.set_code || item.set_code,
+    collector_number: profile?.collector_number || item.collector_number,
+    language: profile?.language || item.language,
+    rarity: profile?.rarity || item.rarity,
+    variant: exactVariant,
+    exact_variant: exactVariant,
+    variant_family: family,
+    primary_image_url: profile?.primary_image_url || item.primary_image_url || item.image_url,
     variant_count: 1,
-    finish: catalog?.is_foil || item.is_foil ? 'foil' : 'non-foil',
+    finish,
   }
 }
 
@@ -49,30 +63,39 @@ async function fetchAllPrints({ game, setCode, requestedLimit, requestedOffset }
   return { ok: true, rows }
 }
 
-async function resolvePrintNames(rows = []) {
-  if (!rows.length) return new Map()
-  const byId = new Map()
+async function fetchSetSearchProfiles({ game, setCode, maxItems }) {
+  const byPrintId = new Map()
+  let offset = 0
+  let total = null
 
-  for (let index = 0; index < rows.length; index += 100) {
-    const batch = rows.slice(index, index + 100)
-    const ids = batch.map((item) => item.id).filter(Boolean)
-    if (!ids.length) continue
-
-    const response = await callInternalApi('/api/v1/prints/resolve', {
+  while (offset < maxItems && (total === null || offset < total)) {
+    const pageLimit = Math.min(INTERNAL_PAGE_SIZE, maxItems - offset)
+    const response = await callInternalApi('/api/v2/search/advanced', {
       method: 'POST',
-      body: { print_ids: ids },
-      timeoutMs: 20000,
+      body: {
+        game,
+        q: '',
+        filters: { set: setCode },
+        limit: pageLimit,
+        offset,
+      },
+      timeoutMs: 30000,
     })
-    if (!response.ok) continue
 
-    for (const resolved of response.payload?.prints || []) {
-      if (resolved?.found && resolved?.catalog?.id) {
-        byId.set(String(resolved.catalog.id), resolved)
-      }
+    if (!response.ok) break
+
+    const page = toItems(response.payload)
+    total = Number(response.payload?.total ?? page.length)
+    for (const item of page) {
+      const printId = item?.print_id || item?.id
+      if (printId) byPrintId.set(String(printId), item)
     }
+
+    if (page.length < pageLimit) break
+    offset += page.length
   }
 
-  return byId
+  return byPrintId
 }
 
 export async function GET(request) {
@@ -120,8 +143,12 @@ export async function GET(request) {
 
   const sets = toItems(setUpstream.payload)
   const set = sets.find((item) => String(item?.code || '').toLowerCase() === String(setCode).toLowerCase()) || sets[0] || null
-  const resolvedById = await resolvePrintNames(printsResult.rows)
-  const cards = printsResult.rows.map((item) => normalizePrint(item, resolvedById.get(String(item.id))))
+  const searchProfiles = await fetchSetSearchProfiles({
+    game,
+    setCode,
+    maxItems: Math.min(Math.max(printsResult.rows.length, 1), MAX_SET_PRINTS),
+  })
+  const cards = printsResult.rows.map((item) => normalizePrint(item, searchProfiles.get(String(item.id))))
 
   return NextResponse.json({
     set: set
