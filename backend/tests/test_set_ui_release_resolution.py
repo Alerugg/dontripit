@@ -11,7 +11,8 @@ def test_release_code_normalization_accepts_bandai_bracket_alias():
     assert _release_codes(row) == {"op16"}
 
 
-def test_set_ui_prefers_catalog_release_membership_over_set_family(client):
+def test_set_ui_prefers_catalog_release_membership_over_set_family(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_HUB_CATALOG_ENABLED", "true")
     with db.SessionLocal() as session:
         game = Game(slug="onepiece", name="ONE PIECE Card Game")
         session.add(game)
@@ -72,7 +73,8 @@ def test_set_ui_prefers_catalog_release_membership_over_set_family(client):
     assert [row["collector_number"] for row in body["items"]] == ["OP16-002"]
 
 
-def test_set_ui_falls_back_to_set_when_no_release_alias_exists(client):
+def test_set_ui_falls_back_to_set_when_no_release_alias_exists(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_HUB_CATALOG_ENABLED", "true")
     with db.SessionLocal() as session:
         game = Game(slug="pokemon", name="Pokémon")
         session.add(game)
