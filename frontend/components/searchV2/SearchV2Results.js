@@ -26,7 +26,7 @@ function ResultImage({ src, name, gameSlug }) {
 function CardResult({ item, gameSlug, query }) {
   const matched = item.matched_print || {}
   const attrs = item.attributes || {}
-  const variants = Number(item.variant_count || 1)
+  const versions = Number(item.variant_count || 1)
 
   return (
     <Link
@@ -38,8 +38,11 @@ function CardResult({ item, gameSlug, query }) {
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
-          <h3>{item.name}</h3>
-          <span className="sv2-variant-count">{variants} {variants === 1 ? 'versión' : 'versiones'}</span>
+          <div>
+            <span className="sv2-result-kind">Carta</span>
+            <h3>{item.name}</h3>
+          </div>
+          <span className="sv2-variant-count">{versions} {versions === 1 ? 'versión' : 'versiones'}</span>
         </div>
         <p className="sv2-collector-line">
           <strong>{matched.collector_number}</strong>
@@ -54,7 +57,7 @@ function CardResult({ item, gameSlug, query }) {
           {gameSlug === 'yugioh' && attrs.attribute ? badge(attrs.attribute) : null}
           {gameSlug === 'yugioh' && attrs.archetype ? badge(attrs.archetype) : null}
         </div>
-        <span className="sv2-result-action">Ver {variants === 1 ? 'la versión' : 'versiones'} →</span>
+        <span className="sv2-result-action">Elegir versión →</span>
       </div>
     </Link>
   )
@@ -73,8 +76,10 @@ function PrintResult({ item, gameSlug }) {
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
-          <h3>{item.name}</h3>
-          <span className="sv2-print-pill">Versión concreta</span>
+          <div>
+            <span className="sv2-result-kind is-exact">Versión exacta</span>
+            <h3>{item.name}</h3>
+          </div>
         </div>
         <p className="sv2-collector-line">
           <strong>{item.collector_number}</strong>
@@ -112,7 +117,7 @@ function PrintResult({ item, gameSlug }) {
 export default function SearchV2Results({ items = [], mode = 'normal', gameSlug, query = '', total = null }) {
   const exactPhysicalResults = mode === 'advanced' || (items.length > 0 && items.every((item) => item.type === 'print'))
   const label = exactPhysicalResults ? 'Versiones que coinciden' : 'Cartas encontradas'
-  const count = total ?? items.length
+  const exactCount = total ?? items.length
 
   return (
     <section className="sv2-results">
@@ -121,8 +126,15 @@ export default function SearchV2Results({ items = [], mode = 'normal', gameSlug,
           <p className="eyebrow">Resultados</p>
           <h2>{label}</h2>
         </div>
-        <p>{count} resultado{count === 1 ? '' : 's'}</p>
+        <p>
+          {exactPhysicalResults
+            ? `${exactCount} resultado${exactCount === 1 ? '' : 's'}`
+            : `${items.length} coincidencia${items.length === 1 ? '' : 's'} principal${items.length === 1 ? '' : 'es'}`}
+        </p>
       </div>
+      {!exactPhysicalResults ? (
+        <p className="sv2-results-note">Buscamos primero la carta. Si necesitas una edición concreta, usa “Afinar búsqueda” para filtrar y paginar versiones físicas.</p>
+      ) : null}
       <div className="sv2-results-grid">
         {items.map((item) => (
           mode === 'advanced' || item.type === 'print'
