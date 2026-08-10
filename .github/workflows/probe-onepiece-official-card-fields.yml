@@ -1,0 +1,57 @@
+name: Probe One Piece Official Card Fields
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/probe-onepiece-official-card-fields.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare representative official card fields
+        run: |
+          python - <<'PY'
+          import json,os,re,requests
+          from bs4 import BeautifulSoup
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          url='https://en.onepiece-cardgame.com/cardlist/?series=569116'
+          r=requests.get(url,timeout=30,headers={'User-Agent':'DontRipIt/1.0 field-parity-audit'}); r.raise_for_status()
+          soup=BeautifulSoup(r.text,'html.parser')
+          targets=['OP16-001','OP16-002','OP16-019','OP16-063','OP16-119']
+          official={}
+          text=soup.get_text('\n')
+          # capture broad text chunks around visible collector occurrence; enough to compare core fields.
+          lines=[x.strip() for x in text.splitlines() if x.strip()]
+          for code in targets:
+              idx=next((i for i,x in enumerate(lines) if x.startswith(code+' |')),None)
+              if idx is None: continue
+              official[code]=lines[idx:idx+35]
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT p.collector_number,p.variant,p.rarity,p.primary_image_url,c.name,
+                       ca.attributes_json card_attributes,pa.attributes_json print_attributes
+                FROM prints p JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN card_attributes ca ON ca.card_id=c.id AND ca.source='official_onepiece'
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='official_onepiece'
+                WHERE g.slug='onepiece' AND p.collector_number=ANY(%s) AND lower(p.language)='en'
+                ORDER BY p.collector_number,p.variant
+              ''',(targets,)); rows=[dict(x) for x in c.fetchall()]
+          conn.close()
+          print('OFFICIAL',json.dumps(official,indent=2,ensure_ascii=False))
+          print('DB',json.dumps(rows,indent=2,ensure_ascii=False,default=str))
+          PY
