@@ -30,7 +30,7 @@ from app.models import (
 
 
 CARDMARKET_SOURCE = "cardmarket"
-SUPPORTED_GAMES = {"pokemon", "onepiece", "mtg", "yugioh"}
+SUPPORTED_GAMES = {"pokemon", "onepiece", "mtg", "yugioh", "riftbound"}
 PRODUCT_GROUPS = {"single", "non_single"}
 _ACCEPTED_LINK_STATUSES = {"accepted", "mapped", "exact"}
 

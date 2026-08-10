@@ -20,7 +20,7 @@ def main() -> int:
         )
     )
     parser.add_argument("price_guide", help="Official Cardmarket Price Guide JSON/CSV")
-    parser.add_argument("--game", choices=["pokemon", "mtg", "onepiece", "yugioh"])
+    parser.add_argument("--game", choices=["pokemon", "mtg", "onepiece", "yugioh", "riftbound"])
     parser.add_argument("--as-of", help="Optional ISO timestamp override; defaults to feed createdAt/current UTC")
     parser.add_argument("--apply", action="store_true", help="Commit the validated source-level price plan")
     parser.add_argument("--report", help="Optional JSON summary output path")
