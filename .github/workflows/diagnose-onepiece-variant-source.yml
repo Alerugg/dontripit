@@ -1,0 +1,91 @@
+name: Diagnose One Piece Variant Source
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/diagnose-onepiece-variant-source.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+      - name: Inspect public One Piece card database transport
+        run: |
+          python - <<'PY'
+          import json,re
+          from urllib.parse import urljoin
+          import requests
+          from bs4 import BeautifulSoup
+
+          base='https://one-piece.cards'
+          session=requests.Session()
+          session.headers.update({'User-Agent':'Mozilla/5.0 DontRipIt catalog verifier'})
+          out={'probes':[],'scripts':[],'signals':[]}
+
+          def probe(url):
+              try:
+                  r=session.get(url,timeout=15,allow_redirects=True)
+                  entry={'url':url,'final_url':r.url,'status':r.status_code,'content_type':r.headers.get('content-type'),'length':len(r.content)}
+                  text=r.text if 'text' in (r.headers.get('content-type') or '') or 'html' in (r.headers.get('content-type') or '') or 'json' in (r.headers.get('content-type') or '') else ''
+                  entry['has_879909']='879909' in text
+                  entry['has_OP15_001_p1']='OP15-001_p1' in text
+                  entry['sample']=text[:500].replace('\n',' ')
+                  out['probes'].append(entry)
+                  return r,text
+              except Exception as exc:
+                  out['probes'].append({'url':url,'error':repr(exc)})
+                  return None,''
+
+          page,text=probe(base+'/cards/en%3AOP15-001_p1')
+          if page:
+              soup=BeautifulSoup(text,'html.parser')
+              for script in soup.find_all('script'):
+                  src=script.get('src')
+                  if src:
+                      out['scripts'].append(urljoin(base,src))
+                  body=script.get_text(' ',strip=True)
+                  if '879909' in body or 'OP15-001_p1' in body:
+                      out['signals'].append({'kind':'inline_script','sample':body[:2000]})
+
+          for url in [
+              base+'/cards?set=OP15-EB04',
+              base+'/api/cards?set=OP15-EB04',
+              base+'/api/cards?set=OP-15',
+              base+'/api/cards/en%3AOP15-001_p1',
+              base+'/api/card/en%3AOP15-001_p1',
+              base+'/api/cards?search=OP15-001',
+              base+'/sitemap.xml',
+              base+'/robots.txt',
+          ]:
+              probe(url)
+
+          for script_url in out['scripts'][:30]:
+              r,js=probe(script_url)
+              if not js:
+                  continue
+              if 'cardmarket' in js.lower() or '/api/' in js.lower() or 'OP15-001_p1' in js:
+                  snippets=[]
+                  for needle in ('cardmarket','/api/','OP15-001_p1'):
+                      pos=js.lower().find(needle.lower())
+                      if pos>=0:
+                          snippets.append(js[max(0,pos-500):pos+1500])
+                  out['signals'].append({'kind':'script','url':script_url,'snippets':snippets[:6]})
+
+          print(json.dumps(out,indent=2,ensure_ascii=False)[:60000])
+          open('/tmp/variant-source.json','w').write(json.dumps(out,indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-variant-source-${{ github.run_id }}
+          path: /tmp/variant-source.json
+          retention-days: 30
