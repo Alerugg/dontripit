@@ -54,8 +54,8 @@ jobs:
             'idGame':22,'status':'validated','createdAt':created.isoformat() if created else None,
             'singles':len(singles.rows),'non_singles':len(nonsingles.rows),'price_products':len(prices),
             'finish_price_products':finish,'categories':dict(cats.most_common()),
-            'single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_external_id} for r in singles.rows[:15]],
-            'non_single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_external_id} for r in nonsingles.rows[:25]],
+            'single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_id} for r in singles.rows[:15]],
+            'non_single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_id} for r in nonsingles.rows[:25]],
           }
           Path('/tmp/riftbound-cardmarket-feed-contract.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
           print(json.dumps(report,indent=2,ensure_ascii=False))
