@@ -3,6 +3,7 @@ import { callInternalApi, getPublicErrorMessage } from '../../../../lib/catalog/
 
 const DEFAULT_PAGE_SIZE = 24
 const MAX_PAGE_SIZE = 48
+const RESULT_KINDS = new Set(['all', 'singles', 'sets', 'sealed', 'matches'])
 
 function boundedInt(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
@@ -106,8 +107,16 @@ export async function GET(request) {
   const page = boundedInt(searchParams.get('page'), 1, 1, 100)
   const limit = boundedInt(searchParams.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)
   const offset = (page - 1) * limit
+  const requestedKind = String(searchParams.get('kind') || 'all').trim().toLowerCase()
+  const kind = RESULT_KINDS.has(requestedKind) ? requestedKind : 'all'
   const category = String(searchParams.get('category') || '').trim()
+  const region = String(searchParams.get('region') || '').trim().toLowerCase()
   const setCode = normalizeOnePieceSetCode(q, game)
+
+  // Keep related result types stable while paginating the active list. On the
+  // default/all view, singles own the page index while sealed stays on page 1.
+  const singlesOffset = kind === 'sealed' ? 0 : offset
+  const sealedOffset = kind === 'sealed' ? offset : 0
 
   const setsPromise = callInternalApi('/api/v1/sets', {
     params: { game, q, limit: 12, offset: 0 },
@@ -119,21 +128,21 @@ export async function GET(request) {
   })
   const singlesPromise = setCode
     ? callInternalApi('/api/v1/set-ui/prints', {
-        params: { game, set_code: setCode, limit, offset },
+        params: { game, set_code: setCode, limit, offset: singlesOffset },
         timeoutMs: 15000,
       })
     : callInternalApi('/api/v2/search/advanced', {
         method: 'POST',
-        body: { game, q, filters: {}, limit, offset },
+        body: { game, q, filters: {}, limit, offset: singlesOffset },
         timeoutMs: 15000,
       })
   const sealedPromise = setCode
     ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
-        params: { limit, offset, category },
+        params: { limit, offset: sealedOffset, category, region },
         timeoutMs: 15000,
       })
     : callInternalApi('/api/v1/market/products', {
-        params: { game, group: 'non_single', q, limit, offset, category },
+        params: { game, group: 'non_single', q, limit, offset: sealedOffset, category, region },
         timeoutMs: 15000,
       })
 
@@ -198,6 +207,7 @@ export async function GET(request) {
     game,
     page,
     limit,
+    kind,
     set_intent: setCode ? { set_code: setCode, exact_set_found: Boolean(exactSet) } : null,
     counts: {
       singles: singlesTotal,
@@ -207,11 +217,11 @@ export async function GET(request) {
     },
     sets,
     exact_set: exactSet,
-    singles: { items: enrichedSingles, total: singlesTotal, page, limit },
+    singles: { items: enrichedSingles, total: singlesTotal, page: kind === 'sealed' ? 1 : page, limit },
     sealed: {
       items: sealed,
       total: sealedTotal,
-      page,
+      page: kind === 'sealed' ? page : 1,
       limit,
       categories,
       regions: sealedUpstream.payload?.regions || [],
