@@ -8,6 +8,7 @@ import StatePanel from '../../../components/catalog/StatePanel'
 import LibraryActions from '../../../components/library/LibraryActions'
 import { fetchPrintById } from '../../../lib/catalog/client'
 import { getCardHref, getGameExplorerHref, getSetHref } from '../../../lib/catalog/routes'
+import { getGameConfig, normalizeGameSlug } from '../../../lib/catalog/games'
 import './PrintDetailPage.css'
 
 function MetaLine({ label, value }) {
@@ -116,7 +117,9 @@ export default function PrintDetailPage({ params }) {
     return () => { cancelled = true }
   }, [id])
 
-  const gameSlug = printDetail?.game || printDetail?.card?.game || 'pokemon'
+  const rawGameSlug = printDetail?.game || printDetail?.card?.game || 'pokemon'
+  const gameSlug = normalizeGameSlug(rawGameSlug)
+  const gameLabel = getGameConfig(gameSlug)?.name || rawGameSlug
   const cardId = printDetail?.card?.id || ''
   const cardHref = getCardHref(gameSlug, cardId)
   const setHref = printDetail?.set_code ? getSetHref(gameSlug, printDetail.set_code) : getGameExplorerHref(gameSlug)
@@ -140,7 +143,7 @@ export default function PrintDetailPage({ params }) {
                   alt={printDetail.card?.name || 'Carta'}
                   className="detail-image"
                   placeholderClassName="catalog-placeholder image-fallback"
-                  label={gameSlug}
+                  label={gameLabel}
                 />
               </div>
               <PriceBlock price={price} />
@@ -148,7 +151,7 @@ export default function PrintDetailPage({ params }) {
 
             <div className="detail-content">
               <nav className="detail-breadcrumbs" aria-label="breadcrumb">
-                <Link href={getGameExplorerHref(gameSlug)}>{gameSlug}</Link>
+                <Link href={getGameExplorerHref(gameSlug)}>{gameLabel}</Link>
                 <span>→</span>
                 <Link href={setHref}>{printDetail.set_name || printDetail.set_code || 'Set'}</Link>
                 <span>→</span>
