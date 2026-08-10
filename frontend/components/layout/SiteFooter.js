@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import BrandMark from '../brand/BrandMark'
-import './SiteFooterRedesign.css'
 
 const games = [
   ['Pokémon', '/games/pokemon'],
@@ -16,7 +15,7 @@ export default function SiteFooter() {
       <div className="app-shell dri-footer-grid">
         <div className="dri-footer-brand">
           <BrandMark />
-          <p>Tu colección TCG, sin caos. Busca, organiza y sigue lo que viene desde una sola cuenta.</p>
+          <p>Busca la carta, identifica la versión física exacta y organiza colección y wishlist desde una sola cuenta.</p>
           <a href="mailto:info@dontripit.com">info@dontripit.com</a>
         </div>
 
@@ -27,9 +26,9 @@ export default function SiteFooter() {
 
         <div className="dri-footer-column">
           <strong>Don’tRipIt</strong>
-          <Link href="/#features">Cómo funciona</Link>
-          <Link href="/#news">Noticias</Link>
-          <a href="https://shop.dontripit.com">Tienda</a>
+          <Link href="/#how-it-works">Cómo funciona</Link>
+          <Link href="/#releases">Lanzamientos</Link>
+          <a href="https://shop.dontripit.com" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
           <Link href="/register">Crear cuenta</Link>
         </div>
 
@@ -37,7 +36,6 @@ export default function SiteFooter() {
           <strong>Legal</strong>
           <Link href="/privacy">Privacidad</Link>
           <Link href="/terms">Términos del MVP</Link>
-          <span>Cookies · pendiente de configuración final</span>
         </div>
       </div>
 
