@@ -83,7 +83,14 @@ def _required_scope(path: str) -> str | None:
 
 
 def _is_safe_public_catalog_request(required_scope: str | None) -> bool:
-    return required_scope == "read:catalog" and request.method in {"GET", "HEAD", "OPTIONS"}
+    if required_scope != "read:catalog":
+        return False
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return True
+    # Advanced search is a read-only query that uses POST only because its
+    # allowlisted filters are structured JSON. It is bounded server-side and
+    # belongs to the same public catalog surface as GET search.
+    return request.method == "POST" and request.path == "/api/v2/search/advanced"
 
 
 def _public_catalog_enabled(required_scope: str | None) -> bool:
@@ -318,4 +325,3 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             meta.get("quota_used"),
             meta.get("retry_after"),
         )
-        return response
