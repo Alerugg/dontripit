@@ -1,146 +1,15 @@
-name: Neon Ingest and Reindex
+name: Legacy Ingest (Manual Only)
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
-    inputs:
-      pokemon_set:
-        description: 'Optional Pokemon set code (example: base1)'
-        required: false
-        type: string
-      pokemon_limit:
-        description: 'Pokemon ingest limit'
-        required: false
-        default: '200'
-        type: string
-      mtg_limit:
-        description: 'MTG ingest limit'
-        required: false
-        default: '200'
-        type: string
-      yugioh_limit:
-        description: 'Yu-Gi-Oh ingest limit'
-        required: false
-        default: '200'
-        type: string
-      riftbound_limit:
-        description: 'Riftbound ingest limit'
-        required: false
-        default: '200'
-        type: string
-      incremental:
-        description: 'Use incremental mode'
-        required: false
-        default: true
-        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
-  ingest:
+  notice:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: backend
-    env:
-      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Debug env (no secrets)
-        run: |
-          if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
-          if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
-          python - <<'PY'
-          import os
-          from urllib.parse import urlparse
-
-          database_url = os.getenv("DATABASE_URL", "")
-          host = "<not available>"
-          if database_url:
-              parsed = urlparse(database_url)
-              host = parsed.hostname or "<not available>"
-          print(f"DATABASE_URL host: {host}")
-          PY
-
-      - name: Run Alembic migrations
-        run: alembic upgrade head
-
-      - name: Run daily refresh pipeline
-        run: |
-          set -euo pipefail
-
-          EVENT_NAME="${{ github.event_name }}"
-          POKEMON_SET_INPUT="${{ github.event.inputs.pokemon_set || '' }}"
-          POKEMON_LIMIT_INPUT="${{ github.event.inputs.pokemon_limit || '' }}"
-          MTG_LIMIT_INPUT="${{ github.event.inputs.mtg_limit || '' }}"
-          YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
-          RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
-          INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
-
-          POKEMON_LIMIT="${POKEMON_LIMIT_INPUT:-200}"
-          MTG_LIMIT="${MTG_LIMIT_INPUT:-200}"
-          YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-200}"
-          RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
-          INCREMENTAL="${INCREMENTAL_INPUT:-true}"
-
-          SKIP_POKEMON="false"
-          if [ -n "${POKEMON_SET_INPUT}" ]; then
-            POKEMON_SET="${POKEMON_SET_INPUT}"
-          elif [ "${EVENT_NAME}" = "schedule" ]; then
-            POKEMON_SET="base1"
-          else
-            POKEMON_SET=""
-            SKIP_POKEMON="true"
-          fi
-
-          ARGS=(
-            --pokemon-limit "${POKEMON_LIMIT}"
-            --mtg-limit "${MTG_LIMIT}"
-            --yugioh-limit "${YUGIOH_LIMIT}"
-            --riftbound-limit "${RIFTBOUND_LIMIT}"
-            --incremental "${INCREMENTAL}"
-          )
-          if [ -n "${POKEMON_SET}" ]; then
-            ARGS+=(--pokemon-set "${POKEMON_SET}")
-          fi
-          if [ "${SKIP_POKEMON}" = "true" ]; then
-            ARGS+=(--skip-pokemon true)
-          fi
-
-          echo "Resolved ARGS:"
-          printf '  %q' "${ARGS[@]}"
-          echo
-
-          STDOUT_FILE="$(mktemp)"
-
-          set +e
-          python -u -m app.scripts.daily_refresh "${ARGS[@]}" \
-            > >(tee "${STDOUT_FILE}") \
-            2> >(tee /dev/stderr)
-          CMD_STATUS=$?
-          set -e
-
-          if [ -s "${STDOUT_FILE}" ]; then
-            echo "Daily refresh summary (pretty):"
-            if ! python -m json.tool < "${STDOUT_FILE}"; then
-              echo "stdout did not contain valid JSON summary"
-            fi
-          else
-            echo "No stdout summary captured"
-          fi
-
-          if [ "${CMD_STATUS}" -ne 0 ]; then
-            echo "daily_refresh failed with exit code ${CMD_STATUS}"
-            exit "${CMD_STATUS}"
-          fi
+      - run: |
+          echo "Legacy daily_refresh scheduling is disabled."
+          echo "Production scheduling is owned by daily-catalog-v2-orchestrator.yml and executes catalog-v2 certified jobs."
