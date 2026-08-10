@@ -62,8 +62,9 @@ def cardmarket_print_batch_read():
 
 def _target_expansions(session, game_slug: str, set_code: str) -> list[str]:
     # One Piece Cardmarket single names end in exact collectors such as
-    # "Krieg (OP15-001)". Matching the literal collector prefix is both safer
-    # and dramatically cheaper than normalizing every catalog row at request time.
+    # "Krieg (OP15-001)". Matching the literal collector prefix proves which
+    # Cardmarket expansion belongs to the requested official set without
+    # relying on fuzzy product names.
     if game_slug == "onepiece":
         collector_prefix = set_code.replace("-", "").lower()
         sql = text(
@@ -139,9 +140,24 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
 
             rows_sql = text(
                 f"""
-                WITH candidate_products AS (
-                  SELECT DISTINCT e.id
+                WITH candidate_links AS (
+                  SELECT DISTINCT
+                         e.id AS external_product_id,
+                         e.external_id,
+                         e.name AS product_name,
+                         e.category,
+                         e.expansion_external_id,
+                         e.website_path,
+                         p.id AS canonical_product_id,
+                         p.product_type,
+                         pv.id AS canonical_product_variant_id,
+                         pv.language,
+                         pv.region
                   {base_join}
+                ),
+                candidate_products AS (
+                  SELECT DISTINCT external_product_id AS id
+                  FROM candidate_links
                 ),
                 latest_as_of AS (
                   SELECT mp.external_product_id, max(mp.as_of) AS as_of
@@ -153,7 +169,7 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
                 current_price_candidates AS (
                   SELECT mp.*,
                          count(*) OVER (PARTITION BY mp.external_product_id) AS total_variants,
-                         count(*) FILTER (WHERE mp.price_variant IN ('default', 'nonfoil'))
+                         count(*) FILTER (WHERE mp.price_variant IN ('default', 'nonfoil', 'sealed'))
                            OVER (PARTITION BY mp.external_product_id) AS preferred_variants
                   FROM external_market_price_snapshots mp
                   JOIN latest_as_of la
@@ -162,20 +178,10 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
                 ),
                 eligible_price AS (
                   SELECT * FROM current_price_candidates
-                  WHERE (preferred_variants = 1 AND price_variant IN ('default', 'nonfoil'))
+                  WHERE (preferred_variants = 1 AND price_variant IN ('default', 'nonfoil', 'sealed'))
                      OR (preferred_variants = 0 AND total_variants = 1)
                 )
-                SELECT e.id AS external_product_id,
-                       e.external_id,
-                       e.name AS product_name,
-                       e.category,
-                       e.expansion_external_id,
-                       e.website_path,
-                       p.id AS canonical_product_id,
-                       p.product_type,
-                       pv.id AS canonical_product_variant_id,
-                       pv.language,
-                       pv.region,
+                SELECT cl.*,
                        ep.currency,
                        ep.price_variant,
                        ep.price_low,
@@ -186,13 +192,13 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
                        ep.avg7,
                        ep.avg30,
                        ep.as_of AS price_as_of
-                {base_join}
-                LEFT JOIN eligible_price ep ON ep.external_product_id = e.id
+                FROM candidate_links cl
+                LEFT JOIN eligible_price ep ON ep.external_product_id = cl.external_product_id
                 ORDER BY
-                  CASE WHEN lower(COALESCE(pv.region, 'global')) = 'global' THEN 0 ELSE 1 END,
-                  e.category ASC,
-                  e.name ASC,
-                  e.id ASC
+                  CASE WHEN lower(COALESCE(cl.region, 'global')) = 'global' THEN 0 ELSE 1 END,
+                  cl.category ASC,
+                  cl.product_name ASC,
+                  cl.external_product_id ASC
                 LIMIT :limit OFFSET :offset
                 """
             ).bindparams(bindparam("expansion_ids", expanding=True))
