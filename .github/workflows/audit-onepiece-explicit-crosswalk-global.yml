@@ -1,5 +1,6 @@
 name: Audit One Piece Explicit Crosswalk Global
 
+# Re-run against the current canonical catalog and current Cardmarket mirror.
 on:
   push:
     branches: [catalog-v2]
@@ -40,8 +41,6 @@ jobs:
           http=requests.Session()
           http.headers.update({'User-Agent':'DontRipIt/1.0 global-exact-cardmarket-auditor'})
 
-          # Fetch the complete public source inventory page-by-page. We only use
-          # EN rows whose variant suffix is semantic (default/pN/rN), never _cmNNN.
           first=http.get(f'{SOURCE}/api/cards',params={'limit':500,'page':1},timeout=30)
           first.raise_for_status(); first_payload=first.json()
           total_pages=max(1,int(first_payload.get('totalPages') or 1))
