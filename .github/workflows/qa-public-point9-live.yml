@@ -4,11 +4,16 @@ on:
   push:
     branches: [catalog-v2]
     paths:
+      - 'frontend/**'
       - '.github/workflows/qa-public-point9-live.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: public-point9-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   public-journeys:
