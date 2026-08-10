@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
-from urllib import error, request
+
+import requests
 
 
 def _site_url() -> str:
@@ -41,17 +41,13 @@ def send_password_reset_email(*, to_email: str, token: str) -> bool:
             "</div>"
         ),
     }
-    req = request.Request(
-        "https://api.resend.com/emails",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with request.urlopen(req, timeout=8) as response:
-            return 200 <= int(response.status) < 300
-    except (error.HTTPError, error.URLError, TimeoutError, OSError):
+        response = requests.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=8,
+        )
+        return 200 <= int(response.status_code) < 300
+    except requests.RequestException:
         return False
