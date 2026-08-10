@@ -1,0 +1,129 @@
+name: Audit Pokemon Official Database Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-pokemon-official-database-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare representative cards from every Pokemon set with Pokemon.com
+        run: |
+          python - <<'PY'
+          import json, os, re, time, unicodedata
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2, requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          BASE='https://www.pokemon.com/us/pokemon-tcg/pokemon-cards/series'
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
+              return re.sub(r'\s+',' ',s).strip().casefold()
+          def local_id(set_id, card_id, collector):
+              sid=str(set_id or '').strip(); cid=str(card_id or '').strip()
+              prefix=sid+'-'
+              if sid and cid.startswith(prefix): return cid[len(prefix):]
+              return str(collector or '').strip()
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT s.id set_pk,s.tcgdex_id,s.code,s.name set_name,s.release_date,
+                       count(distinct p.id) print_count,count(distinct p.card_id) card_count
+                FROM sets s JOIN games g ON g.id=s.game_id
+                LEFT JOIN prints p ON p.set_id=s.id
+                WHERE g.slug='pokemon'
+                GROUP BY s.id,s.tcgdex_id,s.code,s.name,s.release_date
+                ORDER BY coalesce(s.release_date, DATE '1900-01-01'),s.id
+              ''')
+              sets=[dict(x) for x in c.fetchall()]
+              candidates=[]
+              for s in sets:
+                  c.execute('''
+                    SELECT DISTINCT ON (p.card_id) c.id card_pk,c.tcgdex_id card_tcgdex_id,c.name,
+                           p.collector_number,p.rarity
+                    FROM prints p JOIN cards c ON c.id=p.card_id
+                    WHERE p.set_id=%s
+                    ORDER BY p.card_id,p.collector_number,p.id
+                  ''',(s['set_pk'],))
+                  rows=[dict(x) for x in c.fetchall()]
+                  if not rows: continue
+                  idxs=sorted(set([0,len(rows)//2,len(rows)-1]))
+                  for idx in idxs:
+                      r=rows[idx]; r.update({k:s[k] for k in ('set_pk','tcgdex_id','code','set_name')}); candidates.append(r)
+          conn.close()
+
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 official-pokemon-parity','Accept':'text/html'})
+          results=[];counts=Counter(); set_status=defaultdict(Counter)
+          for i,r in enumerate(candidates,1):
+              sid=str(r.get('tcgdex_id') or '').strip()
+              lid=local_id(sid,r.get('card_tcgdex_id'),r.get('collector_number'))
+              if not sid or not lid:
+                  status='missing_official_locator'; counts[status]+=1;set_status[r['set_pk']][status]+=1
+                  results.append({**r,'status':status});continue
+              url=f'{BASE}/{sid}/{lid}/'
+              try:
+                  resp=http.get(url,timeout=30,allow_redirects=True)
+              except Exception as exc:
+                  status='request_error';counts[status]+=1;set_status[r['set_pk']][status]+=1
+                  results.append({**r,'url':url,'status':status,'error':str(exc)[:200]});continue
+              if resp.status_code!=200:
+                  status=f'http_{resp.status_code}';counts[status]+=1;set_status[r['set_pk']][status]+=1
+                  results.append({**r,'url':url,'status':status});continue
+              soup=BeautifulSoup(resp.text,'html.parser')
+              page_text=' '.join(soup.stripped_strings)
+              h1=soup.find('h1'); official_name=' '.join(h1.stripped_strings) if h1 else ''
+              checks={
+                'name': norm(official_name)==norm(r.get('name')),
+                'set_name': norm(r.get('set_name')) in norm(page_text),
+                'collector': bool(re.search(rf'(?<![A-Za-z0-9]){re.escape(str(r.get("collector_number") or "").strip())}\s*/',page_text,re.I)) if str(r.get('collector_number') or '').strip() else True,
+              }
+              status='matched' if all(checks.values()) else 'content_mismatch'
+              counts[status]+=1;set_status[r['set_pk']][status]+=1
+              results.append({**r,'url':url,'status':status,'official_name':official_name,'checks':checks})
+              if i%50==0: print('progress',i,'/',len(candidates),dict(counts),flush=True)
+              time.sleep(0.05)
+
+          set_rows=[]
+          bypk={x['set_pk']:x for x in sets}
+          for pk,s in bypk.items():
+              st=set_status.get(pk,Counter())
+              set_rows.append({**s,'sample_status':dict(st),'official_reachable_samples':st.get('matched',0),'sampled':sum(st.values())})
+          report={
+            'source':'Pokemon.com Trading Card Game Card Database',
+            'official_base':BASE,
+            'db_sets':len(sets),'db_prints':sum(int(x['print_count']) for x in sets),
+            'sampled_cards':len(candidates),'status_counts':dict(counts),
+            'sets_with_all_samples_matched':sum(1 for x in set_rows if x['sampled']>0 and x['official_reachable_samples']==x['sampled']),
+            'sets_with_any_official_match':sum(1 for x in set_rows if x['official_reachable_samples']>0),
+            'catalog_release_candidates_from_verified_sets':sum(1 for x in set_rows if x['official_reachable_samples']>0),
+            'set_results':set_rows,
+            'mismatch_samples':[x for x in results if x['status']!='matched'][:200],
+          }
+          print(json.dumps({k:v for k,v in report.items() if k not in ('set_results','mismatch_samples')},indent=2,ensure_ascii=False))
+          Path('/tmp/pokemon-official-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-official-parity-${{ github.run_id }}
+          path: /tmp/pokemon-official-parity.json
+          retention-days: 90
+          if-no-files-found: warn
