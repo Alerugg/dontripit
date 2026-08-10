@@ -30,6 +30,22 @@ test('catalog discovery is public while personal collector routes stay account-g
   assert.match(proxy, /\/register/)
 })
 
+test('production CSP permits source-owned art for every active card catalog', () => {
+  const config = source('next.config.js')
+  const csp = config.match(/Content-Security-Policy[\s\S]+?upgrade-insecure-requests/)?.[0] || ''
+  for (const hostname of [
+    'cards.scryfall.io',
+    'en.onepiece-cardgame.com',
+    'assets.tcgdex.net',
+    'images.ygoprodeck.com',
+    'images.riftbound.cards',
+  ]) {
+    const hostnamePattern = new RegExp(hostname.replaceAll('.', '\\.'))
+    assert.match(config, hostnamePattern)
+    assert.match(csp, hostnamePattern)
+  }
+})
+
 test('collection and wishlist use exact physical print IDs', () => {
   const actions = source('components/library/LibraryActions.js')
   const library = source('components/library/LibraryPage.js')
