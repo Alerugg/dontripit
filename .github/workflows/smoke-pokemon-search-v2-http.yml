@@ -34,6 +34,15 @@ jobs:
         run: pip install -r requirements.txt
       - name: Verify Neon secret
         run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "smoke-pokemon-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "SEARCH_V2_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
       - name: Run Search V2 HTTP contract smoke
         working-directory: backend
         run: |
@@ -47,3 +56,7 @@ jobs:
           path: /tmp/pokemon-search-v2-http-smoke.json
           retention-days: 90
           if-no-files-found: warn
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true

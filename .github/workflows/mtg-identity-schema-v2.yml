@@ -60,7 +60,7 @@ jobs:
         working-directory: backend
         run: |
           alembic upgrade head
-          test "$(alembic heads | awk '{print $1}')" = "20260808_25"
+          test "$(alembic heads | grep -c '(head)')" -eq 1
 
       - name: Verify exact Scryfall plus finish schema semantics
         env:

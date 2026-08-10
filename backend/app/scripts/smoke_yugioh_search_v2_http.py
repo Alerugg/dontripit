@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from app.main import create_app
@@ -30,12 +31,42 @@ def main() -> int:
     checks = []
 
     with app.test_client() as client:
+        api_key = os.getenv("SEARCH_V2_API_KEY", "").strip()
+        if api_key:
+            client.environ_base["HTTP_X_API_KEY"] = api_key
+
         response, ms = _timed(client, "get", "/api/v2/search?game=yugioh&q=Dark%20Magician&limit=5")
         payload = _require(response)
         items = payload.get("items") or []
         if not items or not any(str(row.get("name") or "").casefold() == "dark magician" for row in items):
             raise AssertionError("HTTP natural search did not return Dark Magician")
         checks.append({"name": "search", "ms": ms, "count": len(items)})
+
+        response, ms = _timed(client, "get", "/api/v2/search?game=yugioh&q=lo&limit=10")
+        payload = _require(response)
+        items = payload.get("items") or []
+        if not items or str(items[0].get("name") or "").casefold() != "lo, the prayers of the voiceless voice":
+            raise AssertionError(
+                f"HTTP natural search 'lo' lost its exact-name lead: "
+                f"{[row.get('name') for row in items[:5]]}"
+            )
+        checks.append({"name": "search_lo_exact_name", "ms": ms, "count": len(items)})
+
+        response, ms = _timed(client, "get", "/api/v2/search?game=yugioh&q=lob&limit=10")
+        payload = _require(response)
+        items = payload.get("items") or []
+        set_codes = [
+            str((row.get("matched_print") or {}).get("set_code") or "").casefold()
+            for row in items
+        ]
+        card_ids = [row.get("card_id") for row in items]
+        if not items or any(set_code != "lob" for set_code in set_codes):
+            raise AssertionError(
+                f"HTTP natural search 'lob' did not prioritize LOB print evidence: {set_codes}"
+            )
+        if len(card_ids) != len(set(card_ids)):
+            raise AssertionError("HTTP natural search 'lob' returned duplicate logical cards")
+        checks.append({"name": "search_lob_print_evidence", "ms": ms, "count": len(items)})
 
         response, ms = _timed(client, "get", "/api/v2/search/suggest?game=yugioh&q=Blue-Eyes%20White%20Dragon&limit=5")
         payload = _require(response)

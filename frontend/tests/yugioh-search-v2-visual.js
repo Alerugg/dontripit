@@ -58,14 +58,16 @@ async function main() {
   try {
     stage = 'desktop_home'
     await page.goto(`${BASE_URL}/games/yugioh`, { waitUntil: 'networkidle', timeout: 60000 })
-    await page.locator('h1').filter({ hasText: 'Yu-Gi-Oh!' }).waitFor({ timeout: 15000 })
-    await page.getByText('14.479 Cards', { exact: true }).waitFor()
-    await page.getByText('44.226 Prints', { exact: true }).waitFor()
-    await page.getByText('20 facets · 19 activos', { exact: true }).waitFor()
+    await page.getByAltText('Yu-Gi-Oh!').waitFor({ timeout: 15000 })
+    await page.getByRole('heading', { name: 'Busca una carta sin perderte en el catálogo.' }).waitFor()
+    const sectionNav = page.getByRole('navigation', { name: 'Secciones de Yu-Gi-Oh!' })
+    for (const label of ['Buscar', 'Sellado', 'Lanzamientos', 'Sets', 'Noticias']) {
+      await sectionNav.getByRole('link', { name: label, exact: true }).waitFor()
+    }
     await snapshot('yugioh-desktop-home')
 
     stage = 'advanced_open'
-    const advancedButton = page.getByRole('button', { name: /Advanced Search/i }).first()
+    const advancedButton = page.getByRole('button', { name: /Afinar búsqueda/i }).first()
     await advancedButton.click()
     await page.locator('.sv2-advanced.is-open').waitFor({ timeout: 10000 })
     for (const selector of [
@@ -112,7 +114,7 @@ async function main() {
     stage = 'mobile'
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(`${BASE_URL}/games/yugioh`, { waitUntil: 'networkidle', timeout: 60000 })
-    await page.locator('h1').filter({ hasText: 'Yu-Gi-Oh!' }).waitFor({ timeout: 15000 })
+    await page.getByAltText('Yu-Gi-Oh!').waitFor({ timeout: 15000 })
     const dimensions = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -132,7 +134,7 @@ async function main() {
       status: 'pass',
       game: 'yugioh',
       checked: [
-        'desktop hero and certified counters',
+        'desktop collector hero and section navigation',
         'full Advanced Search panel opens',
         'six Yu-Gi-Oh quick-filter controls',
         'normal Dark Magician search',

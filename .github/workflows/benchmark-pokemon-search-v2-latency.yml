@@ -16,7 +16,7 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -34,6 +34,27 @@ jobs:
         run: pip install -r requirements.txt
       - name: Verify Neon secret
         run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Wait for the production HP range index
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import time
+          from sqlalchemy import text
+          from app import db
+
+          db.init_engine()
+          for attempt in range(30):
+              with db.SessionLocal() as session:
+                  ready = session.execute(
+                      text("SELECT to_regclass('public.ix_print_search_profiles_game_hp_int') IS NOT NULL")
+                  ).scalar_one()
+              if ready:
+                  print({'index_ready': True, 'attempt': attempt + 1})
+                  break
+              time.sleep(10)
+          else:
+              raise SystemExit('production HP range index was not applied within five minutes')
+          PY
       - name: Compile production search path
         working-directory: backend
         run: python -m compileall -q app/search_v2 app/routes/search_v2.py app/scripts/benchmark_pokemon_search_v2_fast.py

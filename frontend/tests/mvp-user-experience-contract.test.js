@@ -16,10 +16,17 @@ test('auth UI is connected to real session endpoints', () => {
   assert.match(auth, /marketing_consent/)
 })
 
-test('collector app routes are account-gated by the Next proxy', () => {
+test('catalog discovery is public while personal collector routes stay account-gated', () => {
   const proxy = source('proxy.js')
+  const publicRouteConfig = proxy.match(/const PUBLIC_PATHS[\s\S]+?function isPublicPath/)?.[0] || ''
   assert.match(proxy, /dri_session/)
   assert.match(proxy, /PUBLIC_PATHS/)
+  assert.match(proxy, /PUBLIC_PREFIXES/)
+  assert.match(publicRouteConfig, /['"]\/games\/['"]/)
+  assert.match(publicRouteConfig, /['"]\/prints\/['"]/)
+  assert.doesNotMatch(publicRouteConfig, /['"]\/collection['"]/)
+  assert.doesNotMatch(publicRouteConfig, /['"]\/wishlist['"]/)
+  assert.doesNotMatch(publicRouteConfig, /['"]\/dashboard['"]/)
   assert.match(proxy, /\/register/)
 })
 

@@ -71,6 +71,16 @@ jobs:
             --report-path /tmp/yugioh-search-v2-benchmark.json \
             | tee /tmp/yugioh-search-v2-benchmark.log
 
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "cert-yugioh-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "SEARCH_V2_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+
       - name: Run Yu-Gi-Oh Search V2 HTTP contract smoke
         working-directory: backend
         run: python -m app.scripts.smoke_yugioh_search_v2_http
@@ -103,3 +113,8 @@ jobs:
             /tmp/yugioh-search-v2-benchmark.log
           retention-days: 90
           if-no-files-found: warn
+
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true

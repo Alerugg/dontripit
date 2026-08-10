@@ -52,9 +52,9 @@ jobs:
           tests/test_search_v2_indexer.py
       - name: Validate Alembic head
         run: |
-          HEAD="$(alembic heads | awk '{print $1}')"
-          echo "Alembic head: ${HEAD}"
-          test "${HEAD}" = "20260807_19"
+          HEADS="$(alembic heads)"
+          echo "${HEADS}"
+          test "$(printf '%s\n' "${HEADS}" | grep -c '(head)')" -eq 1
       - name: Render V2 migrations offline
         run: |
           alembic upgrade 20260323_17:20260807_19 --sql > /tmp/catalog-v2-schema.sql

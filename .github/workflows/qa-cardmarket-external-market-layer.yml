@@ -73,13 +73,12 @@ jobs:
             scripts/sync_cardmarket_external_prices.py \
             alembic/versions/20260809_28_add_external_catalog_market_layer.py
 
-      - name: Verify Alembic remains linear at revision 28
+      - name: Verify Alembic remains linear
         working-directory: backend
         run: |
           heads="$(alembic heads)"
           echo "$heads"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -q '20260809_28'
 
       - name: Run full Alembic chain on PostgreSQL
         working-directory: backend
@@ -87,6 +86,8 @@ jobs:
           DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/dontripit_test
         run: |
           set -euo pipefail
+          EXPECTED_HEAD="$(alembic heads | awk '{print $1}')"
+          export EXPECTED_HEAD
           alembic upgrade head
           python - <<'PY'
           import os
@@ -95,7 +96,7 @@ jobs:
           engine = create_engine(os.environ['DATABASE_URL'])
           with engine.connect() as connection:
               version = connection.execute(text('select version_num from alembic_version')).scalar_one()
-          assert version == '20260809_28', version
+          assert version == os.environ['EXPECTED_HEAD'], (version, os.environ['EXPECTED_HEAD'])
 
           tables = set(inspect(engine).get_table_names())
           required = {

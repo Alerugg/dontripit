@@ -61,15 +61,17 @@ async function main() {
   try {
     stage = 'desktop_home'
     await page.goto(`${BASE_URL}/games/pokemon`, { waitUntil: 'networkidle', timeout: 60000 })
-    await page.locator('h1').filter({ hasText: 'Pokémon' }).waitFor({ timeout: 15000 })
-    await page.getByText('21.065 Cards', { exact: true }).waitFor()
-    await page.getByText('27.241 Variants', { exact: true }).waitFor()
-    await page.getByText('23 filtros específicos de Pokémon', { exact: true }).waitFor()
+    await page.getByAltText('Pokémon').waitFor({ timeout: 15000 })
+    await page.getByRole('heading', { name: 'Busca una carta sin perderte en el catálogo.' }).waitFor()
+    const sectionNav = page.getByRole('navigation', { name: 'Secciones de Pokémon' })
+    for (const label of ['Buscar', 'Sellado', 'Lanzamientos', 'Sets', 'Noticias']) {
+      await sectionNav.getByRole('link', { name: label, exact: true }).waitFor()
+    }
     await snapshot('pokemon-desktop-home')
 
     // Test the full Advanced panel independently of result-state URL changes.
     stage = 'advanced_open'
-    const advancedButton = page.getByRole('button', { name: /Advanced Search/i }).first()
+    const advancedButton = page.getByRole('button', { name: /Afinar búsqueda/i }).first()
     await advancedButton.waitFor({ state: 'visible', timeout: 10000 })
     assert.equal(await advancedButton.isEnabled(), true, 'Advanced Search button is disabled')
     await advancedButton.click()
@@ -123,7 +125,7 @@ async function main() {
     stage = 'mobile'
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(`${BASE_URL}/games/pokemon`, { waitUntil: 'networkidle', timeout: 60000 })
-    await page.locator('h1').filter({ hasText: 'Pokémon' }).waitFor({ timeout: 15000 })
+    await page.getByAltText('Pokémon').waitFor({ timeout: 15000 })
     const dimensions = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -143,7 +145,7 @@ async function main() {
       status: 'pass',
       game: 'pokemon',
       checked: [
-        'desktop hero and certified counters',
+        'desktop collector hero and section navigation',
         'full Advanced Search panel opens',
         'six Pokémon quick-filter controls',
         'normal Pikachu search',

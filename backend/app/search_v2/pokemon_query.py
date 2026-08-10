@@ -23,7 +23,7 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
     q_norm = normalize_search_text(q)
     tokens = [token for token in q_norm.split() if len(token) >= 2][:8]
     bounded_limit = max(1, min(int(limit or 24), 100))
-    candidate_limit = max(80, bounded_limit * 8)
+    candidate_limit = max(240, bounded_limit * 12)
 
     token_where = " AND ".join(
         f"csp.search_text LIKE :token_{idx}" for idx in range(len(tokens))
@@ -46,10 +46,15 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
 
     sql = text(
         f"""
-        WITH candidates AS MATERIALIZED (
+        WITH matched_cards AS MATERIALIZED (
           SELECT
             csp.card_id,
+            csp.game_id,
+            csp.normalized_name,
             csp.attributes_json,
+            COUNT(*) OVER (
+              PARTITION BY csp.game_id, csp.normalized_name
+            ) AS name_identity_count,
             (
               CASE WHEN csp.normalized_name = :q_norm THEN 5000.0 ELSE 0.0 END +
               CASE WHEN csp.normalized_name LIKE :prefix THEN 2200.0 ELSE 0.0 END +
@@ -58,13 +63,46 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
               CASE WHEN csp.search_text LIKE :contains THEN 350.0 ELSE 0.0 END +
               {token_bonus} +
               similarity(csp.normalized_name, :q_norm) * 900.0
-            ) AS score
+            ) AS relevance_score
           FROM card_search_profiles csp
           JOIN games g ON g.id=csp.game_id
           WHERE g.slug='pokemon'
             AND ({candidate_predicate})
-          ORDER BY score DESC, csp.card_id ASC
+        ),
+        pre_candidates AS MATERIALIZED (
+          SELECT
+            card_id,
+            game_id,
+            normalized_name,
+            attributes_json,
+            name_identity_count,
+            relevance_score
+          FROM matched_cards
+          ORDER BY relevance_score DESC, card_id ASC
           LIMIT :candidate_limit
+        ),
+        candidates AS MATERIALIZED (
+          SELECT
+            card_id,
+            attributes_json,
+            (
+              relevance_score +
+              LEAST(
+                name_identity_count + (
+                  SELECT COUNT(*)
+                  FROM card_search_profiles related
+                  WHERE related.game_id=pre_candidates.game_id
+                    AND related.normalized_name LIKE pre_candidates.normalized_name || ' %'
+                ),
+                50
+              ) * 32.0
+            ) AS score
+          FROM pre_candidates
+          -- Short prefixes naturally favor shorter words under trigram similarity.
+          -- Bounded catalog-family coverage (base name plus named variants) is a
+          -- data-derived tie-breaker; no individual character is hard-coded.
+          ORDER BY score DESC, card_id ASC
+          LIMIT :limit
         )
         SELECT
           c.id AS card_id,

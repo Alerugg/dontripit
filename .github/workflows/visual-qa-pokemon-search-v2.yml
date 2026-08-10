@@ -28,7 +28,6 @@ jobs:
       PUBLIC_API_ENABLED: 'true'
       PUBLIC_IP_RATE_LIMIT_RPM: '200'
       INTERNAL_API_BASE_URL: http://127.0.0.1:5000
-      INTERNAL_API_KEY: ''
       INTERNAL_API_ALLOW_PUBLIC: 'true'
       ADMIN_CONSOLE_USERNAME: admin
       ADMIN_CONSOLE_PASSWORD: visual-qa-password
@@ -52,6 +51,15 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -r requirements.txt
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "visual-pokemon-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "INTERNAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -99,3 +107,7 @@ jobs:
             /tmp/pokemon-frontend.log
           retention-days: 90
           if-no-files-found: warn
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true

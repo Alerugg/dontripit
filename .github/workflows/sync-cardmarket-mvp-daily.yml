@@ -1,6 +1,10 @@
 name: Sync Cardmarket MVP Daily
 
 on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/sync-cardmarket-mvp-daily.yml'
   schedule:
     - cron: '30 4 * * *'
   workflow_dispatch:

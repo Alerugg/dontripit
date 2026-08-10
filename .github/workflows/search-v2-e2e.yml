@@ -160,8 +160,11 @@ jobs:
           build = load('/tmp/build-info.json')
 
           items = search.get('items') or []
-          assert len(items) == 1, f'exact collector should return one logical Card, got {items}'
-          assert items[0].get('card_key') == 'onepiece:op05-119', items
+          assert items, f'exact collector returned no physical variants: {items}'
+          assert all(row.get('card_key') == 'onepiece:op05-119' for row in items), items
+          assert len({row.get('card_id') for row in items}) == 1, items
+          print_ids = [row.get('print_id') for row in items]
+          assert all(print_ids) and len(print_ids) == len(set(print_ids)), f'duplicate physical prints: {items}'
 
           luffy_items = luffy.get('items') or []
           assert luffy_items, luffy

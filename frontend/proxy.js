@@ -8,7 +8,27 @@ const PUBLIC_PATHS = new Set([
   '/reset-password',
   '/privacy',
   '/terms',
+  '/pokemon',
+  '/magic',
+  '/onepiece',
+  '/yugioh',
+  '/riftbound',
+  '/explorer',
 ])
+
+const PUBLIC_PREFIXES = [
+  '/games/',
+  '/cards/',
+  '/prints/',
+  '/explorer/',
+  '/tcg/',
+  '/play/',
+]
+
+function isPublicPath(pathname) {
+  return PUBLIC_PATHS.has(pathname)
+    || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+}
 
 export function proxy(request) {
   const { pathname } = request.nextUrl
@@ -18,7 +38,7 @@ export function proxy(request) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  if (!hasSession && !PUBLIC_PATHS.has(pathname)) {
+  if (!hasSession && !isPublicPath(pathname)) {
     const target = new URL('/register', request.url)
     target.searchParams.set('next', `${pathname}${request.nextUrl.search || ''}`)
     return NextResponse.redirect(target)

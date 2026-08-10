@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from app.main import create_app
@@ -30,12 +31,34 @@ def main() -> int:
     checks = []
 
     with app.test_client() as client:
+        api_key = os.getenv("SEARCH_V2_API_KEY", "").strip()
+        if api_key:
+            client.environ_base["HTTP_X_API_KEY"] = api_key
+
         response, ms = _timed(client, "get", "/api/v2/search?game=pokemon&q=Pikachu&limit=5")
         payload = _require(response)
         items = payload.get("items") or []
         if not items or not any("pikachu" in str(row.get("name") or "").lower() for row in items):
             raise AssertionError("HTTP natural search did not return Pikachu")
         checks.append({"name": "search", "ms": ms, "count": len(items)})
+
+        for query, max_rank in (("char", 0), ("cha", 4)):
+            response, ms = _timed(
+                client,
+                "get",
+                f"/api/v2/search?game=pokemon&q={query}&limit=10",
+            )
+            payload = _require(response)
+            names = [str(row.get("name") or "").casefold() for row in payload.get("items") or []]
+            ranks = [rank for rank, name in enumerate(names) if name == "charizard"]
+            if not ranks or ranks[0] > max_rank:
+                raise AssertionError(
+                    f"HTTP natural search {query!r} ranked Charizard at "
+                    f"{ranks[0] if ranks else 'missing'}; expected <= {max_rank}: {names}"
+                )
+            checks.append(
+                {"name": f"search_{query}_charizard_rank", "ms": ms, "rank": ranks[0]}
+            )
 
         response, ms = _timed(client, "get", "/api/v2/search/suggest?game=pokemon&q=Chariz&limit=5")
         payload = _require(response)

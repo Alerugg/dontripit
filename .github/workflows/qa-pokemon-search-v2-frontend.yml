@@ -44,10 +44,11 @@ jobs:
           ADMIN_CONSOLE_USERNAME: admin
           ADMIN_CONSOLE_PASSWORD: test-build-password
         run: npm run build
-      - name: Verify Pokémon V2 route is present in build source
+      - name: Verify the current Pokémon hub is present in build source
         run: |
           set -euo pipefail
-          grep -q "PokemonExplorerV2Page" 'frontend/app/games/[slug]/page.js'
+          grep -q "GameHubPage" 'frontend/app/games/[slug]/page.js'
+          grep -q "OnePieceSearchV2Experience" 'frontend/components/games/GameHubPage.js'
           grep -q "pokemon" 'frontend/components/searchV2/AdvancedSearchPanel.js'
           grep -q "Pikachu" 'frontend/components/searchV2/OnePieceSearchV2Experience.js'
           grep -q "physical.finish" 'frontend/components/searchV2/SearchV2Results.js'
