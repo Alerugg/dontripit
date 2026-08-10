@@ -1,0 +1,108 @@
+name: Daily Catalog V2 Orchestrator
+
+on:
+  schedule:
+    - cron: '20 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/daily-catalog-v2-orchestrator.yml']
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: daily-catalog-v2-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TARGET_REF: catalog-v2
+    steps:
+      - name: Dispatch certified catalog-v2 pipeline sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api="https://api.github.com/repos/${REPO}"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+
+          run_workflow() {
+            local wf="$1"
+            local label="$2"
+            local started
+            started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "::group::${label} (${wf})"
+            code="$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' -X POST "${auth[@]}" \
+              "${api}/actions/workflows/${wf}/dispatches" \
+              -d "{\"ref\":\"${TARGET_REF}\"}")"
+            if [ "$code" != "204" ]; then
+              echo "Dispatch failed HTTP ${code}:"
+              cat /tmp/dispatch.json || true
+              exit 1
+            fi
+
+            run_id=""
+            for _ in $(seq 1 60); do
+              payload="$(curl -fsS "${auth[@]}" "${api}/actions/workflows/${wf}/runs?branch=${TARGET_REF}&event=workflow_dispatch&per_page=20")"
+              run_id="$(jq -r --arg started "$started" '.workflow_runs | map(select(.created_at >= $started)) | sort_by(.created_at) | last | .id // empty' <<<"$payload")"
+              [ -n "$run_id" ] && break
+              sleep 5
+            done
+            if [ -z "$run_id" ]; then
+              echo "Could not resolve dispatched run for ${wf}"
+              exit 1
+            fi
+            echo "Resolved run ${run_id}"
+
+            for _ in $(seq 1 360); do
+              run="$(curl -fsS "${auth[@]}" "${api}/actions/runs/${run_id}")"
+              status="$(jq -r '.status' <<<"$run")"
+              conclusion="$(jq -r '.conclusion // ""' <<<"$run")"
+              if [ "$status" = "completed" ]; then
+                echo "Run ${run_id} completed: ${conclusion}"
+                if [ "$conclusion" != "success" ]; then
+                  echo "$run" | jq '{id,name,html_url,status,conclusion,head_sha,run_started_at,updated_at}'
+                  exit 1
+                fi
+                echo "::endgroup::"
+                return 0
+              fi
+              sleep 5
+            done
+            echo "Run ${run_id} exceeded orchestrator wait window"
+            exit 1
+          }
+
+          # 1) Refresh Cardmarket mirror + external prices first.
+          run_workflow sync-cardmarket-mvp-daily.yml "Cardmarket mirror and price guide"
+
+          # 2) Refresh only certified exact single mappings for every MVP game.
+          run_workflow apply-mtg-cardmarket-direct-links.yml "MTG exact mapping"
+          run_workflow apply-pokemon-cardmarket-direct-links.yml "Pokemon exact mapping"
+          run_workflow apply-yugioh-cardmarket-exact-singles.yml "Yu-Gi-Oh exact mapping"
+          run_workflow apply-onepiece-cardmarket-release-exact-singles.yml "One Piece exact mapping"
+
+          # 3) Project single prices after mappings are current.
+          run_workflow project-mtg-cardmarket-prices.yml "MTG prices"
+          run_workflow project-pokemon-cardmarket-prices.yml "Pokemon prices"
+          run_workflow project-yugioh-cardmarket-prices.yml "Yu-Gi-Oh prices"
+          run_workflow project-onepiece-cardmarket-prices.yml "One Piece prices"
+
+          # 4) Canonicalize all current non-single commercial identities and price them.
+          run_workflow apply-cardmarket-product-catalog.yml "Non-single catalog and prices"
+
+          # 5) Persist official regional content and repair only source-proven image gaps.
+          run_workflow sync-regional-tcg-content-v3.yml "Regional official content"
+          run_workflow repair-canonical-images.yml "Exact-source image repair"
+
+          # 6) End with a read-only production gate.
+          run_workflow audit-roadmap-1-8-live.yml "Roadmap 1-8 audit"
+
+          echo "Certified daily catalog-v2 pipeline completed successfully."
