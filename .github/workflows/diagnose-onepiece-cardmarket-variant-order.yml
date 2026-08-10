@@ -1,0 +1,136 @@
+name: Diagnose One Piece Cardmarket Variant Order
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/diagnose-onepiece-cardmarket-variant-order.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Compare known exact mappings with Cardmarket product ordering
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from collections import defaultdict, Counter
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn, conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                WITH mapped AS (
+                  SELECT e.id external_product_id,e.external_id,e.expansion_external_id,e.metacard_external_id,
+                         p.id print_id,p.variant,p.collector_number,c.name card_name,'external_link' source
+                  FROM external_catalog_products e
+                  JOIN external_catalog_print_links l ON l.external_product_id=e.id
+                  JOIN prints p ON p.id=l.print_id
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='single' AND g.slug='onepiece'
+                    AND l.link_status IN ('accepted','mapped','exact')
+                  UNION
+                  SELECT e.id,e.external_id,e.expansion_external_id,e.metacard_external_id,
+                         p.id,p.variant,p.collector_number,c.name,'print_identifier' source
+                  FROM print_identifiers pi
+                  JOIN external_catalog_products e ON e.source='cardmarket' AND e.external_id=pi.external_id
+                  JOIN prints p ON p.id=pi.print_id
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE pi.source='cardmarket' AND g.slug='onepiece' AND e.product_group='single'
+                )
+                SELECT * FROM mapped
+                WHERE metacard_external_id IS NOT NULL AND expansion_external_id IS NOT NULL
+                ORDER BY expansion_external_id,metacard_external_id,external_id
+              ''')
+              mapped=[dict(r) for r in c.fetchall()]
+
+              c.execute('''
+                WITH latest AS (
+                  SELECT DISTINCT ON (external_product_id,price_variant)
+                         external_product_id,price_variant,price_low,price_mid,price_market,price_last,avg1,avg7,avg30,as_of
+                  FROM external_market_price_snapshots
+                  ORDER BY external_product_id,price_variant,as_of DESC,id DESC
+                )
+                SELECT e.external_id id_product,e.name,e.expansion_external_id,e.metacard_external_id,
+                       l.price_variant,l.price_low,l.price_mid,l.price_market,l.price_last,l.avg1,l.avg7,l.avg30,l.as_of
+                FROM external_catalog_products e
+                LEFT JOIN latest l ON l.external_product_id=e.id
+                JOIN games g ON g.id=e.game_id
+                WHERE g.slug='onepiece' AND e.source='cardmarket' AND e.product_group='single'
+                  AND (e.name ILIKE '%%(OP15-001)' OR e.name ILIKE '%%(OP15-002)' OR e.name ILIKE '%%(OP15-007)')
+                ORDER BY e.name,e.expansion_external_id,e.external_id,l.price_variant
+              ''')
+              op15_prices=[dict(r) for r in c.fetchall()]
+
+              c.execute('''
+                SELECT e.expansion_external_id,e.product_group,e.category,count(*) product_count,
+                       array_agg(e.name ORDER BY e.external_id) FILTER (WHERE e.product_group='non_single') AS product_names
+                FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                WHERE g.slug='onepiece' AND e.source='cardmarket'
+                  AND e.expansion_external_id IN ('6456','6504')
+                GROUP BY e.expansion_external_id,e.product_group,e.category
+                ORDER BY e.expansion_external_id,e.product_group,e.category
+              ''')
+              expansion_rows=[dict(r) for r in c.fetchall()]
+          conn.close()
+
+          def v_rank(v):
+              s=(v or 'default').lower()
+              if s in ('default','base',''): return 0
+              m=re.fullmatch(r'p(\d+)',s)
+              if m: return int(m.group(1))
+              m=re.fullmatch(r'r(\d+)',s)
+              if m: return 100+int(m.group(1))
+              return 999
+
+          groups=defaultdict(list)
+          for row in mapped:
+              groups[(row['expansion_external_id'],row['metacard_external_id'])].append(row)
+
+          evaluated=[]
+          for key,rows in groups.items():
+              unique_external={r['external_id'] for r in rows}
+              unique_print={r['print_id'] for r in rows}
+              if len(unique_external)<2 or len(unique_print)<2:
+                  continue
+              dedup={r['external_id']:r for r in rows}
+              seq=sorted(dedup.values(),key=lambda r:int(r['external_id']))
+              ranks=[v_rank(r['variant']) for r in seq]
+              evaluated.append({
+                  'expansion':key[0], 'metacard':key[1],
+                  'aligned_ascending':ranks==sorted(ranks),
+                  'sequence':[{'idProduct':r['external_id'],'print_id':r['print_id'],'variant':r['variant'],'collector':r['collector_number'],'name':r['card_name']} for r in seq]
+              })
+
+          summary={
+              'known_mapped_rows':len(mapped),
+              'multi_product_groups_evaluated':len(evaluated),
+              'aligned_ascending':sum(1 for g in evaluated if g['aligned_ascending']),
+              'not_aligned':sum(1 for g in evaluated if not g['aligned_ascending']),
+              'variant_counts':dict(Counter((r.get('variant') or 'default') for r in mapped)),
+              'sample_groups':evaluated[:40],
+              'op15_prices':op15_prices,
+              'expansion_6456_6504':expansion_rows,
+          }
+          print(json.dumps(summary,indent=2,ensure_ascii=False,default=str,sort_keys=True))
+          with open('/tmp/onepiece-cardmarket-variant-order.json','w',encoding='utf-8') as f:
+              json.dump(summary,f,indent=2,ensure_ascii=False,default=str,sort_keys=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-cardmarket-variant-order-${{ github.run_id }}
+          path: /tmp/onepiece-cardmarket-variant-order.json
+          retention-days: 90
