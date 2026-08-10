@@ -43,7 +43,7 @@ function PriceBlock({ price }) {
       <section className="panel-soft identifiers ux-price-panel">
         <p className="eyebrow">Precio</p>
         <h2>Sin precio Cardmarket verificado</h2>
-        <p className="detail-meta">Todavía no tenemos un precio asociado de forma segura a esta versión exacta. Preferimos mostrarlo claramente antes que usar el precio de otra edición.</p>
+        <p className="detail-meta">No mostramos una estimación ni reutilizamos el precio de otra edición. Esta versión se valorará cuando exista una correspondencia de mercado segura.</p>
       </section>
     )
   }
@@ -73,7 +73,8 @@ function PriceBlock({ price }) {
           ? 'El valor conservador es la referencia que usamos para el portfolio cuando Cardmarket dispone de la métrica compatible con esta edición.'
           : 'Este snapshot no contiene una métrica conservadora; por eso no entra en el valor de tu portfolio.'}
       </p>
-      <p className="detail-meta">Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
+      <p className="detail-meta ux-price-explainer">Las métricas respetan el acabado físico de la carta: Low Price EX+ para la referencia conservadora no foil y Foil Low cuando corresponde a una edición foil.</p>
+      <p className="detail-meta">Cada valor conserva su fuente y fecha de actualización. Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
     </section>
   )
 }
