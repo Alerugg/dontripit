@@ -8,15 +8,21 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('exact print pricing requests raw Cardmarket EUR metrics', () => {
+test('exact print pricing delegates to the exact Cardmarket print reference', () => {
   const route = source('app/api/prices/print/[id]/route.js')
-  assert.match(route, /source:\s*'cardmarket'/)
-  assert.match(route, /currency:\s*'EUR'/)
-  assert.match(route, /granularity:\s*'raw'/)
-  assert.match(route, /conservative = latest\.mid/)
-  assert.match(route, /minimum = latest\.low/)
-  assert.match(route, /trend = latest\.market/)
-  assert.match(route, /average = latest\.last/)
+  const backend = source('../backend/app/routes/market_reference.py')
+  assert.match(route, /\/api\/v1\/market\/prints\/\$\{id\}\/cardmarket/)
+  assert.match(route, /const price = payload\.price \|\| null/)
+  assert.match(route, /const reference = payload\.reference \|\| null/)
+  assert.match(route, /price: null/)
+  assert.match(route, /cardmarket: reference/)
+  assert.match(route, /cardmarket_low_ex_plus_or_foil_low/)
+  assert.match(backend, /currency = 'EUR'/)
+  assert.match(backend, /price_low/)
+  assert.match(backend, /price_mid/)
+  assert.match(backend, /price_market/)
+  assert.match(backend, /price_last/)
+  assert.match(backend, /"source": "cardmarket"/)
 })
 
 test('print detail presents four price concepts without collapsing them', () => {
@@ -26,7 +32,8 @@ test('print detail presents four price concepts without collapsing them', () => 
   }
   assert.match(page, /Low Price EX\+/)
   assert.match(page, /Foil Low/)
-  assert.match(page, /Sin precio Cardmarket verificado/)
+  assert.match(page, /Sin Price Guide actual/)
+  assert.match(page, /No reutilizamos el precio de otra edición/)
 })
 
 test('collection labels total as conservative and exposes valuation coverage', () => {
