@@ -226,7 +226,7 @@ jobs:
           PY
           python /tmp/cutover/inventory.py
 
-      - name: Create encrypted logical Railway backup with PostgreSQL 17
+      - name: Create final encrypted logical Railway backup with PostgreSQL 17
         shell: bash
         run: |
           set -euo pipefail
@@ -245,24 +245,26 @@ jobs:
             > /tmp/cutover/railway-backup.list
           test -s /tmp/cutover/railway-backup.dump
           sha256sum /tmp/cutover/railway-backup.dump > /tmp/cutover/railway-backup.sha256
+          # Encrypt with the long-lived Neon connection secret so the backup remains
+          # decryptable after the Railway project itself is deleted.
           openssl enc -aes-256-cbc -pbkdf2 -salt \
             -in /tmp/cutover/railway-backup.dump \
             -out /tmp/cutover/railway-backup.dump.enc \
-            -pass env:RAILWAY_DATABASE_URL
+            -pass env:NEON_DATABASE_URL
           rm -f /tmp/cutover/railway-backup.dump
           test -s /tmp/cutover/railway-backup.dump.enc
           ls -lh /tmp/cutover/railway-backup.dump.enc
 
-      - name: Upload cutover evidence and encrypted backup
+      - name: Upload final cutover evidence and encrypted backup
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: railway-neon-cutover-audit-${{ github.sha }}
+          name: railway-final-backup-${{ github.sha }}
           path: |
             /tmp/cutover/railway-neon-inventory.json
             /tmp/cutover/railway-backup.dump.enc
             /tmp/cutover/railway-backup.list
             /tmp/cutover/railway-backup.sha256
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
           compression-level: 6
