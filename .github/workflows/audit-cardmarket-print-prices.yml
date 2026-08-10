@@ -24,7 +24,7 @@ jobs:
         run: |
           python - <<'PY'
           import csv, json, os
-          from collections import Counter, defaultdict
+          from collections import Counter
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
@@ -147,7 +147,8 @@ jobs:
               else:
                   reason='unmapped_source_not_provable'
               r['reason']=reason
-              r['cardmarket_url']=('https://www.cardmarket.com'+r['website_path']) if r.get('website_path','').startswith('/') else r.get('website_path')
+              website_path=str(r.get('website_path') or '')
+              r['cardmarket_url']=('https://www.cardmarket.com'+website_path) if website_path.startswith('/') else (website_path or None)
 
           counts=Counter((r['game'],r['reason']) for r in rows)
           totals=Counter(r['game'] for r in rows)
