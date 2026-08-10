@@ -5,11 +5,11 @@ on:
     branches: [catalog-v2]
     paths:
       - '.github/workflows/apply-onepiece-op15-certified-crosswalk.yml'
-      - 'backend/data/op15_cardmarket_crosswalk.zlib.b64'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   apply:
@@ -18,6 +18,7 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,48 +27,71 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install psycopg2-binary==2.9.9
+      - name: Download certified dry-run evidence
+        run: |
+          set -euo pipefail
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/9075686380/zip > /tmp/op15-audit.zip
+          mkdir -p /tmp/op15-audit
+          unzip -q /tmp/op15-audit.zip -d /tmp/op15-audit
+          test -s /tmp/op15-audit/op15-explicit-cardmarket-map-full.json
       - name: Validate certified crosswalk and apply exact links
         working-directory: backend
         run: |
           python - <<'PY'
-          import base64
           import hashlib
           import json
           import os
           import re
-          import zlib
-          from collections import Counter, defaultdict
           from pathlib import Path
           from urllib.parse import quote
 
           import psycopg2
           from psycopg2.extras import Json, RealDictCursor, execute_values
 
-          PAYLOAD = Path('data/op15_cardmarket_crosswalk.zlib.b64')
-          EXPECTED_SHA256 = '8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1'
+          AUDIT = Path('/tmp/op15-audit/op15-explicit-cardmarket-map-full.json')
+          EXPECTED_MAPPING_SHA256 = '8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1'
           MAPPING_METHOD = 'op_variant_cm_exact'
-          ACCEPTED = ('accepted', 'mapped', 'exact')
+          report = {'mode': 'apply_certified_audit', 'status': 'started'}
 
-          report = {'mode': 'apply_certified', 'status': 'started'}
           try:
-              compressed = base64.b64decode(PAYLOAD.read_text(encoding='utf-8').strip())
-              raw = zlib.decompress(compressed).decode('utf-8')
-              digest = hashlib.sha256(raw.encode('utf-8')).hexdigest()
-              if digest != EXPECTED_SHA256:
-                  raise AssertionError({'payload_sha256': digest, 'expected': EXPECTED_SHA256})
-              mappings = json.loads(raw)
+              audit = json.loads(AUDIT.read_text(encoding='utf-8'))
+              if audit.get('mode') != 'dry_run_full' or int(audit.get('safe_pairs') or 0) != 195:
+                  raise AssertionError({'unexpected_audit_summary': {k:audit.get(k) for k in ('mode','safe_pairs','safe_current','safe_op15_pairs')}})
+              if int(audit.get('safe_current') or 0) != 195 or int(audit.get('safe_op15_pairs') or 0) != 146:
+                  raise AssertionError('Certified audit coverage changed')
+
+              mappings = []
+              for row in audit.get('details') or []:
+                  if row.get('result') != 'candidate':
+                      continue
+                  canonical = row.get('canonical_candidates') or []
+                  products = row.get('product_candidates') or []
+                  if len(canonical) != 1 or len(products) != 1:
+                      raise AssertionError({'candidate_not_one_to_one': row.get('source_id')})
+                  mappings.append({
+                      'print_id': int(canonical[0]),
+                      'external_product_id': int(products[0]),
+                      'cardmarket_id': str(row['cardmarket_id']),
+                      'collector': str(row['collector']).upper(),
+                      'variant': str(row.get('variant') or 'default').lower(),
+                      'source_id': str(row['source_id']),
+                  })
+
+              compact = json.dumps(mappings, separators=(',', ':'), ensure_ascii=False)
+              digest = hashlib.sha256(compact.encode('utf-8')).hexdigest()
+              if digest != EXPECTED_MAPPING_SHA256:
+                  raise AssertionError({'mapping_sha256': digest, 'expected': EXPECTED_MAPPING_SHA256})
               if len(mappings) != 195:
                   raise AssertionError({'mapping_count': len(mappings), 'expected': 195})
-              if len({int(x['print_id']) for x in mappings}) != 195:
-                  raise AssertionError('print ids are not globally one-to-one')
-              if len({int(x['external_product_id']) for x in mappings}) != 195:
-                  raise AssertionError('external product ids are not globally one-to-one')
-              if len({str(x['cardmarket_id']) for x in mappings}) != 195:
-                  raise AssertionError('Cardmarket idProducts are not globally one-to-one')
+              if len({x['print_id'] for x in mappings}) != 195:
+                  raise AssertionError('print ids are not one-to-one')
+              if len({x['external_product_id'] for x in mappings}) != 195:
+                  raise AssertionError('external products are not one-to-one')
+              if len({x['cardmarket_id'] for x in mappings}) != 195:
+                  raise AssertionError('Cardmarket idProducts are not one-to-one')
 
-              print_ids = [int(x['print_id']) for x in mappings]
-              external_ids = [int(x['external_product_id']) for x in mappings]
-
+              print_ids = [x['print_id'] for x in mappings]
+              external_product_ids = [x['external_product_id'] for x in mappings]
               conn = psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
               conn.autocommit = False
               try:
@@ -79,9 +103,9 @@ jobs:
                       game_id = int(game['id'])
 
                       cur.execute('''
-                          SELECT r.id, r.external_id, r.name, count(DISTINCT pr.print_id) AS print_count
+                          SELECT r.id,r.external_id,r.name,count(DISTINCT pr.print_id) AS print_count
                           FROM catalog_releases r
-                          LEFT JOIN print_releases pr ON pr.release_id = r.id
+                          LEFT JOIN print_releases pr ON pr.release_id=r.id
                           WHERE r.game_id=%s AND r.source='onepiece_official'
                             AND upper(r.name) LIKE '%%OP15%%'
                           GROUP BY r.id,r.external_id,r.name
@@ -90,15 +114,11 @@ jobs:
                       releases = [dict(row) for row in cur.fetchall()]
                       if len(releases) != 1 or int(releases[0]['id']) != 66 or int(releases[0]['print_count']) != 196:
                           raise AssertionError({'unexpected_release_state': releases})
-                      release_id = int(releases[0]['id'])
+                      release_id = 66
 
                       cur.execute('''
-                          SELECT p.id AS print_id, p.collector_number, p.variant, p.language,
-                                 c.game_id, c.name AS card_name, s.code AS set_code,
-                                 EXISTS(
-                                     SELECT 1 FROM print_releases pr
-                                     WHERE pr.print_id=p.id AND pr.release_id=%s
-                                 ) AS in_release
+                          SELECT p.id AS print_id,p.collector_number,p.variant,p.language,c.game_id,c.name AS card_name,s.code AS set_code,
+                                 EXISTS(SELECT 1 FROM print_releases pr WHERE pr.print_id=p.id AND pr.release_id=%s) AS in_release
                           FROM prints p
                           JOIN cards c ON c.id=p.card_id
                           JOIN sets s ON s.id=p.set_id
@@ -114,11 +134,10 @@ jobs:
                           raise AssertionError('Cardmarket mirror has no current snapshot')
 
                       cur.execute('''
-                          SELECT id AS external_product_id, external_id, game_id, product_group,
-                                 name, expansion_external_id, last_seen_at, website_path
+                          SELECT id AS external_product_id,external_id,game_id,product_group,name,expansion_external_id,last_seen_at,website_path
                           FROM external_catalog_products
                           WHERE id = ANY(%s) AND source='cardmarket'
-                      ''', (external_ids,))
+                      ''', (external_product_ids,))
                       product_rows = {int(row['external_product_id']): dict(row) for row in cur.fetchall()}
                       if len(product_rows) != 195:
                           raise AssertionError({'product_rows': len(product_rows), 'expected': 195})
@@ -126,35 +145,30 @@ jobs:
                       collector_re = re.compile(r'\(((?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$', re.I)
                       validation_errors = []
                       for mapping in mappings:
-                          pid = int(mapping['print_id'])
-                          eid = int(mapping['external_product_id'])
-                          print_row = print_rows[pid]
-                          product_row = product_rows[eid]
-                          expected_collector = str(mapping['collector']).upper()
-                          expected_variant = str(mapping['variant'] or 'default').lower()
+                          print_row = print_rows[mapping['print_id']]
+                          product_row = product_rows[mapping['external_product_id']]
                           match = collector_re.search(str(product_row.get('name') or ''))
-                          product_collector = match.group(1).upper() if match else None
-
+                          market_collector = match.group(1).upper() if match else None
                           checks = {
                               'canonical_game': int(print_row['game_id']) == game_id,
                               'canonical_release': bool(print_row['in_release']),
-                              'collector': str(print_row['collector_number']).upper() == expected_collector,
-                              'variant': str(print_row.get('variant') or 'default').lower() == expected_variant,
-                              'language': str(print_row.get('language') or '').lower() == 'en',
+                              'collector_exact': str(print_row['collector_number']).upper() == mapping['collector'],
+                              'variant_exact': str(print_row.get('variant') or 'default').lower() == mapping['variant'],
+                              'language_en': str(print_row.get('language') or '').lower() == 'en',
                               'market_game': int(product_row['game_id']) == game_id,
                               'market_single': product_row['product_group'] == 'single',
                               'market_current': product_row['last_seen_at'] == latest,
-                              'market_id': str(product_row['external_id']) == str(mapping['cardmarket_id']),
-                              'market_collector': product_collector == expected_collector,
+                              'market_id_exact': str(product_row['external_id']) == mapping['cardmarket_id'],
+                              'market_collector_exact': market_collector == mapping['collector'],
                           }
                           if not all(checks.values()):
                               validation_errors.append({
-                                  'print_id': pid,
-                                  'external_product_id': eid,
-                                  'collector': expected_collector,
-                                  'variant': expected_variant,
+                                  'print_id': mapping['print_id'],
+                                  'external_product_id': mapping['external_product_id'],
+                                  'collector': mapping['collector'],
+                                  'variant': mapping['variant'],
                                   'checks': checks,
-                                  'product_name': product_row.get('name'),
+                                  'market_name': product_row.get('name'),
                               })
                       if validation_errors:
                           raise AssertionError({'validation_errors': validation_errors[:20], 'count': len(validation_errors)})
@@ -166,36 +180,34 @@ jobs:
                           WHERE e.source='cardmarket' AND e.game_id=%s
                             AND l.link_status IN ('accepted','mapped','exact')
                             AND (l.print_id = ANY(%s) OR l.external_product_id = ANY(%s))
-                      ''', (game_id, print_ids, external_ids))
-                      existing = [dict(row) for row in cur.fetchall()]
-                      expected_by_print = {int(x['print_id']): int(x['external_product_id']) for x in mappings}
-                      expected_by_product = {int(x['external_product_id']): int(x['print_id']) for x in mappings}
+                      ''', (game_id, print_ids, external_product_ids))
+                      expected_by_print = {x['print_id']: x['external_product_id'] for x in mappings}
+                      expected_by_product = {x['external_product_id']: x['print_id'] for x in mappings}
                       conflicts = []
-                      for row in existing:
+                      for row in cur.fetchall():
                           pid = int(row['print_id'])
                           eid = int(row['external_product_id'])
                           if pid in expected_by_print and expected_by_print[pid] != eid:
-                              conflicts.append({'kind': 'print_claimed_elsewhere', **row})
+                              conflicts.append({'kind':'print_claimed_elsewhere', **dict(row)})
                           if eid in expected_by_product and expected_by_product[eid] != pid:
-                              conflicts.append({'kind': 'product_claimed_elsewhere', **row})
+                              conflicts.append({'kind':'product_claimed_elsewhere', **dict(row)})
                       if conflicts:
                           raise AssertionError({'existing_conflicts': conflicts[:30], 'count': len(conflicts)})
 
                       values = []
                       for mapping in mappings:
-                          pid = int(mapping['print_id'])
-                          eid = int(mapping['external_product_id'])
-                          source_id = str(mapping['source_id'])
+                          source_id = mapping['source_id']
                           evidence = {
                               'source': 'one-piece.cards',
                               'source_kind': 'secondary_explicit_crosswalk',
                               'source_variant_id': source_id,
                               'source_url': f"https://one-piece.cards/cards/{quote(source_id, safe='')}",
-                              'cardmarket_id_product': str(mapping['cardmarket_id']),
-                              'collector_number': str(mapping['collector']).upper(),
-                              'canonical_variant': str(mapping['variant'] or 'default').lower(),
+                              'cardmarket_id_product': mapping['cardmarket_id'],
+                              'collector_number': mapping['collector'],
+                              'canonical_variant': mapping['variant'],
                               'official_release_id': release_id,
-                              'certified_payload_sha256': EXPECTED_SHA256,
+                              'certified_audit_run_id': 31421975728,
+                              'certified_mapping_sha256': EXPECTED_MAPPING_SHA256,
                               'validation': [
                                   'explicit_cardmarket_id',
                                   'official_release_print',
@@ -206,11 +218,12 @@ jobs:
                                   'no_existing_conflict',
                               ],
                           }
-                          values.append((eid, pid, MAPPING_METHOD, 'exact', 'accepted', False, Json(evidence)))
+                          values.append((
+                              mapping['external_product_id'], mapping['print_id'], MAPPING_METHOD,
+                              'exact', 'accepted', False, Json(evidence),
+                          ))
 
-                      execute_values(
-                          cur,
-                          '''
+                      execute_values(cur, '''
                           INSERT INTO external_catalog_print_links(
                               external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence
                           ) VALUES %s
@@ -221,49 +234,38 @@ jobs:
                               reviewed=EXCLUDED.reviewed,
                               evidence=EXCLUDED.evidence,
                               updated_at=now()
-                          ''',
-                          values,
-                          page_size=500,
-                      )
+                      ''', values, page_size=500)
 
                       cur.execute('''
-                          SELECT count(*) AS links,
-                                 count(DISTINCT l.external_product_id) AS products,
-                                 count(DISTINCT l.print_id) AS prints
-                          FROM external_catalog_print_links l
-                          WHERE l.mapping_method=%s AND l.link_status='accepted'
-                            AND l.print_id = ANY(%s)
+                          SELECT count(*) AS links,count(DISTINCT external_product_id) AS products,count(DISTINCT print_id) AS prints
+                          FROM external_catalog_print_links
+                          WHERE mapping_method=%s AND link_status='accepted' AND print_id = ANY(%s)
                       ''', (MAPPING_METHOD, print_ids))
                       stored = dict(cur.fetchone())
-                      if tuple(int(stored[key]) for key in ('links','products','prints')) != (195,195,195):
+                      stored_tuple = tuple(int(stored[k]) for k in ('links','products','prints'))
+                      if stored_tuple != (195,195,195):
                           raise AssertionError({'stored': stored, 'expected': {'links':195,'products':195,'prints':195}})
 
                       cur.execute('''
-                          SELECT count(*) AS priced
+                          SELECT count(DISTINCT l.print_id) AS priced_prints
                           FROM external_catalog_print_links l
                           JOIN external_market_price_snapshots mp ON mp.external_product_id=l.external_product_id
-                          WHERE l.mapping_method=%s AND l.link_status='accepted'
-                            AND l.print_id = ANY(%s)
+                          WHERE l.mapping_method=%s AND l.link_status='accepted' AND l.print_id = ANY(%s)
                             AND mp.currency='EUR' AND mp.price_variant='nonfoil'
-                            AND mp.as_of=(
-                                SELECT max(mp2.as_of)
-                                FROM external_market_price_snapshots mp2
-                                WHERE mp2.external_product_id=mp.external_product_id
-                                  AND mp2.currency='EUR' AND mp2.price_variant='nonfoil'
-                            )
+                            AND COALESCE(mp.price_mid,mp.price_market,mp.price_last,mp.price_low) IS NOT NULL
                       ''', (MAPPING_METHOD, print_ids))
-                      priced = int(cur.fetchone()['priced'])
+                      priced = int(cur.fetchone()['priced_prints'])
 
                       report.update({
                           'status': 'validated_and_applied',
                           'release_id': release_id,
-                          'payload_sha256': digest,
+                          'mapping_sha256': digest,
                           'mapping_count': len(mappings),
-                          'stored': {k: int(v) for k,v in stored.items()},
-                          'current_nonfoil_price_rows': priced,
-                          'op15_links': sum(1 for x in mappings if str(x['collector']).startswith('OP15-')),
-                          'eb04_links': sum(1 for x in mappings if str(x['collector']).startswith('EB04-')),
-                          'other_release_reprints': sum(1 for x in mappings if not str(x['collector']).startswith(('OP15-','EB04-'))),
+                          'stored': {k:int(v) for k,v in stored.items()},
+                          'priced_prints_with_cardmarket_snapshot': priced,
+                          'op15_links': sum(1 for x in mappings if x['collector'].startswith('OP15-')),
+                          'eb04_links': sum(1 for x in mappings if x['collector'].startswith('EB04-')),
+                          'other_release_reprints': sum(1 for x in mappings if not x['collector'].startswith(('OP15-','EB04-'))),
                       })
                   conn.commit()
               except Exception:
@@ -272,7 +274,7 @@ jobs:
               finally:
                   conn.close()
           except Exception as error:
-              report.update({'status': 'failed', 'error': repr(error)})
+              report.update({'status':'failed','error':repr(error)})
               Path('/tmp/op15-certified-crosswalk-apply.json').write_text(json.dumps(report,indent=2,default=str)+'\n')
               print(json.dumps(report,indent=2,default=str))
               raise
