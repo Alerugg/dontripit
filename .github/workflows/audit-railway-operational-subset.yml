@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: railway-final-operational-gate
+  cancel-in-progress: false
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -129,11 +133,11 @@ jobs:
           PY
           python /tmp/railway-operational/audit.py
 
-      - name: Upload operational audit
+      - name: Upload final operational audit
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: railway-operational-subset-${{ github.sha }}
+          name: railway-final-operational-${{ github.sha }}
           path: /tmp/railway-operational/report.json
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
