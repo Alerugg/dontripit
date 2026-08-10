@@ -1,0 +1,69 @@
+name: QA Cardmarket Riftbound Feed Contract
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/qa-cardmarket-riftbound-feed-contract.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Download current Riftbound Cardmarket feeds
+        run: |
+          curl --retry 4 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_22.json -o /tmp/riftbound_singles.json
+          curl --retry 4 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/productList/products_nonsingles_22.json -o /tmp/riftbound_nonsingles.json
+          curl --retry 4 --fail --location --silent --show-error https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_22.json -o /tmp/riftbound_prices.json
+      - name: Validate exact parser contract read-only
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
+          from app.jobs.cardmarket_prices import load_price_guide_bytes
+
+          singles=load_catalog_feed_bytes(Path('/tmp/riftbound_singles.json').read_bytes(),game_slug='riftbound',product_group='single')
+          nonsingles=load_catalog_feed_bytes(Path('/tmp/riftbound_nonsingles.json').read_bytes(),game_slug='riftbound',product_group='non_single')
+          created,prices=load_price_guide_bytes(Path('/tmp/riftbound_prices.json').read_bytes(),filename='riftbound_prices.json')
+          sids={r.product_id for r in singles.rows}; nids={r.product_id for r in nonsingles.rows}; pids={r.product_id for r in prices}
+          if singles.rejected_records or nonsingles.rejected_records: raise AssertionError('Riftbound catalog rows rejected')
+          if len(sids)!=len(singles.rows) or len(nids)!=len(nonsingles.rows): raise AssertionError('duplicate idProduct')
+          if sids & nids: raise AssertionError('single/non-single collision')
+          missing=pids-(sids|nids)
+          if missing: raise AssertionError({'price_products_absent_from_catalog':sorted(missing)[:20]})
+          finish=sum(1 for x in prices if any(v is not None for v in (x.foil_avg,x.foil_low,x.foil_trend,x.foil_avg1,x.foil_avg7,x.foil_avg30)))
+          cats=Counter(r.category for r in list(singles.rows)+list(nonsingles.rows))
+          report={
+            'idGame':22,'status':'validated','createdAt':created.isoformat() if created else None,
+            'singles':len(singles.rows),'non_singles':len(nonsingles.rows),'price_products':len(prices),
+            'finish_price_products':finish,'categories':dict(cats.most_common()),
+            'single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_external_id} for r in singles.rows[:15]],
+            'non_single_samples':[{'idProduct':r.product_id,'name':r.name,'category':r.category,'expansion':r.expansion_external_id} for r in nonsingles.rows[:25]],
+          }
+          Path('/tmp/riftbound-cardmarket-feed-contract.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: riftbound-cardmarket-feed-contract-${{ github.run_id }}
+          path: /tmp/riftbound-cardmarket-feed-contract.json
+          retention-days: 30
+          if-no-files-found: error
