@@ -1,18 +1,78 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
 
+const INTERNAL_PAGE_SIZE = 50
+const MAX_SET_PRINTS = 1000
+
 function toItems(payload) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
-function normalizePrint(item = {}) {
+function normalizePrint(item = {}, resolved = null) {
+  const catalog = resolved?.catalog || null
+  const cardName = catalog?.card_name || item.card_name || item.card?.name || item.name || item.title || ''
+  const setName = catalog?.set_name || item.set_name || item.set_code || ''
   return {
     ...item,
+    ...(catalog || {}),
+    id: catalog?.id || item.id,
     type: 'print',
-    title: item.title || item.name || `Card #${item.card_id || item.id}`,
-    set_name: item.set_name || item.set_code,
+    name: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
+    title: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
+    set_name: setName,
     variant_count: 1,
+    finish: catalog?.is_foil || item.is_foil ? 'foil' : 'non-foil',
   }
+}
+
+async function fetchAllPrints({ game, setCode, requestedLimit, requestedOffset }) {
+  const rows = []
+  const maxItems = Math.min(Math.max(Number(requestedLimit) || 200, 1), MAX_SET_PRINTS)
+  let offset = Math.max(Number(requestedOffset) || 0, 0)
+
+  while (rows.length < maxItems) {
+    const pageLimit = Math.min(INTERNAL_PAGE_SIZE, maxItems - rows.length)
+    const upstream = await callInternalApi('/api/v1/prints', {
+      params: { game, set_code: setCode, limit: pageLimit, offset },
+      timeoutMs: 20000,
+    })
+
+    if (!upstream.ok) return { ok: false, upstream }
+
+    const page = toItems(upstream.payload)
+    rows.push(...page)
+    if (page.length < pageLimit) break
+    offset += page.length
+    if (offset > 1000) break
+  }
+
+  return { ok: true, rows }
+}
+
+async function resolvePrintNames(rows = []) {
+  if (!rows.length) return new Map()
+  const byId = new Map()
+
+  for (let index = 0; index < rows.length; index += 100) {
+    const batch = rows.slice(index, index + 100)
+    const ids = batch.map((item) => item.id).filter(Boolean)
+    if (!ids.length) continue
+
+    const response = await callInternalApi('/api/v1/prints/resolve', {
+      method: 'POST',
+      body: { print_ids: ids },
+      timeoutMs: 20000,
+    })
+    if (!response.ok) continue
+
+    for (const resolved of response.payload?.prints || []) {
+      if (resolved?.found && resolved?.catalog?.id) {
+        byId.set(String(resolved.catalog.id), resolved)
+      }
+    }
+  }
+
+  return byId
 }
 
 export async function GET(request) {
@@ -26,23 +86,11 @@ export async function GET(request) {
     return NextResponse.json({ error: 'set_code_required', message: 'Missing set_code query param.' }, { status: 400 })
   }
 
-  const [setUpstream, printsUpstream] = await Promise.all([
+  const [setUpstream, printsResult] = await Promise.all([
     callInternalApi('/api/v1/sets', {
-      params: {
-        game,
-        q: setCode,
-        limit: 50,
-        offset: 0,
-      },
+      params: { game, q: setCode, limit: 50, offset: 0 },
     }),
-    callInternalApi('/api/v1/prints', {
-      params: {
-        game,
-        set_code: setCode,
-        limit,
-        offset,
-      },
-    }),
+    fetchAllPrints({ game, setCode, requestedLimit: limit, requestedOffset: offset }),
   ])
 
   if (!setUpstream.ok) {
@@ -57,25 +105,23 @@ export async function GET(request) {
     )
   }
 
-  if (!printsUpstream.ok) {
-    const developerHint = getDeveloperErrorHint(printsUpstream.payload, printsUpstream.status)
+  if (!printsResult.ok) {
+    const upstream = printsResult.upstream
+    const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
     return NextResponse.json(
       {
         error: 'catalog_set_prints_failed',
-        message: getPublicErrorMessage(printsUpstream.status),
+        message: getPublicErrorMessage(upstream.status),
         ...(developerHint ? { developer_hint: developerHint } : {}),
       },
-      { status: printsUpstream.status },
+      { status: upstream.status },
     )
   }
 
   const sets = toItems(setUpstream.payload)
-  const set =
-    sets.find((item) => String(item?.code || '').toLowerCase() === String(setCode).toLowerCase()) ||
-    sets[0] ||
-    null
-
-  const cards = toItems(printsUpstream.payload).map(normalizePrint)
+  const set = sets.find((item) => String(item?.code || '').toLowerCase() === String(setCode).toLowerCase()) || sets[0] || null
+  const resolvedById = await resolvePrintNames(printsResult.rows)
+  const cards = printsResult.rows.map((item) => normalizePrint(item, resolvedById.get(String(item.id))))
 
   return NextResponse.json({
     set: set
