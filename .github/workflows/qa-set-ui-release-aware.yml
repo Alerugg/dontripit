@@ -1,0 +1,29 @@
+name: QA Set UI Release Aware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/routes/set_ui.py'
+      - 'backend/tests/test_set_ui_release_resolution.py'
+      - '.github/workflows/qa-set-ui-release-aware.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt pytest
+      - name: Run release-aware checklist tests
+        working-directory: backend
+        run: pytest -q tests/test_set_ui_release_resolution.py
