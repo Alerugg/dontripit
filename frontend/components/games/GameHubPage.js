@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import Link from 'next/link'
 import OnePieceSearchV2Experience from '../searchV2/OnePieceSearchV2Experience'
 import GameCollectionsList from './GameCollectionsList'
 import GameNewsGrid from './GameNewsGrid'
+import MarketProductShelf from './MarketProductShelf'
 import StatePanel from '../catalog/StatePanel'
-import { fetchNewsByGame, fetchReleasesByGame, fetchSetsByGame } from '../../lib/catalog/client'
+import { fetchMarketProductsByGame, fetchNewsByGame, fetchReleasesByGame, fetchSetsByGame } from '../../lib/catalog/client'
 import './GameExplorerPage.css'
 import '../searchV2/FacetPicker.css'
 
@@ -53,21 +55,24 @@ export default function GameHubPage({ game }) {
   const [collectionsError, setCollectionsError] = useState('')
   const [news, setNews] = useState([])
   const [releases, setReleases] = useState([])
+  const [marketProducts, setMarketProducts] = useState([])
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       try {
-        const [nextCollections, nextNews, nextReleases] = await Promise.all([
+        const [nextCollections, nextNews, nextReleases, nextMarketProducts] = await Promise.all([
           fetchSetsByGame(game.slug, { limit: 500 }),
           fetchNewsByGame(game.slug, { limit: 6 }).catch(() => []),
           fetchReleasesByGame(game.slug, { limit: 8 }).catch(() => []),
+          fetchMarketProductsByGame(game.slug, { limit: 24 }).catch(() => []),
         ])
         if (!cancelled) {
           setCollections(nextCollections)
           setNews(nextNews)
           setReleases(nextReleases)
+          setMarketProducts(nextMarketProducts)
           setCollectionsError('')
         }
       } catch (requestError) {
@@ -87,22 +92,27 @@ export default function GameHubPage({ game }) {
   return (
     <section className={`dri-game-hub dri-game-hub-${game.slug}`} style={{ '--game-accent': game.accent }}>
       <div className="app-shell dri-game-hub-shell">
-        <header className="ux-game-intro">
-          <div>
-            <Link href="/dashboard#juegos" className="ux-back-link">← Todos los juegos</Link>
-            <div className="ux-game-intro-main">
-              {copy.logo ? (
-                <div className="ux-game-logo-wrap">
-                  <img src={copy.logo} alt={game.name} />
-                </div>
-              ) : <h1>{game.name}</h1>}
-              <div className="ux-game-intro-copy">
-                <span className="dri-kicker">{game.name}</span>
-                <h1>Busca una carta sin perderte en el catálogo.</h1>
-                <p>{copy.intro}</p>
+        <header className="v4-game-header">
+          <Link href="/dashboard#juegos" className="v4-back-link">← Todos los juegos</Link>
+          <div className="v4-game-header-main">
+            {copy.logo ? (
+              <div className="v4-game-header-logo">
+                <Image src={copy.logo} alt={game.name} width={280} height={100} sizes="240px" priority />
               </div>
+            ) : <h1>{game.name}</h1>}
+            <div>
+              <span className="v4-overline"><i /> Catálogo certificado</span>
+              <h1>Busca una carta sin perderte en el catálogo.</h1>
+              <p>{copy.intro}</p>
             </div>
           </div>
+          <nav className="v4-game-jumps" aria-label={`Secciones de ${game.name}`}>
+            <a href="#buscar">Buscar</a>
+            <a href="#sellado">Sellado</a>
+            <a href="#lanzamientos">Lanzamientos</a>
+            <a href="#colecciones">Sets</a>
+            <a href="#noticias">Noticias</a>
+          </nav>
         </header>
 
         <div id="buscar" className="dri-hub-anchor">
@@ -113,9 +123,9 @@ export default function GameHubPage({ game }) {
           <section id="lanzamientos" className="ux-upcoming-section dri-hub-anchor">
             <div className="ux-section-head">
               <div>
-                <span className="dri-kicker">Próximos lanzamientos · oficial</span>
+                <span className="v4-overline"><i /> Próximos lanzamientos</span>
                 <h2>Fechas que sí están verificadas</h2>
-                <p>Región y fuente importan: una fecha de Europa no se reutiliza como si fuera global.</p>
+                <p>Región y fuente oficial, siempre visibles.</p>
               </div>
             </div>
 
@@ -143,6 +153,8 @@ export default function GameHubPage({ game }) {
               </div>
             )}
           </section>
+
+          <MarketProductShelf products={marketProducts} gameName={game.name} />
 
           <div id="colecciones" className="dri-hub-anchor">
             {collectionsLoading ? (

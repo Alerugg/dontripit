@@ -8,9 +8,9 @@ import BrandMark from '../brand/BrandMark'
 const shopUrl = 'https://shop.dontripit.com'
 
 const publicNavItems = [
-  { href: '/#games', label: 'Juegos' },
-  { href: '/#features', label: 'Cómo funciona' },
-  { href: '/#news', label: 'Novedades' },
+  { href: '/#games', label: 'Catálogos' },
+  { href: '/#features', label: 'Producto' },
+  { href: '/#news', label: 'Lanzamientos' },
 ]
 
 const memberNavItems = [
@@ -63,13 +63,13 @@ export default function TopNav() {
               {item.label}
             </Link>
           ))}
-          {!user ? <a href={shopUrl} className="dri-nav-link">Tienda</a> : null}
+          {!user ? <a href={shopUrl} className="dri-nav-link" target="_blank" rel="noopener noreferrer">Tienda ↗</a> : null}
         </nav>
 
         <div className="dri-nav-actions">
           {authChecked && user ? (
             <>
-              <a href={shopUrl} className="dri-btn dri-btn-ghost">Tienda</a>
+              <a href={shopUrl} className="dri-btn dri-btn-ghost" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
               <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
             </>
           ) : authChecked ? (

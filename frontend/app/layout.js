@@ -3,6 +3,7 @@ import './redesign.css'
 import './dark-collector.css'
 import './ux-v3.css'
 import './pricing-v1.css'
+import './collector-v4.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 
 const manrope = Manrope({
@@ -20,8 +21,8 @@ const spaceGrotesk = Space_Grotesk({
 const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'Don’tRipIt'
 
 export const metadata = {
-  title: `${siteName} · Tu colección TCG, sin caos`,
-  description: 'Busca cartas, guarda tu colección, crea wishlists y sigue noticias y próximos lanzamientos de tus TCG favoritos.',
+  title: `${siteName} · El catálogo TCG para coleccionistas`,
+  description: 'Encuentra la carta, elige la edición física exacta y controla tu colección TCG con fuentes verificables.',
 }
 
 export default function RootLayout({ children }) {

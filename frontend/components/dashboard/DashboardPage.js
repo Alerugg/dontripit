@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import TopNav from '../layout/TopNav'
@@ -17,6 +18,7 @@ const SEARCH_EXAMPLES = {
 
 function GameCard({ game }) {
   const soon = game.slug === 'riftbound'
+  const logo = `/games/${game.slug}/${game.slug === 'magic' ? 'magic_logo' : `${game.slug}_logo`}.png`
   return (
     <Link
       href={soon ? '#' : `/games/${game.slug}`}
@@ -24,9 +26,8 @@ function GameCard({ game }) {
       style={{ '--game-accent': game.accent }}
       aria-disabled={soon}
     >
-      <span className="dri-kicker">{soon ? 'Próximamente' : game.eyebrow}</span>
-      <h3>{game.name}</h3>
-      <p>{soon ? 'Lo abriremos cuando tengamos la fuente de producción correcta.' : 'Busca cartas y llega a la versión física exacta solo cuando lo necesites.'}</p>
+      <span className="v4-game-state">{soon ? 'Próximamente' : 'Catálogo'}</span>
+      <Image src={logo} alt={game.name} width={220} height={80} sizes="180px" />
       <strong>{soon ? 'En preparación' : 'Explorar →'}</strong>
     </Link>
   )
@@ -86,9 +87,9 @@ export default function DashboardPage() {
       <section className="ux-dashboard">
         <section id="buscar" className="ux-search-hero">
           <div className="ux-search-copy">
-            <span className="dri-kicker">{loading ? 'Preparando tu espacio…' : `Hola, ${user?.name?.split(' ')[0] || 'coleccionista'}`}</span>
-            <h1>¿Qué carta buscas?</h1>
-            <p>Elige el juego y escribe lo que recuerdes: nombre, número o set. Don’tRipIt se ocupa de llevarte después a la versión correcta.</p>
+            <span className="v4-overline"><i /> {loading ? 'Preparando tu espacio' : `Hola, ${user?.name?.split(' ')[0] || 'coleccionista'}`}</span>
+            <h1>Busca. Encuentra. Guarda.</h1>
+            <p>Nombre, número o set. Después eliges la versión exacta.</p>
 
             <div className="ux-game-tabs" aria-label="Selecciona un juego">
               {activeGames.map((game) => (
@@ -128,8 +129,8 @@ export default function DashboardPage() {
         <section id="juegos" className="ux-section">
           <div className="ux-section-head">
             <div>
-              <span className="dri-kicker">Explorar por juego</span>
-              <h2>Entra solo cuando quieras navegar sin una búsqueda concreta.</h2>
+              <span className="v4-overline"><i /> Catálogos</span>
+              <h2>Explorar por juego</h2>
             </div>
           </div>
           <div className="ux-game-grid">
@@ -141,7 +142,7 @@ export default function DashboardPage() {
           <section className="ux-section">
             <div className="ux-section-head">
               <div>
-                <span className="dri-kicker">Tu colección</span>
+                <span className="v4-overline"><i /> Tu colección</span>
                 <h2>Lo último que guardaste</h2>
               </div>
               <Link href="/collection" className="home-inline-link">Ver colección completa →</Link>

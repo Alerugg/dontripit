@@ -108,6 +108,17 @@ export async function fetchReleasesByGame(game, options = {}) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
+export async function fetchMarketProductsByGame(game, options = {}) {
+  const payload = await request('/api/catalog/market-products', {
+    game: toApiGameSlug(game || ''),
+    q: options.q ?? '',
+    limit: options.limit ?? 24,
+    offset: options.offset ?? 0,
+  })
+
+  return Array.isArray(payload) ? payload : payload?.items || []
+}
+
 export const RESULT_TYPE_OPTIONS = [
   { value: '', label: 'Todo' },
   { value: 'card', label: 'Cartas' },
