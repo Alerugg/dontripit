@@ -29,13 +29,15 @@ jobs:
           base='https://one-piece.cards'
           session=requests.Session()
           session.headers.update({'User-Agent':'Mozilla/5.0 DontRipIt catalog verifier'})
-          out={'probes':[],'scripts':[],'signals':[]}
+          out={'probes':[],'scripts':[],'signals':[],'api_matches':[]}
 
           def probe(url):
               try:
                   r=session.get(url,timeout=15,allow_redirects=True)
-                  entry={'url':url,'final_url':r.url,'status':r.status_code,'content_type':r.headers.get('content-type'),'length':len(r.content)}
-                  text=r.text if 'text' in (r.headers.get('content-type') or '') or 'html' in (r.headers.get('content-type') or '') or 'json' in (r.headers.get('content-type') or '') else ''
+                  content_type=(r.headers.get('content-type') or '').lower()
+                  textual=any(token in content_type for token in ('text','html','json','javascript','ecmascript'))
+                  text=r.text if textual else ''
+                  entry={'url':url,'final_url':r.url,'status':r.status_code,'content_type':content_type,'length':len(r.content)}
                   entry['has_879909']='879909' in text
                   entry['has_OP15_001_p1']='OP15-001_p1' in text
                   entry['sample']=text[:500].replace('\n',' ')
@@ -54,33 +56,59 @@ jobs:
                       out['scripts'].append(urljoin(base,src))
                   body=script.get_text(' ',strip=True)
                   if '879909' in body or 'OP15-001_p1' in body:
-                      out['signals'].append({'kind':'inline_script','sample':body[:2000]})
+                      out['signals'].append({'kind':'inline_script','sample':body[:4000]})
+
+          api_response,api_text=probe(base+'/api/cards?set=OP15-EB04')
+          if api_response and api_response.ok:
+              try:
+                  payload=api_response.json()
+                  cards=payload.get('cards') if isinstance(payload,dict) else payload
+                  for card in cards or []:
+                      variant_id=str(card.get('variant_id') or card.get('id') or '')
+                      if variant_id.replace('.jpg','') in {'OP15-001','OP15-001_p1','OP15-003','OP15-003_p1'}:
+                          out['api_matches'].append(card)
+              except Exception as exc:
+                  out['signals'].append({'kind':'api_parse_error','error':repr(exc)})
 
           for url in [
-              base+'/cards?set=OP15-EB04',
-              base+'/api/cards?set=OP15-EB04',
               base+'/api/cards?set=OP-15',
               base+'/api/cards/en%3AOP15-001_p1',
               base+'/api/card/en%3AOP15-001_p1',
               base+'/api/cards?search=OP15-001',
-              base+'/sitemap.xml',
-              base+'/robots.txt',
+              base+'/api/prices?card=OP15-001_p1',
+              base+'/api/prices?id=en%3AOP15-001_p1',
+              base+'/api/market?card=OP15-001_p1',
+              base+'/api/cardmarket?card=OP15-001_p1',
           ]:
               probe(url)
 
-          for script_url in out['scripts'][:30]:
+          seen=set()
+          for script_url in out['scripts'][:40]:
+              if script_url in seen:
+                  continue
+              seen.add(script_url)
               r,js=probe(script_url)
               if not js:
                   continue
-              if 'cardmarket' in js.lower() or '/api/' in js.lower() or 'OP15-001_p1' in js:
+              lower=js.lower()
+              needles=('cardmarket','market_price','marketprice','/api/','price','idproduct')
+              if any(needle in lower for needle in needles):
                   snippets=[]
-                  for needle in ('cardmarket','/api/','OP15-001_p1'):
-                      pos=js.lower().find(needle.lower())
-                      if pos>=0:
-                          snippets.append(js[max(0,pos-500):pos+1500])
-                  out['signals'].append({'kind':'script','url':script_url,'snippets':snippets[:6]})
+                  used=[]
+                  for needle in needles:
+                      start=0
+                      while len(snippets)<20:
+                          pos=lower.find(needle,start)
+                          if pos<0:
+                              break
+                          signature=(needle,pos//200)
+                          if signature not in used:
+                              snippets.append(js[max(0,pos-800):pos+2200])
+                              used.append(signature)
+                          start=pos+len(needle)
+                  out['signals'].append({'kind':'script','url':script_url,'snippets':snippets})
 
-          print(json.dumps(out,indent=2,ensure_ascii=False)[:60000])
+          print(json.dumps(out,indent=2,ensure_ascii=False)[:100000])
           open('/tmp/variant-source.json','w').write(json.dumps(out,indent=2,ensure_ascii=False))
           PY
       - uses: actions/upload-artifact@v4
