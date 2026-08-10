@@ -1,0 +1,128 @@
+name: Audit MTG Scryfall Full Physical Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-scryfall-full-physical-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests psycopg2-binary==2.9.9
+      - name: Compare every production MTG finish-print with current Scryfall bulk objects
+        run: |
+          python - <<'PY'
+          import gzip,json,os,re,tempfile,unicodedata
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import psycopg2,requests
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+            s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
+            return re.sub(r'\s+',' ',s).strip().casefold()
+          def expected_finish(row):
+            variant=str(row.get('variant') or '').strip().casefold()
+            if variant in ('foil','etched','nonfoil'): return variant
+            return 'foil' if bool(row.get('is_foil')) else 'nonfoil'
+
+          h={'User-Agent':'DontRipIt/1.0 full-mtg-parity (+https://dontripit.com)','Accept':'application/json'}
+          meta=requests.get('https://api.scryfall.com/bulk-data',headers=h,timeout=45);meta.raise_for_status()
+          items=(meta.json() or {}).get('data') or []
+          bulk=next((x for x in items if x.get('type')=='default_cards'),None)
+          if not bulk: raise RuntimeError('Scryfall default_cards bulk descriptor missing')
+          dl=requests.get(bulk['download_uri'],headers=h,timeout=180);dl.raise_for_status()
+          cards=dl.json()
+          live={str(x.get('id')):x for x in cards if x.get('id')}
+          del cards
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT p.id print_id,p.scryfall_id,p.collector_number,p.language,p.rarity,p.is_foil,p.variant,
+                     c.name,c.oracle_id,s.code set_code,s.name set_name,
+                     EXISTS(SELECT 1 FROM print_images pi WHERE pi.print_id=p.id AND pi.is_primary=true) has_primary_image
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id JOIN sets s ON s.id=p.set_id
+              WHERE g.slug='mtg'
+              ORDER BY p.id
+            ''')
+            rows=[dict(x) for x in c.fetchall()]
+          conn.close()
+
+          counts=Counter();bad=[];missing_id=[];missing_live=[];finish_bad=[];field_bad=Counter();object_usage=defaultdict(list)
+          for r in rows:
+            sid=str(r.get('scryfall_id') or '').strip()
+            if not sid:
+              counts['missing_scryfall_id']+=1;missing_id.append(r);continue
+            card=live.get(sid)
+            if card is None:
+              counts['scryfall_object_not_in_current_bulk']+=1;missing_live.append(r);continue
+            object_usage[sid].append(r['print_id'])
+            fields={
+              'name': norm(card.get('name'))==norm(r.get('name')),
+              'set_code': norm(card.get('set'))==norm(r.get('set_code')),
+              'collector_number': str(card.get('collector_number') or '').strip()==str(r.get('collector_number') or '').strip(),
+              'language': str(card.get('lang') or '').strip().casefold()==str(r.get('language') or '').strip().casefold(),
+              'oracle_id': (not r.get('oracle_id')) or str(card.get('oracle_id') or '').strip().lower()==str(r.get('oracle_id') or '').strip().lower(),
+            }
+            mism=[k for k,v in fields.items() if not v]
+            for f in mism:field_bad[f]+=1
+            finish=expected_finish(r)
+            live_finishes={str(x).casefold() for x in (card.get('finishes') or [])}
+            finish_ok=finish in live_finishes
+            if not finish_ok:
+              field_bad['finish']+=1;finish_bad.append({'print':r,'live_finishes':sorted(live_finishes)})
+            if mism or not finish_ok:
+              counts['mismatch']+=1
+              if len(bad)<500:bad.append({'print':r,'mismatches':mism+([] if finish_ok else ['finish']),'live':{k:card.get(k) for k in ('name','set','collector_number','lang','oracle_id','finishes','image_status','highres_image')}})
+            else: counts['matched']+=1
+
+          distinct_ids=len(object_usage)
+          multi_finish_objects=sum(1 for ids in object_usage.values() if len(ids)>1)
+          no_image_expected=0
+          image_contract_bad=[]
+          for sid,ids in object_usage.items():
+            card=live[sid]
+            image_missing=card.get('image_status')=='missing' or not card.get('highres_image',False) and not card.get('image_uris') and not card.get('card_faces')
+            dbrows=[r for r in rows if str(r.get('scryfall_id') or '')==sid]
+            if image_missing:
+              no_image_expected+=len(dbrows)
+            for r in dbrows:
+              if not r['has_primary_image'] and not image_missing:
+                if len(image_contract_bad)<300:image_contract_bad.append({'print_id':r['print_id'],'scryfall_id':sid,'image_status':card.get('image_status'),'highres_image':card.get('highres_image')})
+
+          report={
+            'scryfall_bulk_updated_at':bulk.get('updated_at'),'scryfall_bulk_size':bulk.get('size'),
+            'production_prints':len(rows),'distinct_scryfall_objects_used':distinct_ids,'current_bulk_objects':len(live),
+            'status_counts':dict(counts),'mismatches_by_field':dict(field_bad),
+            'production_prints_without_scryfall_id':len(missing_id),'production_scryfall_ids_absent_from_current_bulk':len(missing_live),
+            'scryfall_objects_expanded_to_multiple_finish_prints':multi_finish_objects,
+            'source_expected_prints_without_display_image':no_image_expected,
+            'db_missing_image_when_source_has_image':len(image_contract_bad),
+            'mismatch_samples':bad,'missing_id_samples':missing_id[:100],'missing_live_samples':missing_live[:100],
+            'finish_mismatch_samples':finish_bad[:100],'image_contract_bad_samples':image_contract_bad,
+          }
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/mtg-scryfall-full-physical-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          if missing_id or missing_live or bad or image_contract_bad:
+            raise SystemExit('MTG full physical parity has review items')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-scryfall-full-physical-parity-${{ github.run_id }}
+          path: /tmp/mtg-scryfall-full-physical-parity.json
+          retention-days: 90
+          if-no-files-found: warn
