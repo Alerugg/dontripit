@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
@@ -14,7 +14,6 @@ from app.routes.market_reference import (
 
 
 market_search_read_bp = Blueprint("market_search_read", __name__)
-_ACCEPTED = ("accepted", "mapped", "exact")
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
@@ -58,39 +57,10 @@ def cardmarket_print_batch_read():
     return jsonify({"items": [payloads[print_id] for print_id in print_ids]})
 
 
-@market_search_read_bp.get("/api/v1/market/set-products/<game_slug>/<set_code>")
-def cardmarket_set_products_read(game_slug: str, set_code: str):
-    """Return Cardmarket non-single products for expansions proven by exact set collectors.
-
-    Cardmarket's Product List assigns the same ``Expansion ID`` to singles and
-    commercial products. Don’tRipIt therefore derives the eligible expansion IDs
-    from collector numbers that already belong to the requested canonical set,
-    instead of guessing from a booster/product name. This intentionally keeps
-    regional Cardmarket variants (for example Asia Region Legal) separate while
-    still making them discoverable from their logical set.
-    """
-    game_slug = str(game_slug or "").strip().lower()
-    set_code = str(set_code or "").strip().lower()
-    if not game_slug or not set_code:
-        return jsonify({"error": "invalid_params"}), 400
-
-    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=50)
-    offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=5000)
-    category = str(request.args.get("category") or "").strip()
-    region = str(request.args.get("region") or "").strip().lower()
-    category_clause = "AND lower(COALESCE(e.category, '')) = lower(:category)" if category else ""
-    region_clause = "AND lower(COALESCE(pv.region, 'global')) = :region" if region else ""
-    params = {
-        "game": game_slug,
-        "set_code": set_code,
-        "limit": limit,
-        "offset": offset,
-        "category": category,
-        "region": region,
-    }
-
-    proof_ctes = """
-        target_set AS (
+def _target_expansions(session, game_slug: str, set_code: str) -> list[str]:
+    sql = text(
+        """
+        WITH target_set AS (
           SELECT s.id AS set_id
           FROM sets s
           JOIN games g ON g.id = s.game_id
@@ -102,123 +72,166 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
           FROM prints p
           JOIN target_set ts ON ts.set_id = p.set_id
           WHERE COALESCE(p.collector_number, '') <> ''
-        ),
-        target_expansions AS (
-          SELECT DISTINCT e.expansion_external_id
-          FROM external_catalog_products e
-          JOIN games g ON g.id = e.game_id
-          WHERE e.source = 'cardmarket'
-            AND e.product_group = 'single'
-            AND g.slug = :game
-            AND COALESCE(e.expansion_external_id, '') <> ''
-            AND regexp_replace(
-                  lower(COALESCE(substring(e.name from '\\(([^()]*)\\)\\s*$'), '')),
-                  '[^a-z0-9]+', '', 'g'
-                ) IN (SELECT collector_key FROM canonical_collectors)
         )
-    """
-
-    base_join = f"""
+        SELECT DISTINCT e.expansion_external_id
         FROM external_catalog_products e
-        JOIN target_expansions tx ON tx.expansion_external_id = e.expansion_external_id
-        JOIN external_catalog_product_variant_links l ON l.external_product_id = e.id
-        JOIN product_variants pv ON pv.id = l.product_variant_id
-        JOIN products p ON p.id = pv.product_id
-        JOIN games g ON g.id = p.game_id
+        JOIN games g ON g.id = e.game_id
         WHERE e.source = 'cardmarket'
-          AND e.product_group = 'non_single'
-          AND l.link_status IN ('accepted', 'mapped', 'exact')
+          AND e.product_group = 'single'
           AND g.slug = :game
-          {category_clause}
-          {region_clause}
-    """
+          AND COALESCE(e.expansion_external_id, '') <> ''
+          AND regexp_replace(
+                lower(COALESCE(substring(e.name from '\\(([^()]*)\\)\\s*$'), '')),
+                '[^a-z0-9]+', '', 'g'
+              ) IN (SELECT collector_key FROM canonical_collectors)
+        ORDER BY e.expansion_external_id
+        """
+    )
+    return [
+        str(value)
+        for value in session.execute(sql, {"game": game_slug, "set_code": set_code}).scalars().all()
+        if value is not None
+    ]
 
-    rows_sql = text(
-        f"""
-        WITH {proof_ctes},
-        latest_as_of AS (
-          SELECT mp.external_product_id, max(mp.as_of) AS as_of
-          FROM external_market_price_snapshots mp
-          GROUP BY mp.external_product_id
-        ),
-        current_price_candidates AS (
-          SELECT mp.*,
-                 count(*) OVER (PARTITION BY mp.external_product_id) AS total_variants,
-                 count(*) FILTER (WHERE mp.price_variant IN ('default', 'nonfoil'))
-                   OVER (PARTITION BY mp.external_product_id) AS preferred_variants
-          FROM external_market_price_snapshots mp
-          JOIN latest_as_of la
-            ON la.external_product_id = mp.external_product_id AND la.as_of = mp.as_of
-          WHERE mp.currency = 'EUR'
-        ),
-        eligible_price AS (
-          SELECT * FROM current_price_candidates
-          WHERE (preferred_variants = 1 AND price_variant IN ('default', 'nonfoil'))
-             OR (preferred_variants = 0 AND total_variants = 1)
-        )
-        SELECT e.id AS external_product_id,
-               e.external_id,
-               e.name AS product_name,
-               e.category,
-               e.expansion_external_id,
-               e.website_path,
-               p.id AS canonical_product_id,
-               p.product_type,
-               pv.id AS canonical_product_variant_id,
-               pv.language,
-               pv.region,
-               ep.currency,
-               ep.price_variant,
-               ep.price_low,
-               ep.price_mid,
-               ep.price_market,
-               ep.price_last,
-               ep.avg1,
-               ep.avg7,
-               ep.avg30,
-               ep.as_of AS price_as_of
-        {base_join}
-        LEFT JOIN eligible_price ep ON ep.external_product_id = e.id
-        ORDER BY
-          CASE WHEN lower(COALESCE(pv.region, 'global')) = 'global' THEN 0 ELSE 1 END,
-          e.category ASC,
-          e.name ASC,
-          e.id ASC
-        LIMIT :limit OFFSET :offset
-        """
-    )
-    count_sql = text(f"WITH {proof_ctes} SELECT count(DISTINCT e.id) {base_join}")
-    categories_sql = text(
-        f"""
-        WITH {proof_ctes}
-        SELECT COALESCE(NULLIF(trim(e.category), ''), 'Other') AS category,
-               count(DISTINCT e.id) AS product_count
-        {base_join.replace(category_clause, '') if category_clause else base_join}
-        GROUP BY COALESCE(NULLIF(trim(e.category), ''), 'Other')
-        ORDER BY product_count DESC, category ASC
-        """
-    )
-    regions_sql = text(
-        f"""
-        WITH {proof_ctes}
-        SELECT COALESCE(NULLIF(lower(trim(pv.region)), ''), 'global') AS region,
-               count(DISTINCT e.id) AS product_count
-        {base_join.replace(region_clause, '') if region_clause else base_join}
-        GROUP BY COALESCE(NULLIF(lower(trim(pv.region)), ''), 'global')
-        ORDER BY product_count DESC, region ASC
-        """
-    )
-    expansion_sql = text(
-        f"WITH {proof_ctes} SELECT expansion_external_id FROM target_expansions ORDER BY expansion_external_id"
-    )
+
+@market_search_read_bp.get("/api/v1/market/set-products/<game_slug>/<set_code>")
+def cardmarket_set_products_read(game_slug: str, set_code: str):
+    """Return Cardmarket commercial products from expansions proven by set collectors."""
+    game_slug = str(game_slug or "").strip().lower()
+    set_code = str(set_code or "").strip().lower()
+    if not game_slug or not set_code:
+        return jsonify({"error": "invalid_params"}), 400
+
+    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=50)
+    offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=5000)
+    category = str(request.args.get("category") or "").strip()
+    region = str(request.args.get("region") or "").strip().lower()
 
     try:
         with db.SessionLocal() as session:
+            expansion_ids = _target_expansions(session, game_slug, set_code)
+            if not expansion_ids:
+                return jsonify({
+                    "items": [], "limit": limit, "offset": offset, "total": 0,
+                    "expansion_ids": [], "categories": [], "regions": [],
+                })
+
+            params = {
+                "game": game_slug,
+                "expansion_ids": expansion_ids,
+                "limit": limit,
+                "offset": offset,
+                "category": category,
+                "region": region,
+            }
+            category_clause = "AND lower(COALESCE(e.category, '')) = lower(:category)" if category else ""
+            region_clause = "AND lower(COALESCE(pv.region, 'global')) = :region" if region else ""
+
+            base_join = f"""
+                FROM external_catalog_products e
+                JOIN external_catalog_product_variant_links l ON l.external_product_id = e.id
+                JOIN product_variants pv ON pv.id = l.product_variant_id
+                JOIN products p ON p.id = pv.product_id
+                JOIN games g ON g.id = p.game_id
+                WHERE e.source = 'cardmarket'
+                  AND e.product_group = 'non_single'
+                  AND e.expansion_external_id IN :expansion_ids
+                  AND l.link_status IN ('accepted', 'mapped', 'exact')
+                  AND g.slug = :game
+                  {category_clause}
+                  {region_clause}
+            """
+
+            rows_sql = text(
+                f"""
+                WITH candidate_products AS (
+                  SELECT DISTINCT e.id
+                  {base_join}
+                ),
+                latest_as_of AS (
+                  SELECT mp.external_product_id, max(mp.as_of) AS as_of
+                  FROM external_market_price_snapshots mp
+                  JOIN candidate_products cp ON cp.id = mp.external_product_id
+                  WHERE mp.currency = 'EUR'
+                  GROUP BY mp.external_product_id
+                ),
+                current_price_candidates AS (
+                  SELECT mp.*,
+                         count(*) OVER (PARTITION BY mp.external_product_id) AS total_variants,
+                         count(*) FILTER (WHERE mp.price_variant IN ('default', 'nonfoil'))
+                           OVER (PARTITION BY mp.external_product_id) AS preferred_variants
+                  FROM external_market_price_snapshots mp
+                  JOIN latest_as_of la
+                    ON la.external_product_id = mp.external_product_id AND la.as_of = mp.as_of
+                  WHERE mp.currency = 'EUR'
+                ),
+                eligible_price AS (
+                  SELECT * FROM current_price_candidates
+                  WHERE (preferred_variants = 1 AND price_variant IN ('default', 'nonfoil'))
+                     OR (preferred_variants = 0 AND total_variants = 1)
+                )
+                SELECT e.id AS external_product_id,
+                       e.external_id,
+                       e.name AS product_name,
+                       e.category,
+                       e.expansion_external_id,
+                       e.website_path,
+                       p.id AS canonical_product_id,
+                       p.product_type,
+                       pv.id AS canonical_product_variant_id,
+                       pv.language,
+                       pv.region,
+                       ep.currency,
+                       ep.price_variant,
+                       ep.price_low,
+                       ep.price_mid,
+                       ep.price_market,
+                       ep.price_last,
+                       ep.avg1,
+                       ep.avg7,
+                       ep.avg30,
+                       ep.as_of AS price_as_of
+                {base_join}
+                LEFT JOIN eligible_price ep ON ep.external_product_id = e.id
+                ORDER BY
+                  CASE WHEN lower(COALESCE(pv.region, 'global')) = 'global' THEN 0 ELSE 1 END,
+                  e.category ASC,
+                  e.name ASC,
+                  e.id ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ).bindparams(bindparam("expansion_ids", expanding=True))
+
+            count_sql = text(
+                f"SELECT count(DISTINCT e.id) {base_join}"
+            ).bindparams(bindparam("expansion_ids", expanding=True))
+
+            category_base = base_join.replace(category_clause, "") if category_clause else base_join
+            categories_sql = text(
+                f"""
+                SELECT COALESCE(NULLIF(trim(e.category), ''), 'Other') AS category,
+                       count(DISTINCT e.id) AS product_count
+                {category_base}
+                GROUP BY COALESCE(NULLIF(trim(e.category), ''), 'Other')
+                ORDER BY product_count DESC, category ASC
+                """
+            ).bindparams(bindparam("expansion_ids", expanding=True))
+
+            region_base = base_join.replace(region_clause, "") if region_clause else base_join
+            regions_sql = text(
+                f"""
+                SELECT COALESCE(NULLIF(lower(trim(pv.region)), ''), 'global') AS region,
+                       count(DISTINCT e.id) AS product_count
+                {region_base}
+                GROUP BY COALESCE(NULLIF(lower(trim(pv.region)), ''), 'global')
+                ORDER BY product_count DESC, region ASC
+                """
+            ).bindparams(bindparam("expansion_ids", expanding=True))
+
             rows = [dict(row) for row in session.execute(rows_sql, params).mappings().all()]
             total = int(session.execute(count_sql, params).scalar_one())
             category_rows = [dict(row) for row in session.execute(categories_sql, params).mappings().all()]
             region_rows = [dict(row) for row in session.execute(regions_sql, params).mappings().all()]
-            expansion_ids = [str(value) for value in session.execute(expansion_sql, params).scalars().all()]
     except SQLAlchemyError:
         return jsonify({"error": "cardmarket_set_products_unavailable"}), 503
 
