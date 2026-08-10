@@ -25,7 +25,7 @@ jobs:
         run: |
           python - <<'PY'
           import json,os
-          from collections import Counter,defaultdict
+          from collections import Counter
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
@@ -34,7 +34,6 @@ jobs:
           ALL_IDS=FINISH_IDS+COLLECTOR_IDS
 
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
-          out={}
           with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
             c.execute('''
               SELECT p.id print_id,p.scryfall_id,p.card_id,p.set_id,p.collector_number,p.language,p.rarity,p.variant,p.is_foil,p.print_key,
@@ -45,8 +44,6 @@ jobs:
             rows=[dict(x) for x in c.fetchall()]
             assert len(rows)==135, f'expected 135 target prints, got {len(rows)}'
 
-            # Discover every FK that currently points at prints; this keeps the
-            # preflight valid as the schema evolves.
             c.execute('''
               SELECT tc.table_name,kcu.column_name
               FROM information_schema.table_constraints tc
@@ -63,8 +60,6 @@ jobs:
               n=int(c.fetchone()['n'])
               if n: fk_counts.append({'table':table,'column':col,'rows':n})
 
-            # For finish-only review items, verify production has a sibling for
-            # the same Scryfall object that is not itself in the invalid set.
             c.execute('''
               SELECT bad.id bad_print_id,bad.scryfall_id,bad.variant bad_variant,
                      array_agg(good.id ORDER BY good.id) FILTER (WHERE good.id IS NOT NULL) sibling_ids,
@@ -76,22 +71,19 @@ jobs:
             ''',(FINISH_IDS,FINISH_IDS))
             siblings=[dict(x) for x in c.fetchall()]
 
-            # Explicit market/price/user tables if present are also summarized
-            # by the FK discovery above; these focused counts make review easier.
-            table_names=[]
-            c.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
-            table_names=[x['table_name'] for x in c.fetchall()]
+            # Focused tables are counted only when the expected print_id column
+            # actually exists; FK discovery above remains the source of truth.
+            c.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'")
+            columns={(x['table_name'],x['column_name']) for x in c.fetchall()}
             focused={}
             for table,col in [
-              ('external_catalog_print_links','print_id'),('price_snapshots','print_id'),
-              ('collection_items','print_id'),('wishlist_items','print_id'),('print_images','print_id'),
-              ('print_identifiers','print_id'),('print_attributes','print_id'),('print_search_profiles','print_id')]:
-              if table in table_names:
+              ('external_catalog_print_links','print_id'),('collection_items','print_id'),
+              ('wishlist_items','print_id'),('print_images','print_id'),('print_identifiers','print_id'),
+              ('print_attributes','print_id'),('print_search_profiles','print_id'),('print_releases','print_id')]:
+              if (table,col) in columns:
                 c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=ANY(%s)',(ALL_IDS,))
                 focused[table]=int(c.fetchone()['n'])
 
-            # Collector-number corrections must not collide with another print
-            # in the same exact physical identity namespace.
             corrections={272959:'2433',272960:'2433',307059:'2434',307060:'2434'}
             collisions=[]
             for pid,new_col in corrections.items():
@@ -103,8 +95,7 @@ jobs:
               if hits: collisions.append({'print_id':pid,'new_collector':new_col,'hits':hits})
           conn.close()
 
-          sibling_status=Counter()
-          no_sibling=[]
+          sibling_status=Counter();no_sibling=[]
           for row in siblings:
             ids=row.get('sibling_ids') or []
             sibling_status[f'{len(ids)}_siblings']+=1
