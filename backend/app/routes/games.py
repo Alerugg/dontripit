@@ -7,13 +7,22 @@ from app.models import Card, Game
 games_bp = Blueprint("games", __name__)
 
 
+def _database_provider() -> str:
+    host = str(getattr(getattr(db.engine, "url", None), "host", "") or "").lower()
+    if "neon.tech" in host:
+        return "neon"
+    if "railway" in host:
+        return "railway"
+    return "other"
+
+
 @games_bp.get("/api/db-check")
 @games_bp.get("/api/v1/db-check")
 def db_check():
     try:
         with db.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-        return jsonify({"db": "ok"})
+        return jsonify({"db": "ok", "provider": _database_provider()})
     except Exception:
         return jsonify({"error": "database_unavailable"}), 503
 
