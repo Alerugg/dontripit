@@ -1,8 +1,24 @@
 const DEFAULT_TIMEOUT_MS = 12000
 const MAX_TIMEOUT_MS = 30000
+const PRODUCTION_API_BASE_URL = 'https://api.dontripit.com'
+const LEGACY_BACKEND_HOSTS = new Set(['dontripit-production.up.railway.app'])
+
+function normalizeInternalBaseUrl(value) {
+  const raw = String(value || '').trim().replace(/\/$/, '')
+  if (!raw) return ''
+
+  try {
+    const parsed = new URL(raw)
+    if (LEGACY_BACKEND_HOSTS.has(parsed.hostname.toLowerCase())) return PRODUCTION_API_BASE_URL
+    return raw
+  } catch {
+    return raw
+  }
+}
 
 function getInternalConfig() {
-  const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
+  const baseUrl = normalizeInternalBaseUrl(process.env.INTERNAL_API_BASE_URL)
+    || (process.env.VERCEL_ENV === 'production' ? PRODUCTION_API_BASE_URL : '')
   const apiKey = (process.env.INTERNAL_API_KEY || '').trim()
   const allowPublic = String(process.env.INTERNAL_API_ALLOW_PUBLIC || '').trim().toLowerCase() === 'true'
 
@@ -123,7 +139,7 @@ export function getDeveloperErrorHint(upstreamPayload = {}, status) {
   }
 
   if (status === 502) {
-    return 'No hay conexión al backend. Verifica red Docker y que backend esté saludable.'
+    return 'No hay conexión al backend. Verifica red y que el backend esté saludable.'
   }
 
   if (status === 401 || status === 403) {
