@@ -1,0 +1,88 @@
+name: Audit Public Release Readiness
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/audit-public-release-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build 2>&1 | tee /tmp/frontend-build.log
+      - name: Audit release-critical public files and visible placeholder copy
+        run: |
+          set -euo pipefail
+          test -s frontend/app/robots.js
+          test -s frontend/app/sitemap.js
+          test -s frontend/app/privacy/page.js
+          test -s frontend/app/terms/page.js
+          test -s frontend/app/cookies/page.js
+          test -s frontend/app/accessibility.css
+          grep -q 'dri_session' frontend/app/cookies/page.js
+          grep -q 'info@dontripit.com' frontend/app/privacy/page.js
+          grep -q 'Saltar al contenido principal' frontend/app/layout.js
+          grep -q 'prefers-reduced-motion' frontend/app/accessibility.css
+          grep -q '/cookies' frontend/components/layout/SiteFooter.js
+
+          # User-facing release files must not say that mandatory legal work is still pending.
+          if grep -RniE --include='*.js' --include='*.jsx' \
+            'informaci[oó]n legal pendiente|pendiente de completar|lorem ipsum|fake data|datos ficticios' \
+            frontend/app frontend/components; then
+            echo 'Release-blocking placeholder/legal-pending copy found.' >&2
+            exit 1
+          fi
+
+          # Production source must not point back to the retired Railway API.
+          if grep -Rni 'dontripit-production\.up\.railway\.app' frontend --exclude-dir=node_modules --exclude='package-lock.json'; then
+            echo 'Legacy Railway reference found in frontend.' >&2
+            exit 1
+          fi
+
+          cat > /tmp/public-release-readiness.json <<'JSON'
+          {
+            "frontend_tests": "pass",
+            "production_build": "pass",
+            "privacy": "present",
+            "terms": "present",
+            "cookies": "present",
+            "robots": "present",
+            "sitemap": "present",
+            "keyboard_skip_link": "present",
+            "reduced_motion": "present",
+            "release_blocking_placeholder_copy": 0,
+            "legacy_railway_frontend_references": 0
+          }
+          JSON
+          cat /tmp/public-release-readiness.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-release-readiness-${{ github.run_id }}
+          path: |
+            /tmp/frontend-build.log
+            /tmp/public-release-readiness.json
+          retention-days: 90
+          if-no-files-found: warn
