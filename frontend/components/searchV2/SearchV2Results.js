@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import './SearchV2.css'
+import './SearchV2Polish.css'
 
 function badge(value) {
   return value ? <span className="sv2-badge">{value}</span> : null
