@@ -24,7 +24,7 @@ jobs:
       - name: Compare every production MTG finish-print with current Scryfall bulk objects
         run: |
           python - <<'PY'
-          import gzip,json,os,re,tempfile,unicodedata
+          import json,os,re,unicodedata
           from collections import Counter,defaultdict
           from pathlib import Path
           import psycopg2,requests
@@ -61,7 +61,7 @@ jobs:
             rows=[dict(x) for x in c.fetchall()]
           conn.close()
 
-          counts=Counter();bad=[];missing_id=[];missing_live=[];finish_bad=[];field_bad=Counter();object_usage=defaultdict(list)
+          counts=Counter();bad=[];missing_id=[];missing_live=[];finish_bad=[];field_bad=Counter();object_rows=defaultdict(list)
           for r in rows:
             sid=str(r.get('scryfall_id') or '').strip()
             if not sid:
@@ -69,7 +69,7 @@ jobs:
             card=live.get(sid)
             if card is None:
               counts['scryfall_object_not_in_current_bulk']+=1;missing_live.append(r);continue
-            object_usage[sid].append(r['print_id'])
+            object_rows[sid].append(r)
             fields={
               'name': norm(card.get('name'))==norm(r.get('name')),
               'set_code': norm(card.get('set'))==norm(r.get('set_code')),
@@ -83,20 +83,20 @@ jobs:
             live_finishes={str(x).casefold() for x in (card.get('finishes') or [])}
             finish_ok=finish in live_finishes
             if not finish_ok:
-              field_bad['finish']+=1;finish_bad.append({'print':r,'live_finishes':sorted(live_finishes)})
+              field_bad['finish']+=1
+              if len(finish_bad)<100: finish_bad.append({'print':r,'live_finishes':sorted(live_finishes)})
             if mism or not finish_ok:
               counts['mismatch']+=1
               if len(bad)<500:bad.append({'print':r,'mismatches':mism+([] if finish_ok else ['finish']),'live':{k:card.get(k) for k in ('name','set','collector_number','lang','oracle_id','finishes','image_status','highres_image')}})
             else: counts['matched']+=1
 
-          distinct_ids=len(object_usage)
-          multi_finish_objects=sum(1 for ids in object_usage.values() if len(ids)>1)
+          distinct_ids=len(object_rows)
+          multi_finish_objects=sum(1 for group in object_rows.values() if len(group)>1)
           no_image_expected=0
           image_contract_bad=[]
-          for sid,ids in object_usage.items():
+          for sid,dbrows in object_rows.items():
             card=live[sid]
-            image_missing=card.get('image_status')=='missing' or not card.get('highres_image',False) and not card.get('image_uris') and not card.get('card_faces')
-            dbrows=[r for r in rows if str(r.get('scryfall_id') or '')==sid]
+            image_missing=(card.get('image_status')=='missing') or (not card.get('image_uris') and not any((face.get('image_uris') for face in (card.get('card_faces') or []) if isinstance(face,dict))))
             if image_missing:
               no_image_expected+=len(dbrows)
             for r in dbrows:
@@ -112,7 +112,7 @@ jobs:
             'source_expected_prints_without_display_image':no_image_expected,
             'db_missing_image_when_source_has_image':len(image_contract_bad),
             'mismatch_samples':bad,'missing_id_samples':missing_id[:100],'missing_live_samples':missing_live[:100],
-            'finish_mismatch_samples':finish_bad[:100],'image_contract_bad_samples':image_contract_bad,
+            'finish_mismatch_samples':finish_bad,'image_contract_bad_samples':image_contract_bad,
           }
           print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,ensure_ascii=False,default=str))
           Path('/tmp/mtg-scryfall-full-physical-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
