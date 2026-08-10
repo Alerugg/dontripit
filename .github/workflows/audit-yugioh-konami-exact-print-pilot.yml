@@ -1,0 +1,155 @@
+name: Audit YuGiOh Konami Exact Print Pilot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-yugioh-konami-exact-print-pilot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare a deterministic cross-era card sample using exact Konami print rows
+        run: |
+          python - <<'PY'
+          import json,os,re,time,unicodedata
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          YGO='https://db.ygoprodeck.com/api/v7/cardinfo.php'
+          KONAMI='https://www.db.yugioh-card.com/yugiohdb/card_search.action'
+          SAMPLE_N=800
+          def text(v):
+            s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'").replace('–','-').replace('—','-')
+            return re.sub(r'\s+',' ',s).strip()
+          def key(v):
+            s=text(v).casefold()
+            s=s.replace('quarter century secret rare','quarter century secret rare')
+            return re.sub(r'[^a-z0-9]+','',s)
+          def pid_from(value):
+            m=re.search(r'[?&]pid=(\d+)',value or '')
+            return m.group(1) if m else None
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT c.id card_id,c.yugoprodeck_id,c.name,
+                     min(p.id) min_print_id,count(*) print_count
+              FROM cards c JOIN games g ON g.id=c.game_id JOIN prints p ON p.card_id=c.id
+              WHERE g.slug='yugioh' AND c.yugoprodeck_id IS NOT NULL
+              GROUP BY c.id,c.yugoprodeck_id,c.name ORDER BY min(p.id),c.id
+            ''')
+            cards=[dict(x) for x in c.fetchall()]
+            if len(cards)<=SAMPLE_N: selected=cards
+            else:
+              idxs=sorted({round(i*(len(cards)-1)/(SAMPLE_N-1)) for i in range(SAMPLE_N)})
+              selected=[cards[i] for i in idxs]
+            card_ids=[x['card_id'] for x in selected]
+            c.execute('''
+              SELECT p.id print_id,p.card_id,p.collector_number,p.rarity,p.variant,p.language,
+                     s.code set_code,s.name set_name
+              FROM prints p JOIN sets s ON s.id=p.set_id
+              WHERE p.card_id=ANY(%s) ORDER BY p.card_id,p.id
+            ''',(card_ids,))
+            prints_by_card=defaultdict(list)
+            for row in c.fetchall():prints_by_card[row['card_id']].append(dict(row))
+          conn.close()
+
+          # Current YGOPRODeck metadata gives Konami cid while keeping our
+          # canonical DB keyed to the YGOPRODeck passcode.
+          yh=requests.Session();yh.headers.update({'User-Agent':'DontRipIt/1.0 ygo-konami-exact-pilot','Accept':'application/json'})
+          wanted_passcodes={str(x['yugoprodeck_id']) for x in selected}
+          konami={};offset=0
+          while len(konami)<len(wanted_passcodes):
+            rr=yh.get(YGO,params={'num':500,'offset':offset,'misc':'yes'},timeout=60);rr.raise_for_status();data=(rr.json() or {}).get('data') or []
+            if not data:break
+            for card in data:
+              pc=str(card.get('id') or '')
+              if pc not in wanted_passcodes:continue
+              misc=card.get('misc_info') or []
+              cid=misc[0].get('konami_id') if misc and isinstance(misc[0],dict) else None
+              if cid:konami[pc]=str(cid)
+            if len(data)<500:break
+            offset+=500;time.sleep(.04)
+
+          kh=requests.Session();kh.headers.update({'User-Agent':'DontRipIt/1.0 official-konami-exact-pilot','Accept':'text/html'})
+          status=Counter();official_rows_total=0;details=[];official_pid_counts=Counter()
+          for n,card in enumerate(selected,1):
+            passcode=str(card['yugoprodeck_id']);cid=konami.get(passcode);dbprints=prints_by_card[card['card_id']]
+            if not cid:
+              status['card_missing_konami_id']+=1
+              details.append({'card_id':card['card_id'],'name':card['name'],'status':'card_missing_konami_id','db_prints':len(dbprints)})
+              continue
+            try:
+              rr=kh.get(KONAMI,params={'cid':cid,'ope':'2','request_locale':'en'},timeout=30)
+            except Exception as exc:
+              status['request_error']+=1;details.append({'card_id':card['card_id'],'name':card['name'],'konami_id':cid,'status':'request_error','error':str(exc)[:150]});continue
+            if rr.status_code!=200:
+              status[f'http_{rr.status_code}']+=1;continue
+            soup=BeautifulSoup(rr.text,'html.parser')
+            official=[]
+            for row in soup.select('div.t_row'):
+              num=row.select_one('.card_number');rar=row.select_one('.icon.rarity span');pack=row.select_one('.pack_name');inp=row.select_one('input.link_value')
+              code=text(num.get_text(' ',strip=True) if num else '')
+              rarity=text(rar.get_text(' ',strip=True) if rar else '')
+              if not code:continue
+              pid=pid_from(inp.get('value') if inp else '')
+              official.append({'collector_number':code,'rarity':rarity,'product_name':text(pack.get_text(' ',strip=True) if pack else ''),'pid':pid})
+              if pid:official_pid_counts[pid]+=1
+            official_rows_total+=len(official)
+            off_exact=defaultdict(list);off_code=defaultdict(list)
+            for o in official:
+              off_exact[(key(o['collector_number']),key(o['rarity']))].append(o);off_code[key(o['collector_number'])].append(o)
+            for p in dbprints:
+              exact=off_exact.get((key(p['collector_number']),key(p['rarity'])),[])
+              same_code=off_code.get(key(p['collector_number']),[])
+              if len(exact)==1:
+                status['exact_print_match']+=1
+              elif len(exact)>1:
+                status['official_duplicate_exact_rows']+=1
+                if len(details)<500:details.append({'print':p,'card':card,'konami_id':cid,'status':'official_duplicate_exact_rows','official':exact})
+              elif same_code:
+                status['collector_found_rarity_diff']+=1
+                if len(details)<500:details.append({'print':p,'card':card,'konami_id':cid,'status':'collector_found_rarity_diff','official':same_code})
+              else:
+                status['collector_absent_on_official_card_page']+=1
+                if len(details)<500:details.append({'print':p,'card':card,'konami_id':cid,'status':'collector_absent_on_official_card_page','official_row_count':len(official)})
+            db_keys={(key(p['collector_number']),key(p['rarity'])) for p in dbprints}
+            for o in official:
+              if (key(o['collector_number']),key(o['rarity'])) not in db_keys:
+                status['official_exact_row_absent_from_db']+=1
+                if len(details)<500:details.append({'card':card,'konami_id':cid,'status':'official_exact_row_absent_from_db','official':o})
+            if n%50==0:
+              print('progress',n,'/',len(selected),dict(status),flush=True)
+            time.sleep(.10)
+
+          report={
+            'sample_cards':len(selected),'sample_db_prints':sum(len(prints_by_card[x['card_id']]) for x in selected),
+            'sample_cards_with_konami_id':len(konami),'official_rows_seen':official_rows_total,
+            'status_counts':dict(status),'unique_official_pids_seen':len(official_pid_counts),
+            'detail_samples':details,
+          }
+          print(json.dumps({k:v for k,v in report.items() if k!='detail_samples'},indent=2,ensure_ascii=False))
+          Path('/tmp/yugioh-konami-exact-print-pilot.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-konami-exact-print-pilot-${{ github.run_id }}
+          path: /tmp/yugioh-konami-exact-print-pilot.json
+          retention-days: 90
