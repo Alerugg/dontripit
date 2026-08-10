@@ -1,0 +1,158 @@
+name: Apply MTG Scryfall Parity Fixes Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/apply-mtg-scryfall-parity-fixes-live.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Remove 131 source-invalid finish duplicates and correct four SLD collector numbers
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import Counter
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          BAD=[159643,162796,162971,163535,163626,164948,168154,168456,168677,171046,171453,173124,173503,176332,176889,177523,179826,184892,184957,184974,185025,185465,185982,186595,186852,187025,187078,188378,188459,194409,195325,195999,197638,201209,201919,202158,202450,204471,205337,206665,206940,207696,209882,212887,213309,215113,216746,219064,222315,224598,225312,225445,226446,226904,227993,232622,233380,233827,234295,234686,235524,235721,236663,237675,238100,238238,239939,240066,241642,241950,242530,242944,243973,246962,247750,248344,250823,255211,256093,259816,261867,262956,263148,263739,265320,266014,268183,269446,270849,271307,271753,271994,272099,273411,274139,279240,279873,280873,281273,282483,284457,284997,285211,285765,290439,292206,293761,296188,297863,298168,302660,304474,304638,305542,305700,306230,306646,306844,308925,309129,310888,311811,311869,314655,315411,315697,316233,317097,317174,318141,319003]
+          CORRECTIONS={272959:('2343','2433'),272960:('2343','2433'),307059:('2344','2434'),307060:('2344','2434')}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.autocommit=False
+          report={'status':'started'}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET LOCAL lock_timeout='30s'")
+              c.execute("SET LOCAL statement_timeout='10min'")
+              c.execute("SELECT pg_advisory_xact_lock(hashtext('dontripit-mtg-scryfall-parity-fix-20260811'))")
+
+              c.execute('''SELECT count(*) n FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id WHERE g.slug='mtg' ''')
+              before=int(c.fetchone()['n']); assert before==161275,before
+              c.execute('''SELECT p.id,p.scryfall_id,p.variant,p.is_foil,s.code set_code FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=c.game_id WHERE p.id=ANY(%s) AND g.slug='mtg' ORDER BY p.id FOR UPDATE''',(BAD,))
+              bad_rows=[dict(x) for x in c.fetchall()];assert len(bad_rows)==131,len(bad_rows)
+              assert set(x['set_code'] for x in bad_rows)=={'HOB','HOC'},set(x['set_code'] for x in bad_rows)
+              variants=Counter(x['variant'] for x in bad_rows)
+              assert variants==Counter({'nonfoil':70,'foil':61}),variants
+
+              # Each stale finish must have exactly one surviving sibling for the
+              # same Scryfall object. This was independently certified against
+              # current all_cards bulk before this workflow was created.
+              c.execute('''
+                SELECT b.id bad_id,count(g.id) sibling_count,min(g.id) good_id
+                FROM prints b LEFT JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s))
+                WHERE b.id=ANY(%s) GROUP BY b.id ORDER BY b.id
+              ''',(BAD,BAD))
+              pairs=[dict(x) for x in c.fetchall()]
+              assert len(pairs)==131 and all(int(x['sibling_count'])==1 for x in pairs),pairs[:10]
+
+              # No user/business ownership references may appear between audit
+              # and apply. Discover FKs dynamically and permit only derivative
+              # catalog rows that will be deleted explicitly below.
+              allowed_fk_tables={'external_catalog_print_links','print_attributes','print_identifiers','print_search_profiles','print_images','print_releases','print_field_provenance'}
+              c.execute('''
+                SELECT tc.table_name,kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+                JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema
+                WHERE tc.constraint_type='FOREIGN KEY' AND ccu.table_schema='public' AND ccu.table_name='prints' AND ccu.column_name='id'
+                ORDER BY tc.table_name,kcu.column_name
+              ''')
+              unexpected=[]
+              for fk in c.fetchall():
+                table=fk['table_name'];col=fk['column_name']
+                c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=ANY(%s)',(BAD,));n=int(c.fetchone()['n'])
+                if n and table not in allowed_fk_tables:unexpected.append({'table':table,'column':col,'rows':n})
+              assert not unexpected,f'unexpected live references: {unexpected}'
+
+              # 130 stale links are duplicate copies of the exact same external
+              # Cardmarket product already linked to the good sibling; one bad
+              # print has no external link at all.
+              c.execute('''
+                WITH pairs AS (
+                  SELECT b.id bad_id,g.id good_id FROM prints b JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s)) WHERE b.id=ANY(%s)
+                ), badlinks AS (
+                  SELECT p.bad_id,p.good_id,l.external_product_id FROM pairs p LEFT JOIN external_catalog_print_links l ON l.print_id=p.bad_id
+                )
+                SELECT count(*) FILTER (WHERE external_product_id IS NULL) no_link,
+                       count(*) FILTER (WHERE external_product_id IS NOT NULL) linked,
+                       count(*) FILTER (WHERE external_product_id IS NOT NULL AND EXISTS(
+                         SELECT 1 FROM external_catalog_print_links gl WHERE gl.print_id=badlinks.good_id AND gl.external_product_id=badlinks.external_product_id
+                       )) duplicated_on_good
+                FROM badlinks
+              ''',(BAD,BAD))
+              linkproof=dict(c.fetchone());assert (int(linkproof['no_link']),int(linkproof['linked']),int(linkproof['duplicated_on_good']))==(1,130,130),linkproof
+
+              # Generic economics/provenance tables use entity_type/entity_id and
+              # therefore do not participate in FK discovery. Invalid print
+              # histories are removed, never migrated to a different finish.
+              c.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'")
+              columns={(x['table_name'],x['column_name']) for x in c.fetchall()}
+              generic_deleted={}
+              for table in ('price_snapshots','price_daily_ohlc'):
+                if {(table,'entity_type'),(table,'entity_id')} <= columns:
+                  c.execute(f"DELETE FROM {table} WHERE lower(entity_type)='print' AND entity_id=ANY(%s)",(BAD,));generic_deleted[table]=c.rowcount
+              if {( 'field_provenance','entity_type'),('field_provenance','entity_id')} <= columns:
+                c.execute("DELETE FROM field_provenance WHERE lower(entity_type)='print' AND entity_id=ANY(%s)",(BAD,));generic_deleted['field_provenance']=c.rowcount
+
+              derivative_deleted={}
+              for table in ('external_catalog_print_links','print_attributes','print_identifiers','print_search_profiles','print_images','print_releases','print_field_provenance'):
+                if (table,'print_id') in columns:
+                  c.execute(f'DELETE FROM {table} WHERE print_id=ANY(%s)',(BAD,));derivative_deleted[table]=c.rowcount
+              c.execute('DELETE FROM prints WHERE id=ANY(%s) RETURNING id',(BAD,));deleted=[x['id'] for x in c.fetchall()]
+              assert len(deleted)==131,len(deleted)
+
+              collector_changes=[]
+              for pid,(old,new) in CORRECTIONS.items():
+                c.execute('''SELECT p.id,p.collector_number,p.print_key,p.scryfall_id,p.variant,c.name,s.code FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE p.id=%s FOR UPDATE''',(pid,))
+                row=dict(c.fetchone() or {});assert row and row['collector_number']==old and row['code']=='sld',row
+                if pid in (272959,272960):assert row['name']=='Shalai, Voice of Plenty',row
+                else:assert row['name']=='Song of the Worldsoul',row
+                c.execute('''SELECT count(*) n FROM prints WHERE set_id=(SELECT set_id FROM prints WHERE id=%s) AND collector_number=%s AND language=(SELECT language FROM prints WHERE id=%s) AND variant=(SELECT variant FROM prints WHERE id=%s) AND id<>%s''',(pid,new,pid,pid,pid))
+                assert int(c.fetchone()['n'])==0
+                c.execute('UPDATE prints SET collector_number=%s WHERE id=%s',(new,pid));assert c.rowcount==1
+                c.execute('SELECT normalized_collector_number,search_text FROM print_search_profiles WHERE print_id=%s FOR UPDATE',(pid,));profile=dict(c.fetchone() or {})
+                assert profile.get('normalized_collector_number')==old,profile
+                assert old in str(profile.get('search_text') or '').split(),profile
+                # Replace the collector token only when surrounded by spaces or
+                # string boundaries; UUID fragments/other numbers are untouched.
+                c.execute('''UPDATE print_search_profiles
+                             SET normalized_collector_number=%s,
+                                 search_text=regexp_replace(search_text, %s, %s, 'g'),
+                                 updated_at=now()
+                             WHERE print_id=%s''',(new,rf'\m{old}\M',new,pid));assert c.rowcount==1
+                c.execute('SELECT normalized_collector_number,search_text FROM print_search_profiles WHERE print_id=%s',(pid,));after_profile=dict(c.fetchone())
+                assert after_profile['normalized_collector_number']==new and new in after_profile['search_text'].split() and old not in after_profile['search_text'].split(),after_profile
+                # Keep source-level field provenance coherent if that tracked field exists.
+                if {( 'field_provenance','entity_type'),('field_provenance','entity_id'),('field_provenance','field_name'),('field_provenance','value_text')} <= columns:
+                  c.execute("UPDATE field_provenance SET value_text=%s,updated_at=now() WHERE lower(entity_type)='print' AND entity_id=%s AND field_name='collector_number' AND value_text=%s",(new,pid,old))
+                collector_changes.append({'print_id':pid,'from':old,'to':new,'scryfall_id':row['scryfall_id'],'variant':row['variant']})
+
+              c.execute('''SELECT count(*) n FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id WHERE g.slug='mtg' ''')
+              after=int(c.fetchone()['n']);assert after==161144,after
+              c.execute('''SELECT p.variant,count(*) n FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id WHERE g.slug='mtg' GROUP BY p.variant ORDER BY p.variant''')
+              finishes={x['variant']:int(x['n']) for x in c.fetchall()};assert finishes=={'etched':1218,'foil':65875,'nonfoil':94051},finishes
+              c.execute('SELECT count(*) n FROM prints WHERE id=ANY(%s)',(BAD,));assert int(c.fetchone()['n'])==0
+              c.execute('SELECT id,collector_number FROM prints WHERE id=ANY(%s) ORDER BY id',(list(CORRECTIONS),));proof={x['id']:x['collector_number'] for x in c.fetchall()};assert proof=={272959:'2433',272960:'2433',307059:'2434',307060:'2434'},proof
+
+              report={'status':'validated_precommit','prints_before':before,'prints_after':after,'finish_counts_after':finishes,'deleted_stale_finish_prints':len(deleted),'cardmarket_link_proof':linkproof,'generic_deleted':generic_deleted,'derivative_deleted':derivative_deleted,'collector_changes':collector_changes}
+            conn.commit();report['status']='applied'
+            print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          except Exception as exc:
+            conn.rollback();report={'status':'rolled_back','error':f'{type(exc).__name__}: {exc}'};print(json.dumps(report,indent=2));raise
+          finally:
+            conn.close()
+          PY
