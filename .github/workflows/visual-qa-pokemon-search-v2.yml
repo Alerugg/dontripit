@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/visual-qa-pokemon-search-v2.yml'
       - 'frontend/tests/pokemon-search-v2-visual.js'
+      - 'frontend/next.config.js'
       - 'frontend/app/games/[slug]/page.js'
       - 'frontend/components/games/PokemonExplorerV2Page.js'
       - 'frontend/components/search/**'

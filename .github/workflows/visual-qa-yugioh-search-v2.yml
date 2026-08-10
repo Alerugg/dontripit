@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/visual-qa-yugioh-search-v2.yml'
       - 'frontend/tests/yugioh-search-v2-visual.js'
+      - 'frontend/next.config.js'
       - 'frontend/app/games/[slug]/page.js'
       - 'frontend/components/games/YugiohExplorerV2Page.js'
       - 'frontend/components/searchV2/**'
