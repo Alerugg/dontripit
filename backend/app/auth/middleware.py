@@ -87,10 +87,12 @@ def _is_safe_public_catalog_request(required_scope: str | None) -> bool:
         return False
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return True
-    # Advanced search is a read-only query that uses POST only because its
-    # allowlisted filters are structured JSON. It is bounded server-side and
-    # belongs to the same public catalog surface as GET search.
-    return request.method == "POST" and request.path == "/api/v2/search/advanced"
+    # These POST endpoints are bounded, read-only catalog queries. They use POST
+    # only because their allowlisted filters / ID lists are structured JSON.
+    return request.method == "POST" and request.path in {
+        "/api/v2/search/advanced",
+        "/api/v1/market/prints/cardmarket/batch",
+    }
 
 
 def _public_catalog_enabled(required_scope: str | None) -> bool:
