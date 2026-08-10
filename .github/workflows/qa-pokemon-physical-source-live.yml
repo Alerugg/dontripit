@@ -1,0 +1,36 @@
+name: QA Pokemon Physical Source Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-pokemon-physical-source-live.yml'
+      - 'backend/app/scripts/audit_pokemon_physical_source_v2.py'
+      - 'backend/app/pokemon_source_inventory.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend requirements
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Audit live TCGdex physical inventory
+        working-directory: backend
+        run: python -m app.scripts.audit_pokemon_physical_source_v2 | tee /tmp/pokemon-physical-source-live.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-physical-source-live-${{ github.run_id }}
+          path: /tmp/pokemon-physical-source-live.json
+          retention-days: 90
+          if-no-files-found: warn
