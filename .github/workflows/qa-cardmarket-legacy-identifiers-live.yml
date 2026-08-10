@@ -1,0 +1,84 @@
+name: QA Cardmarket Legacy Identifiers Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/qa-cardmarket-legacy-identifiers-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Find exact direct IDs not yet promoted to links
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              WITH accepted AS (
+                SELECT DISTINCT print_id FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.product_group='single'
+                  AND l.link_status IN ('accepted','mapped','exact')
+              ), direct AS (
+                SELECT pi.print_id,pi.external_id,g.slug game_slug,c.name card_name,s.code set_code,
+                       p.collector_number,p.variant,p.is_foil,
+                       count(*) over(partition by pi.print_id) direct_ids_on_print
+                FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN accepted a ON a.print_id=pi.print_id
+                WHERE lower(pi.source)='cardmarket' AND a.print_id IS NULL
+              )
+              SELECT d.*,e.id external_product_id,e.name product_name,e.product_group,e.website_path,
+                     eg.slug product_game,
+                     count(e.id) over(partition by d.print_id,d.external_id) external_matches
+              FROM direct d
+              LEFT JOIN external_catalog_products e ON e.source='cardmarket' AND e.external_id=d.external_id
+              LEFT JOIN games eg ON eg.id=e.game_id
+              ORDER BY d.game_slug,d.print_id,d.external_id
+            ''')
+            rows=[dict(r) for r in c.fetchall()]
+          conn.close()
+          by=Counter(); safe=[]; bad=[]
+          by_print={}
+          for r in rows: by_print.setdefault(int(r['print_id']),[]).append(r)
+          for pid,rs in by_print.items():
+            game=rs[0]['game_slug']; by[(game,'prints_with_direct_id')]+=1
+            ids={str(r['external_id']) for r in rs}
+            matches=[r for r in rs if r['external_product_id'] is not None and r['product_group']=='single' and r['product_game']==game]
+            products={int(r['external_product_id']) for r in matches}
+            if len(ids)==1 and len(products)==1 and all(int(r['external_matches'] or 0)==1 for r in matches):
+              safe.append(rs[0] | {'external_product_id':next(iter(products))}); by[(game,'safe')]+=1
+            else:
+              bad.append({'print_id':pid,'game':game,'ids':sorted(ids),'products':sorted(products),'rows':rs}); by[(game,'quarantined')]+=1
+          games=sorted({g for g,_ in by})
+          report={'status':'completed','safe_count':len(safe),'quarantined_count':len(bad),
+                  'by_game':{g:{k:by[(g,k)] for k in ('prints_with_direct_id','safe','quarantined')} for g in games},
+                  'safe':safe,'quarantined':bad}
+          Path('/tmp/cardmarket-legacy-identifiers.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('safe','quarantined')},indent=2))
+          print(json.dumps(safe[:50],indent=2,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-legacy-identifiers-${{ github.run_id }}
+          path: /tmp/cardmarket-legacy-identifiers.json
+          retention-days: 30
