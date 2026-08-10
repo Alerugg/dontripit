@@ -31,7 +31,6 @@ jobs:
 
           BAD=[159643,162796,162971,163535,163626,164948,168154,168456,168677,171046,171453,173124,173503,176332,176889,177523,179826,184892,184957,184974,185025,185465,185982,186595,186852,187025,187078,188378,188459,194409,195325,195999,197638,201209,201919,202158,202450,204471,205337,206665,206940,207696,209882,212887,213309,215113,216746,219064,222315,224598,225312,225445,226446,226904,227993,232622,233380,233827,234295,234686,235524,235721,236663,237675,238100,238238,239939,240066,241642,241950,242530,242944,243973,246962,247750,248344,250823,255211,256093,259816,261867,262956,263148,263739,265320,266014,268183,269446,270849,271307,271753,271994,272099,273411,274139,279240,279873,280873,281273,282483,284457,284997,285211,285765,290439,292206,293761,296188,297863,298168,302660,304474,304638,305542,305700,306230,306646,306844,308925,309129,310888,311811,311869,314655,315411,315697,316233,317097,317174,318141,319003]
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
-          rows=[]
           with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
             c.execute('''
               WITH pairs AS (
@@ -43,9 +42,9 @@ jobs:
               )
               SELECT p.*,
                      bl.id bad_link_id,bl.external_product_id bad_external_product_id,bl.link_status bad_link_status,
-                     bp.external_id bad_external_id,bp.name bad_product_name,bp.url bad_product_url,bp.source bad_product_source,
+                     bp.external_id bad_external_id,bp.name bad_product_name,bp.website_path bad_product_path,bp.source bad_product_source,
                      gl.id good_link_id,gl.external_product_id good_external_product_id,gl.link_status good_link_status,
-                     gp.external_id good_external_id,gp.name good_product_name,gp.url good_product_url
+                     gp.external_id good_external_id,gp.name good_product_name,gp.website_path good_product_path
               FROM pairs p
               LEFT JOIN external_catalog_print_links bl ON bl.print_id=p.bad_id
               LEFT JOIN external_catalog_products bp ON bp.id=bl.external_product_id
@@ -55,7 +54,6 @@ jobs:
             ''',(BAD,BAD))
             rows=[dict(x) for x in c.fetchall()]
 
-            # Also count all links on the good siblings, not just same-product joins.
             c.execute('''
               WITH good AS (
                 SELECT DISTINCT g.id good_id
@@ -75,7 +73,7 @@ jobs:
           for r in rows:
             x=by_bad.setdefault(r['bad_id'],{'bad_id':r['bad_id'],'good_id':r['good_id'],'bad_variant':r['bad_variant'],'good_variant':r['good_variant'],'bad_links':[]})
             if r.get('bad_link_id'):
-              x['bad_links'].append({k:r.get(k) for k in ('bad_link_id','bad_external_product_id','bad_link_status','bad_external_id','bad_product_name','bad_product_url','bad_product_source','good_link_id','good_external_product_id','good_link_status')})
+              x['bad_links'].append({k:r.get(k) for k in ('bad_link_id','bad_external_product_id','bad_link_status','bad_external_id','bad_product_name','bad_product_path','bad_product_source','good_link_id','good_external_product_id','good_link_status')})
             x['good_all_links']=sibling_links.get(r['good_id'],{'links':0,'external_ids':[]})
 
           status=Counter();details=[]
