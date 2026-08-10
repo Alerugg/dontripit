@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: apply-cardmarket-product-catalog-bulk-v2
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply:
@@ -41,47 +41,54 @@ jobs:
       - name: Apply current schema
         run: alembic upgrade head
       - name: Canonicalize current non-single catalog and prices
-        run: python -m app.jobs.cardmarket_product_catalog_bulk_v2 | tee /tmp/cardmarket-product-bulk.json
-      - name: Verify exact current coverage
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m app.jobs.cardmarket_product_catalog_bulk_v2 | tee /tmp/cardmarket-product-bulk.json
+      - name: Verify exact current coverage efficiently
         run: |
           python - <<'PY'
           import json,os
-          from sqlalchemy import create_engine,text
-          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
-          with engine.connect() as conn:
-              proof=conn.execute(text('''
-                WITH current AS (
-                  SELECT e.id,e.external_id,e.game_id
-                  FROM external_catalog_products e JOIN games g ON g.id=e.game_id
-                  WHERE e.source='cardmarket' AND e.product_group='non_single'
-                    AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
-                    AND g.slug IN ('pokemon','onepiece','mtg','yugioh')
-                ), exact AS (
-                  SELECT c.id,c.external_id,c.game_id,pv.id variant_id,p.game_id canonical_game_id
-                  FROM current c
-                  JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=c.external_id
-                  JOIN product_variants pv ON pv.id=pi.product_variant_id
-                  JOIN products p ON p.id=pv.product_id
-                ), linked AS (
-                  SELECT DISTINCT e.id
-                  FROM exact e JOIN external_catalog_product_variant_links l
-                    ON l.external_product_id=e.id AND l.product_variant_id=e.variant_id AND l.link_status='accepted'
-                ), priced AS (
-                  SELECT DISTINCT e.id
-                  FROM exact e JOIN price_snapshots ps
-                    ON ps.entity_type='product_variant' AND ps.entity_id=e.variant_id
-                  JOIN price_sources src ON src.id=ps.source_id AND src.name='cardmarket'
-                )
-                SELECT (SELECT count(*) FROM current) total,
-                       (SELECT count(*) FROM exact) identifiers,
-                       (SELECT count(*) FROM linked) accepted_links,
-                       (SELECT count(*) FROM exact WHERE canonical_game_id<>game_id) cross_game,
-                       (SELECT count(*) FROM priced) canonically_priced
-              ''')).mappings().one()
-          proof={k:int(v) for k,v in proof.items()}
-          if proof['total'] != proof['identifiers'] or proof['total'] != proof['accepted_links'] or proof['cross_game'] != 0:
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET LOCAL statement_timeout='90s'")
+              c.execute('''CREATE TEMP TABLE current_cm_non_single ON COMMIT DROP AS
+                SELECT e.id,e.external_id,e.game_id,g.slug
+                FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                WHERE e.source='cardmarket' AND e.product_group='non_single'
+                  AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                  AND g.slug IN ('pokemon','onepiece','mtg','yugioh')''')
+              c.execute('CREATE INDEX ON current_cm_non_single(external_id)')
+              c.execute('CREATE INDEX ON current_cm_non_single(id)')
+              c.execute('SELECT count(*) total FROM current_cm_non_single')
+              total=int(c.fetchone()['total'])
+              c.execute('''SELECT count(*) identifiers,count(*) FILTER (WHERE p.game_id<>cm.game_id) cross_game
+                FROM current_cm_non_single cm
+                JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=cm.external_id
+                JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id''')
+              identity=c.fetchone()
+              c.execute('''SELECT count(DISTINCT cm.id) accepted_links
+                FROM current_cm_non_single cm
+                JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=cm.external_id
+                JOIN external_catalog_product_variant_links l ON l.external_product_id=cm.id
+                  AND l.product_variant_id=pi.product_variant_id AND l.link_status='accepted' ''')
+              accepted=int(c.fetchone()['accepted_links'])
+              c.execute("SELECT id FROM price_sources WHERE name='cardmarket'")
+              source_id=int(c.fetchone()['id'])
+              c.execute('''SELECT count(DISTINCT cm.id) priced FROM current_cm_non_single cm
+                JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=cm.external_id
+                JOIN price_snapshots ps ON ps.entity_type='product_variant' AND ps.entity_id=pi.product_variant_id
+                  AND ps.source_id=%s''',(source_id,))
+              priced=int(c.fetchone()['priced'])
+          conn.close()
+          proof={'total':total,'identifiers':int(identity['identifiers']),'accepted_links':accepted,
+                 'cross_game':int(identity['cross_game']),'canonically_priced':priced,
+                 'price_coverage_pct':round(priced*100/total,3) if total else 0}
+          if proof['total']!=13173 or proof['identifiers']!=total or accepted!=total or proof['cross_game']!=0:
               raise AssertionError(proof)
-          if proof['canonically_priced'] < int(proof['total'] * 0.75):
+          if priced<int(total*0.75):
               raise AssertionError({'reason':'unexpected price coverage regression','proof':proof})
           print(json.dumps(proof,indent=2,sort_keys=True))
           PY
