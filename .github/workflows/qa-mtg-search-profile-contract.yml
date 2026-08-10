@@ -30,16 +30,12 @@ jobs:
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           out={}
           with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
-            for table in ('print_search_profiles','search_documents'):
-              c.execute('''SELECT column_name,data_type,is_nullable,column_default
-                           FROM information_schema.columns
-                           WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position''',(table,))
-              out[table+'_columns']=[dict(x) for x in c.fetchall()]
+            c.execute('''SELECT column_name,data_type,is_nullable,column_default
+                         FROM information_schema.columns
+                         WHERE table_schema='public' AND table_name='print_search_profiles' ORDER BY ordinal_position''')
+            out['print_search_profiles_columns']=[dict(x) for x in c.fetchall()]
             c.execute('SELECT * FROM print_search_profiles WHERE print_id=ANY(%s) ORDER BY print_id',(ids,))
             out['profiles']=[dict(x) for x in c.fetchall()]
-            c.execute('''SELECT sd.* FROM search_documents sd JOIN prints p ON p.card_id=sd.card_id
-                         WHERE p.id=ANY(%s) ORDER BY sd.id LIMIT 50''',(ids,))
-            out['search_documents_for_cards']=[dict(x) for x in c.fetchall()]
             c.execute('''SELECT p.id,p.collector_number,p.print_key,p.variant,p.is_foil,c.name,s.code
                          FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
                          WHERE p.id=ANY(%s) ORDER BY p.id''',(ids,))
