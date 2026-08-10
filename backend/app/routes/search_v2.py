@@ -20,6 +20,21 @@ from app.search_v2.yugioh_query import normal_yugioh_search
 
 search_v2_bp = Blueprint("search_v2", __name__)
 SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh", "mtg"}
+MAX_QUERY_LENGTH = 200
+MAX_SEARCH_LIMIT = 100
+MAX_FACET_LIMIT = 100
+
+
+def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
+def _query(value) -> str:
+    return str(value or "").strip()[:MAX_QUERY_LENGTH]
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
@@ -56,11 +71,11 @@ def _suggestion_row(row: dict) -> dict:
 
 @search_v2_bp.get("/api/v2/search")
 def search_v2():
-    q = str(request.args.get("q") or "").strip()
+    q = _query(request.args.get("q"))
     if not q:
         return jsonify({"error": "q is required"}), 400
     game = str(request.args.get("game") or "").strip().lower() or None
-    limit = request.args.get("limit", default=24, type=int) or 24
+    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=MAX_SEARCH_LIMIT)
 
     with db.SessionLocal() as session:
         items = _normal_search_for_game(session, query=q, game=game, limit=limit)
@@ -69,7 +84,7 @@ def search_v2():
 
 @search_v2_bp.get("/api/v2/search/suggest")
 def search_v2_suggest():
-    q = str(request.args.get("q") or "").strip()
+    q = _query(request.args.get("q"))
     if not q:
         return jsonify({"query": q, "items": []})
     game = str(request.args.get("game") or "").strip().lower() or None
@@ -103,8 +118,8 @@ def search_v2_facet_values(game_slug: str, facet_key: str):
     if game_slug not in SEARCH_V2_ADVANCED_GAMES:
         return jsonify({"error": "game_not_search_v2_ready", "game": game_slug}), 422
 
-    query = str(request.args.get("q") or "").strip()
-    limit = request.args.get("limit", default=30, type=int) or 30
+    query = _query(request.args.get("q"))
+    limit = _bounded_int(request.args.get("limit"), default=30, minimum=1, maximum=MAX_FACET_LIMIT)
     try:
         with db.SessionLocal() as session:
             if game_slug == "pokemon":
@@ -155,9 +170,9 @@ def search_v2_advanced():
             result = search_fn(
                 session,
                 filters=filters,
-                query=body.get("q"),
-                limit=body.get("limit", 50),
-                offset=body.get("offset", 0),
+                query=_query(body.get("q")),
+                limit=_bounded_int(body.get("limit"), default=50, minimum=1, maximum=MAX_SEARCH_LIMIT),
+                offset=_bounded_int(body.get("offset"), default=0, minimum=0, maximum=10_000),
             )
     except ValueError as exc:
         return jsonify({"error": "invalid_filters", "detail": str(exc)}), 400

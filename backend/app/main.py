@@ -1,3 +1,4 @@
+import logging
 import os
 
 from flask import Flask, jsonify
@@ -23,6 +24,9 @@ from app.routes.search_v2 import search_v2_bp
 from app.routes.prices import prices_bp
 from app.routes.user_auth import user_auth_bp
 from app.routes.user_library import user_library_bp
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(database_url: str | None = None) -> Flask:
@@ -65,7 +69,8 @@ def create_app(database_url: str | None = None) -> Flask:
 
     @flask_app.errorhandler(Exception)
     def handle_uncaught(error: Exception):
-        return jsonify({"error": "internal_server_error", "detail": str(error)}), 500
+        logger.exception("Unhandled application error", exc_info=error)
+        return jsonify({"error": "internal_server_error"}), 500
 
     return flask_app
 

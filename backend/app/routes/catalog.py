@@ -134,7 +134,12 @@ def _pagination(default_limit: int = 20, max_limit: int = 200) -> tuple[int, int
 
 
 def _json_error(error: str, detail: str, status: int):
-    return jsonify({"error": error, "detail": detail}), status
+    payload = {"error": error}
+    # Validation/not-found details are part of the public API contract. Database
+    # and implementation details must never cross the HTTP boundary on 5xx.
+    if status < 500:
+        payload["detail"] = detail
+    return jsonify(payload), status
 
 
 def _variant_order_sql(column: str) -> str:

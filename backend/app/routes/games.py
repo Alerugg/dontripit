@@ -14,8 +14,8 @@ def db_check():
         with db.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         return jsonify({"db": "ok"})
-    except Exception as exc:
-        return jsonify({"error": str(exc).splitlines()[0]}), 500
+    except Exception:
+        return jsonify({"error": "database_unavailable"}), 503
 
 
 @games_bp.get("/api/games")
