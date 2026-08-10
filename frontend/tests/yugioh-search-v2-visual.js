@@ -111,7 +111,7 @@ async function main() {
     assert.match(exactPrintText, /dark magician/, 'Monster + DARK did not preserve Dark Magician query')
     assert.match(exactPrintText, /monster/, 'exact Yu-Gi-Oh print does not surface Monster evidence')
     assert.match(exactPrintText, /dark/, 'exact Yu-Gi-Oh print does not surface DARK evidence')
-    assert.match(await page.locator('.sv2-results-head').innerText(), /Exact prints/)
+    assert.match(await page.locator('.sv2-results-head').innerText(), /Versiones que coinciden/)
     await snapshot('yugioh-desktop-advanced-monster-dark')
 
     stage = 'mobile'
@@ -141,7 +141,7 @@ async function main() {
         'full Advanced Search panel opens',
         'six Yu-Gi-Oh quick-filter controls',
         'normal Dark Magician search',
-        'Monster + DARK returns Exact Prints',
+        'Monster + DARK returns matching physical versions',
         'source-backed Yu-Gi-Oh identity badges',
         'mobile viewport without horizontal overflow',
         'Search V2 BFF responses without HTTP errors',

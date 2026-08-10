@@ -121,7 +121,7 @@ async function main() {
     await page.locator('.sv2-result-card-print').first().waitFor({ timeout: 20000 })
     const exactPrintText = (await page.locator('.sv2-result-card-print').first().innerText()).toLowerCase()
     assert.match(exactPrintText, /holo/, 'advanced Holo result does not surface Holo identity')
-    assert.match(await page.locator('.sv2-results-head').innerText(), /Exact prints/)
+    assert.match(await page.locator('.sv2-results-head').innerText(), /Versiones que coinciden/)
     await snapshot('pokemon-desktop-advanced-holo')
 
     stage = 'mobile'
@@ -151,7 +151,7 @@ async function main() {
         'full Advanced Search panel opens',
         'six Pokémon quick-filter controls',
         'normal Pikachu search',
-        'Holo quick filter returns Exact Prints',
+        'Holo quick filter returns matching physical versions',
         'Pokémon physical badge visibility',
         'mobile viewport without horizontal overflow',
         'Search V2 BFF responses without HTTP errors',
