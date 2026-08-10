@@ -60,32 +60,35 @@ export default function GameHubPage({ game }) {
   useEffect(() => {
     let cancelled = false
 
-    async function load() {
-      try {
-        const [nextCollections, nextNews, nextReleases, nextMarketProducts] = await Promise.all([
-          fetchSetsByGame(game.slug, { limit: 500 }),
-          fetchNewsByGame(game.slug, { limit: 6 }).catch(() => []),
-          fetchReleasesByGame(game.slug, { limit: 8 }).catch(() => []),
-          fetchMarketProductsByGame(game.slug, { limit: 24 }).catch(() => []),
-        ])
-        if (!cancelled) {
-          setCollections(nextCollections)
-          setNews(nextNews)
-          setReleases(nextReleases)
-          setMarketProducts(nextMarketProducts)
-          setCollectionsError('')
-        }
-      } catch (requestError) {
+    setCollectionsLoading(true)
+    setCollectionsError('')
+
+    fetchSetsByGame(game.slug, { limit: 500 })
+      .then((items) => {
+        if (!cancelled) setCollections(items)
+      })
+      .catch((requestError) => {
         if (!cancelled) {
           setCollections([])
           setCollectionsError(requestError.message || 'No pudimos cargar los sets.')
         }
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setCollectionsLoading(false)
-      }
-    }
+      })
 
-    load()
+    fetchReleasesByGame(game.slug, { limit: 8 })
+      .then((items) => { if (!cancelled) setReleases(items) })
+      .catch(() => { if (!cancelled) setReleases([]) })
+
+    fetchMarketProductsByGame(game.slug, { limit: 24 })
+      .then((items) => { if (!cancelled) setMarketProducts(items) })
+      .catch(() => { if (!cancelled) setMarketProducts([]) })
+
+    fetchNewsByGame(game.slug, { limit: 6 })
+      .then((items) => { if (!cancelled) setNews(items) })
+      .catch(() => { if (!cancelled) setNews([]) })
+
     return () => { cancelled = true }
   }, [game.slug])
 
@@ -93,7 +96,7 @@ export default function GameHubPage({ game }) {
     <section className={`dri-game-hub dri-game-hub-${game.slug}`} style={{ '--game-accent': game.accent }}>
       <div className="app-shell dri-game-hub-shell">
         <header className="v4-game-header">
-          <Link href="/dashboard#juegos" className="v4-back-link">← Todos los juegos</Link>
+          <Link href="/#games" className="v4-back-link">← Todos los juegos</Link>
           <div className="v4-game-header-main">
             {copy.logo ? (
               <div className="v4-game-header-logo">
@@ -101,16 +104,16 @@ export default function GameHubPage({ game }) {
               </div>
             ) : <h1>{game.name}</h1>}
             <div>
-              <span className="v4-overline"><i /> Catálogo certificado</span>
+              <span className="v4-overline"><i /> Catálogo Don’tRipIt</span>
               <h1>Busca una carta sin perderte en el catálogo.</h1>
               <p>{copy.intro}</p>
             </div>
           </div>
           <nav className="v4-game-jumps" aria-label={`Secciones de ${game.name}`}>
             <a href="#buscar">Buscar</a>
+            <a href="#colecciones">Sets</a>
             <a href="#sellado">Sellado</a>
             <a href="#lanzamientos">Lanzamientos</a>
-            <a href="#colecciones">Sets</a>
             <a href="#noticias">Noticias</a>
           </nav>
         </header>
@@ -120,6 +123,20 @@ export default function GameHubPage({ game }) {
         </div>
 
         <div className="ux-game-secondary">
+          <div id="colecciones" className="dri-hub-anchor">
+            {collectionsLoading ? (
+              <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" />
+            ) : null}
+            {!collectionsLoading && collectionsError ? (
+              <StatePanel title="No pudimos cargar los sets" description={collectionsError} error tone="error" />
+            ) : null}
+            {!collectionsLoading && !collectionsError ? (
+              <GameCollectionsList collections={collections} gameSlug={game.slug} />
+            ) : null}
+          </div>
+
+          <MarketProductShelf products={marketProducts} gameName={game.name} />
+
           <section id="lanzamientos" className="ux-upcoming-section dri-hub-anchor">
             <div className="ux-section-head">
               <div>
@@ -153,20 +170,6 @@ export default function GameHubPage({ game }) {
               </div>
             )}
           </section>
-
-          <MarketProductShelf products={marketProducts} gameName={game.name} />
-
-          <div id="colecciones" className="dri-hub-anchor">
-            {collectionsLoading ? (
-              <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" />
-            ) : null}
-            {!collectionsLoading && collectionsError ? (
-              <StatePanel title="No pudimos cargar los sets" description={collectionsError} error tone="error" />
-            ) : null}
-            {!collectionsLoading && !collectionsError ? (
-              <GameCollectionsList collections={collections} gameSlug={game.slug} />
-            ) : null}
-          </div>
 
           <div id="noticias" className="dri-hub-anchor">
             <GameNewsGrid news={news} />
