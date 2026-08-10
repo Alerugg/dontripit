@@ -14,161 +14,202 @@ const GAME_LOGOS = {
 }
 
 const GAME_NOTES = {
-  pokemon: 'Cartas, sets y variantes',
-  magic: 'Prints, finishes e idiomas',
-  onepiece: 'Leaders, promos y parallels',
+  pokemon: 'Cartas, sets, promos y variantes',
+  magic: 'Impresiones, finishes e idiomas',
+  onepiece: 'Leaders, promos, parallels y reprints',
   yugioh: 'Ediciones, rarezas y códigos',
-  riftbound: 'Catálogo en preparación',
+  riftbound: 'El siguiente catálogo que estamos preparando',
 }
 
 export default function PublicHome() {
+  const activeGames = GAME_CATALOG.filter((game) => game.slug !== 'riftbound')
+  const riftbound = GAME_CATALOG.find((game) => game.slug === 'riftbound')
+
   return (
-    <main className="v4-site">
+    <main className="dri-home">
       <TopNav />
 
-      <section className="v4-hero app-shell">
-        <div className="v4-hero-copy">
-          <span className="v4-overline"><i /> El catálogo para coleccionistas</span>
-          <h1>Encuentra la carta.<br /><em>Controla la colección.</em></h1>
-          <p>Busca por nombre, número o set. Don’tRipIt te lleva de la carta a la edición física exacta.</p>
-          <HomeSearch />
-          <div className="v4-hero-links">
-            <Link href="/register" className="v4-button v4-button-primary">Crear cuenta gratis</Link>
-            <a href="#games" className="v4-text-link">Explorar juegos <span>↓</span></a>
+      <section className="dri-home-hero app-shell">
+        <div className="dri-home-hero-copy">
+          <span className="v4-overline"><i /> Tu colección, bien identificada</span>
+          <h1>Encuentra la carta.<br /><em>Guarda la versión exacta.</em></h1>
+          <p>
+            Busca por nombre, número o set. Don’tRipIt separa cada edición física, conecta su precio con la fuente y te deja organizar colección y wishlist sin mezclar variantes.
+          </p>
+
+          <div id="search" className="dri-home-search-zone">
+            <HomeSearch />
           </div>
-          <ul className="v4-proof-list" aria-label="Funciones principales">
-            <li><span>✓</span> Búsqueda precisa</li>
-            <li><span>✓</span> Colección y wishlist</li>
-            <li><span>✓</span> Precios con fuente</li>
+
+          <div className="dri-home-hero-actions">
+            <Link href="/register" className="dri-btn dri-btn-primary">Crear cuenta gratis</Link>
+            <a href="#games" className="dri-btn dri-btn-ghost">Explorar catálogos ↓</a>
+          </div>
+
+          <ul className="dri-home-proof" aria-label="Principios del producto">
+            <li><b>✓</b>Identidad física exacta</li>
+            <li><b>✓</b>Precio con fuente y fecha</li>
+            <li><b>✓</b>Colección y wishlist por versión</li>
           </ul>
         </div>
 
-        <div className="v4-hero-visual" aria-label="Juegos disponibles en Don’tRipIt">
-          <div className="v4-orbit v4-orbit-one" />
-          <div className="v4-orbit v4-orbit-two" />
-          <div className="v4-card-bundle">
-            <Image
-              src="/branding/tcg_bundle.png"
-              alt="Selección de cartas coleccionables"
-              width={1445}
-              height={900}
-              sizes="(max-width: 900px) 92vw, 48vw"
-              priority
-            />
-          </div>
-          <div className="v4-float-card v4-float-card-search">
-            <span>Resultado exacto</span>
-            <strong>Monkey D. Luffy</strong>
-            <small>OP05-119 · 14 versiones</small>
-          </div>
-          <div className="v4-float-card v4-float-card-price">
-            <span>Valor conservador</span>
-            <strong>€42,80</strong>
-            <small>Cardmarket · EUR</small>
+        <div className="dri-home-product-preview" aria-label="Ejemplo del flujo de Don’tRipIt">
+          <div className="dri-preview-window">
+            <div className="dri-preview-top">
+              <span>Ejemplo de interfaz</span>
+              <strong>Don’tRipIt</strong>
+            </div>
+            <div className="dri-preview-search">
+              <span>⌕</span>
+              <strong>OP05-119</strong>
+            </div>
+            <div className="dri-preview-result">
+              <div className="dri-preview-card-art">DRI</div>
+              <div className="dri-preview-result-copy">
+                <small>Resultado exacto</small>
+                <strong>Elige la edición que tienes</strong>
+                <div className="dri-preview-tags">
+                  <i>Set</i><i>Rareza</i><i>Idioma</i><i>Variante</i>
+                </div>
+              </div>
+            </div>
+            <div className="dri-preview-action-row">
+              <span>+ Mi colección</span>
+              <span>♡ Wishlist</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="v4-signal-bar">
+      <section className="dri-capability-bar">
         <div className="app-shell">
-          <span>UNA CUENTA</span><i />
-          <span>CUATRO CATÁLOGOS ACTIVOS</span><i />
-          <span>IDENTIDAD FÍSICA EXACTA</span><i />
-          <span>FUENTES VERIFICABLES</span>
+          <span>4 catálogos activos</span><i />
+          <span>Cardmarket como fuente de mercado</span><i />
+          <span>Variantes y reprints separados</span><i />
+          <span>Lanzamientos oficiales por región</span>
         </div>
       </section>
 
-      <section id="games" className="v4-section app-shell">
-        <header className="v4-section-heading">
+      <section id="games" className="dri-home-section app-shell">
+        <header className="dri-home-heading">
           <div>
             <span className="v4-overline"><i /> Catálogos</span>
-            <h2>Tu juego. La misma claridad.</h2>
+            <h2>Cuatro juegos. Una forma clara de coleccionar.</h2>
           </div>
-          <p>Cada TCG conserva sus filtros, rarezas y reglas.</p>
+          <p>La interfaz es consistente; los filtros y atributos respetan las reglas de cada TCG.</p>
         </header>
 
-        <div className="v4-game-grid">
-          {GAME_CATALOG.map((game) => {
-            const soon = game.slug === 'riftbound'
-            return (
-              <Link
-                key={game.slug}
-                href={soon ? '/games/riftbound' : `/games/${game.slug}`}
-                className={`v4-game-card v4-game-${game.slug} ${soon ? 'is-soon' : ''}`}
-                style={{ '--game-accent': game.accent }}
-              >
-                <span className="v4-game-state">{soon ? 'Próximamente' : 'Explorar'}</span>
-                <div className="v4-game-logo">
-                  <Image src={GAME_LOGOS[game.slug]} alt={game.name} width={280} height={100} sizes="220px" />
-                </div>
-                <p>{GAME_NOTES[game.slug]}</p>
-                <b aria-hidden="true">↗</b>
-              </Link>
-            )
-          })}
+        <div className="dri-game-grid">
+          {activeGames.map((game) => (
+            <Link
+              key={game.slug}
+              href={`/games/${game.slug}`}
+              className="dri-game-card"
+              style={{ '--game-accent': game.accent }}
+            >
+              <span className="dri-game-card-state">Explorar catálogo</span>
+              <div className="dri-game-card-logo">
+                <Image src={GAME_LOGOS[game.slug]} alt={game.name} width={280} height={100} sizes="210px" />
+              </div>
+              <p>{GAME_NOTES[game.slug]}</p>
+              <b className="dri-game-card-arrow" aria-hidden="true">↗</b>
+            </Link>
+          ))}
+
+          {riftbound ? (
+            <Link
+              href="/games/riftbound"
+              className="dri-game-card is-soon"
+              style={{ '--game-accent': riftbound.accent }}
+            >
+              <span className="dri-game-card-state">Próximamente</span>
+              <div className="dri-game-card-logo">
+                <Image src={GAME_LOGOS.riftbound} alt={riftbound.name} width={280} height={100} sizes="190px" />
+              </div>
+              <p>{GAME_NOTES.riftbound}</p>
+            </Link>
+          ) : null}
         </div>
       </section>
 
-      <section id="features" className="v4-section app-shell">
-        <div className="v4-bento">
-          <article className="v4-bento-main">
-            <span className="v4-overline"><i /> Search V2</span>
-            <h2>Escribe “Luffy”.<br />Nosotros resolvemos el resto.</h2>
-            <p>La búsqueda normal agrupa la carta. Los filtros avanzados aparecen sólo cuando necesitas una versión concreta.</p>
-            <div className="v4-demo-query">
-              <span>⌕</span><strong>Luffy</strong><kbd>ENTER</kbd>
-            </div>
-            <div className="v4-demo-results">
-              <span><b>Monkey D. Luffy</b><small>Personaje · 31 versiones</small></span>
-              <span><b>Monkey D. Luffy</b><small>Leader · 18 versiones</small></span>
-              <span><b>Monkey D. Luffy</b><small>Promo · 9 versiones</small></span>
-            </div>
-          </article>
+      <section id="how-it-works" className="dri-home-section app-shell">
+        <header className="dri-home-heading">
+          <div>
+            <span className="v4-overline"><i /> Cómo funciona</span>
+            <h2>De lo que recuerdas a la carta exacta, sin rodeos.</h2>
+          </div>
+          <p>No necesitas conocer antes el ID interno, el finish o la taxonomía del catálogo.</p>
+        </header>
 
-          <article className="v4-bento-card v4-bento-purple">
-            <span>01</span>
-            <h3>Edición exacta</h3>
-            <p>Set, idioma, rareza y acabado separados.</p>
-            <div className="v4-mini-tags"><i>OP05</i><i>Alt art</i><i>EN</i></div>
+        <div className="dri-flow-grid">
+          <article className="dri-flow-card">
+            <span className="dri-flow-number">01</span>
+            <h3>Busca como coleccionista</h3>
+            <p>Nombre, número de carta o set. Te mostramos primero resultados entendibles y dejamos los filtros técnicos para cuando realmente hagan falta.</p>
           </article>
-
-          <article className="v4-bento-card">
-            <span>02</span>
-            <h3>Portfolio honesto</h3>
-            <p>Sin estimaciones inventadas. Precio, fuente y fecha.</p>
-            <strong className="v4-price">€1.284,40</strong>
+          <article className="dri-flow-card">
+            <span className="dri-flow-number">02</span>
+            <h3>Elige la versión física</h3>
+            <p>Arte, set, idioma, rareza, finish, promo o reprint permanecen separados. Ves lo importante antes de guardar nada.</p>
           </article>
-
-          <article className="v4-bento-card">
-            <span>03</span>
-            <h3>Wishlist limpia</h3>
-            <p>Guarda la versión que buscas, no sólo el nombre.</p>
-            <div className="v4-heart-line"><b>♡</b><span>24 cartas</span></div>
+          <article className="dri-flow-card">
+            <span className="dri-flow-number">03</span>
+            <h3>Guárdala desde la misma ficha</h3>
+            <p>Precio, colección y wishlist están junto a la versión seleccionada. La ficha avanzada existe para profundizar, no como paso obligatorio.</p>
           </article>
         </div>
       </section>
 
-      <section id="news" className="v4-section app-shell">
-        <div className="v4-release-panel">
+      <section className="dri-home-section app-shell">
+        <header className="dri-home-heading">
+          <div>
+            <span className="v4-overline"><i /> Datos que puedes confiar</span>
+            <h2>Profundo por detrás. Simple por delante.</h2>
+          </div>
+          <p>Don’tRipIt conserva la complejidad del catálogo sin obligarte a navegar como si estuvieras mirando una base de datos.</p>
+        </header>
+
+        <div className="dri-feature-grid">
+          <article className="dri-feature-card is-primary">
+            <span className="dri-feature-chip">Edición exacta</span>
+            <h3>Una carta no es una sola versión.</h3>
+            <p>Alternativas, promos, reprints, idiomas y acabados conservan su identidad propia para que tu colección sea realmente precisa.</p>
+          </article>
+          <article className="dri-feature-card">
+            <span className="dri-feature-chip">Mercado</span>
+            <h3>Precio con contexto.</h3>
+            <p>Cuando existe un precio fiable, mostramos fuente y fecha. Cuando no existe, lo decimos en vez de inventarlo.</p>
+          </article>
+          <article className="dri-feature-card">
+            <span className="dri-feature-chip">Portfolio</span>
+            <h3>Cobertura visible.</h3>
+            <p>El valor de la colección diferencia lo valorado de lo que todavía no tiene una referencia de mercado verificable.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="releases" className="dri-home-section app-shell">
+        <div className="dri-home-release">
           <div>
             <span className="v4-overline"><i /> Calendario oficial</span>
             <h2>Lo próximo, con región y fuente.</h2>
-            <p>Sin convertir rumores ni fechas de otro mercado en datos.</p>
+            <p>Fechas oficiales separadas por mercado. Sin convertir rumores ni calendarios de otra región en datos.</p>
           </div>
-          <div className="v4-release-list">
-            <Link href="/games/pokemon#lanzamientos"><span>US</span><strong>Pokémon</strong><small>Ver calendario →</small></Link>
-            <Link href="/games/magic#lanzamientos"><span>GLOBAL</span><strong>Magic</strong><small>Ver calendario →</small></Link>
-            <Link href="/games/yugioh#lanzamientos"><span>EU</span><strong>Yu‑Gi‑Oh!</strong><small>Ver calendario →</small></Link>
+          <div className="dri-home-release-list">
+            <Link href="/games/pokemon#lanzamientos"><span>POKÉMON</span><strong>Ver próximos lanzamientos</strong><small>USA · EU · JP →</small></Link>
+            <Link href="/games/onepiece#lanzamientos"><span>ONE PIECE</span><strong>Ver próximos lanzamientos</strong><small>USA · EU · JP →</small></Link>
+            <Link href="/games/magic#lanzamientos"><span>MAGIC</span><strong>Ver próximos lanzamientos</strong><small>USA · EU · JP →</small></Link>
+            <Link href="/games/yugioh#lanzamientos"><span>YU-GI-OH!</span><strong>Ver próximos lanzamientos</strong><small>USA · EU · JP →</small></Link>
           </div>
         </div>
       </section>
 
-      <section className="v4-final app-shell">
+      <section className="dri-home-final app-shell">
         <div>
           <span className="v4-overline"><i /> Don’tRipIt</span>
-          <h2>Tu colección merece algo mejor que una hoja de cálculo.</h2>
+          <h2>Busca una carta. Nosotros nos encargamos de que la versión correcta no se pierda por el camino.</h2>
         </div>
-        <Link href="/register" className="v4-button v4-button-light">Empezar gratis <span>→</span></Link>
+        <Link href="/register" className="dri-btn dri-btn-primary">Empezar gratis →</Link>
       </section>
 
       <SiteFooter />
