@@ -1,4 +1,5 @@
 import FallbackImage from '../common/FallbackImage'
+import './MarketProductShelf.css'
 
 function money(value, currency = 'EUR') {
   if (value === null || value === undefined) return null
