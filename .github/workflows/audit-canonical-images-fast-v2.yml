@@ -1,0 +1,78 @@
+name: Audit Canonical Images Fast V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-canonical-images-fast-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install sqlalchemy==2.0.36 psycopg2-binary==2.9.9
+      - name: Audit images
+        run: |
+          python - <<'PY'
+          import json,os
+          from sqlalchemy import create_engine,text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          out={}
+          with engine.connect() as c:
+              rows=c.execute(text('''
+                SELECT g.slug,count(*) prints,
+                  count(*) FILTER (WHERE EXISTS (SELECT 1 FROM print_images i WHERE i.print_id=p.id AND NULLIF(i.url,'') IS NOT NULL)) with_image,
+                  count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM print_images i WHERE i.print_id=p.id AND NULLIF(i.url,'') IS NOT NULL)) missing
+                FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+                WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh') GROUP BY g.slug ORDER BY g.slug
+              ''')).mappings().all()
+              out['counts']=[{k:int(v) if k!='slug' else v for k,v in r.items()} for r in rows]
+              for slug in ('pokemon','mtg'):
+                  missing=c.execute(text('''
+                    SELECT p.id print_id,ca.name,s.code set_code,p.collector_number,p.variant,p.is_foil,p.language,
+                      p.scryfall_id,p.tcgdex_id,p.yugioh_id,p.print_key,
+                      array_remove(array_agg(DISTINCT pi.source),NULL) identifier_sources
+                    FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+                    LEFT JOIN sets s ON s.id=p.set_id LEFT JOIN print_identifiers pi ON pi.print_id=p.id
+                    WHERE g.slug=:slug AND NOT EXISTS(SELECT 1 FROM print_images i WHERE i.print_id=p.id AND NULLIF(i.url,'') IS NOT NULL)
+                    GROUP BY p.id,ca.name,s.code,p.collector_number,p.variant,p.is_foil,p.language,p.scryfall_id,p.tcgdex_id,p.yugioh_id,p.print_key
+                    ORDER BY p.id LIMIT 200
+                  '''),{'slug':slug}).mappings().all()
+                  out[slug+'_sample']=[dict(r) for r in missing]
+
+              # Attribute evidence that may contain recoverable source image URLs.
+              c.execute("SELECT to_regclass('public.print_attributes') AS t")
+              if c.scalar() is not None:
+                  for slug in ('pokemon','mtg'):
+                      attrs=c.execute(text('''
+                        SELECT p.id print_id,pa.source,pa.attributes
+                        FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+                        JOIN print_attributes pa ON pa.print_id=p.id
+                        WHERE g.slug=:slug AND NOT EXISTS(SELECT 1 FROM print_images i WHERE i.print_id=p.id AND NULLIF(i.url,'') IS NOT NULL)
+                          AND CAST(pa.attributes AS text) ILIKE '%image%'
+                        ORDER BY p.id LIMIT 100
+                      '''),{'slug':slug}).mappings().all()
+                      out[slug+'_image_attributes']=[dict(r) for r in attrs]
+
+              c.execute("SELECT to_regclass('public.product_images') AS t")
+              product_table=c.scalar()
+              if product_table is not None:
+                  variants=c.execute(text('''
+                    SELECT g.slug,count(*) variants,
+                      count(*) FILTER (WHERE EXISTS(SELECT 1 FROM product_images i WHERE i.product_variant_id=pv.id AND NULLIF(i.url,'') IS NOT NULL)) with_image
+                    FROM product_variants pv JOIN products p ON p.id=pv.product_id JOIN games g ON g.id=p.game_id
+                    WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh') GROUP BY g.slug ORDER BY g.slug
+                  ''')).mappings().all()
+                  out['product_variants']=[{'slug':r['slug'],'variants':int(r['variants']),'with_image':int(r['with_image']),
+                                            'missing':int(r['variants'])-int(r['with_image'])} for r in variants]
+          print(json.dumps(out,indent=2,default=str,sort_keys=True))
+          PY
