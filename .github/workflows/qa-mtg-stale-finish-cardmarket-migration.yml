@@ -1,0 +1,100 @@
+name: QA MTG Stale Finish Cardmarket Migration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-mtg-stale-finish-cardmarket-migration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Compare stale finish links with their valid sibling links
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import Counter
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          BAD=[159643,162796,162971,163535,163626,164948,168154,168456,168677,171046,171453,173124,173503,176332,176889,177523,179826,184892,184957,184974,185025,185465,185982,186595,186852,187025,187078,188378,188459,194409,195325,195999,197638,201209,201919,202158,202450,204471,205337,206665,206940,207696,209882,212887,213309,215113,216746,219064,222315,224598,225312,225445,226446,226904,227993,232622,233380,233827,234295,234686,235524,235721,236663,237675,238100,238238,239939,240066,241642,241950,242530,242944,243973,246962,247750,248344,250823,255211,256093,259816,261867,262956,263148,263739,265320,266014,268183,269446,270849,271307,271753,271994,272099,273411,274139,279240,279873,280873,281273,282483,284457,284997,285211,285765,290439,292206,293761,296188,297863,298168,302660,304474,304638,305542,305700,306230,306646,306844,308925,309129,310888,311811,311869,314655,315411,315697,316233,317097,317174,318141,319003]
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          rows=[]
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              WITH pairs AS (
+                SELECT b.id bad_id,b.scryfall_id,b.variant bad_variant,
+                       g.id good_id,g.variant good_variant
+                FROM prints b
+                JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s))
+                WHERE b.id=ANY(%s)
+              )
+              SELECT p.*,
+                     bl.id bad_link_id,bl.external_product_id bad_external_product_id,bl.link_status bad_link_status,
+                     bp.external_id bad_external_id,bp.name bad_product_name,bp.url bad_product_url,bp.source bad_product_source,
+                     gl.id good_link_id,gl.external_product_id good_external_product_id,gl.link_status good_link_status,
+                     gp.external_id good_external_id,gp.name good_product_name,gp.url good_product_url
+              FROM pairs p
+              LEFT JOIN external_catalog_print_links bl ON bl.print_id=p.bad_id
+              LEFT JOIN external_catalog_products bp ON bp.id=bl.external_product_id
+              LEFT JOIN external_catalog_print_links gl ON gl.print_id=p.good_id AND gl.external_product_id=bl.external_product_id
+              LEFT JOIN external_catalog_products gp ON gp.id=gl.external_product_id
+              ORDER BY p.bad_id,bl.id
+            ''',(BAD,BAD))
+            rows=[dict(x) for x in c.fetchall()]
+
+            # Also count all links on the good siblings, not just same-product joins.
+            c.execute('''
+              WITH good AS (
+                SELECT DISTINCT g.id good_id
+                FROM prints b JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s))
+                WHERE b.id=ANY(%s)
+              )
+              SELECT good.good_id,count(l.id) links,
+                     array_agg(p.external_id ORDER BY p.external_id) FILTER (WHERE l.id IS NOT NULL) external_ids
+              FROM good LEFT JOIN external_catalog_print_links l ON l.print_id=good.good_id
+              LEFT JOIN external_catalog_products p ON p.id=l.external_product_id
+              GROUP BY good.good_id ORDER BY good.good_id
+            ''',(BAD,BAD))
+            sibling_links={x['good_id']:dict(x) for x in c.fetchall()}
+          conn.close()
+
+          by_bad={}
+          for r in rows:
+            x=by_bad.setdefault(r['bad_id'],{'bad_id':r['bad_id'],'good_id':r['good_id'],'bad_variant':r['bad_variant'],'good_variant':r['good_variant'],'bad_links':[]})
+            if r.get('bad_link_id'):
+              x['bad_links'].append({k:r.get(k) for k in ('bad_link_id','bad_external_product_id','bad_link_status','bad_external_id','bad_product_name','bad_product_url','bad_product_source','good_link_id','good_external_product_id','good_link_status')})
+            x['good_all_links']=sibling_links.get(r['good_id'],{'links':0,'external_ids':[]})
+
+          status=Counter();details=[]
+          for x in by_bad.values():
+            bad=x['bad_links']; good_count=int((x.get('good_all_links') or {}).get('links') or 0)
+            if not bad: key='bad_has_no_external_link'
+            elif all(link.get('good_link_id') for link in bad): key='same_product_already_on_good'
+            elif good_count==0: key='safe_move_to_unlinked_good'
+            else: key='good_has_other_link_review'
+            status[key]+=1;x['status']=key
+            if key!='same_product_already_on_good':details.append(x)
+          report={'bad_prints':len(by_bad),'status_counts':dict(status),'review_rows':details}
+          print(json.dumps({'bad_prints':report['bad_prints'],'status_counts':report['status_counts']},indent=2,ensure_ascii=False))
+          print('review_sample',json.dumps(details[:30],indent=2,ensure_ascii=False,default=str))
+          open('/tmp/mtg-stale-finish-cardmarket-migration.json','w').write(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-stale-finish-cardmarket-migration-${{ github.run_id }}
+          path: /tmp/mtg-stale-finish-cardmarket-migration.json
+          retention-days: 90
