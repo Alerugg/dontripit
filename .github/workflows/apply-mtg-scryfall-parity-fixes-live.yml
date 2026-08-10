@@ -44,13 +44,10 @@ jobs:
               before=int(c.fetchone()['n']); assert before==161275,before
               c.execute('''SELECT p.id,p.scryfall_id,p.variant,p.is_foil,s.code set_code FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=c.game_id WHERE p.id=ANY(%s) AND g.slug='mtg' ORDER BY p.id FOR UPDATE''',(BAD,))
               bad_rows=[dict(x) for x in c.fetchall()];assert len(bad_rows)==131,len(bad_rows)
-              assert set(x['set_code'] for x in bad_rows)=={'HOB','HOC'},set(x['set_code'] for x in bad_rows)
+              assert {str(x['set_code']).lower() for x in bad_rows}=={'hob','hoc'},set(x['set_code'] for x in bad_rows)
               variants=Counter(x['variant'] for x in bad_rows)
               assert variants==Counter({'nonfoil':70,'foil':61}),variants
 
-              # Each stale finish must have exactly one surviving sibling for the
-              # same Scryfall object. This was independently certified against
-              # current all_cards bulk before this workflow was created.
               c.execute('''
                 SELECT b.id bad_id,count(g.id) sibling_count,min(g.id) good_id
                 FROM prints b LEFT JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s))
@@ -59,9 +56,6 @@ jobs:
               pairs=[dict(x) for x in c.fetchall()]
               assert len(pairs)==131 and all(int(x['sibling_count'])==1 for x in pairs),pairs[:10]
 
-              # No user/business ownership references may appear between audit
-              # and apply. Discover FKs dynamically and permit only derivative
-              # catalog rows that will be deleted explicitly below.
               allowed_fk_tables={'external_catalog_print_links','print_attributes','print_identifiers','print_search_profiles','print_images','print_releases','print_field_provenance'}
               c.execute('''
                 SELECT tc.table_name,kcu.column_name
@@ -78,9 +72,6 @@ jobs:
                 if n and table not in allowed_fk_tables:unexpected.append({'table':table,'column':col,'rows':n})
               assert not unexpected,f'unexpected live references: {unexpected}'
 
-              # 130 stale links are duplicate copies of the exact same external
-              # Cardmarket product already linked to the good sibling; one bad
-              # print has no external link at all.
               c.execute('''
                 WITH pairs AS (
                   SELECT b.id bad_id,g.id good_id FROM prints b JOIN prints g ON g.scryfall_id=b.scryfall_id AND g.id<>b.id AND NOT (g.id=ANY(%s)) WHERE b.id=ANY(%s)
@@ -96,16 +87,13 @@ jobs:
               ''',(BAD,BAD))
               linkproof=dict(c.fetchone());assert (int(linkproof['no_link']),int(linkproof['linked']),int(linkproof['duplicated_on_good']))==(1,130,130),linkproof
 
-              # Generic economics/provenance tables use entity_type/entity_id and
-              # therefore do not participate in FK discovery. Invalid print
-              # histories are removed, never migrated to a different finish.
               c.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'")
               columns={(x['table_name'],x['column_name']) for x in c.fetchall()}
               generic_deleted={}
               for table in ('price_snapshots','price_daily_ohlc'):
                 if {(table,'entity_type'),(table,'entity_id')} <= columns:
                   c.execute(f"DELETE FROM {table} WHERE lower(entity_type)='print' AND entity_id=ANY(%s)",(BAD,));generic_deleted[table]=c.rowcount
-              if {( 'field_provenance','entity_type'),('field_provenance','entity_id')} <= columns:
+              if {('field_provenance','entity_type'),('field_provenance','entity_id')} <= columns:
                 c.execute("DELETE FROM field_provenance WHERE lower(entity_type)='print' AND entity_id=ANY(%s)",(BAD,));generic_deleted['field_provenance']=c.rowcount
 
               derivative_deleted={}
@@ -118,7 +106,7 @@ jobs:
               collector_changes=[]
               for pid,(old,new) in CORRECTIONS.items():
                 c.execute('''SELECT p.id,p.collector_number,p.print_key,p.scryfall_id,p.variant,c.name,s.code FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE p.id=%s FOR UPDATE''',(pid,))
-                row=dict(c.fetchone() or {});assert row and row['collector_number']==old and row['code']=='sld',row
+                row=dict(c.fetchone() or {});assert row and row['collector_number']==old and str(row['code']).lower()=='sld',row
                 if pid in (272959,272960):assert row['name']=='Shalai, Voice of Plenty',row
                 else:assert row['name']=='Song of the Worldsoul',row
                 c.execute('''SELECT count(*) n FROM prints WHERE set_id=(SELECT set_id FROM prints WHERE id=%s) AND collector_number=%s AND language=(SELECT language FROM prints WHERE id=%s) AND variant=(SELECT variant FROM prints WHERE id=%s) AND id<>%s''',(pid,new,pid,pid,pid))
@@ -127,8 +115,6 @@ jobs:
                 c.execute('SELECT normalized_collector_number,search_text FROM print_search_profiles WHERE print_id=%s FOR UPDATE',(pid,));profile=dict(c.fetchone() or {})
                 assert profile.get('normalized_collector_number')==old,profile
                 assert old in str(profile.get('search_text') or '').split(),profile
-                # Replace the collector token only when surrounded by spaces or
-                # string boundaries; UUID fragments/other numbers are untouched.
                 c.execute('''UPDATE print_search_profiles
                              SET normalized_collector_number=%s,
                                  search_text=regexp_replace(search_text, %s, %s, 'g'),
@@ -136,8 +122,7 @@ jobs:
                              WHERE print_id=%s''',(new,rf'\m{old}\M',new,pid));assert c.rowcount==1
                 c.execute('SELECT normalized_collector_number,search_text FROM print_search_profiles WHERE print_id=%s',(pid,));after_profile=dict(c.fetchone())
                 assert after_profile['normalized_collector_number']==new and new in after_profile['search_text'].split() and old not in after_profile['search_text'].split(),after_profile
-                # Keep source-level field provenance coherent if that tracked field exists.
-                if {( 'field_provenance','entity_type'),('field_provenance','entity_id'),('field_provenance','field_name'),('field_provenance','value_text')} <= columns:
+                if {('field_provenance','entity_type'),('field_provenance','entity_id'),('field_provenance','field_name'),('field_provenance','value_text')} <= columns:
                   c.execute("UPDATE field_provenance SET value_text=%s,updated_at=now() WHERE lower(entity_type)='print' AND entity_id=%s AND field_name='collector_number' AND value_text=%s",(new,pid,old))
                 collector_changes.append({'print_id':pid,'from':old,'to':new,'scryfall_id':row['scryfall_id'],'variant':row['variant']})
 
