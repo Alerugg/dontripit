@@ -35,7 +35,9 @@ export default function SiteFooter() {
         <div className="dri-footer-column">
           <strong>Legal</strong>
           <Link href="/privacy">Privacidad</Link>
-          <Link href="/terms">Términos del MVP</Link>
+          <Link href="/cookies">Cookies</Link>
+          <Link href="/terms">Términos de uso</Link>
+          <a href="mailto:info@dontripit.com">Contacto</a>
         </div>
       </div>
 
