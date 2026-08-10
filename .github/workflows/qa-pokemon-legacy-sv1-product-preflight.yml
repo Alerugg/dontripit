@@ -1,0 +1,54 @@
+name: QA Pokemon Legacy sv1 Product Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-pokemon-legacy-sv1-product-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Inspect legacy and canonical Scarlet Violet sets plus referencing products
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          out={}
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''SELECT s.* FROM sets s JOIN games g ON g.id=s.game_id
+                         WHERE g.slug='pokemon' AND s.tcgdex_id IN ('sv1','sv01') ORDER BY s.tcgdex_id''')
+            sets=[dict(x) for x in c.fetchall()];out['sets']=sets
+            byid={x['tcgdex_id']:x for x in sets}
+            legacy=byid.get('sv1'); canonical=byid.get('sv01')
+            if legacy:
+              c.execute('SELECT * FROM products WHERE set_id=%s ORDER BY id',(legacy['id'],));out['legacy_products']=[dict(x) for x in c.fetchall()]
+            else: out['legacy_products']=[]
+            if canonical:
+              c.execute('SELECT * FROM products WHERE set_id=%s ORDER BY id',(canonical['id'],));out['canonical_products']=[dict(x) for x in c.fetchall()]
+            else: out['canonical_products']=[]
+            c.execute('''SELECT column_name,data_type,is_nullable FROM information_schema.columns
+                         WHERE table_schema='public' AND table_name='products' ORDER BY ordinal_position''')
+            out['product_columns']=[dict(x) for x in c.fetchall()]
+          conn.close()
+          out['preflight']={
+            'legacy_exists':bool(legacy),'canonical_exists':bool(canonical),
+            'legacy_is_empty_catalog_set':bool(legacy) and not any(True for _ in []),
+            'legacy_product_count':len(out['legacy_products']),
+            'canonical_product_count':len(out['canonical_products']),
+          }
+          print(json.dumps(out,indent=2,ensure_ascii=False,default=str))
+          PY
