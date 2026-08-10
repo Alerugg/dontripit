@@ -13,6 +13,8 @@ on:
       - 'backend/app/routes/search_v2.py'
       - 'backend/app/scripts/rebuild_mtg_search_v2_fast.py'
       - 'backend/app/scripts/benchmark_mtg_search_v2_shadow.py'
+      - 'backend/app/scripts/apply_mtg_v22_snapshot_live.py'
+      - 'backend/app/scripts/apply_mtg_v23_snapshot_live.py'
       - 'backend/tests/test_mtg_search_v2.py'
   workflow_dispatch:
 
