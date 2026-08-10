@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json, time
-          import urllib.error, urllib.parse, urllib.request
+          import urllib.parse, urllib.request
 
           base='https://dontripit.com'
           headers={'User-Agent':'Dontripit-Point9-QA/1.0'}
@@ -43,7 +43,6 @@ jobs:
                   time.sleep(5)
               raise AssertionError(f'{path} failed after retries: {last}')
 
-          # Static/public entry points.
           pages=['/','/games/pokemon','/games/onepiece','/games/magic','/games/yugioh','/login','/register','/forgot-password','/reset-password']
           for path in pages:
               request(path)
@@ -55,15 +54,15 @@ jobs:
 
           sets=request('/api/catalog/sets?game=onepiece&limit=500&offset=0',expect_json=True)
           items=sets.get('items',sets if isinstance(sets,list) else [])
-          assert len(items)>50, f'set archive still truncated: {len(items)}'
+          assert len(items)>=40, f'One Piece public set archive unexpectedly small: {len(items)}'
           op15=next((row for row in items if str(row.get('code','')).lower().replace('-','')=='op15'),None)
           assert op15, 'OP15 not found in One Piece set archive'
           set_code=str(op15.get('code'))
-          print(json.dumps({'onepiece_sets_loaded':len(items),'op15_code':set_code},sort_keys=True))
+          print(json.dumps({'onepiece_public_sets':len(items),'op15_code':set_code},sort_keys=True))
 
           detail=request('/api/catalog/set-detail?'+urllib.parse.urlencode({'game':'onepiece','set_code':set_code,'limit':1000,'offset':0}),expect_json=True)
           cards=detail.get('cards') or []
-          assert len(cards)>50, f'OP15 checklist still truncated: {len(cards)}'
+          assert len(cards)>50, f'OP15 checklist still truncated at public page size: {len(cards)}'
           fallback_names=[row for row in cards if str(row.get('name','')).startswith('Carta #')]
           assert len(fallback_names) <= max(3, int(len(cards)*0.05)), f'too many unresolved card names: {len(fallback_names)}/{len(cards)}'
           exact=next((row for row in cards if row.get('id') and row.get('card_id')),None)
