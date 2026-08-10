@@ -1,0 +1,57 @@
+name: Audit Multigame Canonical Inventory
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-multigame-canonical-inventory.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Inventory active games and provenance layers
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          out={}
+          with conn, conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute("SELECT id,slug,name FROM games ORDER BY id")
+            games=[dict(x) for x in c.fetchall()]
+            for g in games:
+              gid=g['id']; slug=g['slug']
+              d={'name':g['name']}
+              for key,sql in {
+                'sets':"SELECT count(*) n FROM sets WHERE game_id=%s",
+                'cards':"SELECT count(*) n FROM cards WHERE game_id=%s",
+                'prints':"SELECT count(*) n FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",
+                'images':"SELECT count(*) n FROM print_images pi JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",
+                'prints_with_primary_image':"SELECT count(distinct p.id) n FROM prints p JOIN cards c ON c.id=p.card_id JOIN print_images pi ON pi.print_id=p.id AND pi.is_primary=true WHERE c.game_id=%s",
+                'search_profiles':"SELECT count(*) n FROM print_search_profiles psp JOIN prints p ON p.id=psp.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",
+                'card_attributes':"SELECT count(*) n FROM card_attributes ca JOIN cards c ON c.id=ca.card_id WHERE c.game_id=%s",
+                'print_attributes':"SELECT count(*) n FROM print_attributes pa JOIN prints p ON p.id=pa.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",
+                'catalog_releases':"SELECT count(*) n FROM catalog_releases WHERE game_id=%s",
+                'print_release_memberships':"SELECT count(*) n FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id WHERE cr.game_id=%s",
+              }.items():
+                c.execute(sql,(gid,)); d[key]=int(c.fetchone()['n'])
+              c.execute("SELECT source,count(*) rows,count(distinct ca.card_id) entities FROM card_attributes ca JOIN cards c ON c.id=ca.card_id WHERE c.game_id=%s GROUP BY source ORDER BY rows DESC",(gid,)); d['card_attribute_sources']=[dict(x) for x in c.fetchall()]
+              c.execute("SELECT source,count(*) rows,count(distinct pa.print_id) entities FROM print_attributes pa JOIN prints p ON p.id=pa.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s GROUP BY source ORDER BY rows DESC",(gid,)); d['print_attribute_sources']=[dict(x) for x in c.fetchall()]
+              c.execute("SELECT source,count(*) rows,count(distinct pi.print_id) entities FROM print_images pi JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s GROUP BY source ORDER BY rows DESC",(gid,)); d['image_sources']=[dict(x) for x in c.fetchall()]
+              c.execute("SELECT source,count(*) releases FROM catalog_releases WHERE game_id=%s GROUP BY source ORDER BY releases DESC",(gid,)); d['release_sources']=[dict(x) for x in c.fetchall()]
+              c.execute("SELECT language,count(*) prints FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s GROUP BY language ORDER BY prints DESC",(gid,)); d['languages']=[dict(x) for x in c.fetchall()]
+              out[slug]=d
+          conn.close()
+          print(json.dumps(out,indent=2,ensure_ascii=False,default=str))
+          PY
