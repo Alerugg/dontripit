@@ -58,40 +58,32 @@ def cardmarket_print_batch_read():
 
 
 def _target_expansions(session, game_slug: str, set_code: str) -> list[str]:
-    sql = text(
-        """
-        WITH target_set AS (
-          SELECT s.id AS set_id
-          FROM sets s
-          JOIN games g ON g.id = s.game_id
-          WHERE g.slug = :game AND lower(s.code) = :set_code
-          LIMIT 1
-        ),
-        canonical_collectors AS (
-          SELECT DISTINCT regexp_replace(lower(COALESCE(p.collector_number, '')), '[^a-z0-9]+', '', 'g') AS collector_key
-          FROM prints p
-          JOIN target_set ts ON ts.set_id = p.set_id
-          WHERE COALESCE(p.collector_number, '') <> ''
+    # One Piece Cardmarket single names end in exact collectors such as
+    # "Krieg (OP15-001)". Matching the literal collector prefix is both safer
+    # and dramatically cheaper than normalizing every catalog row at request time.
+    if game_slug == "onepiece":
+        collector_prefix = set_code.replace("-", "").lower()
+        sql = text(
+            """
+            SELECT DISTINCT e.expansion_external_id
+            FROM external_catalog_products e
+            JOIN games g ON g.id = e.game_id
+            WHERE e.source = 'cardmarket'
+              AND e.product_group = 'single'
+              AND g.slug = :game
+              AND COALESCE(e.expansion_external_id, '') <> ''
+              AND lower(e.name) LIKE :collector_pattern
+            ORDER BY e.expansion_external_id
+            """
         )
-        SELECT DISTINCT e.expansion_external_id
-        FROM external_catalog_products e
-        JOIN games g ON g.id = e.game_id
-        WHERE e.source = 'cardmarket'
-          AND e.product_group = 'single'
-          AND g.slug = :game
-          AND COALESCE(e.expansion_external_id, '') <> ''
-          AND regexp_replace(
-                lower(COALESCE(substring(e.name from '\\(([^()]*)\\)\\s*$'), '')),
-                '[^a-z0-9]+', '', 'g'
-              ) IN (SELECT collector_key FROM canonical_collectors)
-        ORDER BY e.expansion_external_id
-        """
-    )
-    return [
-        str(value)
-        for value in session.execute(sql, {"game": game_slug, "set_code": set_code}).scalars().all()
-        if value is not None
-    ]
+        pattern = f"%({collector_prefix}-%"
+        return [
+            str(value)
+            for value in session.execute(sql, {"game": game_slug, "collector_pattern": pattern}).scalars().all()
+            if value is not None
+        ]
+
+    return []
 
 
 @market_search_read_bp.get("/api/v1/market/set-products/<game_slug>/<set_code>")
