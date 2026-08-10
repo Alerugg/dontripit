@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 import psycopg2
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.script.revision import ResolutionError
 
 
 EXPECTED_SCHEMA = "mtg-canonical-v2.2"
@@ -24,6 +27,27 @@ EXPECTED_COUNTS = {
     "print_images": 168435,
 }
 EXPECTED_FINISHES = {"etched": 1218, "foil": 65936, "nonfoil": 94121}
+REQUIRED_MTG_SCHEMA_REVISION = "20260808_25"
+
+
+def _assert_supported_schema_revision(revision: str) -> None:
+    config_path = Path(__file__).resolve().parents[2] / "alembic.ini"
+    config = Config(str(config_path))
+    config.set_main_option("script_location", str(config_path.parent / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    try:
+        ancestry = {
+            item.revision
+            for item in scripts.iterate_revisions(str(revision), "base")
+        }
+    except ResolutionError as exc:
+        raise AssertionError(f"Unknown Alembic revision: {revision}") from exc
+
+    if REQUIRED_MTG_SCHEMA_REVISION not in ancestry:
+        raise AssertionError(
+            f"Alembic revision {revision} does not include required MTG schema "
+            f"{REQUIRED_MTG_SCHEMA_REVISION}"
+        )
 
 
 def _db_url() -> str:
@@ -464,8 +488,7 @@ def run(*, snapshot_dir: Path, output_path: Path) -> dict:
 
             cur.execute("SELECT version_num FROM alembic_version")
             revision = str(cur.fetchone()[0])
-            if revision != "20260808_25":
-                raise AssertionError(f"Unexpected Alembic revision: {revision}")
+            _assert_supported_schema_revision(revision)
 
             cur.execute("SELECT id FROM games WHERE slug='mtg'")
             found = cur.fetchone()

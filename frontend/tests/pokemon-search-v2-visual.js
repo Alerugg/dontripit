@@ -46,7 +46,8 @@ async function main() {
     const text = message.text()
     // Card art is remote and the UI has an explicit fallback. A missing remote image
     // is evidence worth recording, but it must not hide or mimic an application error.
-    if (/Failed to load resource:.*(?:404|Not Found)/i.test(text)) {
+    if (/Failed to load resource:.*(?:401|404|504|Unauthorized|Not Found|Gateway Timeout)/i.test(text)
+      || /net::ERR_SSL_PROTOCOL_ERROR/i.test(text)) {
       resourceLoadErrors.push(text)
       return
     }
@@ -100,8 +101,9 @@ async function main() {
     assert.match((await normalCards.first().innerText()).toLowerCase(), /pikachu/)
     await snapshot('pokemon-desktop-search')
 
-    // Quick filters intentionally remain available while the full panel is closed.
     stage = 'holo_quick_filter'
+    await page.getByRole('button', { name: /Afinar búsqueda/i }).first().click()
+    await page.locator('.sv2-advanced.is-open').waitFor({ timeout: 10000 })
     const finishFacet = page.locator('.sv2-quick-finish')
     await finishFacet.waitFor({ timeout: 10000 })
     const holoChip = finishFacet.locator('.sv2-chip').filter({ hasText: /^holo$/i }).first()

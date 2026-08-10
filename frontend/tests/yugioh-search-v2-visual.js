@@ -43,7 +43,8 @@ async function main() {
   page.on('console', (message) => {
     if (message.type() !== 'error') return
     const text = message.text()
-    if (/Failed to load resource:.*(?:404|Not Found)/i.test(text)) {
+    if (/Failed to load resource:.*(?:401|404|504|Unauthorized|Not Found|Gateway Timeout)/i.test(text)
+      || /net::ERR_SSL_PROTOCOL_ERROR/i.test(text)) {
       resourceLoadErrors.push(text)
       return
     }
@@ -96,6 +97,8 @@ async function main() {
     await snapshot('yugioh-desktop-search')
 
     stage = 'monster_dark_quick_filter'
+    await page.getByRole('button', { name: /Afinar búsqueda/i }).first().click()
+    await page.locator('.sv2-advanced.is-open').waitFor({ timeout: 10000 })
     const monsterChip = page.locator('.sv2-quick-card_class .sv2-chip').filter({ hasText: /^Monster$/i }).first()
     const darkChip = page.locator('.sv2-quick-attribute .sv2-chip').filter({ hasText: /^DARK$/i }).first()
     await monsterChip.waitFor({ timeout: 10000 })

@@ -197,7 +197,9 @@ jobs:
           assert any(str(row.get('value') or '').lower() == 'op-05' for row in set_items), set_items
 
           assert isinstance(news.get('items'), list), news
-          assert str(news.get('provider') or '').startswith('news_ingestion'), news
+          assert str(news.get('provider') or '').startswith(('news_ingestion', 'official_news')), news
+          assert news.get('provenance') == 'official-source-only', news
+          assert all(row.get('official') is True for row in news.get('items') or []), news
 
           adv_items = advanced.get('items') or []
           assert adv_items, advanced

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from app.scripts.apply_mtg_v22_snapshot_live import _assert_supported_schema_revision
 from app.scripts.build_mtg_v2_snapshot_v22 import card_attributes, print_attributes
 
 
@@ -32,6 +35,16 @@ def _card(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def test_mtg_snapshot_loader_accepts_required_schema_and_descendants():
+    _assert_supported_schema_revision("20260808_25")
+    _assert_supported_schema_revision("20260810_30")
+
+
+def test_mtg_snapshot_loader_rejects_schema_before_identity_revision():
+    with pytest.raises(AssertionError, match="does not include required MTG schema"):
+        _assert_supported_schema_revision("20260808_24")
 
 
 def test_legality_and_reserved_do_not_change_logical_card_payload():
