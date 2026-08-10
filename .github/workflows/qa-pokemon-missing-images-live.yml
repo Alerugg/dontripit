@@ -1,0 +1,92 @@
+name: QA Pokemon Missing Images Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-pokemon-missing-images-live.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Classify Pokemon prints without a primary image
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                WITH missing AS (
+                  SELECT p.id print_id,p.card_id,p.set_id,p.collector_number,p.variant,p.is_foil,p.rarity,
+                         p.tcgdex_id,c.tcgdex_id card_tcgdex_id,c.name,s.code set_code,s.name set_name
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  JOIN sets s ON s.id=p.set_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id AND pi.is_primary=true)
+                ), sibling AS (
+                  SELECT m.print_id,
+                         count(DISTINCT pi.url) sibling_url_count,
+                         min(pi.url) FILTER (WHERE pi.url IS NOT NULL) single_url,
+                         count(DISTINCT p2.id) FILTER (WHERE pi.id IS NOT NULL) sibling_prints_with_image
+                  FROM missing m
+                  LEFT JOIN prints p2 ON p2.card_id=m.card_id AND p2.id<>m.print_id
+                  LEFT JOIN print_images pi ON pi.print_id=p2.id AND pi.is_primary=true
+                  GROUP BY m.print_id
+                )
+                SELECT m.*,coalesce(sib.sibling_url_count,0) sibling_url_count,sib.single_url,
+                       coalesce(sib.sibling_prints_with_image,0) sibling_prints_with_image
+                FROM missing m LEFT JOIN sibling sib ON sib.print_id=m.print_id
+                ORDER BY m.set_id,m.collector_number,m.print_id
+              ''')
+              rows=[dict(x) for x in c.fetchall()]
+          conn.close()
+
+          status=Counter();sets=Counter();variants=Counter();safe=[];ambiguous=[];no_sibling=[]
+          for r in rows:
+              sets[r['set_code']]+=1; variants[str(r['variant'])]+=1
+              if int(r['sibling_url_count'])==1 and r.get('single_url'):
+                  status['safe_unique_sibling_art']+=1; safe.append(r)
+              elif int(r['sibling_url_count'])>1:
+                  status['ambiguous_multiple_sibling_arts']+=1; ambiguous.append(r)
+              else:
+                  status['no_sibling_art']+=1; no_sibling.append(r)
+          report={
+            'missing_primary_images':len(rows),
+            'status_counts':dict(status),
+            'top_sets':sets.most_common(50),
+            'top_variants':variants.most_common(50),
+            'safe_sample':safe[:100],
+            'ambiguous_sample':ambiguous[:100],
+            'no_sibling_sample':no_sibling[:100],
+            'safe_print_ids':[r['print_id'] for r in safe],
+          }
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('sample') and k!='safe_print_ids'},indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/pokemon-missing-images.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-missing-images-${{ github.run_id }}
+          path: /tmp/pokemon-missing-images.json
+          retention-days: 90
+          if-no-files-found: warn
