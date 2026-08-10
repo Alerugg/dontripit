@@ -1,0 +1,193 @@
+name: Audit YuGiOh Konami Exact Print Full
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-yugioh-konami-exact-print-full.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare every canonical Yu-Gi-Oh card page with exact Konami print rows
+        run: |
+          python - <<'PY'
+          import json,os,re,time,unicodedata
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          YGO='https://db.ygoprodeck.com/api/v7/cardinfo.php'
+          KONAMI='https://www.db.yugioh-card.com/yugiohdb/card_search.action'
+          def clean(v):
+            s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'").replace('–','-').replace('—','-')
+            return re.sub(r'\s+',' ',s).strip()
+          def k(v): return re.sub(r'[^a-z0-9]+','',clean(v).casefold())
+          def pid_from(v):
+            m=re.search(r'[?&]pid=(\d+)',v or '')
+            return m.group(1) if m else None
+          def get_retry(session,url,*,params=None,timeout=35,max_attempts=5):
+            wait=.8
+            for attempt in range(1,max_attempts+1):
+              try:
+                r=session.get(url,params=params,timeout=timeout)
+                if r.status_code==200:return r
+                if r.status_code not in (403,429,500,502,503,504):return r
+              except requests.RequestException:
+                if attempt==max_attempts:raise
+              time.sleep(wait);wait=min(wait*2,8)
+            return r
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT c.id card_id,c.yugoprodeck_id,c.name,count(p.id) print_count
+              FROM cards c JOIN games g ON g.id=c.game_id
+              LEFT JOIN prints p ON p.card_id=c.id
+              WHERE g.slug='yugioh'
+              GROUP BY c.id,c.yugoprodeck_id,c.name
+              ORDER BY c.id
+            ''')
+            cards=[dict(x) for x in c.fetchall()]
+            c.execute('''
+              SELECT p.id print_id,p.card_id,p.collector_number,p.rarity,p.variant,p.language,p.print_key,
+                     s.code set_code,s.name set_name
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id JOIN sets s ON s.id=p.set_id
+              WHERE g.slug='yugioh' ORDER BY p.card_id,p.id
+            ''')
+            prints_by_card=defaultdict(list)
+            for row in c.fetchall():prints_by_card[row['card_id']].append(dict(row))
+          conn.close()
+
+          # Current YGOPRODeck is used only to resolve its stable passcode to the
+          # official Konami cid. Physical truth below comes from Konami rows.
+          yh=requests.Session();yh.headers.update({'User-Agent':'DontRipIt/1.0 ygo-konami-full','Accept':'application/json'})
+          konami_by_passcode={};offset=0;page=500
+          while True:
+            r=get_retry(yh,YGO,params={'num':page,'offset':offset,'misc':'yes'},timeout=60)
+            r.raise_for_status();data=(r.json() or {}).get('data') or []
+            if not data:break
+            for card in data:
+              misc=card.get('misc_info') or []
+              cid=misc[0].get('konami_id') if misc and isinstance(misc[0],dict) else None
+              if cid:konami_by_passcode[str(card.get('id'))]=str(cid)
+            if len(data)<page:break
+            offset+=page;time.sleep(.05)
+
+          kh=requests.Session();kh.headers.update({'User-Agent':'DontRipIt/1.0 official-konami-full-parity','Accept':'text/html'})
+          status=Counter();request_status=Counter();exact_memberships=[];review=[];official_missing=[]
+          pids=defaultdict(lambda:{'product_name':None,'date':None,'prints':set(),'rows':0})
+          official_rows_total=0;cards_with_page=0
+
+          for n,card in enumerate(cards,1):
+            dbprints=prints_by_card.get(card['card_id'],[])
+            passcode=str(card.get('yugoprodeck_id') or '')
+            cid=konami_by_passcode.get(passcode)
+            if not cid:
+              status['card_missing_konami_id']+=1
+              if len(review)<2000:review.append({'status':'card_missing_konami_id','card':card,'db_prints':len(dbprints)})
+              continue
+            try:
+              rr=get_retry(kh,KONAMI,params={'cid':cid,'ope':'2','request_locale':'en'},timeout=35)
+            except Exception as exc:
+              request_status['exception']+=1
+              if len(review)<2000:review.append({'status':'request_exception','card':card,'konami_id':cid,'error':str(exc)[:180]})
+              continue
+            if rr.status_code!=200:
+              request_status[f'http_{rr.status_code}']+=1
+              if len(review)<2000:review.append({'status':f'http_{rr.status_code}','card':card,'konami_id':cid})
+              continue
+            request_status['http_200']+=1;cards_with_page+=1
+            soup=BeautifulSoup(rr.text,'html.parser')
+            official=[]
+            for row in soup.select('div.t_row'):
+              num=row.select_one('.card_number');rar=row.select_one('.icon.rarity span');pack=row.select_one('.pack_name');inp=row.select_one('input.link_value');date_node=row.select_one('.time')
+              collector=clean(num.get_text(' ',strip=True) if num else '')
+              rarity=clean(rar.get_text(' ',strip=True) if rar else '')
+              if not collector:continue
+              pid=pid_from(inp.get('value') if inp else '')
+              product_name=clean(pack.get_text(' ',strip=True) if pack else '')
+              raw_date=clean(date_node.get_text(' ',strip=True) if date_node else '')
+              m=re.search(r'(\d{4})/(\d{2})/(\d{2})',raw_date);released=f'{m.group(1)}-{m.group(2)}-{m.group(3)}' if m else None
+              o={'collector_number':collector,'rarity':rarity,'pid':pid,'product_name':product_name,'release_date':released,'konami_id':cid}
+              official.append(o);official_rows_total+=1
+              if pid:
+                meta=pids[pid];meta['rows']+=1
+                if product_name:meta['product_name']=product_name
+                if released:meta['date']=released
+            off_exact=defaultdict(list);off_code=defaultdict(list)
+            for o in official:
+              off_exact[(k(o['collector_number']),k(o['rarity']))].append(o);off_code[k(o['collector_number'])].append(o)
+            db_exact=defaultdict(list)
+            for p in dbprints:db_exact[(k(p['collector_number']),k(p['rarity']))].append(p)
+
+            for p in dbprints:
+              exact=off_exact.get((k(p['collector_number']),k(p['rarity'])),[])
+              same_code=off_code.get(k(p['collector_number']),[])
+              if exact:
+                # Multiple official rows are valid many-to-many release memberships
+                # when the exact same physical signature is distributed in several products.
+                unique={(o.get('pid'),o.get('product_name'),o.get('release_date')) for o in exact}
+                status['exact_print_match']+=1
+                if len(unique)>1:status['exact_print_multi_product']+=1
+                for o in exact:
+                  if o.get('pid'):
+                    membership={'print_id':p['print_id'],'pid':o['pid'],'collector_number':p['collector_number'],'rarity':p['rarity'],'product_name':o['product_name'],'release_date':o['release_date'],'konami_id':cid}
+                    exact_memberships.append(membership);pids[o['pid']]['prints'].add(p['print_id'])
+              elif same_code:
+                status['collector_found_rarity_diff']+=1
+                if len(review)<2000:review.append({'status':'collector_found_rarity_diff','card':card,'print':p,'official_rows':same_code})
+              else:
+                status['collector_absent_on_official_card_page']+=1
+                if len(review)<2000:review.append({'status':'collector_absent_on_official_card_page','card':card,'print':p,'official_row_count':len(official)})
+
+            for sig,official_for_sig in off_exact.items():
+              if sig not in db_exact:
+                for o in official_for_sig:
+                  status['official_exact_row_absent_from_db']+=1
+                  if len(official_missing)<5000:official_missing.append({'card':card,'official':o})
+            if n%250==0:
+              print('progress',n,'/',len(cards),'pages',cards_with_page,'status',dict(status),'requests',dict(request_status),flush=True)
+            time.sleep(.10)
+
+          # Deduplicate memberships exactly; source pages may repeat identical rows.
+          dedup={}
+          for m in exact_memberships:dedup[(m['print_id'],m['pid'])]=m
+          exact_memberships=list(dedup.values())
+          product_rows=[]
+          for pid,meta in pids.items():
+            product_rows.append({'pid':pid,'product_name':meta['product_name'],'release_date':meta['date'],'official_rows_seen':meta['rows'],'matched_prints':len(meta['prints'])})
+          product_rows.sort(key=lambda x:int(x['pid']))
+
+          report={
+            'production_cards':len(cards),'production_prints':sum(len(v) for v in prints_by_card.values()),
+            'ygoprodeck_passcodes_with_konami_id':len(konami_by_passcode),'cards_with_official_page':cards_with_page,
+            'request_status':dict(request_status),'official_rows_seen':official_rows_total,
+            'status_counts':dict(status),'exact_print_pid_memberships':len(exact_memberships),
+            'official_products_seen':len(pids),'products_with_any_exact_matched_print':sum(1 for x in product_rows if x['matched_prints']>0),
+            'exact_memberships':exact_memberships,'official_products':product_rows,
+            'review_samples':review,'official_missing_samples':official_missing,
+          }
+          print(json.dumps({key:value for key,value in report.items() if key not in ('exact_memberships','official_products','review_samples','official_missing_samples')},indent=2,ensure_ascii=False))
+          Path('/tmp/yugioh-konami-exact-print-full.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-konami-exact-print-full-${{ github.run_id }}
+          path: /tmp/yugioh-konami-exact-print-full.json
+          retention-days: 90
