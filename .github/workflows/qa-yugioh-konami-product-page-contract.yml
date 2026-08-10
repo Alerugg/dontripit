@@ -1,0 +1,63 @@
+name: QA YuGiOh Konami Product Page Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-product-page-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Inspect official product pages using locators from Included-in list
+        run: |
+          python - <<'PY'
+          import json,re,requests
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+
+          BASE='https://www.db.yugioh-card.com/yugiohdb/'
+          LIST=urljoin(BASE,'card_list.action?request_locale=en')
+          h={'User-Agent':'DontRipIt/1.0 konami-product-page-contract','Accept':'text/html'}
+          root=requests.get(LIST,headers=h,timeout=30);root.raise_for_status();s=BeautifulSoup(root.text,'html.parser')
+          targets=[]
+          wanted={'11101000','13301001','11101001'}
+          for row in s.select('#update_list .t_row'):
+            inp=row.select_one('input.link_value'); value=(inp.get('value') if inp else '') or ''
+            m=re.search(r'[?&]pid=(\d+)',value)
+            if not m or m.group(1) not in wanted: continue
+            name=' '.join((row.select_one('.main') or row).stripped_strings)
+            targets.append({'pid':m.group(1),'name':name,'value':value})
+          out=[]
+          for t in targets:
+            url=urljoin(BASE,t['value'].replace('&amp;','&'))
+            if 'request_locale=' not in url:
+              url += ('&' if '?' in url else '?')+'request_locale=en'
+            r=requests.get(url,headers=h,timeout=30);r.raise_for_status();p=BeautifulSoup(r.text,'html.parser')
+            item={'target':t,'final_url':r.url,'title':p.title.get_text(' ',strip=True) if p.title else None}
+            item['selectors']={sel:len(p.select(sel)) for sel in ['div.t_row','.card_number','.card_name','.icon.rarity','.pack_name','#card_list .t_row','#update_list .t_row']}
+            rows=[]
+            for node in p.select('div.t_row')[:8]:
+              rows.append({
+                'class':node.get('class'),
+                'number':' '.join((node.select_one('.card_number') or []).stripped_strings) if node.select_one('.card_number') else None,
+                'name':' '.join((node.select_one('.card_name') or []).stripped_strings) if node.select_one('.card_name') else None,
+                'rarity':' '.join((node.select_one('.icon.rarity') or []).stripped_strings) if node.select_one('.icon.rarity') else None,
+                'pack_name':' '.join((node.select_one('.pack_name') or []).stripped_strings) if node.select_one('.pack_name') else None,
+                'text':' '.join(node.stripped_strings)[:1000],
+              })
+            item['row_samples']=rows
+            item['html_snippet']=str((p.select_one('div.t_row') or ''))[:5000]
+            out.append(item)
+          print(json.dumps(out,indent=2,ensure_ascii=False))
+          if len(out)!=len(wanted): raise SystemExit(f'expected {len(wanted)} product pages, got {len(out)}')
+          PY
