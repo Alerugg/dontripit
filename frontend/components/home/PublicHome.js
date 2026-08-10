@@ -27,7 +27,7 @@ export default function PublicHome() {
       <section className="canva-workspace app-shell">
         <header className="canva-workspace-head">
           <div>
-            <span className="canva-eyebrow">Product catalog</span>
+            <span className="canva-eyebrow">Catálogo TCG</span>
             <h1>Tu colección empieza por encontrar <em>la versión correcta.</em></h1>
           </div>
           <div className="canva-account-cta">
@@ -45,7 +45,7 @@ export default function PublicHome() {
         </div>
 
         <div className="canva-workspace-grid">
-          <section className="canva-results-pane">
+          <section className="canva-results-pane" id="games">
             <div className="canva-pane-title">
               <div>
                 <span className="canva-eyebrow">Resultados</span>
@@ -77,7 +77,7 @@ export default function PublicHome() {
               </Link>
             </div>
 
-            <div className="canva-workflow-strip">
+            <div className="canva-workflow-strip" id="how-it-works">
               {WORKSPACE_CARDS.map((item, index) => (
                 <article key={item.label} className="canva-workflow-item">
                   <span>{String(index + 1).padStart(2, '0')}</span>
@@ -91,15 +91,15 @@ export default function PublicHome() {
             </div>
           </section>
 
-          <aside className="canva-collection-pane">
+          <aside className="canva-collection-pane" id="releases">
             <div className="canva-tabs" aria-label="Vista de colección">
               <span className="is-active">Colección</span>
               <span>Wishlist</span>
-              <span>Set progress</span>
+              <span>Progreso de set</span>
             </div>
 
             <div className="canva-side-hero">
-              <span className="canva-eyebrow">Collection cards</span>
+              <span className="canva-eyebrow">Tus cartas</span>
               <h2>Todo lo que guardas, por edición exacta.</h2>
               <p>Tu colección, wishlist y progreso por set usan la misma identidad física que ves en el catálogo.</p>
             </div>
