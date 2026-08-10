@@ -24,7 +24,7 @@ jobs:
       - name: Compare every production MTG finish-print with current Scryfall bulk objects
         run: |
           python - <<'PY'
-          import json,os,re,unicodedata
+          import gzip,json,os,re,tempfile,unicodedata
           from collections import Counter,defaultdict
           from pathlib import Path
           import psycopg2,requests
@@ -38,16 +38,8 @@ jobs:
             if variant in ('foil','etched','nonfoil'): return variant
             return 'foil' if bool(row.get('is_foil')) else 'nonfoil'
 
-          h={'User-Agent':'DontRipIt/1.0 full-mtg-parity (+https://dontripit.com)','Accept':'application/json'}
-          meta=requests.get('https://api.scryfall.com/bulk-data',headers=h,timeout=45);meta.raise_for_status()
-          items=(meta.json() or {}).get('data') or []
-          bulk=next((x for x in items if x.get('type')=='default_cards'),None)
-          if not bulk: raise RuntimeError('Scryfall default_cards bulk descriptor missing')
-          dl=requests.get(bulk['download_uri'],headers=h,timeout=180);dl.raise_for_status()
-          cards=dl.json()
-          live={str(x.get('id')):x for x in cards if x.get('id')}
-          del cards
-
+          # Read production first so the large bulk file can be streamed and we
+          # retain only Scryfall objects that Don’tRipIt actually references.
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
             c.execute('''
@@ -60,6 +52,39 @@ jobs:
             ''')
             rows=[dict(x) for x in c.fetchall()]
           conn.close()
+          wanted_ids={str(r.get('scryfall_id') or '').strip() for r in rows if str(r.get('scryfall_id') or '').strip()}
+
+          h={'User-Agent':'DontRipIt/1.0 full-mtg-parity (+https://dontripit.com)','Accept':'application/json;q=0.9,*/*;q=0.8'}
+          meta=requests.get('https://api.scryfall.com/bulk-data',headers=h,timeout=45);meta.raise_for_status()
+          items=(meta.json() or {}).get('data') or []
+          # all_cards is required because production deliberately contains
+          # non-English Scryfall print objects as well as English ones.
+          bulk=next((x for x in items if x.get('type')=='all_cards'),None)
+          if not bulk:
+            raise RuntimeError('Scryfall all_cards bulk descriptor missing')
+          download_uri=bulk.get('jsonl_download_uri')
+          if not download_uri:
+            descriptor_uri=bulk.get('uri')
+            if descriptor_uri:
+              descriptor=requests.get(descriptor_uri,headers=h,timeout=45);descriptor.raise_for_status()
+              detail=descriptor.json();download_uri=detail.get('jsonl_download_uri')
+              bulk={**bulk,**detail}
+          if not download_uri:
+            raise RuntimeError(f'Scryfall current JSONL download URI missing; keys={sorted(bulk.keys())}')
+
+          live={}
+          with tempfile.NamedTemporaryFile(suffix='.jsonl.gz') as fp:
+            with requests.get(download_uri,headers=h,timeout=240,stream=True) as dl:
+              dl.raise_for_status()
+              for chunk in dl.iter_content(chunk_size=1024*1024):
+                if chunk: fp.write(chunk)
+            fp.flush()
+            with gzip.open(fp.name,'rt',encoding='utf-8') as gz:
+              for line in gz:
+                if not line.strip(): continue
+                card=json.loads(line)
+                sid=str(card.get('id') or '')
+                if sid in wanted_ids: live[sid]=card
 
           counts=Counter();bad=[];missing_id=[];missing_live=[];finish_bad=[];field_bad=Counter();object_rows=defaultdict(list)
           for r in rows:
@@ -78,7 +103,7 @@ jobs:
               'oracle_id': (not r.get('oracle_id')) or str(card.get('oracle_id') or '').strip().lower()==str(r.get('oracle_id') or '').strip().lower(),
             }
             mism=[k for k,v in fields.items() if not v]
-            for f in mism:field_bad[f]+=1
+            for f in mism: field_bad[f]+=1
             finish=expected_finish(r)
             live_finishes={str(x).casefold() for x in (card.get('finishes') or [])}
             finish_ok=finish in live_finishes
@@ -87,25 +112,28 @@ jobs:
               if len(finish_bad)<100: finish_bad.append({'print':r,'live_finishes':sorted(live_finishes)})
             if mism or not finish_ok:
               counts['mismatch']+=1
-              if len(bad)<500:bad.append({'print':r,'mismatches':mism+([] if finish_ok else ['finish']),'live':{k:card.get(k) for k in ('name','set','collector_number','lang','oracle_id','finishes','image_status','highres_image')}})
-            else: counts['matched']+=1
+              if len(bad)<500:
+                bad.append({'print':r,'mismatches':mism+([] if finish_ok else ['finish']),'live':{k:card.get(k) for k in ('name','set','collector_number','lang','oracle_id','finishes','image_status','highres_image')}})
+            else:
+              counts['matched']+=1
 
           distinct_ids=len(object_rows)
           multi_finish_objects=sum(1 for group in object_rows.values() if len(group)>1)
-          no_image_expected=0
-          image_contract_bad=[]
+          no_image_expected=0;image_contract_bad=[]
           for sid,dbrows in object_rows.items():
             card=live[sid]
-            image_missing=(card.get('image_status')=='missing') or (not card.get('image_uris') and not any((face.get('image_uris') for face in (card.get('card_faces') or []) if isinstance(face,dict))))
-            if image_missing:
-              no_image_expected+=len(dbrows)
+            face_has_image=any((face.get('image_uris') for face in (card.get('card_faces') or []) if isinstance(face,dict)))
+            image_missing=(card.get('image_status')=='missing') or (not card.get('image_uris') and not face_has_image)
+            if image_missing: no_image_expected+=len(dbrows)
             for r in dbrows:
               if not r['has_primary_image'] and not image_missing:
-                if len(image_contract_bad)<300:image_contract_bad.append({'print_id':r['print_id'],'scryfall_id':sid,'image_status':card.get('image_status'),'highres_image':card.get('highres_image')})
+                if len(image_contract_bad)<300:
+                  image_contract_bad.append({'print_id':r['print_id'],'scryfall_id':sid,'image_status':card.get('image_status'),'highres_image':card.get('highres_image')})
 
           report={
-            'scryfall_bulk_updated_at':bulk.get('updated_at'),'scryfall_bulk_size':bulk.get('size'),
-            'production_prints':len(rows),'distinct_scryfall_objects_used':distinct_ids,'current_bulk_objects':len(live),
+            'scryfall_bulk_type':bulk.get('type'),'scryfall_bulk_updated_at':bulk.get('updated_at'),
+            'scryfall_bulk_compressed_size':bulk.get('compressed_size'),'production_prints':len(rows),
+            'production_distinct_scryfall_ids_requested':len(wanted_ids),'distinct_scryfall_objects_found':distinct_ids,
             'status_counts':dict(counts),'mismatches_by_field':dict(field_bad),
             'production_prints_without_scryfall_id':len(missing_id),'production_scryfall_ids_absent_from_current_bulk':len(missing_live),
             'scryfall_objects_expanded_to_multiple_finish_prints':multi_finish_objects,
