@@ -60,6 +60,7 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
   const setCount = Array.isArray(card?.sets) ? card.sets.length : 0
   const [selectedPrintId, setSelectedPrintId] = useState(prints[0]?.id || null)
   const [price, setPrice] = useState(null)
+  const [cardmarket, setCardmarket] = useState(null)
   const [priceLoading, setPriceLoading] = useState(false)
 
   useEffect(() => {
@@ -80,15 +81,26 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
   useEffect(() => {
     if (!selectedPrint?.id) {
       setPrice(null)
+      setCardmarket(null)
       return undefined
     }
 
     let cancelled = false
     setPriceLoading(true)
     fetch(`/api/prices/print/${selectedPrint.id}`, { cache: 'no-store' })
-      .then(async (response) => response.ok ? response.json() : { price: null })
-      .then((payload) => { if (!cancelled) setPrice(payload?.price || null) })
-      .catch(() => { if (!cancelled) setPrice(null) })
+      .then(async (response) => response.ok ? response.json() : { price: null, cardmarket: null })
+      .then((payload) => {
+        if (!cancelled) {
+          setPrice(payload?.price || null)
+          setCardmarket(payload?.cardmarket || payload?.price?.cardmarket || null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPrice(null)
+          setCardmarket(null)
+        }
+      })
       .finally(() => { if (!cancelled) setPriceLoading(false) })
 
     return () => { cancelled = true }
@@ -170,7 +182,7 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
                 </div>
 
                 {priceLoading ? (
-                  <div className="dri-inline-price is-empty">Consultando precio verificado…</div>
+                  <div className="dri-inline-price is-empty">Consultando precio Cardmarket…</div>
                 ) : price ? (
                   <div className="dri-inline-price">
                     <div className="dri-inline-price-main">
@@ -180,11 +192,21 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
                     <small>{price.source || 'Cardmarket'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</small>
                   </div>
                 ) : (
-                  <div className="dri-inline-price is-empty">Sin precio Cardmarket verificado para esta versión exacta. No mostramos una estimación inventada.</div>
+                  <div className="dri-inline-price is-empty">Sin Price Guide actual para esta versión exacta. Si existe una correspondencia segura, puedes abrir Cardmarket para comprobar sus ofertas.</div>
                 )}
 
                 <div className="dri-selected-print-actions">
                   <LibraryActions printId={selectedPrint.id} />
+                  {cardmarket?.url ? (
+                    <a
+                      href={cardmarket.url}
+                      target="_blank"
+                      rel="noopener noreferrer sponsored"
+                      className="dri-btn"
+                    >
+                      Comprar en Cardmarket ↗
+                    </a>
+                  ) : null}
                   <Link href={getPrintHref(selectedPrint.id)} className="dri-btn dri-btn-ghost">Ver todos los detalles →</Link>
                 </div>
               </div>

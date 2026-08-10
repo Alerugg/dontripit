@@ -38,13 +38,23 @@ function PriceMetric({ label, value, currency, featured = false }) {
   )
 }
 
-function PriceBlock({ price }) {
+function PriceBlock({ price, cardmarket }) {
   if (!price) {
     return (
       <section className="panel-soft identifiers ux-price-panel">
-        <p className="eyebrow">Precio</p>
-        <h2>Sin precio Cardmarket verificado</h2>
-        <p className="detail-meta">No mostramos una estimación ni reutilizamos el precio de otra edición. Esta versión se valorará cuando exista una correspondencia de mercado segura.</p>
+        <p className="eyebrow">Cardmarket</p>
+        <h2>Sin Price Guide actual</h2>
+        <p className="detail-meta">No reutilizamos el precio de otra edición. Esta versión solo recibe precio cuando Cardmarket aporta datos para su contraparte exacta.</p>
+        {cardmarket?.url ? (
+          <a
+            href={cardmarket.url}
+            target="_blank"
+            rel="noopener noreferrer sponsored"
+            className="dri-btn"
+          >
+            Ver esta versión en Cardmarket ↗
+          </a>
+        ) : null}
       </section>
     )
   }
@@ -75,7 +85,17 @@ function PriceBlock({ price }) {
           : 'Este snapshot no contiene una métrica conservadora; por eso no entra en el valor de tu portfolio.'}
       </p>
       <p className="detail-meta ux-price-explainer">Las métricas respetan el acabado físico de la carta: Low Price EX+ para la referencia conservadora no foil y Foil Low cuando corresponde a una edición foil.</p>
-      <p className="detail-meta">Cada valor conserva su fuente y fecha de actualización. Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
+      <p className="detail-meta">Fuente: {price.source || 'Cardmarket'}{price.as_of ? ` · actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</p>
+      {cardmarket?.url ? (
+        <a
+          href={cardmarket.url}
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          className="dri-btn"
+        >
+          Comprar en Cardmarket ↗
+        </a>
+      ) : null}
     </section>
   )
 }
@@ -84,6 +104,7 @@ export default function PrintDetailPage({ params }) {
   const { id } = use(params)
   const [printDetail, setPrintDetail] = useState(null)
   const [price, setPrice] = useState(null)
+  const [cardmarket, setCardmarket] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -96,16 +117,18 @@ export default function PrintDetailPage({ params }) {
       try {
         const [payload, priceResponse] = await Promise.all([
           fetchPrintById(id),
-          fetch(`/api/prices/print/${id}`, { cache: 'no-store' }).then((response) => response.ok ? response.json() : { price: null }).catch(() => ({ price: null })),
+          fetch(`/api/prices/print/${id}`, { cache: 'no-store' }).then((response) => response.ok ? response.json() : { price: null, cardmarket: null }).catch(() => ({ price: null, cardmarket: null })),
         ])
         if (!cancelled) {
           setPrintDetail(payload)
           setPrice(priceResponse?.price || null)
+          setCardmarket(priceResponse?.cardmarket || priceResponse?.price?.cardmarket || null)
         }
       } catch (requestError) {
         if (!cancelled) {
           setPrintDetail(null)
           setPrice(null)
+          setCardmarket(null)
           setError(requestError.message)
         }
       } finally {
@@ -131,7 +154,7 @@ export default function PrintDetailPage({ params }) {
       <TopNav />
 
       <section className="detail-shell">
-        {loading && <StatePanel title="Cargando versión" description="Preparando la edición física exacta." />}
+        {loading && <StatePanel title="Cargando versión" description="Preparando la edición física exacta y su mercado." />}
         {!loading && error && <StatePanel title="No pudimos cargar esta versión" description={error} error />}
 
         {!loading && !error && printDetail && (
@@ -146,7 +169,7 @@ export default function PrintDetailPage({ params }) {
                   label={gameLabel}
                 />
               </div>
-              <PriceBlock price={price} />
+              <PriceBlock price={price} cardmarket={cardmarket} />
             </div>
 
             <div className="detail-content">
@@ -186,11 +209,15 @@ export default function PrintDetailPage({ params }) {
                 <MetaLine label="Variante" value={variantLabel} />
                 <MetaLine label="Acabado" value={finishLabel} />
                 <MetaLine label="Idioma" value={printDetail.language?.toUpperCase()} />
+                {cardmarket?.id_product ? <MetaLine label="Cardmarket idProduct" value={cardmarket.id_product} /> : null}
               </section>
 
               <div className="dri-exact-navigation">
                 <Link href={cardHref} className="dri-btn dri-btn-ghost">← Ver las demás versiones</Link>
                 <Link href={setHref} className="dri-btn dri-btn-ghost">Ver el set completo</Link>
+                {cardmarket?.url ? (
+                  <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn">Cardmarket ↗</a>
+                ) : null}
               </div>
             </div>
           </article>
