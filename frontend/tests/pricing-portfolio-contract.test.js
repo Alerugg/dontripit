@@ -8,6 +8,7 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
+// Release contract: pricing is allowed only through an exact physical Cardmarket reference.
 test('exact print pricing delegates to the exact Cardmarket print reference', () => {
   const route = source('app/api/prices/print/[id]/route.js')
   const backend = source('../backend/app/routes/market_reference.py')
