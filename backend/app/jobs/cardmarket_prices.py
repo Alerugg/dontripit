@@ -104,12 +104,14 @@ def _parse_row(raw: dict) -> CardmarketPriceRow | None:
         avg1=_money(_first(raw, "avg1", "AVG1")),
         avg7=_money(_first(raw, "avg7", "AVG7")),
         avg30=_money(_first(raw, "avg30", "AVG30")),
-        foil_avg=_money(_first(raw, "avg-holo", "foil avg", "Foil Sell", "SELLFOIL", "foil_sell")),
-        foil_low=_money(_first(raw, "low-holo", "foil low", "Foil Low", "LOWFOIL", "foil_low")),
-        foil_trend=_money(_first(raw, "trend-holo", "foil trend", "Foil Trend", "TRENDFOIL", "foil_trend")),
-        foil_avg1=_money(_first(raw, "avg1-holo", "Foil AVG1", "AVG1FOIL", "foil_avg1")),
-        foil_avg7=_money(_first(raw, "avg7-holo", "Foil AVG7", "AVG7FOIL", "foil_avg7")),
-        foil_avg30=_money(_first(raw, "avg30-holo", "Foil AVG30", "AVG30FOIL", "foil_avg30")),
+        # Current Cardmarket JSON uses *-foil for MTG/YGO/One Piece and
+        # *-holo for Pokemon. Keep legacy CSV aliases for backwards compatibility.
+        foil_avg=_money(_first(raw, "avg-foil", "avg-holo", "foil avg", "Foil Sell", "SELLFOIL", "foil_sell")),
+        foil_low=_money(_first(raw, "low-foil", "low-holo", "foil low", "Foil Low", "LOWFOIL", "foil_low")),
+        foil_trend=_money(_first(raw, "trend-foil", "trend-holo", "foil trend", "Foil Trend", "TRENDFOIL", "foil_trend")),
+        foil_avg1=_money(_first(raw, "avg1-foil", "avg1-holo", "Foil AVG1", "AVG1FOIL", "foil_avg1")),
+        foil_avg7=_money(_first(raw, "avg7-foil", "avg7-holo", "Foil AVG7", "AVG7FOIL", "foil_avg7")),
+        foil_avg30=_money(_first(raw, "avg30-foil", "avg30-holo", "Foil AVG30", "AVG30FOIL", "foil_avg30")),
     )
 
 
