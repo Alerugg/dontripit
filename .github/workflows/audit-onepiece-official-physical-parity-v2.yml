@@ -1,0 +1,153 @@
+name: Audit One Piece Official Physical Parity V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-official-physical-parity-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare every official physical image to production
+        run: |
+          python - <<'PY'
+          import json,os,re,requests
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from bs4 import BeautifulSoup
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          BASE='https://en.onepiece-cardgame.com/cardlist/'
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 official-physical-parity-v2'})
+          root=http.get(BASE,timeout=30); root.raise_for_status(); soup=BeautifulSoup(root.text,'html.parser')
+          series=[]
+          sel=soup.find('select',{'name':'series'})
+          for opt in (sel.find_all('option') if sel else []):
+            sid=(opt.get('value') or '').strip()
+            if sid.isdigit(): series.append((sid,' '.join(opt.stripped_strings)))
+          if len(series)<50: raise AssertionError(f'Expected broad official series selector, got {len(series)}')
+
+          def clean_value(node,cls):
+            x=node.select_one('.'+cls)
+            if not x:return None
+            h=x.find('h3')
+            if h:h.extract()
+            return ' '.join(x.stripped_strings).strip() or None
+
+          rows=[]; per_series=[]
+          for sid,label in series:
+            rr=http.get(BASE,params={'series':sid},timeout=30); rr.raise_for_status(); ss=BeautifulSoup(rr.text,'html.parser')
+            cards=[]
+            for dl in ss.select('dl.modalCol'):
+              oid=(dl.get('id') or '').strip()
+              info=dl.select_one('.infoCol'); spans=[x.get_text(' ',strip=True) for x in info.find_all('span')] if info else []
+              collector=spans[0] if len(spans)>0 else None
+              rarity=spans[1] if len(spans)>1 else None
+              card_type=spans[2] if len(spans)>2 else None
+              name=(dl.select_one('.cardName').get_text(' ',strip=True) if dl.select_one('.cardName') else None)
+              img=dl.select_one('.frontCol img')
+              src=((img.get('data-src') or img.get('src') or '') if img else '')
+              filename=src.split('?',1)[0].rsplit('/',1)[-1] if src else None
+              attr=dl.select_one('.attribute img')
+              attribute=(attr.get('alt') if attr else clean_value(dl,'attribute'))
+              card={'series':sid,'series_label':label,'official_id':oid,'collector_number':collector,'rarity':rarity,'card_type':card_type,'name':name,
+                    'filename':filename,'cost_or_life':clean_value(dl,'cost'),'attribute':attribute,'power':clean_value(dl,'power'),
+                    'counter':clean_value(dl,'counter'),'color':clean_value(dl,'color'),'block':clean_value(dl,'block'),
+                    'traits':clean_value(dl,'feature'),'effect':clean_value(dl,'text'),'trigger':clean_value(dl,'trigger'),'card_sets':clean_value(dl,'getInfo')}
+              if filename: cards.append(card); rows.append(card)
+            count_text=ss.select_one('.countCol')
+            displayed=None
+            if count_text:
+              m=re.search(r'(\d+)\s+results',count_text.get_text(' ',strip=True),re.I); displayed=int(m.group(1)) if m else None
+            per_series.append({'series':sid,'label':label,'displayed_results':displayed,'parsed_physical_rows':len(cards),'unique_files':len({x['filename'] for x in cards})})
+
+          # Official identity can recur across series because reprints are discoverable from multiple series.
+          official_by_file=defaultdict(list)
+          for r in rows: official_by_file[r['filename']].append(r)
+          unique_official=set(official_by_file)
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT p.id print_id,p.collector_number,p.variant,p.rarity,p.language,p.is_foil,
+                     ca.name card_name,s.code set_code,s.name set_name,
+                     pi.url image_url,pi.is_primary,pi.source image_source
+              FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+              JOIN sets s ON s.id=p.set_id
+              LEFT JOIN print_images pi ON pi.print_id=p.id
+              WHERE g.slug='onepiece' AND lower(coalesce(p.language,''))='en'
+            ''')
+            dbrows=[dict(x) for x in c.fetchall()]
+          conn.close()
+          db_by_file=defaultdict(list); db_print_ids=set()
+          for r in dbrows:
+            db_print_ids.add(int(r['print_id']))
+            u=str(r.get('image_url') or '')
+            if u:
+              fn=urlparse(u).path.rsplit('/',1)[-1]
+              if fn: db_by_file[fn].append(r)
+
+          missing=[]; ambiguous=[]; matched=[]
+          for fn in sorted(unique_official):
+            hits=db_by_file.get(fn,[])
+            pids=sorted({int(x['print_id']) for x in hits})
+            if not pids: missing.append({'filename':fn,'official':official_by_file[fn]})
+            elif len(pids)>1: ambiguous.append({'filename':fn,'print_ids':pids,'official':official_by_file[fn]})
+            else:
+              sample=hits[0]; off=official_by_file[fn][0]
+              core={
+                'collector_match':str(sample['collector_number'] or '').upper()==str(off['collector_number'] or '').upper(),
+                'name_match':str(sample['card_name'] or '').strip()==str(off['name'] or '').strip(),
+                'rarity_match':str(sample['rarity'] or '').strip().upper()==str(off['rarity'] or '').strip().upper(),
+              }
+              matched.append({'filename':fn,'print_id':pids[0],'set_code':sample['set_code'],'db_variant':sample['variant'],'official_id':off['official_id'],'core':core})
+          matched_pids={x['print_id'] for x in matched}
+          db_unmatched=[]
+          for pid in sorted(db_print_ids-matched_pids):
+            choices=[x for x in dbrows if int(x['print_id'])==pid]
+            if choices:
+              x=choices[0]; db_unmatched.append({'print_id':pid,'collector_number':x['collector_number'],'variant':x['variant'],'rarity':x['rarity'],'set_code':x['set_code'],'card_name':x['card_name'],'images':[y['image_url'] for y in choices if y.get('image_url')]})
+
+          core_mismatch=[x for x in matched if not all(x['core'].values())]
+          # prefix grouping from filenames for actionable set-level gaps
+          def prefix(fn):
+            base=fn[:-4] if fn.lower().endswith('.png') else fn
+            collector=base.split('_',1)[0]
+            m=re.match(r'^([A-Z]+\d+)-',collector.upper())
+            return m.group(1) if m else collector.split('-',1)[0].upper()
+          miss_prefix=Counter(prefix(x['filename']) for x in missing)
+          off_prefix=Counter(prefix(fn) for fn in unique_official)
+          report={
+            'official_series_count':len(series),'official_rows_across_series':len(rows),'official_unique_physical_files':len(unique_official),
+            'production_en_prints':len(db_print_ids),'matched_unique_official_files':len(matched),'missing_official_files':len(missing),
+            'ambiguous_official_files':len(ambiguous),'production_prints_without_official_file_match':len(db_unmatched),'core_identity_mismatches':len(core_mismatch),
+            'official_by_prefix':dict(off_prefix.most_common()),'missing_by_prefix':dict(miss_prefix.most_common()),
+            'series':per_series,'missing':missing,'ambiguous':ambiguous,'db_unmatched':db_unmatched,'core_mismatch':core_mismatch,'matched':matched,
+          }
+          Path('/tmp/onepiece-official-physical-parity-v2.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('series','missing','ambiguous','db_unmatched','core_mismatch','matched','official_by_prefix')},indent=2,ensure_ascii=False))
+          print('MISSING_PREFIX_TOP',json.dumps(dict(miss_prefix.most_common(30))))
+          print('SERIES_MISMATCHES',json.dumps([x for x in per_series if x['displayed_results'] is not None and x['displayed_results']!=x['parsed_physical_rows']],ensure_ascii=False))
+          print('CORE_MISMATCH_SAMPLE',json.dumps(core_mismatch[:20],ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-official-physical-parity-v2-${{ github.run_id }}
+          path: /tmp/onepiece-official-physical-parity-v2.json
+          retention-days: 90
+          if-no-files-found: warn
