@@ -1,5 +1,6 @@
 name: Audit MTG Direct Cardmarket Links Live
 
+# Re-run against current Scryfall evidence and current Cardmarket mirror.
 on:
   push:
     branches: [catalog-v2]
