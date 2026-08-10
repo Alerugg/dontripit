@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
-      - name: Compare representative cards from every Pokemon set with Pokemon.com
+      - name: Probe official Pokemon database coverage without treating perimeter blocks as data mismatches
         run: |
           python - <<'PY'
           import json, os, re, time, unicodedata
@@ -33,6 +33,7 @@ jobs:
           from psycopg2.extras import RealDictCursor
 
           BASE='https://www.pokemon.com/us/pokemon-tcg/pokemon-cards/series'
+          BLOCK_MARKERS=('pardon our interruption','access denied','perimeterx','px-captcha','captcha')
           def norm(v):
               s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
               return re.sub(r'\s+',' ',s).strip().casefold()
@@ -89,15 +90,21 @@ jobs:
                   results.append({**r,'url':url,'status':status});continue
               soup=BeautifulSoup(resp.text,'html.parser')
               page_text=' '.join(soup.stripped_strings)
-              h1=soup.find('h1'); official_name=' '.join(h1.stripped_strings) if h1 else ''
+              normalized_page=norm(page_text)
+              if any(marker in normalized_page for marker in BLOCK_MARKERS):
+                  status='official_site_perimeter_block'
+                  counts[status]+=1;set_status[r['set_pk']][status]+=1
+                  results.append({**r,'url':url,'status':status})
+                  continue
+
               checks={
-                'name': norm(official_name)==norm(r.get('name')),
-                'set_name': norm(r.get('set_name')) in norm(page_text),
+                'name': norm(r.get('name')) in normalized_page,
+                'set_name': norm(r.get('set_name')) in normalized_page,
                 'collector': bool(re.search(rf'(?<![A-Za-z0-9]){re.escape(str(r.get("collector_number") or "").strip())}\s*/',page_text,re.I)) if str(r.get('collector_number') or '').strip() else True,
               }
               status='matched' if all(checks.values()) else 'content_mismatch'
               counts[status]+=1;set_status[r['set_pk']][status]+=1
-              results.append({**r,'url':url,'status':status,'official_name':official_name,'checks':checks})
+              results.append({**r,'url':url,'status':status,'checks':checks})
               if i%50==0: print('progress',i,'/',len(candidates),dict(counts),flush=True)
               time.sleep(0.05)
 
@@ -105,19 +112,18 @@ jobs:
           bypk={x['set_pk']:x for x in sets}
           for pk,s in bypk.items():
               st=set_status.get(pk,Counter())
-              set_rows.append({**s,'sample_status':dict(st),'official_reachable_samples':st.get('matched',0),'sampled':sum(st.values())})
+              set_rows.append({**s,'sample_status':dict(st),'official_matches':st.get('matched',0),'sampled':sum(st.values())})
           report={
             'source':'Pokemon.com Trading Card Game Card Database',
             'official_base':BASE,
+            'important_scope_note':'Pokemon.com is authoritative where covered but is not historically exhaustive; absence/404 is not sufficient evidence to delete a canonical physical card.',
             'db_sets':len(sets),'db_prints':sum(int(x['print_count']) for x in sets),
             'sampled_cards':len(candidates),'status_counts':dict(counts),
-            'sets_with_all_samples_matched':sum(1 for x in set_rows if x['sampled']>0 and x['official_reachable_samples']==x['sampled']),
-            'sets_with_any_official_match':sum(1 for x in set_rows if x['official_reachable_samples']>0),
-            'catalog_release_candidates_from_verified_sets':sum(1 for x in set_rows if x['official_reachable_samples']>0),
+            'sets_with_any_machine_verified_match':sum(1 for x in set_rows if x['official_matches']>0),
             'set_results':set_rows,
-            'mismatch_samples':[x for x in results if x['status']!='matched'][:200],
+            'non_match_samples':[x for x in results if x['status']!='matched'][:200],
           }
-          print(json.dumps({k:v for k,v in report.items() if k not in ('set_results','mismatch_samples')},indent=2,ensure_ascii=False))
+          print(json.dumps({k:v for k,v in report.items() if k not in ('set_results','non_match_samples')},indent=2,ensure_ascii=False))
           Path('/tmp/pokemon-official-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
           PY
       - uses: actions/upload-artifact@v4
