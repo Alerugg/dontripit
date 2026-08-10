@@ -73,6 +73,8 @@ export default function DashboardPage() {
   const pieces = useMemo(() => collection.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [collection])
   const recent = collection.items.slice(0, 6)
   const selectedGameConfig = activeGames.find((game) => game.slug === selectedGame) || activeGames[0]
+  const coverage = collection.count > 0 ? Math.round((Number(collection.valuation_coverage_count || 0) / Number(collection.count)) * 100) : 0
+  const valueLabel = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)
 
   function submitSearch(event) {
     event.preventDefault()
@@ -88,8 +90,8 @@ export default function DashboardPage() {
         <section id="buscar" className="ux-search-hero">
           <div className="ux-search-copy">
             <span className="v4-overline"><i /> {loading ? 'Preparando tu espacio' : `Hola, ${user?.name?.split(' ')[0] || 'coleccionista'}`}</span>
-            <h1>Busca. Encuentra. Guarda.</h1>
-            <p>Nombre, número o set. Después eliges la versión exacta.</p>
+            <h1>¿Qué carta buscas?</h1>
+            <p>Empieza por el nombre, número o set. Después eliges la versión física exacta sin salir del flujo.</p>
 
             <div className="ux-game-tabs" aria-label="Selecciona un juego">
               {activeGames.map((game) => (
@@ -120,11 +122,22 @@ export default function DashboardPage() {
         </section>
 
         <section className="ux-overview" aria-label="Resumen de tu cuenta">
-          <div className="ux-stat"><span>Versiones distintas</span><strong>{collection.count || 0}</strong></div>
-          <div className="ux-stat"><span>Cartas totales</span><strong>{pieces}</strong></div>
-          <div className="ux-stat"><span>En wishlist</span><strong>{wishlist.count || 0}</strong></div>
-          <div className="ux-stat"><span>Valor conservador*</span><strong>{new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)}</strong></div>
+          <div className="ux-stat"><span>Versiones guardadas</span><strong>{collection.count || 0}</strong><small>Cada edición cuenta una vez</small></div>
+          <div className="ux-stat"><span>Cartas totales</span><strong>{pieces}</strong><small>Incluye cantidades repetidas</small></div>
+          <div className="ux-stat"><span>Wishlist</span><strong>{wishlist.count || 0}</strong><small>Versiones que estás buscando</small></div>
+          <div className="ux-stat"><span>Valor conocido</span><strong>{valueLabel}</strong><small>Cobertura de precio: {coverage}%</small></div>
         </section>
+
+        {!loading && collection.count === 0 ? (
+          <section className="ux-first-step">
+            <div>
+              <span className="v4-overline"><i /> Tu primer paso</span>
+              <h2>Añade tu primera versión.</h2>
+              <p>Busca una carta que ya tengas, elige la edición correcta y pulsa “Mi colección”. A partir de ahí este espacio empezará a reflejar tu colección real.</p>
+            </div>
+            <Link href={`/games/${selectedGame}#buscar`} className="dri-btn dri-btn-primary">Buscar en {selectedGameConfig?.name || 'el catálogo'} →</Link>
+          </section>
+        ) : null}
 
         <section id="juegos" className="ux-section">
           <div className="ux-section-head">
@@ -160,8 +173,6 @@ export default function DashboardPage() {
             </div>
           </section>
         ) : null}
-
-        <p className="detail-meta" style={{ marginTop: 28 }}>*Suma solo versiones con valoración conservadora Cardmarket en EUR: {collection.valuation_coverage_count || 0} de {collection.count || 0}. Las demás quedan fuera hasta tener un dato verificable.</p>
       </section>
     </main>
   )
