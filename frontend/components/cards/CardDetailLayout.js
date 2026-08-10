@@ -1,10 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
-import VariantPicker from '../catalog/VariantPicker'
-import { getGameExplorerHref, getSetHref } from '../../lib/catalog/routes'
+import LibraryActions from '../library/LibraryActions'
+import { getGameExplorerHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 import { getGameConfig, normalizeGameSlug } from '../../lib/catalog/games'
 
 function DetailStat({ label, value }) {
@@ -17,6 +17,39 @@ function DetailStat({ label, value }) {
   )
 }
 
+function money(value, currency = 'EUR') {
+  if (value === null || value === undefined) return null
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(Number(value))
+  } catch {
+    return `${value} ${currency}`
+  }
+}
+
+function selectedMeta(print) {
+  return [
+    print?.set_code,
+    print?.collector_number ? `#${print.collector_number}` : null,
+    print?.language?.toUpperCase(),
+    print?.rarity,
+    print?.finish && print.finish !== 'default' ? print.finish : null,
+    print?.variant && print.variant !== 'default' ? print.variant : null,
+  ].filter(Boolean)
+}
+
+function optionLabel(print) {
+  return [
+    print?.set_code || print?.set_name,
+    print?.collector_number ? `#${print.collector_number}` : null,
+    print?.variant && print.variant !== 'default' ? print.variant : null,
+    print?.finish && print.finish !== 'default' ? print.finish : null,
+  ].filter(Boolean).join(' · ')
+}
+
 export default function CardDetailLayout({ card, routeGameSlug = '' }) {
   const gameSlug = normalizeGameSlug(routeGameSlug || card?.game_slug || card?.game || '')
   const gameConfig = getGameConfig(gameSlug)
@@ -25,13 +58,51 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
   const prints = useMemo(() => (Array.isArray(card?.prints) ? card.prints : []), [card])
   const variantCount = prints.length
   const setCount = Array.isArray(card?.sets) ? card.sets.length : 0
+  const [selectedPrintId, setSelectedPrintId] = useState(prints[0]?.id || null)
+  const [price, setPrice] = useState(null)
+  const [priceLoading, setPriceLoading] = useState(false)
+
+  useEffect(() => {
+    if (!prints.length) {
+      setSelectedPrintId(null)
+      return
+    }
+    if (!prints.some((print) => String(print.id) === String(selectedPrintId))) {
+      setSelectedPrintId(prints[0].id)
+    }
+  }, [prints, selectedPrintId])
+
+  const selectedPrint = useMemo(
+    () => prints.find((print) => String(print.id) === String(selectedPrintId)) || prints[0] || null,
+    [prints, selectedPrintId],
+  )
+
+  useEffect(() => {
+    if (!selectedPrint?.id) {
+      setPrice(null)
+      return undefined
+    }
+
+    let cancelled = false
+    setPriceLoading(true)
+    fetch(`/api/prices/print/${selectedPrint.id}`, { cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : { price: null })
+      .then((payload) => { if (!cancelled) setPrice(payload?.price || null) })
+      .catch(() => { if (!cancelled) setPrice(null) })
+      .finally(() => { if (!cancelled) setPriceLoading(false) })
+
+    return () => { cancelled = true }
+  }, [selectedPrint?.id])
+
+  const conservative = money(price?.conservative, price?.currency || 'EUR')
+  const observed = money(price?.value, price?.currency || 'EUR')
 
   return (
-    <article className="detail-page panel">
+    <article className="detail-page">
       <div className="detail-media-column">
         <div className="detail-media detail-media-card">
           <FallbackImage
-            src={card.primary_image_url}
+            src={selectedPrint?.primary_image_url || card.primary_image_url}
             alt={card.name}
             className="detail-image"
             placeholderClassName="catalog-placeholder image-fallback"
@@ -62,20 +133,99 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
         <div className="detail-title-block">
           <p className="eyebrow">Carta encontrada</p>
           <h1>{card.name}</h1>
-          <p className="detail-intro">Ahora elige la versión física que te interesa. Cada set, idioma o variante se guarda por separado en tu colección o wishlist.</p>
+          <p className="detail-intro">Elige abajo la edición física que tienes o buscas. Precio, colección y wishlist se actualizan aquí mismo: no necesitas abrir otra ficha para actuar.</p>
         </div>
 
         <section className="detail-stats-grid">
           <DetailStat label="Juego" value={gameLabel} />
-          <DetailStat label="Versiones disponibles" value={variantCount} />
+          <DetailStat label="Versiones" value={variantCount} />
           <DetailStat label="Sets relacionados" value={setCount} />
         </section>
+
+        {selectedPrint ? (
+          <section className="dri-card-workspace">
+            <div className="dri-card-workspace-head">
+              <div>
+                <p className="eyebrow">Versión seleccionada</p>
+                <h2>{selectedPrint.set_name || selectedPrint.set_code || 'Edición física'}</h2>
+                <p>Cambia de versión más abajo. Tus acciones siempre se aplican a la edición que está seleccionada.</p>
+              </div>
+              <span className="dri-card-workspace-count">{variantCount} {variantCount === 1 ? 'versión' : 'versiones'}</span>
+            </div>
+
+            <div className="dri-selected-print">
+              <div className="dri-selected-print-media">
+                <FallbackImage
+                  src={selectedPrint.primary_image_url || card.primary_image_url}
+                  alt={`${card.name} · ${selectedPrint.set_code || selectedPrint.set_name || 'versión'}`}
+                  className="detail-image"
+                  placeholderClassName="image-fallback"
+                  label={selectedPrint.set_code || gameLabel}
+                />
+              </div>
+              <div className="dri-selected-print-copy">
+                <h3>{card.name}</h3>
+                <div className="dri-selected-print-meta">
+                  {selectedMeta(selectedPrint).map((value) => <span key={value}>{value}</span>)}
+                </div>
+
+                {priceLoading ? (
+                  <div className="dri-inline-price is-empty">Consultando precio verificado…</div>
+                ) : price ? (
+                  <div className="dri-inline-price">
+                    <div className="dri-inline-price-main">
+                      <strong>{conservative || observed || 'Precio disponible'}</strong>
+                      <span>{conservative ? 'valor conservador' : 'precio observado'}</span>
+                    </div>
+                    <small>{price.source || 'Cardmarket'}{price.as_of ? ` · ${new Date(price.as_of).toLocaleDateString('es-ES')}` : ''}</small>
+                  </div>
+                ) : (
+                  <div className="dri-inline-price is-empty">Sin precio Cardmarket verificado para esta versión exacta. No mostramos una estimación inventada.</div>
+                )}
+
+                <div className="dri-selected-print-actions">
+                  <LibraryActions printId={selectedPrint.id} />
+                  <Link href={getPrintHref(selectedPrint.id)} className="dri-btn dri-btn-ghost">Ver todos los detalles →</Link>
+                </div>
+              </div>
+            </div>
+
+            {prints.length > 1 ? (
+              <div className="dri-variant-strip" aria-label="Versiones físicas de la carta">
+                {prints.map((print) => {
+                  const active = String(print.id) === String(selectedPrint.id)
+                  return (
+                    <button
+                      key={print.id}
+                      type="button"
+                      className={`dri-variant-option ${active ? 'is-selected' : ''}`}
+                      aria-pressed={active}
+                      onClick={() => setSelectedPrintId(print.id)}
+                    >
+                      <div className="dri-variant-option-thumb">
+                        <FallbackImage
+                          src={print.primary_image_url}
+                          alt={optionLabel(print) || card.name}
+                          className="detail-image"
+                          placeholderClassName="image-fallback"
+                          label={print.set_code || 'Versión'}
+                        />
+                      </div>
+                      <strong>{print.set_code || print.set_name || 'Versión'}</strong>
+                      <small>{optionLabel(print) || 'Edición disponible'}</small>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {(card.sets || []).length ? (
           <section className="detail-section-block panel-soft">
             <div className="section-heading compact">
               <p className="eyebrow">Aparece en</p>
-              <h2>Sets</h2>
+              <h2>Sets relacionados</h2>
             </div>
             <div className="chip-row">
               {(card.sets || []).map((setItem) => (
@@ -92,22 +242,13 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
           </section>
         ) : null}
 
-        <section className="detail-section-block">
-          <div className="section-heading compact">
-            <p className="eyebrow">Elige una versión</p>
-            <h2>¿Cuál tienes o cuál buscas?</h2>
-            <p>{variantCount ? `${variantCount} ${variantCount === 1 ? 'versión disponible' : 'versiones disponibles'}.` : 'Todavía no tenemos versiones registradas para esta carta.'}</p>
-          </div>
-
-          {variantCount ? (
-            <div className="ux-detail-guide">
-              <span aria-hidden="true">→</span>
-              <div><strong>Siguiente paso:</strong> compara set, idioma y variante, abre la correcta y desde ahí añádela a tu colección o wishlist.</div>
-            </div>
-          ) : null}
-
-          <VariantPicker prints={prints} gameSlug={gameSlug} />
-        </section>
+        {!variantCount ? (
+          <section className="detail-section-block panel-soft">
+            <p className="eyebrow">Sin versiones</p>
+            <h2>Todavía no tenemos una edición física asociada.</h2>
+            <p className="detail-meta">La carta existe en el catálogo, pero no vamos a inventar una versión para permitir acciones de colección.</p>
+          </section>
+        ) : null}
       </div>
     </article>
   )
