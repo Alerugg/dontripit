@@ -2,25 +2,24 @@ from __future__ import annotations
 
 import os
 import time
-from collections import defaultdict
-from datetime import datetime, timezone
-from dataclasses import dataclass
 
 from flask import Flask, g, jsonify, request
 from sqlalchemy import select
 
 from app import db
-from app.auth.service import current_period_ym, find_active_key, get_or_create_usage, touch_last_used
+from app.auth.service import consume_request_quota, current_period_ym, find_active_key, touch_last_used
 from app.models import ApiPlan, ApiRequestMetric
+from app.rate_limit import clear_memory_rate_limits, consume_rate_limit
 
-_RATE_WINDOWS: dict[str, list[float]] = defaultdict(list)
+
+class _LegacyRateWindows:
+    """Compatibility shim for historical tests that clear the old limiter."""
+
+    def clear(self) -> None:
+        clear_memory_rate_limits()
 
 
-@dataclass
-class RateState:
-    limit: int
-    remaining: int
-    blocked: bool
+_RATE_WINDOWS = _LegacyRateWindows()
 
 
 def _as_bool(value: str | None, default: bool = True) -> bool:
@@ -103,17 +102,6 @@ def _public_catalog_enabled(required_scope: str | None) -> bool:
     return _as_bool(os.getenv("PUBLIC_API_ENABLED"), default=False)
 
 
-def _rate_limit(identity: str, limit: int) -> RateState:
-    now = time.time()
-    window_start = now - 60
-    bucket = _RATE_WINDOWS[identity]
-    bucket[:] = [item for item in bucket if item > window_start]
-    if len(bucket) >= limit:
-        return RateState(limit=limit, remaining=0, blocked=True)
-    bucket.append(now)
-    return RateState(limit=limit, remaining=max(limit - len(bucket), 0), blocked=False)
-
-
 def _client_ip() -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
@@ -121,13 +109,26 @@ def _client_ip() -> str:
     return request.remote_addr or "unknown"
 
 
-def _set_headers(response, plan: str | None, rate_limit: int | None, remaining: int | None, quota_limit, quota_used):
+def _set_headers(
+    response,
+    plan: str | None,
+    rate_limit: int | None,
+    remaining: int | None,
+    quota_limit,
+    quota_used,
+    retry_after: int | None = None,
+):
     if plan is not None:
         response.headers["X-Plan"] = str(plan)
     if rate_limit is not None:
         response.headers["X-RateLimit-Limit"] = str(rate_limit)
     if remaining is not None:
         response.headers["X-RateLimit-Remaining"] = str(max(remaining, 0))
+        response.headers["RateLimit-Remaining"] = str(max(remaining, 0))
+    if rate_limit is not None:
+        response.headers["RateLimit-Limit"] = str(rate_limit)
+    if retry_after is not None:
+        response.headers["Retry-After"] = str(max(1, retry_after))
     response.headers["X-Quota-Monthly"] = "unlimited" if quota_limit is None else str(quota_limit)
     response.headers["X-Quota-Used"] = "n/a" if quota_used is None else str(quota_used)
 
@@ -155,11 +156,12 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             default_limit = 15 if auth_entry else 120
             env_name = "USER_AUTH_IP_RATE_LIMIT_RPM" if auth_entry else "USER_SESSION_IP_RATE_LIMIT_RPM"
             limit = max(1, int(os.getenv(env_name, str(default_limit))))
-            rate = _rate_limit(f"user:{_client_ip()}:{'auth' if auth_entry else 'session'}", limit)
+            route_bucket = path if auth_entry else "session"
+            rate = consume_rate_limit(f"user:{_client_ip()}:{route_bucket}", limit)
             if rate.blocked:
                 response = jsonify({"error": "rate_limited"})
                 response.status_code = 429
-                _set_headers(response, "user", rate.limit, rate.remaining, None, None)
+                _set_headers(response, "user", rate.limit, rate.remaining, None, None, rate.retry_after)
                 return response
             g.api_meta = {
                 "plan": "user",
@@ -167,6 +169,7 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                 "rate_remaining": rate.remaining,
                 "quota_limit": None,
                 "quota_used": None,
+                "retry_after": None,
             }
             return None
 
@@ -211,15 +214,28 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                     if not plan:
                         return jsonify({"error": "invalid_api_key"}), 401
 
-                    rate = _rate_limit(f"key:{api_key.id}", plan.burst_rpm)
+                    rate = consume_rate_limit(f"key:{api_key.id}", plan.burst_rpm)
                     if rate.blocked and plan.burst_rpm > 0:
                         response = jsonify({"error": "rate_limited"})
                         response.status_code = 429
-                        _set_headers(response, plan.name, rate.limit, rate.remaining, plan.monthly_quota_requests, None)
+                        _set_headers(
+                            response,
+                            plan.name,
+                            rate.limit,
+                            rate.remaining,
+                            plan.monthly_quota_requests,
+                            None,
+                            rate.retry_after,
+                        )
                         return response
 
-                    usage = get_or_create_usage(session, api_key.id, current_period_ym())
-                    if plan.monthly_quota_requests is not None and usage.request_count >= plan.monthly_quota_requests:
+                    quota = consume_request_quota(
+                        session,
+                        api_key.id,
+                        current_period_ym(),
+                        plan.monthly_quota_requests,
+                    )
+                    if quota.blocked:
                         response = jsonify({"error": "quota_exceeded"})
                         response.status_code = 429
                         _set_headers(
@@ -228,12 +244,11 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                             rate.limit,
                             rate.remaining,
                             plan.monthly_quota_requests,
-                            usage.request_count,
+                            quota.used,
                         )
+                        session.rollback()
                         return response
 
-                    usage.request_count += 1
-                    usage.last_request_at = datetime.now(timezone.utc)
                     touch_last_used(api_key)
                     session.commit()
 
@@ -242,7 +257,8 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                         "rate_limit": rate.limit,
                         "rate_remaining": rate.remaining,
                         "quota_limit": plan.monthly_quota_requests,
-                        "quota_used": usage.request_count,
+                        "quota_used": quota.used,
+                        "retry_after": None,
                     }
                     g.api_key_prefix = api_key.prefix
                     return None
@@ -253,11 +269,11 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                 if not public_enabled:
                     return jsonify({"error": "invalid_api_key"}), 401
 
-        rate = _rate_limit(f"ip:{_client_ip()}", int(os.getenv("PUBLIC_IP_RATE_LIMIT_RPM", "30")))
+        rate = consume_rate_limit(f"ip:{_client_ip()}", int(os.getenv("PUBLIC_IP_RATE_LIMIT_RPM", "30")))
         if rate.blocked:
             response = jsonify({"error": "rate_limited"})
             response.status_code = 429
-            _set_headers(response, "public", rate.limit, rate.remaining, None, None)
+            _set_headers(response, "public", rate.limit, rate.remaining, None, None, rate.retry_after)
             return response
 
         g.api_meta = {
@@ -266,6 +282,7 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             "rate_remaining": rate.remaining,
             "quota_limit": None,
             "quota_used": None,
+            "retry_after": None,
         }
         return None
 
@@ -299,5 +316,6 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             meta.get("rate_remaining"),
             meta.get("quota_limit"),
             meta.get("quota_used"),
+            meta.get("retry_after"),
         )
         return response

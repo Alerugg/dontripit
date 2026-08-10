@@ -10,6 +10,29 @@ from app.search_v2.normalization import (
 )
 
 
+ONEPIECE_ALLOWED_FILTERS = {
+    "set",
+    "collector_number",
+    "release",
+    "language",
+    "color",
+    "card_type",
+    "cost",
+    "life",
+    "power",
+    "counter",
+    "attribute",
+    "traits",
+    "block",
+    "rarity",
+    "variant_family",
+    "exact_variant",
+    "promo",
+    "sp",
+    "treasure_rare",
+}
+
+
 def _as_list(value) -> list[str]:
     if value is None:
         return []
@@ -56,6 +79,9 @@ def advanced_onepiece_search(
         raise RuntimeError("Advanced Search V2 requires PostgreSQL")
 
     filters = dict(filters or {})
+    unknown = sorted(set(filters) - ONEPIECE_ALLOWED_FILTERS)
+    if unknown:
+        raise ValueError(f"Unsupported One Piece advanced filters: {unknown}")
     params: dict[str, object] = {
         "game": "onepiece",
         "limit": max(1, min(int(limit or 50), 200)),

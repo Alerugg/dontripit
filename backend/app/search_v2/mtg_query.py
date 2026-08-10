@@ -61,7 +61,8 @@ def normal_mtg_search(session, *, query: str, limit: int = 24) -> list[dict]:
                   CASE WHEN csp.normalized_name LIKE :prefix THEN 4200.0 ELSE 0.0 END +
                   CASE WHEN csp.normalized_name LIKE :contains THEN 1800.0 ELSE 0.0 END +
                   CASE WHEN csp.search_text LIKE :contains THEN 550.0 ELSE 0.0 END +
-                  {token_bonus_sql}) AS score
+                  {token_bonus_sql} +
+                  similarity(csp.normalized_name,:q_norm) * 900.0) AS score
           FROM card_search_profiles csp
           JOIN games g ON g.id=csp.game_id
           WHERE g.slug='mtg'
@@ -69,7 +70,8 @@ def normal_mtg_search(session, *, query: str, limit: int = 24) -> list[dict]:
               csp.normalized_name=:q_norm OR
               csp.normalized_name LIKE :prefix OR
               csp.normalized_name LIKE :contains OR
-              csp.search_text LIKE :contains
+              csp.search_text LIKE :contains OR
+              similarity(csp.normalized_name,:q_norm) >= 0.20
             )
           ORDER BY score DESC,csp.card_id ASC
           LIMIT :candidate_limit

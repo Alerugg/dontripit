@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
 
 from app.ingest.connectors.scryfall_mtg_v2 import ScryfallMtgV2Connector
-from app.ingest.registry import get_connector
+from app.ingest.registry import get_connector as _get_connector
+
+
+def get_connector(name: str):
+    """Inspect a quarantined adapter without enabling its production writer."""
+    return _get_connector(name, allow_quarantined=True)
 
 
 def test_registry_uses_scryfall_v2_connector():

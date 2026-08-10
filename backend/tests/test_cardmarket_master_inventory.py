@@ -9,6 +9,11 @@ from app.jobs.cardmarket_master_inventory import (
     load_catalog_feed_bytes,
 )
 from app.jobs.cardmarket_catalog_audit import ProductListRow
+from app.external_catalog_models import (
+    ExternalCatalogPrintLink,
+    ExternalCatalogProduct,
+    ExternalCatalogProductVariantLink,
+)
 from app.models import (
     Card,
     Game,
@@ -128,6 +133,94 @@ def test_mapped_single_and_sealed_make_game_ready(client):
     assert summary["ready"] is True
     assert summary["games"]["pokemon"]["ready"] is True
     assert {item.status for item in decisions} == {"mapped_print", "mapped_product_variant"}
+
+
+def test_accepted_external_links_are_used_by_master_inventory(client):
+    single_row = ProductListRow("1101", "Pikachu", "51", "Pokemon Single", "11")
+    sealed_row = ProductListRow("2101", "Test Booster Box", "53", "Pokemon Display", "11")
+    with db.SessionLocal() as session:
+        game, _, _, print_row = _single(session)
+        _, _, variant = _sealed(session, name="Test Booster Box")
+        external_single = ExternalCatalogProduct(
+            source="cardmarket",
+            external_id="1101",
+            game_id=game.id,
+            product_group="single",
+            name="Pikachu",
+        )
+        external_sealed = ExternalCatalogProduct(
+            source="cardmarket",
+            external_id="2101",
+            game_id=game.id,
+            product_group="non_single",
+            name="Test Booster Box",
+        )
+        session.add_all([external_single, external_sealed])
+        session.flush()
+        session.add_all(
+            [
+                ExternalCatalogPrintLink(
+                    external_product_id=external_single.id,
+                    print_id=print_row.id,
+                    mapping_method="identity_certified",
+                    confidence="exact",
+                    link_status="accepted",
+                    reviewed=True,
+                ),
+                ExternalCatalogProductVariantLink(
+                    external_product_id=external_sealed.id,
+                    product_variant_id=variant.id,
+                    mapping_method="identity_certified",
+                    confidence="exact",
+                    link_status="accepted",
+                    reviewed=True,
+                ),
+            ]
+        )
+        session.commit()
+
+        summary, decisions = build_master_inventory(
+            session,
+            [_feed("pokemon", "single", single_row), _feed("pokemon", "non_single", sealed_row)],
+        )
+
+    assert summary["mapped"] == 2
+    assert summary["ready"] is True
+    assert {item.status for item in decisions} == {"mapped_print", "mapped_product_variant"}
+
+
+def test_legacy_and_external_link_for_same_entity_are_deduplicated(client):
+    row = ProductListRow("1201", "Pikachu", "51", "Pokemon Single", "11")
+    with db.SessionLocal() as session:
+        game, _, _, print_row = _single(session)
+        external = ExternalCatalogProduct(
+            source="cardmarket",
+            external_id="1201",
+            game_id=game.id,
+            product_group="single",
+            name="Pikachu",
+        )
+        session.add(external)
+        session.flush()
+        session.add_all(
+            [
+                PrintIdentifier(print_id=print_row.id, source="cardmarket", external_id="1201"),
+                ExternalCatalogPrintLink(
+                    external_product_id=external.id,
+                    print_id=print_row.id,
+                    mapping_method="legacy_projection",
+                    confidence="exact",
+                    link_status="accepted",
+                    reviewed=True,
+                ),
+            ]
+        )
+        session.commit()
+
+        summary, decisions = build_master_inventory(session, [_feed("pokemon", "single", row)])
+
+    assert summary["mapped"] == 1
+    assert decisions[0].status == "mapped_print"
 
 
 def test_single_mapped_to_product_side_is_explicit_wrong_entity(client):

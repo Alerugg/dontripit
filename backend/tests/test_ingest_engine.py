@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from app import db
 from app.auth.service import hash_api_key
 from app.ingest.base import IngestStats
-from app.ingest.registry import get_connector
+from app.ingest.connectors.onepiece import OnePieceConnector
+from app.ingest.registry import get_connector as _get_connector
 from app.models import (
     ApiKey,
     ApiPlan,
@@ -26,6 +27,13 @@ from app.models import (
 )
 
 
+def get_connector(name: str):
+    """Exercise legacy adapters without weakening the runtime registry."""
+    if name == "onepiece":
+        return OnePieceConnector()
+    return _get_connector(name, allow_quarantined=True)
+
+
 def _ygo_fixture_source_path() -> Path:
     fixture_name = "ygoprodeck_yugioh_sample.json"
     candidates = [
@@ -33,6 +41,19 @@ def _ygo_fixture_source_path() -> Path:
         Path("backend/data/fixtures") / fixture_name,
         Path(__file__).resolve().parents[1] / "data" / "fixtures" / fixture_name,
         Path(__file__).resolve().parents[2] / "data" / "fixtures" / fixture_name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"Unable to resolve fixture path for {fixture_name}")
+
+
+def _fixture_path(fixture_name: str) -> Path:
+    """Resolve fixture files whether pytest starts at repo or backend root."""
+    candidates = [
+        Path("data/fixtures") / fixture_name,
+        Path("backend/data/fixtures") / fixture_name,
+        Path(__file__).resolve().parents[1] / "data" / "fixtures" / fixture_name,
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -1002,7 +1023,7 @@ def test_yugioh_remote_load_small_limit_uses_single_request(monkeypatch):
 
     assert len(payloads) == 3
     assert len(calls) == 1
-    assert calls[0]["params"] == {"num": 3, "offset": 0}
+    assert calls[0]["params"] == {"num": 3, "offset": 0, "sort": "new"}
 
 
 def test_yugioh_remote_load_dedupes_overlapping_pages(monkeypatch):
@@ -2021,7 +2042,7 @@ def test_riftbound_ingest_persists_primary_image_from_fixture(client):
 
 def test_riftbound_ingest_replaces_disallowed_domains_and_missing_images(client, tmp_path):
     connector = get_connector("riftbound")
-    fixture_path = Path("data/fixtures/riftbound_sample.json")
+    fixture_path = _fixture_path("riftbound_sample.json")
     payload = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     payload["prints"][0]["primary_image_url"] = "https://images.riftbound.cards/sets/rb1/001-borderless-en.webp"
@@ -2469,7 +2490,7 @@ def test_riftbound_normalization_is_homogeneous_between_official_and_fallback(cl
     connector = get_connector("riftbound")
     fallback_payloads = connector.load("data/fixtures/riftbound_fallback_like.json", fixture=True)
 
-    official_payload = json.loads(Path("data/fixtures/riftbound_official_like.json").read_text(encoding="utf-8"))
+    official_payload = json.loads(_fixture_path("riftbound_official_like.json").read_text(encoding="utf-8"))
     from app.ingest.connectors.riftbound_official import RiftboundOfficialBackend
     backend = RiftboundOfficialBackend(connector.logger)
     records = backend.to_logical_records(backend.fetch_all_from_content(official_payload))
@@ -2483,7 +2504,7 @@ def test_riftbound_normalization_is_homogeneous_between_official_and_fallback(cl
 
 def test_riftbound_official_payload_parsing_and_image_fallback(client):
     connector = get_connector("riftbound")
-    official_payload = json.loads(Path("data/fixtures/riftbound_official_like.json").read_text(encoding="utf-8"))
+    official_payload = json.loads(_fixture_path("riftbound_official_like.json").read_text(encoding="utf-8"))
     from app.ingest.connectors.riftbound_official import RiftboundOfficialBackend
 
     backend = RiftboundOfficialBackend(connector.logger)

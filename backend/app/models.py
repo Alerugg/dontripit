@@ -321,6 +321,29 @@ class ApiUsage(Base):
     last_request_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class RateLimitBucket(Base):
+    """Shared fixed-window counters used by every API worker.
+
+    ``identity_hash`` is an HMAC digest; raw IP addresses and API keys are never
+    persisted in the limiter table.
+    """
+
+    __tablename__ = "rate_limit_buckets"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", "window_start", name="uq_rate_limit_identity_window"),
+        Index("ix_rate_limit_buckets_expires_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    window_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class ApiRequestMetric(Base):
     __tablename__ = "api_request_metrics"
 

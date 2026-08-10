@@ -66,6 +66,14 @@ jobs:
           )
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --report /tmp/cardmarket/catalog-dry.json
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --apply --report /tmp/cardmarket/catalog-apply.json
+      - name: Map only exact and unique sealed identities
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python scripts/map_cardmarket_sealed_exact.py --report /tmp/cardmarket/sealed-mapping-dry.json
+          python scripts/map_cardmarket_sealed_exact.py --apply --report /tmp/cardmarket/sealed-mapping-apply.json
       - name: Validate and apply all current Cardmarket prices
         working-directory: backend
         env:
@@ -78,10 +86,20 @@ jobs:
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
               --game "$game" --apply --report "/tmp/cardmarket/${game}-prices-apply.json"
           done
+      - name: Generate missing verified image worklist
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          python scripts/report_missing_images.py \
+            --json /tmp/cardmarket/missing-images.json \
+            --csv /tmp/cardmarket/missing-images.csv
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cardmarket-mvp-daily-${{ github.run_id }}
-          path: /tmp/cardmarket/*-*.json
+          path: |
+            /tmp/cardmarket/*-*.json
+            /tmp/cardmarket/missing-images.csv
           retention-days: 30
           if-no-files-found: warn

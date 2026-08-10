@@ -5,6 +5,36 @@ from sqlalchemy import text
 from app.search_v2.normalization import normalize_language, normalize_search_text
 
 
+POKEMON_ALLOWED_FILTERS = {
+    "set",
+    "collector_number",
+    "series",
+    "release_year",
+    "language",
+    "category",
+    "types",
+    "stage",
+    "hp",
+    "trainer_type",
+    "energy_type",
+    "evolve_from",
+    "dex_id",
+    "rarity",
+    "regulation_mark",
+    "illustrator",
+    "finish",
+    "foil_pattern",
+    "stamp",
+    "variant_subtype",
+    "release_context",
+    "size",
+    "exact_variant",
+    # Useful internal physical dimension retained for API clients. The public
+    # UI advertises the more collector-friendly Finish/Exact Variant facets.
+    "variant_family",
+}
+
+
 def _as_list(value) -> list[str]:
     if value is None:
         return []
@@ -50,6 +80,9 @@ def advanced_pokemon_search(
 
     game_id = int(session.execute(text("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")).scalar_one())
     filters = dict(filters or {})
+    unknown = sorted(set(filters) - POKEMON_ALLOWED_FILTERS)
+    if unknown:
+        raise ValueError(f"Unsupported Pokémon advanced filters: {unknown}")
     params: dict[str, object] = {
         "game_id": game_id,
         "limit": max(1, min(int(limit or 50), 200)),

@@ -1,6 +1,6 @@
 import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -129,8 +129,22 @@ def _int_param(name: str, default: int, maximum: int) -> int:
     return min(max(value, 0), maximum)
 
 
-def _pagination(default_limit: int = 20, max_limit: int = 200) -> tuple[int, int]:
-    return _int_param("limit", default_limit, max_limit), _int_param("offset", 0, 1_000_000)
+def _is_public_catalog_request() -> bool:
+    return (getattr(g, "api_meta", None) or {}).get("plan") == "public"
+
+
+def _pagination(
+    default_limit: int = 20,
+    max_limit: int = 200,
+    max_offset: int = 1_000_000,
+) -> tuple[int, int]:
+    # The public HUB only needs shallow, human-scale pagination. Deep catalog
+    # export remains available to scoped API customers instead of being an
+    # anonymous bulk-extraction endpoint.
+    if _is_public_catalog_request():
+        max_limit = min(max_limit, 50)
+        max_offset = min(max_offset, 1_000)
+    return _int_param("limit", default_limit, max_limit), _int_param("offset", 0, max_offset)
 
 
 def _json_error(error: str, detail: str, status: int):
@@ -717,8 +731,7 @@ def list_products():
     set_code = request.args.get("set_code", "").strip()
     product_type = request.args.get("type", "").strip()
     q = request.args.get("q", "").strip()
-    limit = _int_param("limit", 20, 100)
-    offset = _int_param("offset", 0, 100000)
+    limit, offset = _pagination(default_limit=20, max_limit=100, max_offset=100_000)
 
     where = []
     params = {"limit": limit, "offset": offset}
@@ -791,6 +804,184 @@ def list_products():
         items.append(item)
 
     return jsonify({"items": items, "limit": limit, "offset": offset, "total": total})
+
+
+@catalog_bp.get("/api/market/products")
+@catalog_bp.get("/api/v1/market/products")
+def list_market_products():
+    """Browse the source-owned Cardmarket catalog without inventing identity.
+
+    Listing status is derived from complete-feed observations: a row observed
+    in the latest successful game/group snapshot is verified as available; a
+    previously observed row absent from that snapshot is explicitly not listed
+    in the latest feed. Canonical identity has a separate status and is never
+    inferred in this read endpoint.
+    """
+    game = request.args.get("game", "").strip().lower()
+    product_group = request.args.get("group", "non_single").strip().lower()
+    category = request.args.get("category", "").strip()
+    q = request.args.get("q", "").strip()
+    if product_group not in {"single", "non_single"}:
+        return _json_error("invalid_params", "group must be single or non_single", 400)
+    limit, offset = _pagination(default_limit=24, max_limit=100, max_offset=100_000)
+
+    where = ["e.source = 'cardmarket'", "e.product_group = :product_group"]
+    params = {"product_group": product_group, "limit": limit, "offset": offset}
+    if game:
+        where.append("g.slug = :game")
+        params["game"] = game
+    if category:
+        where.append("lower(COALESCE(e.category, '')) = lower(:category)")
+        params["category"] = category
+    if q:
+        where.append("lower(e.name) LIKE :q")
+        params["q"] = f"%{q.lower()}%"
+    where_sql = " AND ".join(where)
+
+    sql = text(
+        f"""
+        WITH latest_feed AS (
+            SELECT source, game_id, product_group, MAX(last_seen_at) AS snapshot_at
+            FROM external_catalog_products
+            WHERE source = 'cardmarket'
+            GROUP BY source, game_id, product_group
+        ), accepted_links AS (
+            SELECT l.external_product_id,
+                   COUNT(DISTINCT l.product_variant_id) AS variant_count,
+                   MIN(l.product_variant_id) AS product_variant_id,
+                   COUNT(DISTINCT p.game_id) AS linked_game_count,
+                   MIN(p.game_id) AS linked_game_id,
+                   MIN(p.id) AS canonical_product_id
+            FROM external_catalog_product_variant_links l
+            JOIN product_variants pv ON pv.id = l.product_variant_id
+            JOIN products p ON p.id = pv.product_id
+            WHERE l.link_status IN ('accepted', 'mapped', 'exact')
+            GROUP BY l.external_product_id
+        ), all_links AS (
+            SELECT external_product_id, COUNT(*) AS link_count
+            FROM external_catalog_product_variant_links
+            GROUP BY external_product_id
+        ), latest_prices AS (
+            SELECT external_product_id, currency, price_low, price_mid, price_market,
+                   price_last, as_of,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY external_product_id
+                       ORDER BY as_of DESC, id DESC
+                   ) AS row_number
+            FROM external_market_price_snapshots
+            WHERE price_variant = 'sealed'
+        )
+        SELECT e.id,
+               e.external_id,
+               e.name,
+               e.category,
+               e.category_id,
+               e.expansion_external_id,
+               e.product_group,
+               e.website_path,
+               e.last_seen_at,
+               latest_feed.snapshot_at,
+               g.slug AS game,
+               CASE
+                   WHEN latest_feed.snapshot_at IS NULL THEN 'catalog_snapshot_unknown'
+                   WHEN e.last_seen_at = latest_feed.snapshot_at THEN 'available_verified'
+                   ELSE 'not_listed_latest_feed'
+               END AS listing_status,
+               CASE
+                   WHEN COALESCE(accepted_links.variant_count, 0) = 1
+                        AND accepted_links.linked_game_count = 1
+                        AND accepted_links.linked_game_id = e.game_id THEN 'verified'
+                   WHEN COALESCE(accepted_links.variant_count, 0) > 1 THEN 'ambiguous'
+                   WHEN COALESCE(accepted_links.variant_count, 0) = 1
+                        AND accepted_links.linked_game_id <> e.game_id THEN 'conflict'
+                   WHEN COALESCE(all_links.link_count, 0) > 0 THEN 'review_pending'
+                   ELSE 'unverified'
+               END AS identity_status,
+               CASE
+                   WHEN COALESCE(accepted_links.variant_count, 0) = 1
+                        AND accepted_links.linked_game_id = e.game_id
+                   THEN accepted_links.canonical_product_id
+                   ELSE NULL
+               END AS canonical_product_id,
+               CASE
+                   WHEN COALESCE(accepted_links.variant_count, 0) = 1
+                        AND accepted_links.linked_game_id = e.game_id
+                   THEN accepted_links.product_variant_id
+                   ELSE NULL
+               END AS product_variant_id,
+               (
+                   SELECT pi.url
+                   FROM product_images pi
+                   WHERE pi.product_variant_id = accepted_links.product_variant_id
+                   ORDER BY pi.is_primary DESC, pi.id ASC
+                   LIMIT 1
+               ) AS primary_image_url,
+               latest_prices.currency,
+               latest_prices.price_low,
+               latest_prices.price_mid,
+               latest_prices.price_market,
+               latest_prices.price_last,
+               latest_prices.as_of AS price_as_of
+        FROM external_catalog_products e
+        JOIN games g ON g.id = e.game_id
+        LEFT JOIN latest_feed
+          ON latest_feed.source = e.source
+         AND latest_feed.game_id = e.game_id
+         AND latest_feed.product_group = e.product_group
+        LEFT JOIN accepted_links ON accepted_links.external_product_id = e.id
+        LEFT JOIN all_links ON all_links.external_product_id = e.id
+        LEFT JOIN latest_prices
+          ON latest_prices.external_product_id = e.id
+         AND latest_prices.row_number = 1
+        WHERE {where_sql}
+        ORDER BY e.name ASC, e.external_id ASC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    count_sql = text(
+        f"""
+        SELECT COUNT(*)
+        FROM external_catalog_products e
+        JOIN games g ON g.id = e.game_id
+        WHERE {where_sql}
+        """
+    )
+
+    try:
+        with db.SessionLocal() as session:
+            rows = session.execute(sql, params).mappings().all()
+            total = int(session.execute(count_sql, params).scalar_one())
+    except SQLAlchemyError as error:
+        return _json_error("market_products_query_failed", str(error), 500)
+
+    items = []
+    for source_row in rows:
+        row = dict(source_row)
+        for key in ("last_seen_at", "snapshot_at", "price_as_of"):
+            if hasattr(row.get(key), "isoformat"):
+                row[key] = row[key].isoformat()
+        for key in ("price_low", "price_mid", "price_market", "price_last"):
+            if row.get(key) is not None:
+                row[key] = float(row[key])
+        items.append(row)
+    return jsonify({
+        "items": items,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "listing_status_contract": {
+            "available_verified": "Observed in the latest complete Cardmarket feed",
+            "not_listed_latest_feed": "Previously observed but absent from the latest complete feed",
+            "catalog_snapshot_unknown": "No complete feed observation is available",
+        },
+        "identity_status_contract": {
+            "verified": "Accepted exact link to one canonical product variant",
+            "unverified": "No accepted canonical identity link",
+            "review_pending": "A candidate link exists but is not accepted",
+            "ambiguous": "Multiple accepted canonical variants conflict",
+            "conflict": "Accepted link crosses game identity",
+        },
+    })
 
 
 @catalog_bp.get("/api/products/<int:product_id>")

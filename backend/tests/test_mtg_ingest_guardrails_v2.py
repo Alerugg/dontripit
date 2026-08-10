@@ -4,8 +4,13 @@ from sqlalchemy import select
 
 from app import db
 from app.ingest.base import SourceConnector
-from app.ingest.registry import get_connector
+from app.ingest.registry import get_connector as _get_connector
 from app.models import Source, SourceRecord
+
+
+def get_connector(name: str):
+    """Inspect a quarantined adapter without enabling its production writer."""
+    return _get_connector(name, allow_quarantined=True)
 
 
 def test_source_connector_persists_raw_payload_by_default():

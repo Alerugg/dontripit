@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
@@ -35,6 +35,11 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
 
 def _query(value) -> str:
     return str(value or "").strip()[:MAX_QUERY_LENGTH]
+
+
+def _access_limit(maximum: int) -> int:
+    plan = (getattr(g, "api_meta", None) or {}).get("plan")
+    return min(maximum, 50) if plan == "public" else maximum
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int):
@@ -75,7 +80,7 @@ def search_v2():
     if not q:
         return jsonify({"error": "q is required"}), 400
     game = str(request.args.get("game") or "").strip().lower() or None
-    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=MAX_SEARCH_LIMIT)
+    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=_access_limit(MAX_SEARCH_LIMIT))
 
     with db.SessionLocal() as session:
         items = _normal_search_for_game(session, query=q, game=game, limit=limit)
@@ -119,7 +124,7 @@ def search_v2_facet_values(game_slug: str, facet_key: str):
         return jsonify({"error": "game_not_search_v2_ready", "game": game_slug}), 422
 
     query = _query(request.args.get("q"))
-    limit = _bounded_int(request.args.get("limit"), default=30, minimum=1, maximum=MAX_FACET_LIMIT)
+    limit = _bounded_int(request.args.get("limit"), default=30, minimum=1, maximum=_access_limit(MAX_FACET_LIMIT))
     try:
         with db.SessionLocal() as session:
             if game_slug == "pokemon":
@@ -171,8 +176,18 @@ def search_v2_advanced():
                 session,
                 filters=filters,
                 query=_query(body.get("q")),
-                limit=_bounded_int(body.get("limit"), default=50, minimum=1, maximum=MAX_SEARCH_LIMIT),
-                offset=_bounded_int(body.get("offset"), default=0, minimum=0, maximum=10_000),
+                limit=_bounded_int(
+                    body.get("limit"),
+                    default=50,
+                    minimum=1,
+                    maximum=_access_limit(MAX_SEARCH_LIMIT),
+                ),
+                offset=_bounded_int(
+                    body.get("offset"),
+                    default=0,
+                    minimum=0,
+                    maximum=1_000 if (getattr(g, "api_meta", None) or {}).get("plan") == "public" else 10_000,
+                ),
             )
     except ValueError as exc:
         return jsonify({"error": "invalid_filters", "detail": str(exc)}), 400

@@ -11,10 +11,15 @@ from app.auth import middleware
 from app.auth.create_key import main as create_key_main
 from app.auth.service import disable_key_by_prefix, hash_api_key, rotate_key_by_prefix
 from app.ingest.base import IngestStats
-from app.ingest.registry import get_connector
+from app.ingest.registry import get_connector as _get_connector
 from app.models import ApiKey, ApiPlan, Card, Game, PriceSnapshot, Print, PrintIdentifier, PrintImage, Product, Set, SourceRecord
 from app.scripts.reindex_search import rebuild_search_documents
 from app.scripts.seed import run_seed
+
+
+def get_connector(name: str):
+    """Allow quarantined fixture adapters only in compatibility tests."""
+    return _get_connector(name, allow_quarantined=True)
 
 
 def _ygo_fixture_source_path() -> Path:

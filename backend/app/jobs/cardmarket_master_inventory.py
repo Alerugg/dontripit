@@ -12,6 +12,11 @@ from typing import Iterable
 
 from sqlalchemy import select
 
+from app.external_catalog_models import (
+    ExternalCatalogPrintLink,
+    ExternalCatalogProduct,
+    ExternalCatalogProductVariantLink,
+)
 from app.jobs.cardmarket_catalog_audit import ProductListRow, audit_product_list
 from app.models import (
     Card,
@@ -27,6 +32,7 @@ from app.models import (
 CARDMARKET_SOURCE = "cardmarket"
 SUPPORTED_GAMES = {"pokemon", "onepiece", "mtg", "yugioh"}
 PRODUCT_GROUPS = {"single", "non_single"}
+_ACCEPTED_LINK_STATUSES = {"accepted", "mapped", "exact"}
 
 _CONFLICT_STATUSES = {
     "duplicate_catalog_product",
@@ -197,31 +203,59 @@ def load_catalog_feed_file(path: str | Path, *, game_slug: str, product_group: s
 
 
 def _print_identifier_index(session) -> dict[str, list[tuple[int, str]]]:
-    rows = session.execute(
+    legacy_rows = session.execute(
         select(PrintIdentifier.external_id, Print.id, Game.slug)
         .join(Print, Print.id == PrintIdentifier.print_id)
         .join(Card, Card.id == Print.card_id)
         .join(Game, Game.id == Card.game_id)
         .where(PrintIdentifier.source == CARDMARKET_SOURCE)
     ).all()
-    result: dict[str, list[tuple[int, str]]] = {}
-    for external_id, print_id, game_slug in rows:
-        result.setdefault(str(external_id), []).append((int(print_id), str(game_slug)))
-    return result
+    linked_rows = session.execute(
+        select(ExternalCatalogProduct.external_id, Print.id, Game.slug)
+        .join(
+            ExternalCatalogPrintLink,
+            ExternalCatalogPrintLink.external_product_id == ExternalCatalogProduct.id,
+        )
+        .join(Print, Print.id == ExternalCatalogPrintLink.print_id)
+        .join(Card, Card.id == Print.card_id)
+        .join(Game, Game.id == Card.game_id)
+        .where(
+            ExternalCatalogProduct.source == CARDMARKET_SOURCE,
+            ExternalCatalogPrintLink.link_status.in_(_ACCEPTED_LINK_STATUSES),
+        )
+    ).all()
+    result: dict[str, set[tuple[int, str]]] = {}
+    for external_id, print_id, game_slug in [*legacy_rows, *linked_rows]:
+        result.setdefault(str(external_id), set()).add((int(print_id), str(game_slug)))
+    return {external_id: sorted(mappings) for external_id, mappings in result.items()}
 
 
 def _product_identifier_index(session) -> dict[str, list[tuple[int, str]]]:
-    rows = session.execute(
+    legacy_rows = session.execute(
         select(ProductIdentifier.external_id, ProductVariant.id, Game.slug)
         .join(ProductVariant, ProductVariant.id == ProductIdentifier.product_variant_id)
         .join(Product, Product.id == ProductVariant.product_id)
         .join(Game, Game.id == Product.game_id)
         .where(ProductIdentifier.source == CARDMARKET_SOURCE)
     ).all()
-    result: dict[str, list[tuple[int, str]]] = {}
-    for external_id, variant_id, game_slug in rows:
-        result.setdefault(str(external_id), []).append((int(variant_id), str(game_slug)))
-    return result
+    linked_rows = session.execute(
+        select(ExternalCatalogProduct.external_id, ProductVariant.id, Game.slug)
+        .join(
+            ExternalCatalogProductVariantLink,
+            ExternalCatalogProductVariantLink.external_product_id == ExternalCatalogProduct.id,
+        )
+        .join(ProductVariant, ProductVariant.id == ExternalCatalogProductVariantLink.product_variant_id)
+        .join(Product, Product.id == ProductVariant.product_id)
+        .join(Game, Game.id == Product.game_id)
+        .where(
+            ExternalCatalogProduct.source == CARDMARKET_SOURCE,
+            ExternalCatalogProductVariantLink.link_status.in_(_ACCEPTED_LINK_STATUSES),
+        )
+    ).all()
+    result: dict[str, set[tuple[int, str]]] = {}
+    for external_id, variant_id, game_slug in [*legacy_rows, *linked_rows]:
+        result.setdefault(str(external_id), set()).add((int(variant_id), str(game_slug)))
+    return {external_id: sorted(mappings) for external_id, mappings in result.items()}
 
 
 def _single_audit_index(session, feed: CatalogFeed, crosswalk: dict[str, dict]) -> dict[str, object]:
