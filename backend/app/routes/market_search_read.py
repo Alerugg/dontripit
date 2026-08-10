@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, jsonify, request
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +16,7 @@ from app.routes.market_reference import (
 
 
 market_search_read_bp = Blueprint("market_search_read", __name__)
+logger = logging.getLogger(__name__)
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
@@ -224,7 +227,13 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
             total = int(session.execute(count_sql, params).scalar_one())
             category_rows = [dict(row) for row in session.execute(categories_sql, params).mappings().all()]
             region_rows = [dict(row) for row in session.execute(regions_sql, params).mappings().all()]
-    except SQLAlchemyError:
+    except SQLAlchemyError as error:
+        logger.exception(
+            "Cardmarket set product query failed for game=%s set=%s",
+            game_slug,
+            set_code,
+            exc_info=error,
+        )
         return jsonify({"error": "cardmarket_set_products_unavailable"}), 503
 
     items = []
