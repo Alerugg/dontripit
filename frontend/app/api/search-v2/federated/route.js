@@ -129,7 +129,7 @@ export async function GET(request) {
         timeoutMs: 15000,
       })
   const sealedPromise = setCode
-    ? callInternalApi(`/api/v1/market/sets/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}/products`, {
+    ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
         params: { limit, offset, category },
         timeoutMs: 15000,
       })
@@ -155,9 +155,9 @@ export async function GET(request) {
 
   let marketByPrint = new Map()
   if (singles.length) {
-    const marketUpstream = await callInternalApi('/api/v1/market/prints/cardmarket/batch', {
-      method: 'POST',
-      body: { print_ids: singles.map((item) => item.print_id).filter(Boolean) },
+    const ids = singles.map((item) => item.print_id).filter(Boolean)
+    const marketUpstream = await callInternalApi('/api/v1/market/prints/cardmarket-batch', {
+      params: { ids: ids.join(',') },
       timeoutMs: 15000,
     })
     if (marketUpstream.ok) {
@@ -203,7 +203,15 @@ export async function GET(request) {
     sets,
     exact_set: exactSet,
     singles: { items: enrichedSingles, total: singlesTotal, page, limit },
-    sealed: { items: sealed, total: sealedTotal, page, limit, categories },
+    sealed: {
+      items: sealed,
+      total: sealedTotal,
+      page,
+      limit,
+      categories,
+      regions: sealedUpstream.payload?.regions || [],
+      expansion_ids: sealedUpstream.payload?.expansion_ids || [],
+    },
     matches,
     errors,
   })
