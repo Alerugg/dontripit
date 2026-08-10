@@ -25,42 +25,27 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install psycopg2-binary==2.9.9
-      - name: Audit exact public OP15 prints against Cardmarket
+      - name: Audit all OP15 set-ui prints against Cardmarket
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json
-          import os
-          import re
+          import json, os, re
           from collections import defaultdict
           from pathlib import Path
-
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
           CANONICAL_RE = re.compile(r'^(?:OP|ST|EB|PRB)\d{1,2}-\d{3}(?:_p\d+)?$|^P-\d{3}(?:_p\d+)?$', re.I)
           ACCEPTED = ('accepted', 'mapped', 'exact')
           UNSUPPORTED_FINISH = ('etched', 'glossy')
-
-          report = {
-              'game': 'onepiece',
-              'set_code': 'OP-15',
-              'mode': 'read_only_live_db_audit',
-              'status': 'started',
-          }
+          report = {'game':'onepiece','set_code':'OP-15','mode':'read_only_live_db_audit','status':'started'}
 
           conn = psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           try:
               with conn.cursor(cursor_factory=RealDictCursor) as cur:
                   cur.execute('''
-                      SELECT p.id AS print_id,
-                             p.collector_number,
-                             p.language,
-                             p.rarity,
-                             p.is_foil,
-                             p.variant,
-                             c.name AS card_name,
-                             s.code AS set_code
+                      SELECT p.id AS print_id,p.collector_number,p.language,p.rarity,p.is_foil,p.variant,
+                             c.name AS card_name,s.code AS set_code
                       FROM prints p
                       JOIN cards c ON c.id=p.card_id
                       JOIN sets s ON s.id=p.set_id
@@ -68,186 +53,99 @@ jobs:
                       WHERE g.slug='onepiece' AND lower(s.code)='op-15'
                       ORDER BY p.collector_number ASC,p.id ASC
                   ''')
-                  all_rows = [dict(row) for row in cur.fetchall()]
-                  all_ids = [int(row['print_id']) for row in all_rows]
-
-                  cur.execute('''
-                      SELECT print_id,source,external_id
-                      FROM print_identifiers
-                      WHERE print_id = ANY(%s)
-                      ORDER BY print_id,source
-                  ''', (all_ids,))
-                  identifiers = defaultdict(list)
-                  for row in cur.fetchall():
-                      identifiers[int(row['print_id'])].append({
-                          'source': row['source'],
-                          'external_id': row['external_id'],
-                      })
-
-                  public_rows = []
-                  for row in all_rows:
-                      pid = int(row['print_id'])
-                      ids = identifiers.get(pid, [])
-                      if any(CANONICAL_RE.fullmatch(str(x.get('external_id') or '').strip()) for x in ids):
-                          row['identifiers'] = ids
-                          public_rows.append(row)
-
-                  print_ids = [int(row['print_id']) for row in public_rows]
+                  public_rows=[dict(r) for r in cur.fetchall()]
+                  print_ids=[int(r['print_id']) for r in public_rows]
                   if not print_ids:
                       raise AssertionError('OP15 public print set is empty')
 
+                  cur.execute('''SELECT print_id,source,external_id FROM print_identifiers
+                                 WHERE print_id=ANY(%s) ORDER BY print_id,source''',(print_ids,))
+                  identifiers=defaultdict(list)
+                  for r in cur.fetchall():
+                      identifiers[int(r['print_id'])].append({'source':r['source'],'external_id':r['external_id']})
+                  for r in public_rows:
+                      r['identifiers']=identifiers.get(int(r['print_id']),[])
+
                   cur.execute('''
                       WITH latest_prices AS (
-                          SELECT external_product_id,
-                                 currency,
-                                 price_variant,
-                                 price_low,
-                                 price_mid,
-                                 price_market,
-                                 price_last,
-                                 avg1,
-                                 avg7,
-                                 avg30,
-                                 as_of AS price_as_of,
-                                 ROW_NUMBER() OVER (
-                                     PARTITION BY external_product_id,currency,price_variant
-                                     ORDER BY as_of DESC,id DESC
-                                 ) AS row_number
+                          SELECT external_product_id,currency,price_variant,price_low,price_mid,price_market,price_last,
+                                 avg1,avg7,avg30,as_of AS price_as_of,
+                                 ROW_NUMBER() OVER(PARTITION BY external_product_id,currency,price_variant ORDER BY as_of DESC,id DESC) rn
                           FROM external_market_price_snapshots
                           WHERE currency='EUR' AND price_variant IN ('nonfoil','foil')
                       )
-                      SELECT l.print_id,
-                             e.id AS external_product_id,
-                             e.external_id AS cardmarket_id_product,
-                             e.name AS product_name,
-                             e.website_path,
-                             l.mapping_method,
-                             l.confidence AS mapping_confidence,
-                             l.link_status,
-                             lp.currency,
-                             lp.price_variant,
-                             lp.price_low,
-                             lp.price_mid,
-                             lp.price_market,
-                             lp.price_last,
-                             lp.avg1,
-                             lp.avg7,
-                             lp.avg30,
-                             lp.price_as_of
+                      SELECT l.print_id,e.id AS external_product_id,e.external_id AS cardmarket_id_product,
+                             e.name AS product_name,e.website_path,l.mapping_method,l.confidence AS mapping_confidence,
+                             l.link_status,lp.currency,lp.price_variant,lp.price_low,lp.price_mid,lp.price_market,
+                             lp.price_last,lp.avg1,lp.avg7,lp.avg30,lp.price_as_of
                       FROM external_catalog_print_links l
                       JOIN external_catalog_products e ON e.id=l.external_product_id
                       JOIN prints p ON p.id=l.print_id
-                      LEFT JOIN latest_prices lp
-                        ON lp.external_product_id=e.id
-                       AND lp.row_number=1
-                       AND lp.price_variant=CASE WHEN p.is_foil IS TRUE THEN 'foil' ELSE 'nonfoil' END
-                      WHERE l.print_id = ANY(%s)
-                        AND e.source='cardmarket'
-                        AND e.product_group='single'
-                        AND l.link_status = ANY(%s)
+                      LEFT JOIN latest_prices lp ON lp.external_product_id=e.id AND lp.rn=1
+                           AND lp.price_variant=CASE WHEN p.is_foil IS TRUE THEN 'foil' ELSE 'nonfoil' END
+                      WHERE l.print_id=ANY(%s) AND e.source='cardmarket' AND e.product_group='single'
+                        AND l.link_status=ANY(%s)
                       ORDER BY l.print_id,e.id
-                  ''', (print_ids, list(ACCEPTED)))
-                  market_rows = defaultdict(list)
-                  for row in cur.fetchall():
-                      market_rows[int(row['print_id'])].append(dict(row))
+                  ''',(print_ids,list(ACCEPTED)))
+                  market_rows=defaultdict(list)
+                  for r in cur.fetchall(): market_rows[int(r['print_id'])].append(dict(r))
 
-                  counts = defaultdict(int)
-                  details = []
-                  gaps = []
-                  for prow in public_rows:
-                      pid = int(prow['print_id'])
-                      candidates = market_rows.get(pid, [])
-                      product_ids = {int(x['external_product_id']) for x in candidates if x.get('external_product_id') is not None}
-                      status = None
-                      reason = None
-                      market = None
-                      price_value = None
-
+                  counts=defaultdict(int); details=[]; gaps=[]; noncanonical=[]
+                  for p in public_rows:
+                      pid=int(p['print_id']); candidates=market_rows.get(pid,[])
+                      canonical_ids=[x for x in p['identifiers'] if CANONICAL_RE.fullmatch(str(x.get('external_id') or '').strip())]
+                      if not canonical_ids:
+                          noncanonical.append({'print_id':pid,'collector_number':p.get('collector_number'),'card_name':p.get('card_name'),'variant':p.get('variant'),'identifiers':p['identifiers']})
+                      product_ids={int(x['external_product_id']) for x in candidates if x.get('external_product_id') is not None}
+                      market=None; price_value=None; reason=None
                       if not candidates:
-                          status = 'unmapped'
-                          reason = 'no_accepted_exact_cardmarket_mapping'
-                      elif len(product_ids) != 1:
-                          status = 'ambiguous'
-                          reason = 'multiple_accepted_cardmarket_products'
+                          status='unmapped'; reason='no_accepted_exact_cardmarket_mapping'
+                      elif len(product_ids)!=1:
+                          status='ambiguous'; reason='multiple_accepted_cardmarket_products'
                       else:
-                          market = candidates[0]
-                          variant = str(prow.get('variant') or '').strip().lower()
-                          unsupported = any(token in variant for token in UNSUPPORTED_FINISH)
-                          values = [market.get('price_mid'), market.get('price_market'), market.get('price_last'), market.get('price_low')]
-                          price_value = next((float(v) for v in values if v is not None), None)
-                          if unsupported:
-                              status = 'mapped_unpriced'
-                              reason = 'cardmarket_priceguide_cannot_separate_finish'
+                          market=candidates[0]
+                          variant=str(p.get('variant') or '').strip().lower()
+                          values=[market.get('price_mid'),market.get('price_market'),market.get('price_last'),market.get('price_low')]
+                          price_value=next((float(v) for v in values if v is not None),None)
+                          if any(t in variant for t in UNSUPPORTED_FINISH):
+                              status='mapped_unpriced'; reason='cardmarket_priceguide_cannot_separate_finish'
                           elif market.get('price_as_of') is None or price_value is None:
-                              status = 'mapped_unpriced'
-                              reason = 'no_current_cardmarket_priceguide_row'
+                              status='mapped_unpriced'; reason='no_current_cardmarket_priceguide_row'
                           else:
-                              status = 'priced'
-
-                      counts[status] += 1
-                      item = {
-                          'print_id': pid,
-                          'collector_number': prow.get('collector_number'),
-                          'card_name': prow.get('card_name'),
-                          'variant': prow.get('variant'),
-                          'language': prow.get('language'),
-                          'is_foil': prow.get('is_foil'),
-                          'status': status,
-                          'reason': reason,
-                          'canonical_identifiers': [
-                              x for x in prow.get('identifiers', [])
-                              if CANONICAL_RE.fullmatch(str(x.get('external_id') or '').strip())
-                          ],
-                          'cardmarket': None if market is None else {
-                              'external_product_id': int(market['external_product_id']),
-                              'id_product': str(market.get('cardmarket_id_product') or ''),
-                              'product_name': market.get('product_name'),
-                              'website_path': market.get('website_path'),
-                              'mapping_method': market.get('mapping_method'),
-                              'mapping_confidence': market.get('mapping_confidence'),
-                              'link_status': market.get('link_status'),
-                              'price_as_of': str(market.get('price_as_of')) if market.get('price_as_of') is not None else None,
-                              'price_variant': market.get('price_variant'),
-                              'price_value': price_value,
-                          },
-                      }
+                              status='priced'
+                      counts[status]+=1
+                      item={'print_id':pid,'collector_number':p.get('collector_number'),'card_name':p.get('card_name'),
+                            'variant':p.get('variant'),'language':p.get('language'),'is_foil':p.get('is_foil'),
+                            'status':status,'reason':reason,'canonical_identifiers':canonical_ids,
+                            'cardmarket':None if market is None else {
+                                'external_product_id':int(market['external_product_id']),
+                                'id_product':str(market.get('cardmarket_id_product') or ''),
+                                'product_name':market.get('product_name'),'website_path':market.get('website_path'),
+                                'mapping_method':market.get('mapping_method'),'mapping_confidence':market.get('mapping_confidence'),
+                                'link_status':market.get('link_status'),'price_as_of':str(market.get('price_as_of')) if market.get('price_as_of') is not None else None,
+                                'price_variant':market.get('price_variant'),'price_value':price_value}}
                       details.append(item)
-                      if status != 'priced':
-                          gaps.append(item)
+                      if status!='priced': gaps.append(item)
 
-                  mapped = len(public_rows) - counts['unmapped']
-                  unique_cm_products = {
-                      int(item['cardmarket']['external_product_id'])
-                      for item in details if item.get('cardmarket') and item['status'] != 'ambiguous'
-                  }
-                  urls_present = sum(1 for item in details if item.get('cardmarket') and item['cardmarket'].get('website_path'))
-
-                  report.update({
-                      'status': 'completed',
-                      'database_set_rows': len(all_rows),
-                      'public_canonical_prints': len(public_rows),
-                      'mapped_prints': mapped,
-                      'priced_prints': counts['priced'],
-                      'mapped_unpriced_prints': counts['mapped_unpriced'],
-                      'unmapped_prints': counts['unmapped'],
-                      'ambiguous_prints': counts['ambiguous'],
-                      'unique_cardmarket_products': len(unique_cm_products),
-                      'cardmarket_urls_present': urls_present,
-                      'all_public_print_ids_unique': len(print_ids) == len(set(print_ids)),
-                      'coverage_percent': round((counts['priced'] / len(public_rows)) * 100, 2),
-                      'gap_count': len(gaps),
-                      'gaps': gaps,
-                      'details': details,
-                  })
+                  unique_cm={int(x['cardmarket']['external_product_id']) for x in details if x.get('cardmarket') and x['status']!='ambiguous'}
+                  urls=sum(1 for x in details if x.get('cardmarket') and x['cardmarket'].get('website_path'))
+                  report.update({'status':'completed','public_set_ui_prints':len(public_rows),
+                                 'prints_with_canonical_identifier':len(public_rows)-len(noncanonical),
+                                 'prints_without_canonical_identifier':len(noncanonical),'noncanonical_rows':noncanonical,
+                                 'mapped_prints':len(public_rows)-counts['unmapped'],'priced_prints':counts['priced'],
+                                 'mapped_unpriced_prints':counts['mapped_unpriced'],'unmapped_prints':counts['unmapped'],
+                                 'ambiguous_prints':counts['ambiguous'],'unique_cardmarket_products':len(unique_cm),
+                                 'cardmarket_urls_present':urls,'all_public_print_ids_unique':len(print_ids)==len(set(print_ids)),
+                                 'coverage_percent':round((counts['priced']/len(public_rows))*100,2),'gap_count':len(gaps),
+                                 'gaps':gaps,'details':details})
           finally:
               conn.close()
 
-          output = Path('/tmp/op15-cardmarket-live-audit.json')
-          output.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str) + '\n', encoding='utf-8')
-          print(json.dumps({k:v for k,v in report.items() if k not in ('details','gaps')}, indent=2, ensure_ascii=False, default=str))
-          if report.get('gaps'):
-              print('\nGAPS:')
-              print(json.dumps(report['gaps'], indent=2, ensure_ascii=False, default=str))
+          out=Path('/tmp/op15-cardmarket-live-audit.json')
+          out.write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('details','gaps')},indent=2,ensure_ascii=False,default=str))
+          if report['gaps']:
+              print('\nGAPS:'); print(json.dumps(report['gaps'],indent=2,ensure_ascii=False,default=str))
           PY
       - name: Publish audit summary
         if: always()
@@ -257,16 +155,11 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/op15-cardmarket-live-audit.json')
           if not p.exists():
-              print('## OP15 Cardmarket audit\nAudit file was not produced.')
-              raise SystemExit(0)
+              print('## OP15 Cardmarket audit\nAudit file was not produced.'); raise SystemExit(0)
           r=json.loads(p.read_text())
           print('## OP15 Cardmarket live audit')
-          print(f"- Public canonical prints: **{r.get('public_canonical_prints')}**")
-          print(f"- Priced: **{r.get('priced_prints')}**")
-          print(f"- Mapped but unpriced: **{r.get('mapped_unpriced_prints')}**")
-          print(f"- Unmapped: **{r.get('unmapped_prints')}**")
-          print(f"- Ambiguous: **{r.get('ambiguous_prints')}**")
-          print(f"- Cardmarket URLs present: **{r.get('cardmarket_urls_present')}**")
+          for label,key in [('Public set-ui prints','public_set_ui_prints'),('Priced','priced_prints'),('Mapped but unpriced','mapped_unpriced_prints'),('Unmapped','unmapped_prints'),('Ambiguous','ambiguous_prints'),('Cardmarket URLs present','cardmarket_urls_present'),('Without canonical identifier','prints_without_canonical_identifier')]:
+              print(f"- {label}: **{r.get(key)}**")
           print(f"- Priced coverage: **{r.get('coverage_percent')}%**")
           if r.get('gaps'):
               print('\n### Gaps')
