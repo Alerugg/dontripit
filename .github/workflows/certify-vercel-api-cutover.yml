@@ -49,7 +49,7 @@ jobs:
           status, games=get('/api/games')
           assert status==200 and isinstance(games,list) and len(games)>=4, (status,games)
           slugs={str(row.get('slug')) for row in games}
-          assert {'pokemon','onepiece','magic','yugioh'}.issubset(slugs), slugs
+          assert {'pokemon','onepiece','mtg','yugioh'}.issubset(slugs), slugs
 
           print(json.dumps({
               'runtime': health.get('runtime'),
