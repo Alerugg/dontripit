@@ -1,0 +1,74 @@
+name: Audit Cardmarket Product Conflict V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-product-conflict-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - run: |
+          python - <<'PY'
+          import json,os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                WITH current AS (
+                  SELECT e.id,e.external_id,e.game_id,e.name,e.category,e.expansion_external_id,e.website_path
+                  FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                    AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                    AND g.slug IN ('pokemon','onepiece','mtg','yugioh')
+                )
+                SELECT c.id external_product_id,c.external_id id_product,g.slug game,c.name external_name,
+                       c.category,c.expansion_external_id,c.website_path,
+                       l.id link_id,l.product_variant_id,l.mapping_method,l.confidence,l.link_status,l.reviewed,
+                       CAST(l.evidence AS text) evidence,
+                       pv.product_id,p.name canonical_product_name,p.product_type,g2.slug canonical_game,
+                       pv.language,pv.region,pv.packaging,pv.sku,
+                       COALESCE((SELECT json_agg(json_build_object('source',pi.source,'external_id',pi.external_id))
+                         FROM product_identifiers pi WHERE pi.product_variant_id=pv.id),'[]'::json) identifiers
+                FROM current c
+                JOIN games g ON g.id=c.game_id
+                JOIN external_catalog_product_variant_links l ON l.external_product_id=c.id AND l.link_status='accepted'
+                JOIN product_variants pv ON pv.id=l.product_variant_id
+                JOIN products p ON p.id=pv.product_id
+                JOIN games g2 ON g2.id=p.game_id
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM product_identifiers pi2
+                  WHERE pi2.source='cardmarket' AND pi2.external_id=c.external_id
+                    AND pi2.product_variant_id=l.product_variant_id
+                )
+                ORDER BY c.id,l.id
+              ''')
+              rows=[dict(r) for r in c.fetchall()]
+              c.execute('''
+                WITH current AS (
+                  SELECT e.id FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                    AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                    AND g.slug IN ('pokemon','onepiece','mtg','yugioh')
+                )
+                SELECT e.id external_product_id,count(DISTINCT l.product_variant_id) accepted_variants
+                FROM current e JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.link_status='accepted'
+                GROUP BY e.id HAVING count(DISTINCT l.product_variant_id)>1 ORDER BY e.id
+              ''')
+              multi=[dict(r) for r in c.fetchall()]
+          conn.close()
+          print(json.dumps({'accepted_without_exact_idProduct':rows,'multiple_accepted_links':multi},indent=2,default=str,sort_keys=True))
+          PY
