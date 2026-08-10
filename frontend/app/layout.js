@@ -1,6 +1,7 @@
 import './globals.css'
 import './product-ui.css'
 import './auth-ui.css'
+import './canva-workspace.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 
 const manrope = Manrope({
