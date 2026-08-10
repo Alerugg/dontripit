@@ -8,14 +8,14 @@ import BrandMark from '../brand/BrandMark'
 const shopUrl = 'https://shop.dontripit.com'
 
 const publicNavItems = [
-  { href: '/#games', label: 'Catálogos' },
-  { href: '/#features', label: 'Producto' },
-  { href: '/#news', label: 'Lanzamientos' },
+  { href: '/#games', label: 'Explorar' },
+  { href: '/#how-it-works', label: 'Cómo funciona' },
+  { href: '/#releases', label: 'Lanzamientos' },
 ]
 
 const memberNavItems = [
   { href: '/dashboard#buscar', label: 'Buscar' },
-  { href: '/collection', label: 'Colección' },
+  { href: '/collection', label: 'Mi colección' },
   { href: '/wishlist', label: 'Wishlist' },
 ]
 
@@ -63,15 +63,12 @@ export default function TopNav() {
               {item.label}
             </Link>
           ))}
-          {!user ? <a href={shopUrl} className="dri-nav-link" target="_blank" rel="noopener noreferrer">Tienda ↗</a> : null}
+          <a href={shopUrl} className="dri-nav-link" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
         </nav>
 
         <div className="dri-nav-actions">
           {authChecked && user ? (
-            <>
-              <a href={shopUrl} className="dri-btn dri-btn-ghost" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
-              <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
-            </>
+            <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
           ) : authChecked ? (
             <>
               <Link href="/login" className="dri-btn dri-btn-ghost">Entrar</Link>
@@ -98,7 +95,7 @@ export default function TopNav() {
             {navItems.map((item) => (
               <Link key={item.href} href={item.href} onClick={() => setOpen(false)}>{item.label}</Link>
             ))}
-            <a href={shopUrl}>Tienda</a>
+            <a href={shopUrl} target="_blank" rel="noopener noreferrer">Tienda ↗</a>
             <div className="dri-mobile-menu-actions">
               {user ? (
                 <button type="button" className="dri-btn dri-btn-ghost" onClick={logout}>Salir</button>
