@@ -1,0 +1,124 @@
+name: Audit One Piece Bandai Structured Fields Semantic V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-bandai-structured-fields-semantic-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Semantic field parity
+        run: |
+          python - <<'PY'
+          import json,os,re,requests,unicodedata
+          from collections import Counter
+          from urllib.parse import urlparse
+          from bs4 import BeautifulSoup
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          BASE='https://en.onepiece-cardgame.com/cardlist/'
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 semantic-parity'})
+          root=BeautifulSoup(http.get(BASE,timeout=30).text,'html.parser')
+          series=[o.get('value').strip() for o in root.select('select[name=series] option') if (o.get('value') or '').strip().isdigit()]
+          def nt(v):
+            if v is None:return None
+            s=unicodedata.normalize('NFKC',str(v)).replace('’',"'").replace('“','"').replace('”','"').replace('−','-')
+            return re.sub(r'\s+',' ',s).strip() or None
+          def cat(v):
+            x=nt(v);return x.casefold() if x else None
+          def ints(v):
+            if v is None:return None
+            m=re.search(r'-?\d+',str(v).replace(',',''));return int(m.group()) if m else None
+          def box(dl, selector):
+            x=dl.select_one(selector)
+            if not x:return (None,None)
+            h=x.find('h3');label=h.get_text(' ',strip=True) if h else None
+            if h:h.extract()
+            return label,(' '.join(x.stripped_strings).strip() or None)
+          def info(dl):
+            x=dl.select_one('.infoCol');sp=[z.get_text(' ',strip=True) for z in x.find_all('span')] if x else []
+            return (sp+[None,None,None])[:3]
+          official={}
+          for sid in series:
+            ss=BeautifulSoup(http.get(BASE,params={'series':sid},timeout=30).text,'html.parser')
+            for dl in ss.select('dl.modalCol'):
+              im=dl.select_one('.frontCol img');src=((im.get('data-src') or im.get('src') or '') if im else '')
+              fn=src.split('?',1)[0].rsplit('/',1)[-1] if src else None
+              if not fn or fn in official:continue
+              collector,rarity,ctype=info(dl)
+              cname=dl.select_one('.cardName'); name=cname.get_text(' ',strip=True) if cname else None
+              cost_label,cost_raw=box(dl,'.cost'); life=None;cost=None
+              if cat(cost_label)=='life':life=ints(cost_raw)
+              elif cat(cost_label)=='cost':cost=ints(cost_raw)
+              # some templates may expose a dedicated life box
+              life_label,life_raw=box(dl,'.life')
+              if cat(life_label)=='life' or life_raw is not None:life=ints(life_raw)
+              def val(sel):return box(dl,sel)[1]
+              ax=dl.select_one('.attribute'); alts=[i.get('alt') for i in ax.find_all('img') if i.get('alt')] if ax else []
+              attribute=alts or ([val('.attribute')] if val('.attribute') else [])
+              color=[z.strip() for z in re.split(r'[/,]',val('.color') or '') if z.strip()]
+              bx=dl.select_one('.block'); block=None
+              if bx:
+                bim=bx.find('img'); raw=(bim.get('alt') if bim and bim.get('alt') else val('.block'))
+                m=re.search(r'\b([0-9]+|X)\b',raw or '',re.I);block=m.group(1).upper() if m else nt(raw)
+              traits=[z.strip() for z in re.split(r'\s*/\s*',val('.feature') or '') if z.strip()]
+              official[fn]={'collector_number':collector,'rarity':rarity,'name':name,'card_type':ctype,'life':life,'cost':cost,
+                'attribute':attribute,'power':ints(val('.power')),'counter':ints(val('.counter')),'color':color,'block':block,
+                'traits':traits,'effect':nt(val('.text')),'trigger':nt(val('.trigger'))}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''SELECT p.id print_id,p.collector_number,p.rarity,c.name,pi.url,psp.attributes_json
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+              JOIN print_images pi ON pi.print_id=p.id AND pi.is_primary=true
+              LEFT JOIN print_search_profiles psp ON psp.print_id=p.id
+              WHERE g.slug='onepiece' AND lower(coalesce(p.language,''))='en' ''')
+            db={urlparse(str(r['url'])).path.rsplit('/',1)[-1]:dict(r) for r in c.fetchall()}
+          conn.close()
+          def nl(v):
+            if v is None:return []
+            vals=v if isinstance(v,list) else [v]
+            out=[]
+            for x in vals:
+              # normalize combined slash-delimited attributes/colors/traits
+              out.extend([cat(z) for z in re.split(r'\s*/\s*',str(x)) if cat(z)])
+            return sorted(out)
+          fields=['collector_number','rarity','name','card_type','life','cost','attribute','power','counter','color','block','traits','effect','trigger']
+          mm=Counter();bad=[];samples=[]
+          for fn,o in official.items():
+            r=db.get(fn);a=(r or {}).get('attributes_json') or {}
+            d={'collector_number':r.get('collector_number') if r else None,'rarity':r.get('rarity') if r else None,'name':r.get('name') if r else None,
+               'card_type':a.get('card_type'),'life':a.get('life'),'cost':a.get('cost'),'attribute':a.get('attribute') or [],'power':a.get('power'),
+               'counter':a.get('counter'),'color':a.get('color') or [],'block':a.get('block'),'traits':a.get('traits') or [],'effect':a.get('effect'),'trigger':a.get('trigger')}
+            fs=[]
+            for f in fields:
+              if f in ('attribute','color','traits'):eq=nl(o[f])==nl(d[f])
+              elif f in ('collector_number','rarity','card_type','block'):eq=cat(o[f])==cat(d[f])
+              elif f in ('name','effect','trigger'):eq=nt(o[f])==nt(d[f])
+              else:eq=o[f]==d[f]
+              if not eq:mm[f]+=1;fs.append(f)
+            if fs:
+              bad.append({'filename':fn,'print_id':r.get('print_id') if r else None,'fields':fs})
+              if len(samples)<40:samples.append({'filename':fn,'fields':fs,'official':{f:o[f] for f in fs},'db':{f:d[f] for f in fs}})
+          report={'official':len(official),'db':len(db),'mismatch_prints':len(bad),'mismatches_by_field':dict(mm),'samples':samples}
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          open('/tmp/onepiece-bandai-semantic-v2.json','w').write(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-bandai-semantic-v2-${{ github.run_id }}
+          path: /tmp/onepiece-bandai-semantic-v2.json
+          retention-days: 90
