@@ -325,3 +325,4 @@ def register_api_product_middleware(flask_app: Flask) -> None:
             meta.get("quota_used"),
             meta.get("retry_after"),
         )
+        return response
