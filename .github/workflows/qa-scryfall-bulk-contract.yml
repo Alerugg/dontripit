@@ -1,0 +1,31 @@
+name: QA Scryfall Bulk Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-scryfall-bulk-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests
+      - name: Inspect descriptor without downloading bulk file
+        run: |
+          python - <<'PY'
+          import json,requests
+          h={'User-Agent':'DontRipIt/1.0 scryfall-bulk-contract (+https://dontripit.com)','Accept':'application/json;q=0.9,*/*;q=0.8'}
+          r=requests.get('https://api.scryfall.com/bulk-data',headers=h,timeout=30);r.raise_for_status()
+          payload=r.json(); item=next((x for x in (payload.get('data') or []) if x.get('type')=='default_cards'),None)
+          print(json.dumps({'top_keys':sorted(payload.keys()),'default_cards':item},indent=2,ensure_ascii=False))
+          if item and item.get('uri'):
+            d=requests.get(item['uri'],headers=h,timeout=30);print('descriptor_status',d.status_code);print(json.dumps(d.json(),indent=2,ensure_ascii=False)[:8000])
+          PY
