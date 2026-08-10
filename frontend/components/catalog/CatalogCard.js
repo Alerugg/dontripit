@@ -8,7 +8,7 @@ function buildSubtitle(item) {
   return [
     item.set_name || item.summary_label,
     collectorLabel,
-    item.language,
+    item.language?.toUpperCase?.() || item.language,
     item.variant_label,
     item.variant_count ? `${item.variant_count} variante${item.variant_count === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ')
@@ -16,26 +16,30 @@ function buildSubtitle(item) {
 
 function buildMetaChips(item) {
   return [
-    item.set_code,
+    item.set_code?.toUpperCase?.() || item.set_code,
     item.rarity,
+    item.finish && item.finish !== 'default' ? item.finish : null,
     item.year,
   ].filter(Boolean)
 }
 
 function resolveItemType(item) {
   if (item.type === 'set') return { label: 'Set', className: 'badge-set' }
-  if (item.type === 'print') return { label: 'Print', className: 'badge-print' }
+  if (item.type === 'print') return { label: 'Versión', className: 'badge-print' }
   return { label: 'Carta', className: 'badge-card' }
 }
 
 export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
+  const exactPrintId = item.print_id || (item.type === 'print' ? item.id : null)
   const resolvedCardId = item.type === 'card' ? item.id : (item.card_id || null)
   const href = item.type === 'set'
     ? getSetHref(item.game, item.set_code || item.code)
-    : resolvedCardId
-      ? getCardHref(item.game, resolvedCardId, queryState)
-      : getPrintHref(item.id)
+    : exactPrintId
+      ? getPrintHref(exactPrintId)
+      : resolvedCardId
+        ? getCardHref(item.game, resolvedCardId, queryState)
+        : '#'
   const itemType = resolveItemType(item)
 
   return (
@@ -69,7 +73,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
               <span key={meta} className="catalog-meta-chip">{meta}</span>
             ))}
           </div>
-          {item.variant_count ? <span className="catalog-variant-pill">{item.variant_count} variantes</span> : null}
+          {item.variant_count ? <span className="catalog-variant-pill">{item.variant_count} versiones</span> : null}
         </div>
       </div>
     </Link>
