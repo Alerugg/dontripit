@@ -83,7 +83,19 @@ jobs:
             assert pids and len(pids)==len(set(pids))
             missing=set(pids)-(feeds['single']|feeds['non_single'])
             assert not missing, f'{game}: price IDs absent from catalog: {sorted(missing)[:20]}'
-            summary[game]={'singles':len(feeds['single']),'non_singles':len(feeds['non_single']),'price_products':len(pids),'price_as_of':created.isoformat() if created else None}
+            finish_price_products=sum(
+              1 for x in prices
+              if any(v is not None for v in (x.foil_avg,x.foil_low,x.foil_trend,x.foil_avg1,x.foil_avg7,x.foil_avg30))
+            )
+            if game in {'mtg','yugioh','pokemon'}:
+              assert finish_price_products > 0, f'{game}: current feed finish prices were not parsed'
+            summary[game]={
+              'singles':len(feeds['single']),
+              'non_singles':len(feeds['non_single']),
+              'price_products':len(pids),
+              'finish_price_products':finish_price_products,
+              'price_as_of':created.isoformat() if created else None,
+            }
           print({'validated':summary,'global_current_products':len(all_ids)})
           PY
       - name: Preflight complete Cardmarket catalog
