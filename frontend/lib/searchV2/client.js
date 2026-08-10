@@ -27,6 +27,20 @@ export async function searchV2({ q, game, limit = 24 } = {}) {
   return payload?.items || []
 }
 
+export async function federatedSearchV2({ q, game, page = 1, limit = 24, category = '' } = {}) {
+  const response = await fetch(`/api/search-v2/federated${toQuery({
+    q,
+    game: toApiGameSlug(game || ''),
+    page,
+    limit,
+    category,
+  })}`, {
+    method: 'GET',
+    cache: 'no-store',
+  })
+  return readJson(response)
+}
+
 export async function suggestV2({ q, game, limit = 8 } = {}) {
   const response = await fetch(`/api/search-v2/suggest${toQuery({ q, game: toApiGameSlug(game || ''), limit })}`, {
     method: 'GET',

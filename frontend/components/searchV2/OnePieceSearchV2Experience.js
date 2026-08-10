@@ -6,22 +6,23 @@ import GameSearchBar from '../games/GameSearchBar'
 import StatePanel from '../catalog/StatePanel'
 import SectionHeader from '../ui/SectionHeader'
 import AdvancedSearchPanel from './AdvancedSearchPanel'
+import FederatedSearchResults from './FederatedSearchResults'
 import SearchV2Results from './SearchV2Results'
-import { advancedSearchV2, fetchFacetsV2, searchV2, suggestV2 } from '../../lib/searchV2/client'
+import { advancedSearchV2, federatedSearchV2, fetchFacetsV2, suggestV2 } from '../../lib/searchV2/client'
 import { appendAdvancedFilters, hasFilterValues, readAdvancedFilters, safePage } from '../../lib/searchV2/urlState'
 import './SearchV2.css'
 
 const SEARCH_COPY_BY_GAME = {
   onepiece: {
-    examples: ['Luffy', 'Zoro', 'OP05-119'],
-    placeholder: 'Luffy, Zoro, OP05-119…',
-    description: 'Nombre, número o set. Empieza con lo que recuerdes y afina después solo si necesitas una versión concreta.',
+    examples: ['Luffy', 'OP15', 'OP05-119'],
+    placeholder: 'Luffy, OP15, OP05-119…',
+    description: 'Busca carta, número o colección. Si escribes un set como OP15 verás su checklist, sellado y coincidencias en una sola búsqueda.',
     empty: 'Prueba otro nombre, número de carta o set.',
   },
   pokemon: {
     examples: ['Pikachu', 'Charizard', '151'],
     placeholder: 'Pikachu, Charizard, 151…',
-    description: 'Busca por nombre, número o set. Rareza, idioma y acabado quedan para después si realmente importan.',
+    description: 'Busca por nombre, número o set. Las versiones físicas se paginan para mantener la búsqueda rápida.',
     empty: 'Prueba otro Pokémon, número o set.',
   },
   yugioh: {
@@ -33,7 +34,7 @@ const SEARCH_COPY_BY_GAME = {
   magic: {
     examples: ['Black Lotus', 'Sol Ring', 'Lightning Bolt'],
     placeholder: 'Black Lotus, Sol Ring, Lightning Bolt…',
-    description: 'Busca primero la carta. Si hace falta, afina luego por set, idioma, rareza, finish o artista.',
+    description: 'Busca primero la carta. Las versiones físicas y productos relacionados se cargan por páginas.',
     empty: 'Prueba otro nombre o set.',
   },
 }
@@ -46,6 +47,7 @@ const DEFAULT_SEARCH_COPY = {
 }
 
 const ADVANCED_PAGE_SIZE = 24
+const NORMAL_PAGE_SIZE = 24
 
 function suggestionForLegacyRow(item) {
   return {
@@ -53,6 +55,11 @@ function suggestionForLegacyRow(item) {
     primary_image_url: item.primary_image_url || item.image_url,
     set_name: item.set_name || item.set_code,
   }
+}
+
+function payloadCount(payload) {
+  const counts = payload?.counts || {}
+  return Number(counts.singles || 0) + Number(counts.sets || 0) + Number(counts.sealed || 0) + Number(counts.matches || 0)
 }
 
 export default function OnePieceSearchV2Experience({ game }) {
@@ -69,7 +76,10 @@ export default function OnePieceSearchV2Experience({ game }) {
 
   const [query, setQuery] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialAdvancedRan ? '' : initialQuery)
-  const [normalItems, setNormalItems] = useState([])
+  const [normalPayload, setNormalPayload] = useState(null)
+  const [normalPage, setNormalPage] = useState(1)
+  const [normalType, setNormalType] = useState('all')
+  const [normalCategory, setNormalCategory] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)
@@ -135,7 +145,7 @@ export default function OnePieceSearchV2Experience({ game }) {
 
   useEffect(() => {
     if (!submittedQuery.trim()) {
-      setNormalItems([])
+      setNormalPayload(null)
       setError('')
       return undefined
     }
@@ -145,11 +155,17 @@ export default function OnePieceSearchV2Experience({ game }) {
       setLoading(true)
       setError('')
       try {
-        const rows = await searchV2({ q: submittedQuery.trim(), game: game.slug, limit: 48 })
-        if (!cancelled) setNormalItems(rows)
+        const payload = await federatedSearchV2({
+          q: submittedQuery.trim(),
+          game: game.slug,
+          page: normalPage,
+          limit: NORMAL_PAGE_SIZE,
+          category: normalCategory,
+        })
+        if (!cancelled) setNormalPayload(payload)
       } catch (requestError) {
         if (!cancelled) {
-          setNormalItems([])
+          setNormalPayload(null)
           setError(requestError.message || 'No pudimos ejecutar la búsqueda.')
         }
       } finally {
@@ -158,7 +174,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     }
     runSearch()
     return () => { cancelled = true }
-  }, [game.slug, submittedQuery])
+  }, [game.slug, normalCategory, normalPage, submittedQuery])
 
   useEffect(() => {
     if (initialAdvancedHydrated.current || !initialAdvancedRan) return
@@ -174,20 +190,45 @@ export default function OnePieceSearchV2Experience({ game }) {
     if (advancedRan) {
       appendAdvancedFilters(params, appliedAdvancedFilters)
       if (advancedPage > 1) params.set('page', String(advancedPage))
+    } else {
+      if (normalPage > 1) params.set('search_page', String(normalPage))
+      if (normalType !== 'all') params.set('kind', normalType)
+      if (normalCategory) params.set('category', normalCategory)
     }
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, pathname, router, submittedQuery])
+  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, pathname, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
     setQuery(clean)
     setSubmittedQuery(clean)
+    setNormalPage(1)
+    setNormalType('all')
+    setNormalCategory('')
     setAdvancedRan(false)
     setAdvancedItems([])
     setAdvancedTotal(0)
     setAdvancedPage(1)
     setAdvancedError('')
+  }
+
+  function goToNormalPage(page) {
+    setNormalPage(Math.max(1, Number(page) || 1))
+    if (typeof document !== 'undefined') {
+      document.getElementById('buscar')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
+  function changeNormalType(type) {
+    setNormalType(type)
+    setNormalPage(1)
+  }
+
+  function changeNormalCategory(category) {
+    setNormalCategory(category)
+    setNormalType('sealed')
+    setNormalPage(1)
   }
 
   async function runAdvanced(nextPage = 1, { reuseApplied = false } = {}) {
@@ -250,7 +291,7 @@ export default function OnePieceSearchV2Experience({ game }) {
         <SectionHeader
           compact
           eyebrow="Buscar"
-          title="Encuentra la carta"
+          title="Encuentra cartas, colecciones y sellado"
           description={searchCopy.description}
         />
 
@@ -302,7 +343,7 @@ export default function OnePieceSearchV2Experience({ game }) {
 
       {advancedRan ? (
         <>
-          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando versiones que coincidan…" /> : null}
+          {advancedLoading ? <StatePanel title="Aplicando filtros" description="Buscando versiones que coincidan…" loading /> : null}
           {!advancedLoading && advancedError ? <StatePanel title="No pudimos filtrar" description={advancedError} error /> : null}
           {!advancedLoading && !advancedError && advancedItems.length === 0 ? (
             <StatePanel
@@ -330,13 +371,24 @@ export default function OnePieceSearchV2Experience({ game }) {
         </>
       ) : (
         <>
-          {submittedQuery && loading ? <StatePanel title="Buscando" description={`Buscando “${submittedQuery}”…`} /> : null}
+          {submittedQuery && loading ? <StatePanel title="Buscando en el catálogo" description={`Cargando cartas, colección y sellado para “${submittedQuery}”…`} loading /> : null}
           {submittedQuery && !loading && error ? <StatePanel title="No pudimos buscar" description={error} error /> : null}
-          {submittedQuery && !loading && !error && normalItems.length === 0 ? (
+          {submittedQuery && !loading && !error && payloadCount(normalPayload) === 0 ? (
             <StatePanel title="Sin resultados" description={searchCopy.empty} tone="muted" />
           ) : null}
-          {submittedQuery && !loading && !error && normalItems.length > 0 ? (
-            <SearchV2Results items={normalItems} mode="normal" gameSlug={game.slug} query={submittedQuery} />
+          {submittedQuery && !loading && !error && payloadCount(normalPayload) > 0 ? (
+            <FederatedSearchResults
+              payload={normalPayload}
+              gameSlug={game.slug}
+              query={submittedQuery}
+              activeType={normalType}
+              onTypeChange={changeNormalType}
+              page={normalPage}
+              onPageChange={goToNormalPage}
+              pageSize={NORMAL_PAGE_SIZE}
+              category={normalCategory}
+              onCategoryChange={changeNormalCategory}
+            />
           ) : null}
         </>
       )}

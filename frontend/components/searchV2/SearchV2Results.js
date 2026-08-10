@@ -9,6 +9,19 @@ function badge(value) {
   return value ? <span className="sv2-badge">{value}</span> : null
 }
 
+function money(value, currency = 'EUR') {
+  if (value === null || value === undefined) return null
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(Number(value))
+  } catch {
+    return `${value} ${currency}`
+  }
+}
+
 function ResultImage({ src, name, gameSlug }) {
   const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug === 'magic' ? 'Magic' : gameSlug || 'TCG'
   const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : gameSlug === 'magic' ? 'MTG' : undefined
@@ -69,49 +82,76 @@ function PrintResult({ item, gameSlug }) {
   const stamps = Array.isArray(physical.stamps) ? physical.stamps : []
   const printId = item.print_id || item.id
   const href = printId ? `/prints/${printId}` : `/games/${gameSlug}/cards/${item.card_id}`
+  const market = item.market || null
+  const marketPrice = market?.price || null
+  const marketReference = market?.reference || null
+  const priceLabel = money(
+    marketPrice?.conservative ?? marketPrice?.value ?? marketPrice?.trend ?? marketPrice?.average ?? marketPrice?.minimum,
+    marketPrice?.currency || 'EUR',
+  )
 
   return (
-    <Link href={href} className="sv2-result-card sv2-result-card-print">
-      <div className="sv2-result-image-wrap">
-        <ResultImage src={item.primary_image_url} name={item.name} gameSlug={gameSlug} />
-      </div>
-      <div className="sv2-result-copy">
-        <div className="sv2-result-title-row">
-          <div>
-            <span className="sv2-result-kind is-exact">Versión exacta</span>
-            <h3>{item.name}</h3>
+    <article className="sv2-result-card sv2-result-card-print">
+      <Link href={href} style={{ display: 'contents', color: 'inherit', textDecoration: 'none' }}>
+        <div className="sv2-result-image-wrap">
+          <ResultImage src={item.primary_image_url} name={item.name} gameSlug={gameSlug} />
+        </div>
+        <div className="sv2-result-copy">
+          <div className="sv2-result-title-row">
+            <div>
+              <span className="sv2-result-kind is-exact">Versión exacta</span>
+              <h3>{item.name}</h3>
+            </div>
           </div>
+          <p className="sv2-collector-line">
+            <strong>{item.collector_number}</strong>
+            {item.set_code ? <span>{String(item.set_code).toUpperCase()}</span> : null}
+          </p>
+          {item.set_name ? <small className="sv2-release-line">{item.set_name}</small> : null}
+          <div className="sv2-badges">
+            {badge(item.rarity)}
+            {badge(item.language?.toUpperCase())}
+            {item.variant_family && item.variant_family !== 'default' ? badge(item.variant_family) : null}
+            {item.exact_variant && item.exact_variant !== 'default' ? badge(item.exact_variant) : null}
+            {gameSlug === 'onepiece' && physical.block ? badge(`Block ${physical.block}`) : null}
+            {gameSlug === 'pokemon' && physical.finish ? badge(physical.finish) : null}
+            {gameSlug === 'pokemon' && physical.regulation_mark ? badge(`Reg ${physical.regulation_mark}`) : null}
+            {gameSlug === 'pokemon' && physical.foil_pattern ? badge(physical.foil_pattern) : null}
+            {gameSlug === 'pokemon' ? stamps.slice(0, 2).map((stamp) => <span key={stamp} className="sv2-badge">{stamp}</span>) : null}
+            {gameSlug === 'yugioh' && physical.card_class ? badge(physical.card_class) : null}
+            {gameSlug === 'yugioh' && physical.attribute ? badge(physical.attribute) : null}
+            {gameSlug === 'yugioh' && physical.race ? badge(physical.race) : null}
+            {gameSlug === 'yugioh' && physical.atk !== undefined && physical.atk !== null ? badge(`ATK ${physical.atk}`) : null}
+            {gameSlug === 'yugioh' && physical.def !== undefined && physical.def !== null ? badge(`DEF ${physical.def}`) : null}
+          </div>
+          {item.releases?.length ? (
+            <small className="sv2-release-line">{item.releases[0]}{item.releases.length > 1 ? ` +${item.releases.length - 1}` : ''}</small>
+          ) : null}
+          {gameSlug === 'yugioh' && Array.isArray(physical.release_names) && physical.release_names.length ? (
+            <small className="sv2-release-line">{physical.release_names[0]}{physical.release_names.length > 1 ? ` +${physical.release_names.length - 1}` : ''}</small>
+          ) : null}
+          <span className="sv2-result-action">Abrir esta versión →</span>
         </div>
-        <p className="sv2-collector-line">
-          <strong>{item.collector_number}</strong>
-          {item.set_code ? <span>{String(item.set_code).toUpperCase()}</span> : null}
-        </p>
-        {item.set_name ? <small className="sv2-release-line">{item.set_name}</small> : null}
-        <div className="sv2-badges">
-          {badge(item.rarity)}
-          {badge(item.language?.toUpperCase())}
-          {item.variant_family && item.variant_family !== 'default' ? badge(item.variant_family) : null}
-          {item.exact_variant && item.exact_variant !== 'default' ? badge(item.exact_variant) : null}
-          {gameSlug === 'onepiece' && physical.block ? badge(`Block ${physical.block}`) : null}
-          {gameSlug === 'pokemon' && physical.finish ? badge(physical.finish) : null}
-          {gameSlug === 'pokemon' && physical.regulation_mark ? badge(`Reg ${physical.regulation_mark}`) : null}
-          {gameSlug === 'pokemon' && physical.foil_pattern ? badge(physical.foil_pattern) : null}
-          {gameSlug === 'pokemon' ? stamps.slice(0, 2).map((stamp) => <span key={stamp} className="sv2-badge">{stamp}</span>) : null}
-          {gameSlug === 'yugioh' && physical.card_class ? badge(physical.card_class) : null}
-          {gameSlug === 'yugioh' && physical.attribute ? badge(physical.attribute) : null}
-          {gameSlug === 'yugioh' && physical.race ? badge(physical.race) : null}
-          {gameSlug === 'yugioh' && physical.atk !== undefined && physical.atk !== null ? badge(`ATK ${physical.atk}`) : null}
-          {gameSlug === 'yugioh' && physical.def !== undefined && physical.def !== null ? badge(`DEF ${physical.def}`) : null}
+      </Link>
+
+      {market ? (
+        <div style={{ gridColumn: '2', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.45rem', marginTop: '-.2rem' }}>
+          <strong style={{ fontSize: '.88rem' }}>{priceLabel || 'Sin Price Guide actual'}</strong>
+          <span style={{ fontSize: '.7rem', opacity: .6 }}>Cardmarket</span>
+          {marketReference?.url ? (
+            <a
+              href={marketReference.url}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              className="sv2-result-action"
+              style={{ marginLeft: 'auto' }}
+            >
+              Comprar ↗
+            </a>
+          ) : null}
         </div>
-        {item.releases?.length ? (
-          <small className="sv2-release-line">{item.releases[0]}{item.releases.length > 1 ? ` +${item.releases.length - 1}` : ''}</small>
-        ) : null}
-        {gameSlug === 'yugioh' && Array.isArray(physical.release_names) && physical.release_names.length ? (
-          <small className="sv2-release-line">{physical.release_names[0]}{physical.release_names.length > 1 ? ` +${physical.release_names.length - 1}` : ''}</small>
-        ) : null}
-        <span className="sv2-result-action">Abrir esta versión →</span>
-      </div>
-    </Link>
+      ) : null}
+    </article>
   )
 }
 
@@ -134,7 +174,7 @@ export default function SearchV2Results({ items = [], mode = 'normal', gameSlug,
         </p>
       </div>
       {!exactPhysicalResults ? (
-        <p className="sv2-results-note">Buscamos primero la carta. Si necesitas una edición concreta, usa “Afinar búsqueda” para filtrar y paginar versiones físicas.</p>
+        <p className="sv2-results-note">Primero agrupamos por carta. Las singles físicas aparecen aparte y paginadas, para que puedas elegir la edición exacta sin cargar cientos de filas de golpe.</p>
       ) : null}
       <div className="sv2-results-grid">
         {items.map((item) => (

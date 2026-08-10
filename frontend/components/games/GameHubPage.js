@@ -54,16 +54,22 @@ export default function GameHubPage({ game }) {
   const [collectionsLoading, setCollectionsLoading] = useState(true)
   const [collectionsError, setCollectionsError] = useState('')
   const [news, setNews] = useState([])
+  const [newsLoading, setNewsLoading] = useState(true)
   const [releases, setReleases] = useState([])
+  const [releasesLoading, setReleasesLoading] = useState(true)
   const [marketProducts, setMarketProducts] = useState([])
+  const [marketLoading, setMarketLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
 
     setCollectionsLoading(true)
     setCollectionsError('')
+    setNewsLoading(true)
+    setReleasesLoading(true)
+    setMarketLoading(true)
 
-    fetchSetsByGame(game.slug, { limit: 500 })
+    const collectionsRequest = fetchSetsByGame(game.slug, { limit: 50 })
       .then((items) => {
         if (!cancelled) setCollections(items)
       })
@@ -77,17 +83,22 @@ export default function GameHubPage({ game }) {
         if (!cancelled) setCollectionsLoading(false)
       })
 
-    fetchReleasesByGame(game.slug, { limit: 8 })
+    const releasesRequest = fetchReleasesByGame(game.slug, { limit: 8 })
       .then((items) => { if (!cancelled) setReleases(items) })
       .catch(() => { if (!cancelled) setReleases([]) })
+      .finally(() => { if (!cancelled) setReleasesLoading(false) })
 
-    fetchMarketProductsByGame(game.slug, { limit: 24 })
+    const marketRequest = fetchMarketProductsByGame(game.slug, { limit: 24 })
       .then((items) => { if (!cancelled) setMarketProducts(items) })
       .catch(() => { if (!cancelled) setMarketProducts([]) })
+      .finally(() => { if (!cancelled) setMarketLoading(false) })
 
-    fetchNewsByGame(game.slug, { limit: 6 })
+    const newsRequest = fetchNewsByGame(game.slug, { limit: 6 })
       .then((items) => { if (!cancelled) setNews(items) })
       .catch(() => { if (!cancelled) setNews([]) })
+      .finally(() => { if (!cancelled) setNewsLoading(false) })
+
+    Promise.allSettled([collectionsRequest, releasesRequest, marketRequest, newsRequest])
 
     return () => { cancelled = true }
   }, [game.slug])
@@ -125,7 +136,7 @@ export default function GameHubPage({ game }) {
         <div className="ux-game-secondary">
           <div id="colecciones" className="dri-hub-anchor">
             {collectionsLoading ? (
-              <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" />
+              <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" loading />
             ) : null}
             {!collectionsLoading && collectionsError ? (
               <StatePanel title="No pudimos cargar los sets" description={collectionsError} error tone="error" />
@@ -135,7 +146,13 @@ export default function GameHubPage({ game }) {
             ) : null}
           </div>
 
-          <MarketProductShelf products={marketProducts} gameName={game.name} />
+          <div id="sellado" className="dri-hub-anchor">
+            {marketLoading ? (
+              <StatePanel title="Cargando sellado" description="Consultando productos y precios Cardmarket…" tone="muted" loading />
+            ) : (
+              <MarketProductShelf products={marketProducts} gameName={game.name} />
+            )}
+          </div>
 
           <section id="lanzamientos" className="ux-upcoming-section dri-hub-anchor">
             <div className="ux-section-head">
@@ -146,7 +163,9 @@ export default function GameHubPage({ game }) {
               </div>
             </div>
 
-            {releases.length ? (
+            {releasesLoading ? (
+              <StatePanel title="Cargando lanzamientos" description="Consultando el calendario oficial…" tone="muted" loading />
+            ) : releases.length ? (
               <div className="ux-upcoming-grid">
                 {releases.map((item) => (
                   <a
@@ -172,7 +191,11 @@ export default function GameHubPage({ game }) {
           </section>
 
           <div id="noticias" className="dri-hub-anchor">
-            <GameNewsGrid news={news} />
+            {newsLoading ? (
+              <StatePanel title="Cargando noticias" description="Actualizando las fuentes oficiales de esta región…" tone="muted" loading />
+            ) : (
+              <GameNewsGrid news={news} />
+            )}
           </div>
         </div>
       </div>
