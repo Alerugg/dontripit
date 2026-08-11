@@ -47,6 +47,11 @@ def _number(value):
         return None
 
 
+def _positive_number(value):
+    number = _number(value)
+    return number if number is not None and number > 0 else None
+
+
 def _cardmarket_url(raw_json: dict | None) -> str | None:
     raw_json = raw_json if isinstance(raw_json, dict) else {}
     path = str(raw_json.get("website_path") or "").strip()
@@ -64,7 +69,8 @@ def market_print_summary():
     This endpoint never performs identity matching. It reads only canonical
     PriceSnapshot rows previously projected through accepted exact Cardmarket
     links, so search/filter UI cannot accidentally borrow a price from another
-    artwork, finish or physical printing.
+    artwork, finish or physical printing. Cardmarket's zero placeholders are
+    treated as unavailable rather than displayed as EUR 0.00.
     """
 
     try:
@@ -112,11 +118,14 @@ def market_print_summary():
     items = []
     for row in rows:
         raw_json = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
-        market = _number(row.get("price_market"))
-        low = _number(row.get("price_low"))
-        mid = _number(row.get("price_mid"))
-        last = _number(row.get("price_last"))
+        market = _positive_number(row.get("price_market"))
+        low = _positive_number(row.get("price_low"))
+        mid = _positive_number(row.get("price_mid"))
+        last = _positive_number(row.get("price_last"))
+        high = _positive_number(row.get("price_high"))
         display = market if market is not None else low if low is not None else last if last is not None else mid
+        if display is None:
+            continue
         as_of = row.get("as_of")
         items.append(
             {
@@ -125,7 +134,7 @@ def market_print_summary():
                 "price_market": market,
                 "price_low": low,
                 "price_mid": mid,
-                "price_high": _number(row.get("price_high")),
+                "price_high": high,
                 "price_last": last,
                 "display_price": display,
                 "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else as_of,
