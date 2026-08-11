@@ -44,11 +44,11 @@ class ExternalPricePlan:
             "nonfoil_snapshots": self.nonfoil_snapshots,
             "foil_snapshots": self.foil_snapshots,
             "sealed_snapshots": self.sealed_snapshots,
-            "write_ready": (
-                self.duplicate_rows == 0
-                and self.missing_external_products == 0
-                and self.cross_game_products == 0
-            ),
+            # Cardmarket's PriceGuide can temporarily retain product ids that
+            # are no longer present in the current product catalog export. Such
+            # rows cannot be attached safely, so they are classified and
+            # skipped rather than blocking prices for every current product.
+            "write_ready": self.duplicate_rows == 0 and self.cross_game_products == 0,
         }
 
 
@@ -111,6 +111,11 @@ def build_external_price_plan(
     No canonical Print mapping is required here. A Cardmarket single can emit a
     nonfoil and a foil snapshot at the same timestamp. Non-single products emit
     one ``sealed`` snapshot from the normal price block.
+
+    PriceGuide rows whose idProduct is absent from the current Cardmarket
+    product catalog are deliberately left unattached. Cardmarket occasionally
+    exposes this short-lived feed skew; carrying those rows forward without a
+    current source-owned product would weaken identity guarantees.
     """
     as_of = _utc(as_of)
     game_slug = str(game_slug or "").strip().lower() or None
@@ -230,10 +235,6 @@ def build_external_price_plan(
 def apply_external_price_plan(session, plan: ExternalPricePlan) -> dict:
     if plan.duplicate_rows:
         raise ValueError(f"Refusing Cardmarket price apply with {plan.duplicate_rows} duplicate feed rows")
-    if plan.missing_external_products:
-        raise ValueError(
-            f"Refusing Cardmarket price apply with {plan.missing_external_products} products missing from external catalog"
-        )
     if plan.cross_game_products:
         raise ValueError(f"Refusing Cardmarket price apply with {plan.cross_game_products} cross-game products")
     if not plan.snapshots:
