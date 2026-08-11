@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
+from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql
 
 set_ui_bp = Blueprint("set_ui", __name__)
 
@@ -15,6 +16,12 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return min(max(parsed, minimum), maximum)
+
+
+def _bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalized_release_code(value: object) -> str:
@@ -64,15 +71,13 @@ def _resolve_catalog_release(session, *, game: str, requested_code: str) -> dict
 
 
 def _order_sql(sort: str) -> str:
-    number = "COALESCE(NULLIF(substring(p.collector_number from '([0-9]+)$'), '')::integer, 2147483647)"
-    suffix = "CASE WHEN COALESCE(p.variant,'default')='default' THEN 0 ELSE 1 END"
-    orders = {
-        "number_asc": f"{number} ASC, lower(COALESCE(p.collector_number,'')) ASC, {suffix} ASC, lower(COALESCE(p.variant,'')) ASC, p.id ASC",
-        "number_desc": f"{number} DESC, lower(COALESCE(p.collector_number,'')) DESC, {suffix} ASC, lower(COALESCE(p.variant,'')) ASC, p.id ASC",
-        "name_asc": f"lower(c.name) ASC, {number} ASC, lower(COALESCE(p.collector_number,'')) ASC, p.id ASC",
-        "name_desc": f"lower(c.name) DESC, {number} ASC, lower(COALESCE(p.collector_number,'')) ASC, p.id ASC",
-    }
-    return orders.get(sort, orders["number_asc"])
+    default = (
+        "COALESCE(NULLIF(substring(p.collector_number from '([0-9]+)[^0-9]*$'), '')::bigint, 9223372036854775807) ASC, "
+        "lower(COALESCE(p.collector_number,'')) ASC, "
+        "CASE WHEN COALESCE(p.variant,'default')='default' THEN 0 ELSE 1 END ASC, "
+        "lower(COALESCE(p.variant,'')) ASC, p.id ASC"
+    )
+    return print_order_sql(sort, default=default)
 
 
 @set_ui_bp.get("/api/v1/set-ui/prints")
@@ -86,9 +91,11 @@ def list_set_ui_prints():
     limit = _bounded_int(request.args.get("limit"), default=36, minimum=1, maximum=50)
     offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=100_000)
     q = str(request.args.get("q") or "").strip().lower()[:200]
-    sort = str(request.args.get("sort") or "number_asc").strip().lower()
-    if sort not in {"number_asc", "number_desc", "name_asc", "name_desc"}:
+    try:
+        sort = normalize_search_sort(request.args.get("sort") or "number_asc")
+    except ValueError:
         return jsonify({"error": "invalid_params", "detail": "unsupported sort"}), 400
+    has_price = _bool(request.args.get("has_price"))
 
     q_clause = """
       AND (
@@ -99,6 +106,8 @@ def list_set_ui_prints():
         OR lower(COALESCE(p.language,'')) LIKE :q
       )
     """ if q else ""
+    price_clause = " AND cm.cardmarket_price IS NOT NULL" if has_price else ""
+    market_join = current_cardmarket_price_join(print_id="p.id", game_id="c.game_id")
     order_sql = _order_sql(sort)
 
     try:
@@ -120,15 +129,17 @@ def list_set_ui_prints():
                        c.name AS card_name, c.name AS name,
                        s.code AS set_code, s.name AS set_name,
                        p.collector_number, p.language, p.rarity, p.is_foil, p.variant,
+                       cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
                        (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC, pi.id ASC LIMIT 1) AS primary_image_url
             """
 
             if release:
-                base_from = """
+                base_from = f"""
                     FROM print_releases pr
                     JOIN prints p ON p.id=pr.print_id
                     JOIN cards c ON c.id=p.card_id
                     JOIN sets s ON s.id=p.set_id
+                    {market_join}
                     WHERE pr.release_id=:release_id
                 """
                 params = {"release_id": release["id"], "q": f"%{q}%", "limit": limit, "offset": offset}
@@ -137,18 +148,19 @@ def list_set_ui_prints():
                     "release_external_id": release["external_id"], "release_name": release["name"], "release_code": release["code"],
                 }
             else:
-                base_from = """
+                base_from = f"""
                     FROM prints p
                     JOIN cards c ON c.id=p.card_id
                     JOIN sets s ON s.id=p.set_id
                     JOIN games g ON g.id=c.game_id
+                    {market_join}
                     WHERE g.slug=:game AND lower(s.code)=:set_code
                 """
                 params = {"game": game, "set_code": set_code.lower(), "q": f"%{q}%", "limit": limit, "offset": offset}
                 scope = {"type": "set", "set_code": set_code}
 
-            rows_sql = text(f"{common_select} {base_from} {q_clause} ORDER BY {order_sql} LIMIT :limit OFFSET :offset")
-            count_sql = text(f"SELECT COUNT(*) {base_from} {q_clause}")
+            rows_sql = text(f"{common_select} {base_from} {q_clause} {price_clause} ORDER BY {order_sql} LIMIT :limit OFFSET :offset")
+            count_sql = text(f"SELECT COUNT(*) {base_from} {q_clause} {price_clause}")
             unfiltered_sql = text(f"SELECT COUNT(*) {base_from}")
             rows = session.execute(rows_sql, params).mappings().all()
             total = int(session.execute(count_sql, params).scalar_one())
@@ -156,13 +168,23 @@ def list_set_ui_prints():
     except SQLAlchemyError:
         return jsonify({"error": "set_checklist_unavailable"}), 503
 
+    items = []
+    for source_row in rows:
+        row = dict(source_row)
+        if row.get("cardmarket_price") is not None:
+            row["cardmarket_price"] = float(row["cardmarket_price"])
+        if hasattr(row.get("cardmarket_as_of"), "isoformat"):
+            row["cardmarket_as_of"] = row["cardmarket_as_of"].isoformat()
+        items.append(row)
+
     return jsonify({
-        "items": [dict(row) for row in rows],
+        "items": items,
         "limit": limit,
         "offset": offset,
         "total": total,
         "unfiltered_total": unfiltered_total,
         "sort": sort,
+        "has_price": has_price,
         "query": q,
         "scope": scope,
     })
