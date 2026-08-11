@@ -1,0 +1,1342 @@
+{
+  "1078": {
+    "accepted_old_links": 37,
+    "anchor": {
+      "name": "STRUCTURE DECK DINOSAUR'S RAGE",
+      "pid": "14402003",
+      "release_date": "None",
+      "release_id": 1695,
+      "sealed_evidence": [
+        {
+          "base": "structure deck dinosaur s rage",
+          "category": "Yugioh Structure Deck",
+          "idProduct": "254264",
+          "name": "Structure Deck: Dinosaur's Rage",
+          "website_path": "/YuGiOh/Products?idProduct=254264"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Five-Headed Dragon",
+        "collector_number": "SD09-ENSS1",
+        "expansion_external_id": "1078",
+        "id_product": "103406",
+        "language": "en",
+        "market_name": "Five-Headed Dragon",
+        "metacard_external_id": "102751",
+        "official_releases": [
+          {
+            "name": "STRUCTURE DECK DINOSAUR'S RAGE SPECIAL EDITION",
+            "pid": "12202001",
+            "release_date": "None",
+            "release_id": 1601
+          }
+        ],
+        "print_id": 139576,
+        "rarity": "Ultra Rare",
+        "set_code": "SD09",
+        "variant": "rarity-ultra-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Structure Deck",
+        "expansion_external_id": "1078",
+        "external_id": "254264",
+        "name": "Structure Deck: Dinosaur's Rage",
+        "website_path": "/YuGiOh/Products?idProduct=254264"
+      },
+      {
+        "category": "Yugioh Structure Deck",
+        "expansion_external_id": "1078",
+        "external_id": "293932",
+        "name": "Structure Deck: Dinosaur's Rage Card Pack",
+        "website_path": "/YuGiOh/Products?idProduct=293932"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 1,
+      "matches_anchor": 36
+    }
+  },
+  "1488": {
+    "accepted_old_links": 55,
+    "anchor": {
+      "name": "SUPER STARTER SPACE-TIME SHOWDOWN",
+      "pid": "13312000",
+      "release_date": "None",
+      "release_id": 1677,
+      "sealed_evidence": [
+        {
+          "base": "super starter space time showdown",
+          "category": "Yugioh Starter Deck",
+          "idProduct": "267997",
+          "name": "Super Starter: Space-Time Showdown",
+          "website_path": "/YuGiOh/Products?idProduct=267997"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Odd-Eyes Dragon",
+        "collector_number": "YS14-ENA01",
+        "expansion_external_id": "1488",
+        "id_product": "268089",
+        "language": "en",
+        "market_name": "Odd-Eyes Dragon",
+        "metacard_external_id": "210053",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147798,
+        "rarity": "Ultra Rare",
+        "set_code": "YS14",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Des Volstgalph",
+        "collector_number": "YS14-ENA02",
+        "expansion_external_id": "1488",
+        "id_product": "268090",
+        "language": "en",
+        "market_name": "Des Volstgalph",
+        "metacard_external_id": "105973",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147799,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Kuraz the Light Monarch",
+        "collector_number": "YS14-ENA03",
+        "expansion_external_id": "1488",
+        "id_product": "268091",
+        "language": "en",
+        "market_name": "Kuraz the Light Monarch",
+        "metacard_external_id": "202014",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147800,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "D.D. Warrior Lady",
+        "collector_number": "YS14-ENA04",
+        "expansion_external_id": "1488",
+        "id_product": "268092",
+        "language": "en",
+        "market_name": "D.D. Warrior Lady",
+        "metacard_external_id": "102343",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147801,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Sacred Crane",
+        "collector_number": "YS14-ENA05",
+        "expansion_external_id": "1488",
+        "id_product": "268093",
+        "language": "en",
+        "market_name": "Sacred Crane",
+        "metacard_external_id": "103889",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147802,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Amazoness Sage",
+        "collector_number": "YS14-ENA06",
+        "expansion_external_id": "1488",
+        "id_product": "268094",
+        "language": "en",
+        "market_name": "Amazoness Sage",
+        "metacard_external_id": "200605",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147803,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Injection Fairy Lily",
+        "collector_number": "YS14-ENA07",
+        "expansion_external_id": "1488",
+        "id_product": "268095",
+        "language": "en",
+        "market_name": "Injection Fairy Lily",
+        "metacard_external_id": "103127",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147804,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "The A. Forces",
+        "collector_number": "YS14-ENA08",
+        "expansion_external_id": "1488",
+        "id_product": "268096",
+        "language": "en",
+        "market_name": "The A. Forces",
+        "metacard_external_id": "104196",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147805,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Reinforcement of the Army",
+        "collector_number": "YS14-ENA09",
+        "expansion_external_id": "1488",
+        "id_product": "268097",
+        "language": "en",
+        "market_name": "Reinforcement of the Army",
+        "metacard_external_id": "103805",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147806,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Dark Hole",
+        "collector_number": "YS14-ENA10",
+        "expansion_external_id": "1488",
+        "id_product": "268098",
+        "language": "en",
+        "market_name": "Dark Hole",
+        "metacard_external_id": "102381",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147807,
+        "rarity": "Ultra Rare",
+        "set_code": "YS14",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Swords of Revealing Light",
+        "collector_number": "YS14-ENA11",
+        "expansion_external_id": "1488",
+        "id_product": "268099",
+        "language": "en",
+        "market_name": "Swords of Revealing Light",
+        "metacard_external_id": "104168",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147808,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Mirror Force",
+        "collector_number": "YS14-ENA12",
+        "expansion_external_id": "1488",
+        "id_product": "268100",
+        "language": "en",
+        "market_name": "Mirror Force",
+        "metacard_external_id": "103466",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147809,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Call of the Haunted",
+        "collector_number": "YS14-ENA13",
+        "expansion_external_id": "1488",
+        "id_product": "268101",
+        "language": "en",
+        "market_name": "Call of the Haunted",
+        "metacard_external_id": "102111",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147810,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Magic Cylinder",
+        "collector_number": "YS14-ENA14",
+        "expansion_external_id": "1488",
+        "id_product": "268102",
+        "language": "en",
+        "market_name": "Magic Cylinder",
+        "metacard_external_id": "103322",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147811,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Divine Wrath",
+        "collector_number": "YS14-ENA15",
+        "expansion_external_id": "1488",
+        "id_product": "268103",
+        "language": "en",
+        "market_name": "Divine Wrath",
+        "metacard_external_id": "102527",
+        "official_releases": [
+          {
+            "name": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+            "pid": "13312001",
+            "release_date": "None",
+            "release_id": 1678
+          }
+        ],
+        "print_id": 147812,
+        "rarity": "Common",
+        "set_code": "YS14",
+        "variant": "rarity-common"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Starter Deck",
+        "expansion_external_id": "1488",
+        "external_id": "267997",
+        "name": "Super Starter: Space-Time Showdown",
+        "website_path": "/YuGiOh/Products?idProduct=267997"
+      },
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "1488",
+        "external_id": "268040",
+        "name": "Space-Time Showdown Power-Up Pack",
+        "website_path": "/YuGiOh/Products?idProduct=268040"
+      },
+      {
+        "category": "Yugioh Promo Products",
+        "expansion_external_id": "1488",
+        "external_id": "268041",
+        "name": "Space-Time Showdown Power Box",
+        "website_path": "/YuGiOh/Products?idProduct=268041"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 15,
+      "matches_anchor": 40
+    }
+  },
+  "1517": {
+    "accepted_old_links": 44,
+    "anchor": {
+      "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET",
+      "pid": "18808002",
+      "release_date": "None",
+      "release_id": 1805,
+      "sealed_evidence": [
+        {
+          "base": "noble knights of the round table box set",
+          "category": "Yugioh Promo Products",
+          "idProduct": "270922",
+          "name": "Noble Knights of the Round Table Box Set",
+          "website_path": "/YuGiOh/Products?idProduct=270922"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Effect Veiler",
+        "collector_number": "NKRT-EN039",
+        "expansion_external_id": "1517",
+        "id_product": "271117",
+        "language": "en",
+        "market_name": "Effect Veiler",
+        "metacard_external_id": "200577",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130688,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      },
+      {
+        "card_name": "Mystical Space Typhoon",
+        "collector_number": "NKRT-EN040",
+        "expansion_external_id": "1517",
+        "id_product": "271118",
+        "language": "en",
+        "market_name": "Mystical Space Typhoon",
+        "metacard_external_id": "103527",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130689,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      },
+      {
+        "card_name": "Gold Sarcophagus",
+        "collector_number": "NKRT-EN041",
+        "expansion_external_id": "1517",
+        "id_product": "271119",
+        "language": "en",
+        "market_name": "Gold Sarcophagus",
+        "metacard_external_id": "105975",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130690,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      },
+      {
+        "card_name": "Forbidden Lance",
+        "collector_number": "NKRT-EN042",
+        "expansion_external_id": "1517",
+        "id_product": "271120",
+        "language": "en",
+        "market_name": "Forbidden Lance",
+        "metacard_external_id": "202590",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130691,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      },
+      {
+        "card_name": "Torrential Tribute",
+        "collector_number": "NKRT-EN043",
+        "expansion_external_id": "1517",
+        "id_product": "271121",
+        "language": "en",
+        "market_name": "Torrential Tribute",
+        "metacard_external_id": "104321",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130692,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      },
+      {
+        "card_name": "Compulsory Evacuation Device",
+        "collector_number": "NKRT-EN044",
+        "expansion_external_id": "1517",
+        "id_product": "271122",
+        "language": "en",
+        "market_name": "Compulsory Evacuation Device",
+        "metacard_external_id": "102220",
+        "official_releases": [
+          {
+            "name": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+            "pid": "18808003",
+            "release_date": "None",
+            "release_id": 1806
+          }
+        ],
+        "print_id": 130693,
+        "rarity": "Platinum Rare",
+        "set_code": "NKRT",
+        "variant": "rarity-platinum-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Promo Products",
+        "expansion_external_id": "1517",
+        "external_id": "270922",
+        "name": "Noble Knights of the Round Table Box Set",
+        "website_path": "/YuGiOh/Products?idProduct=270922"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 6,
+      "matches_anchor": 38
+    }
+  },
+  "1657": {
+    "accepted_old_links": 98,
+    "anchor": {
+      "name": "CLASH OF REBELLIONS",
+      "pid": "11114006",
+      "release_date": "None",
+      "release_id": 1358,
+      "sealed_evidence": [
+        {
+          "base": "clash of rebellions",
+          "category": "Yugioh Booster",
+          "idProduct": "283524",
+          "name": "Clash of Rebellions Booster",
+          "website_path": "/YuGiOh/Products?idProduct=283524"
+        },
+        {
+          "base": "clash of rebellions",
+          "category": "Yugioh Display",
+          "idProduct": "283525",
+          "name": "Clash of Rebellions Booster Box",
+          "website_path": "/YuGiOh/Products?idProduct=283525"
+        },
+        {
+          "base": "clash of rebellions",
+          "category": "Yugioh Special Edition",
+          "idProduct": "320875",
+          "name": "Clash of Rebellions: Special Edition",
+          "website_path": "/YuGiOh/Products?idProduct=320875"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Ultimaya Tzolkin",
+        "collector_number": "CORE-ENSE1",
+        "expansion_external_id": "1657",
+        "id_product": "286938",
+        "language": "en",
+        "market_name": "Ultimaya Tzolkin",
+        "metacard_external_id": "220154",
+        "official_releases": [
+          {
+            "name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+            "pid": "12211003",
+            "release_date": "None",
+            "release_id": 1640
+          }
+        ],
+        "print_id": 109529,
+        "rarity": "Super Rare",
+        "set_code": "CORE",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Frightfur Tiger",
+        "collector_number": "CORE-ENSE2",
+        "expansion_external_id": "1657",
+        "id_product": "286939",
+        "language": "en",
+        "market_name": "Frightfur Tiger",
+        "metacard_external_id": "220499",
+        "official_releases": [
+          {
+            "name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+            "pid": "12211003",
+            "release_date": "None",
+            "release_id": 1640
+          }
+        ],
+        "print_id": 109530,
+        "rarity": "Super Rare",
+        "set_code": "CORE",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Engraver of the Mark",
+        "collector_number": "CORE-ENSE3",
+        "expansion_external_id": "1657",
+        "id_product": "286940",
+        "language": "en",
+        "market_name": "Engraver of the Mark",
+        "metacard_external_id": "221316",
+        "official_releases": [
+          {
+            "name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+            "pid": "12211003",
+            "release_date": "None",
+            "release_id": 1640
+          }
+        ],
+        "print_id": 109531,
+        "rarity": "Super Rare",
+        "set_code": "CORE",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Destruction Sword Flash",
+        "collector_number": "CORE-ENSE4",
+        "expansion_external_id": "1657",
+        "id_product": "286941",
+        "language": "en",
+        "market_name": "Destruction Sword Flash",
+        "metacard_external_id": "221317",
+        "official_releases": [
+          {
+            "name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+            "pid": "12211003",
+            "release_date": "None",
+            "release_id": 1640
+          }
+        ],
+        "print_id": 109532,
+        "rarity": "Super Rare",
+        "set_code": "CORE",
+        "variant": "rarity-super-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "1657",
+        "external_id": "283524",
+        "name": "Clash of Rebellions Booster",
+        "website_path": "/YuGiOh/Products?idProduct=283524"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1657",
+        "external_id": "283525",
+        "name": "Clash of Rebellions Booster Box",
+        "website_path": "/YuGiOh/Products?idProduct=283525"
+      },
+      {
+        "category": "Yugioh Special Edition",
+        "expansion_external_id": "1657",
+        "external_id": "320875",
+        "name": "Clash of Rebellions: Special Edition",
+        "website_path": "/YuGiOh/Products?idProduct=320875"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1657",
+        "external_id": "410129",
+        "name": "Clash of Rebellions Booster Box (18 Booster)",
+        "website_path": "/YuGiOh/Products?idProduct=410129"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 4,
+      "matches_anchor": 90,
+      "no_official_membership": 4
+    }
+  },
+  "1677": {
+    "accepted_old_links": 98,
+    "anchor": {
+      "name": "DIMENSION OF CHAOS",
+      "pid": "11114009",
+      "release_date": "None",
+      "release_id": 1360,
+      "sealed_evidence": [
+        {
+          "base": "dimension of chaos",
+          "category": "Yugioh Booster",
+          "idProduct": "285572",
+          "name": "Dimension of Chaos Booster",
+          "website_path": "/YuGiOh/Products?idProduct=285572"
+        },
+        {
+          "base": "dimension of chaos",
+          "category": "Yugioh Display",
+          "idProduct": "285573",
+          "name": "Dimension of Chaos Booster Box",
+          "website_path": "/YuGiOh/Products?idProduct=285573"
+        },
+        {
+          "base": "dimension of chaos",
+          "category": "Yugioh Special Edition",
+          "idProduct": "286937",
+          "name": "Dimension of Chaos: Special Edition",
+          "website_path": "/YuGiOh/Products?idProduct=286937"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Ultimaya Tzolkin",
+        "collector_number": "DOCS-ENSE1",
+        "expansion_external_id": "1677",
+        "id_product": "286933",
+        "language": "en",
+        "market_name": "Ultimaya Tzolkin",
+        "metacard_external_id": "220154",
+        "official_releases": [
+          {
+            "name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+            "pid": "12211002",
+            "release_date": "None",
+            "release_id": 1639
+          }
+        ],
+        "print_id": 112806,
+        "rarity": "Super Rare",
+        "set_code": "DOCS",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Frightfur Tiger",
+        "collector_number": "DOCS-ENSE2",
+        "expansion_external_id": "1677",
+        "id_product": "286934",
+        "language": "en",
+        "market_name": "Frightfur Tiger",
+        "metacard_external_id": "220499",
+        "official_releases": [
+          {
+            "name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+            "pid": "12211002",
+            "release_date": "None",
+            "release_id": 1639
+          }
+        ],
+        "print_id": 112807,
+        "rarity": "Super Rare",
+        "set_code": "DOCS",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Engraver of the Mark",
+        "collector_number": "DOCS-ENSE3",
+        "expansion_external_id": "1677",
+        "id_product": "286935",
+        "language": "en",
+        "market_name": "Engraver of the Mark",
+        "metacard_external_id": "221316",
+        "official_releases": [
+          {
+            "name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+            "pid": "12211002",
+            "release_date": "None",
+            "release_id": 1639
+          }
+        ],
+        "print_id": 112808,
+        "rarity": "Super Rare",
+        "set_code": "DOCS",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Destruction Sword Flash",
+        "collector_number": "DOCS-ENSE4",
+        "expansion_external_id": "1677",
+        "id_product": "286936",
+        "language": "en",
+        "market_name": "Destruction Sword Flash",
+        "metacard_external_id": "221317",
+        "official_releases": [
+          {
+            "name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+            "pid": "12211002",
+            "release_date": "None",
+            "release_id": 1639
+          }
+        ],
+        "print_id": 112809,
+        "rarity": "Super Rare",
+        "set_code": "DOCS",
+        "variant": "rarity-super-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "1677",
+        "external_id": "285572",
+        "name": "Dimension of Chaos Booster",
+        "website_path": "/YuGiOh/Products?idProduct=285572"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1677",
+        "external_id": "285573",
+        "name": "Dimension of Chaos Booster Box",
+        "website_path": "/YuGiOh/Products?idProduct=285573"
+      },
+      {
+        "category": "Yugioh Special Edition",
+        "expansion_external_id": "1677",
+        "external_id": "286937",
+        "name": "Dimension of Chaos: Special Edition",
+        "website_path": "/YuGiOh/Products?idProduct=286937"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1677",
+        "external_id": "410119",
+        "name": "Dimension of Chaos Booster Box (18 Booster)",
+        "website_path": "/YuGiOh/Products?idProduct=410119"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 4,
+      "matches_anchor": 90,
+      "no_official_membership": 4
+    }
+  },
+  "1712": {
+    "accepted_old_links": 97,
+    "anchor": {
+      "name": "THE DARK ILLUSION",
+      "pid": "11115005",
+      "release_date": "None",
+      "release_id": 1366,
+      "sealed_evidence": [
+        {
+          "base": "the dark illusion",
+          "category": "Yugioh Booster",
+          "idProduct": "290079",
+          "name": "The Dark Illusion Booster",
+          "website_path": "/YuGiOh/Products?idProduct=290079"
+        },
+        {
+          "base": "the dark illusion",
+          "category": "Yugioh Display",
+          "idProduct": "290080",
+          "name": "The Dark Illusion Booster Box",
+          "website_path": "/YuGiOh/Products?idProduct=290080"
+        },
+        {
+          "base": "the dark illusion",
+          "category": "Yugioh Special Edition",
+          "idProduct": "290081",
+          "name": "The Dark Illusion: Special Edition",
+          "website_path": "/YuGiOh/Products?idProduct=290081"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Blackwing - Gram the Shining Star",
+        "collector_number": "TDIL-ENSE1",
+        "expansion_external_id": "1712",
+        "id_product": "292737",
+        "language": "en",
+        "market_name": "Blackwing - Gram the Shining Star",
+        "metacard_external_id": "208834",
+        "official_releases": [
+          {
+            "name": "THE DARK ILLUSION SPECIAL EDITION (UK)",
+            "pid": "12212002",
+            "release_date": "None",
+            "release_id": 1643
+          }
+        ],
+        "print_id": 146047,
+        "rarity": "Super Rare",
+        "set_code": "TDIL",
+        "variant": "rarity-super-rare"
+      },
+      {
+        "card_name": "Number S39: Utopia the Lightning",
+        "collector_number": "TDIL-ENSE2",
+        "expansion_external_id": "1712",
+        "id_product": "292738",
+        "language": "en",
+        "market_name": "Number S39: Utopia the Lightning",
+        "metacard_external_id": "221989",
+        "official_releases": [
+          {
+            "name": "THE DARK ILLUSION SPECIAL EDITION (UK)",
+            "pid": "12212002",
+            "release_date": "None",
+            "release_id": 1643
+          }
+        ],
+        "print_id": 146048,
+        "rarity": "Super Rare",
+        "set_code": "TDIL",
+        "variant": "rarity-super-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "1712",
+        "external_id": "290079",
+        "name": "The Dark Illusion Booster",
+        "website_path": "/YuGiOh/Products?idProduct=290079"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1712",
+        "external_id": "290080",
+        "name": "The Dark Illusion Booster Box",
+        "website_path": "/YuGiOh/Products?idProduct=290080"
+      },
+      {
+        "category": "Yugioh Special Edition",
+        "expansion_external_id": "1712",
+        "external_id": "290081",
+        "name": "The Dark Illusion: Special Edition",
+        "website_path": "/YuGiOh/Products?idProduct=290081"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "1712",
+        "external_id": "410084",
+        "name": "The Dark Illusion Booster Box (18 Booster)",
+        "website_path": "/YuGiOh/Products?idProduct=410084"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 2,
+      "matches_anchor": 91,
+      "no_official_membership": 4
+    }
+  },
+  "2429": {
+    "accepted_old_links": 106,
+    "anchor": {
+      "name": "DUEL POWER",
+      "pid": "18813000",
+      "release_date": "None",
+      "release_id": 1818,
+      "sealed_evidence": [
+        {
+          "base": "duel power",
+          "category": "Yugioh Promo Products",
+          "idProduct": "369491",
+          "name": "Duel Power",
+          "website_path": "/YuGiOh/Products?idProduct=369491"
+        },
+        {
+          "base": "duel power",
+          "category": "Yugioh Booster",
+          "idProduct": "371767",
+          "name": "Duel Power Booster",
+          "website_path": "/YuGiOh/Products?idProduct=371767"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Dark Magician",
+        "collector_number": "DUPO-EN101",
+        "expansion_external_id": "2429",
+        "id_product": "371759",
+        "language": "en",
+        "market_name": "Dark Magician",
+        "metacard_external_id": "102390",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116063,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Elemental HERO Neos",
+        "collector_number": "DUPO-EN102",
+        "expansion_external_id": "2429",
+        "id_product": "371760",
+        "language": "en",
+        "market_name": "Elemental HERO Neos",
+        "metacard_external_id": "102630",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116064,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Stardust Dragon",
+        "collector_number": "DUPO-EN103",
+        "expansion_external_id": "2429",
+        "id_product": "371761",
+        "language": "en",
+        "market_name": "Stardust Dragon",
+        "metacard_external_id": "104962",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116065,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Number 39: Utopia",
+        "collector_number": "DUPO-EN104",
+        "expansion_external_id": "2429",
+        "id_product": "371762",
+        "language": "en",
+        "market_name": "Number 39: Utopia",
+        "metacard_external_id": "203571",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116066,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Odd-Eyes Pendulum Dragon",
+        "collector_number": "DUPO-EN105",
+        "expansion_external_id": "2429",
+        "id_product": "371763",
+        "language": "en",
+        "market_name": "Odd-Eyes Pendulum Dragon",
+        "metacard_external_id": "210074",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116067,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      },
+      {
+        "card_name": "Decode Talker",
+        "collector_number": "DUPO-EN106",
+        "expansion_external_id": "2429",
+        "id_product": "371764",
+        "language": "en",
+        "market_name": "Decode Talker",
+        "metacard_external_id": "225886",
+        "official_releases": [
+          {
+            "name": "DUEL POWER VARIANT CARDS",
+            "pid": "18813001",
+            "release_date": "None",
+            "release_id": 1819
+          }
+        ],
+        "print_id": 116068,
+        "rarity": "Ultra Rare",
+        "set_code": "DUPO",
+        "variant": "rarity-ultra-rare"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Promo Products",
+        "expansion_external_id": "2429",
+        "external_id": "369491",
+        "name": "Duel Power",
+        "website_path": "/YuGiOh/Products?idProduct=369491"
+      },
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "2429",
+        "external_id": "371767",
+        "name": "Duel Power Booster",
+        "website_path": "/YuGiOh/Products?idProduct=371767"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 6,
+      "matches_anchor": 100
+    }
+  },
+  "2844": {
+    "accepted_old_links": 53,
+    "anchor": {
+      "name": "SPEED DUEL: TRIALS OF THE KINGDOM",
+      "pid": "1202001007",
+      "release_date": "None",
+      "release_id": 1595,
+      "sealed_evidence": [
+        {
+          "base": "speed duel trials of the kingdom",
+          "category": "Yugioh Display",
+          "idProduct": "413574",
+          "name": "Speed Duel: Trials of the Kingdom Booster Box",
+          "website_path": "/YuGiOh/Products?idProduct=413574"
+        },
+        {
+          "base": "speed duel trials of the kingdom",
+          "category": "Yugioh Booster",
+          "idProduct": "413579",
+          "name": "Speed Duel: Trials of the Kingdom Booster",
+          "website_path": "/YuGiOh/Products?idProduct=413579"
+        }
+      ]
+    },
+    "anchor_vote_count": 1,
+    "contradictions": [
+      {
+        "card_name": "Two-Headed King Rex",
+        "collector_number": "SBTK-ENSP1",
+        "expansion_external_id": "2844",
+        "id_product": "426841",
+        "language": "en",
+        "market_name": "Two-Headed King Rex",
+        "metacard_external_id": "104369",
+        "official_releases": [
+          {
+            "name": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+            "pid": "1202001006",
+            "release_date": "None",
+            "release_id": 1594
+          }
+        ],
+        "print_id": 139531,
+        "rarity": "Common",
+        "set_code": "SBTK",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Jack's Knight",
+        "collector_number": "SBTK-ENSP2",
+        "expansion_external_id": "2844",
+        "id_product": "426836",
+        "language": "en",
+        "market_name": "Jack's Knight",
+        "metacard_external_id": "103150",
+        "official_releases": [
+          {
+            "name": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+            "pid": "1202001006",
+            "release_date": "None",
+            "release_id": 1594
+          }
+        ],
+        "print_id": 139532,
+        "rarity": "Common",
+        "set_code": "SBTK",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Sphere Kuriboh",
+        "collector_number": "SBTK-ENSP3",
+        "expansion_external_id": "2844",
+        "id_product": "426831",
+        "language": "en",
+        "market_name": "Sphere Kuriboh",
+        "metacard_external_id": "220962",
+        "official_releases": [
+          {
+            "name": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+            "pid": "1202001006",
+            "release_date": "None",
+            "release_id": 1594
+          }
+        ],
+        "print_id": 139533,
+        "rarity": "Common",
+        "set_code": "SBTK",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Riryoku",
+        "collector_number": "SBTK-ENSP4",
+        "expansion_external_id": "2844",
+        "id_product": "426826",
+        "language": "en",
+        "market_name": "Riryoku",
+        "metacard_external_id": "103837",
+        "official_releases": [
+          {
+            "name": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+            "pid": "1202001006",
+            "release_date": "None",
+            "release_id": 1594
+          }
+        ],
+        "print_id": 139534,
+        "rarity": "Common",
+        "set_code": "SBTK",
+        "variant": "rarity-common"
+      },
+      {
+        "card_name": "Reinforcements",
+        "collector_number": "SBTK-ENSP5",
+        "expansion_external_id": "2844",
+        "id_product": "426821",
+        "language": "en",
+        "market_name": "Reinforcements",
+        "metacard_external_id": "103806",
+        "official_releases": [
+          {
+            "name": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+            "pid": "1202001006",
+            "release_date": "None",
+            "release_id": 1594
+          }
+        ],
+        "print_id": 139535,
+        "rarity": "Common",
+        "set_code": "SBTK",
+        "variant": "rarity-common"
+      }
+    ],
+    "sealed_products": [
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "2844",
+        "external_id": "413574",
+        "name": "Speed Duel: Trials of the Kingdom Booster Box",
+        "website_path": "/YuGiOh/Products?idProduct=413574"
+      },
+      {
+        "category": "Yugioh Booster",
+        "expansion_external_id": "2844",
+        "external_id": "413579",
+        "name": "Speed Duel: Trials of the Kingdom Booster",
+        "website_path": "/YuGiOh/Products?idProduct=413579"
+      },
+      {
+        "category": "Yugioh Display",
+        "expansion_external_id": "2844",
+        "external_id": "668423",
+        "name": "Speed Duel: Trials of the Kingdom Booster Box (18 Booster)",
+        "website_path": "/YuGiOh/Products?idProduct=668423"
+      }
+    ],
+    "status_counts": {
+      "contradicts_anchor": 5,
+      "matches_anchor": 46,
+      "no_official_membership": 2
+    }
+  }
+}
