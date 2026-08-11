@@ -10,31 +10,7 @@ import { getGameHref } from '../../lib/catalog/routes'
 import { getGameConfig } from '../../lib/catalog/games'
 import { getLocalSetImageCandidates } from '../../lib/catalog/setImages'
 
-function extractCollectorNumber(value = '') {
-  const raw = String(value || '')
-  const trailing = raw.match(/(\d+)$/)
-  if (trailing) return Number(trailing[1])
-  const first = raw.match(/\d+/)
-  return first ? Number(first[0]) : Number.MAX_SAFE_INTEGER
-}
-
-function sortCardsByCollectorNumber(cards = []) {
-  return [...cards].sort((a, b) => {
-    const aCollector = a.collector_number || ''
-    const bCollector = b.collector_number || ''
-    const aNum = extractCollectorNumber(aCollector)
-    const bNum = extractCollectorNumber(bCollector)
-    if (aNum !== bNum) return aNum - bNum
-
-    const rawCompare = String(aCollector).localeCompare(String(bCollector), undefined, {
-      numeric: true,
-      sensitivity: 'base',
-    })
-    if (rawCompare !== 0) return rawCompare
-
-    return String(a.name || a.title || '').localeCompare(String(b.name || b.title || ''), undefined, { sensitivity: 'base' })
-  })
-}
+const PAGE_SIZE = 36
 
 function formatSetReleaseDate(value) {
   if (!value) return ''
@@ -50,9 +26,7 @@ function SetHeroVisual({ gameSlug, setCode, setName }) {
   useEffect(() => { setCandidateIndex(0) }, [gameSlug, setCode])
   const currentSrc = candidates[candidateIndex] || ''
 
-  if (!currentSrc) {
-    return <div className="game-set-hero-placeholder"><span>{setCode || 'SET'}</span></div>
-  }
+  if (!currentSrc) return <div className="game-set-hero-placeholder"><span>{setCode || 'SET'}</span></div>
 
   return (
     <img
@@ -70,15 +44,21 @@ export default function GameSetPage({ gameSlug, setCode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [sort, setSort] = useState('number_asc')
 
   useEffect(() => {
     let cancelled = false
-
-    async function loadSet() {
+    const handle = setTimeout(async () => {
       setLoading(true)
       setError('')
       try {
-        const payload = await fetchSetDetail(gameSlug, setCode, { limit: 1000 })
+        const payload = await fetchSetDetail(gameSlug, setCode, {
+          q: query.trim(),
+          sort,
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
+        })
         if (!cancelled) setSetDetail(payload)
       } catch (requestError) {
         if (!cancelled) {
@@ -88,40 +68,33 @@ export default function GameSetPage({ gameSlug, setCode }) {
       } finally {
         if (!cancelled) setLoading(false)
       }
+    }, query ? 180 : 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(handle)
     }
+  }, [gameSlug, page, query, setCode, sort])
 
-    loadSet()
-    return () => { cancelled = true }
-  }, [gameSlug, setCode])
+  function changeQuery(value) {
+    setQuery(value)
+    setPage(1)
+  }
 
-  const orderedCards = useMemo(() => {
-    const sorted = sortCardsByCollectorNumber(setDetail?.cards || [])
-    const collectorTotal = Number(setDetail?.set?.collector_total || 0)
-    return sorted.map((item) => ({ ...item, collector_total: collectorTotal }))
-  }, [setDetail])
+  function changeSort(value) {
+    setSort(value)
+    setPage(1)
+  }
 
-  const visibleCards = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return orderedCards
-    return orderedCards.filter((item) => [
-      item.name,
-      item.title,
-      item.collector_number,
-      item.rarity,
-      item.variant,
-      item.language,
-    ].some((value) => String(value || '').toLowerCase().includes(needle)))
-  }, [orderedCards, query])
-
-  if (loading) {
+  if (loading && !setDetail) {
     return (
       <section className="page-shell game-page">
-        <StatePanel title="Cargando colección" description="Preparando todas las versiones físicas del set." tone="default" />
+        <StatePanel title="Cargando colección" description="Preparando esta página de versiones físicas." tone="default" />
       </section>
     )
   }
 
-  if (error) {
+  if (error && !setDetail) {
     return (
       <section className="page-shell game-page">
         <StatePanel title="No pudimos cargar la colección" description={error} error tone="error" />
@@ -138,6 +111,10 @@ export default function GameSetPage({ gameSlug, setCode }) {
   }
 
   const collection = setDetail.set
+  const cards = setDetail.cards || []
+  const resultTotal = Number(setDetail.total || 0)
+  const unfilteredTotal = Number(collection.collector_total || collection.print_count || resultTotal)
+  const totalPages = Math.max(1, Math.ceil(resultTotal / PAGE_SIZE))
   const releaseLabel = formatSetReleaseDate(collection.release_date)
   const totalCards = Number(collection.card_count || 0)
 
@@ -155,7 +132,7 @@ export default function GameSetPage({ gameSlug, setCode }) {
 
           <p className="eyebrow">Set</p>
           <h1>{collection.name}</h1>
-          <p className="game-set-hero-meta-line">{String(collection.code || '').toUpperCase()} · {orderedCards.length} versiones físicas</p>
+          <p className="game-set-hero-meta-line">{String(collection.code || '').toUpperCase()} · {unfilteredTotal.toLocaleString()} versiones físicas</p>
 
           <div className="game-set-meta-chips">
             {releaseLabel ? <span>Lanzamiento: {releaseLabel}</span> : null}
@@ -163,7 +140,7 @@ export default function GameSetPage({ gameSlug, setCode }) {
             {collection.series ? <span>Serie: {collection.series}</span> : null}
           </div>
 
-          <p>Checklist completo del set. Cada alternativa, promo, idioma o reimpresión que tenga identidad propia aparece como una versión separada y abre directamente su ficha exacta.</p>
+          <p>Checklist completo del set. Cada alternativa, promo, idioma o reimpresión con identidad propia abre directamente su ficha exacta.</p>
 
           <div className="toolbar-row">
             <Link href={getGameHref(game.slug)} className="secondary-btn">Volver a {game.name}</Link>
@@ -189,33 +166,46 @@ export default function GameSetPage({ gameSlug, setCode }) {
           <div className="section-heading compact">
             <p className="eyebrow">Checklist</p>
             <h2>Todas las versiones de esta colección</h2>
-            <p>{orderedCards.length} versión{orderedCards.length === 1 ? '' : 'es'} cargada{orderedCards.length === 1 ? '' : 's'}.</p>
+            <p>{resultTotal.toLocaleString()} versión{resultTotal === 1 ? '' : 'es'} · página {page} de {totalPages}.</p>
           </div>
-          <label className="dri-set-search">
-            <span>Buscar dentro del set</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Nombre, número, rareza…"
-            />
-          </label>
+          <div className="dri-set-controls">
+            <label className="dri-set-search">
+              <span>Buscar dentro del set</span>
+              <input value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Nombre, número, rareza…" />
+            </label>
+            <label className="dri-set-sort">
+              <span>Ordenar</span>
+              <select value={sort} onChange={(event) => changeSort(event.target.value)}>
+                <option value="number_asc">Número ↑</option>
+                <option value="number_desc">Número ↓</option>
+                <option value="name_asc">Nombre A–Z</option>
+                <option value="name_desc">Nombre Z–A</option>
+              </select>
+            </label>
+          </div>
         </div>
 
-        {query ? <p className="dri-set-filter-count">{visibleCards.length} coincidencia{visibleCards.length === 1 ? '' : 's'} para “{query}”.</p> : null}
+        {loading ? <p className="dri-set-filter-count">Actualizando página…</p> : null}
+        {query ? <p className="dri-set-filter-count">{resultTotal.toLocaleString()} coincidencia{resultTotal === 1 ? '' : 's'} para “{query}”.</p> : null}
+        {error ? <p className="dri-set-filter-count">{error}</p> : null}
 
-        {!visibleCards.length ? (
+        {!cards.length && !loading ? (
           <StatePanel
-            title={orderedCards.length ? 'No encontramos esa carta en el set' : 'Sin versiones cargadas todavía'}
-            description={orderedCards.length ? 'Prueba con otro nombre, número o rareza.' : 'La colección existe, pero aún no tenemos versiones asociadas en esta vista.'}
+            title={unfilteredTotal ? 'No encontramos esa carta en el set' : 'Sin versiones cargadas todavía'}
+            description={unfilteredTotal ? 'Prueba con otro nombre, número o rareza.' : 'La colección existe, pero aún no tenemos versiones asociadas en esta vista.'}
             tone="muted"
           />
         ) : (
-          <ResultsGrid
-            items={visibleCards}
-            view="grid"
-            queryState={{ type: 'singles', set_code: collection.code }}
-          />
+          <ResultsGrid items={cards} view="grid" queryState={{ type: 'singles', set_code: collection.code }} />
         )}
+
+        {totalPages > 1 ? (
+          <nav className="dri-set-pagination" aria-label="Paginación de versiones del set">
+            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>← Anterior</button>
+            <span>Página <strong>{page}</strong> de {totalPages} · {resultTotal.toLocaleString()} versiones</span>
+            <button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Siguiente →</button>
+          </nav>
+        ) : null}
       </section>
     </section>
   )
