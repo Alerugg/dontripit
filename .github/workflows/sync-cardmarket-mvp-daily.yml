@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/cardmarket
-          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18 riftbound:22; do
             game="${spec%%:*}"
             game_id="${spec##*:}"
             for group in singles nonsingles; do
@@ -67,6 +67,8 @@ jobs:
             --catalog pokemon:non_single:/tmp/cardmarket/pokemon_nonsingles.json
             --catalog onepiece:single:/tmp/cardmarket/onepiece_singles.json
             --catalog onepiece:non_single:/tmp/cardmarket/onepiece_nonsingles.json
+            --catalog riftbound:single:/tmp/cardmarket/riftbound_singles.json
+            --catalog riftbound:non_single:/tmp/cardmarket/riftbound_nonsingles.json
           )
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --report /tmp/cardmarket/catalog-dry.json
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --apply --report /tmp/cardmarket/catalog-apply.json
@@ -84,7 +86,7 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          for game in mtg yugioh pokemon onepiece; do
+          for game in mtg yugioh pokemon onepiece riftbound; do
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
               --game "$game" --report "/tmp/cardmarket/${game}-prices-dry.json"
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
