@@ -52,7 +52,7 @@ jobs:
               cur.execute("SELECT id,slug FROM games WHERE slug IN ('yugioh','pokemon','mtg')")
               gids={r['slug']:int(r['id']) for r in cur.fetchall()}
 
-              # YGO independent product-name anchors, but only call it a contradiction when the target Print has explicit official memberships.
+              # YGO: only call it a contradiction when the target Print has explicit official memberships.
               gid=gids['yugioh']
               cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='konami_neuron'",(gid,))
               rels=[dict(r) for r in cur.fetchall()]; byname=defaultdict(list); relmeta={int(r['id']):r for r in rels}
@@ -89,7 +89,7 @@ jobs:
               exp_counts=Counter(x['expansion'] for x in true_contra)
               out['yugioh']={'unique_product_name_anchors':len(anchors),'anchor_conflicts':len(anchor_conflicts),'official_membership_matches':matches,'anchored_rows_without_official_membership':len(no_membership_anchored),'true_nonempty_membership_contradictions':len(true_contra),'unanchored_old_links':unanchored,'contradictions_by_expansion':dict(exp_counts.most_common()),'true_contradiction_sample':true_contra[:250],'no_membership_sample':no_membership_anchored[:30]}
 
-              # Pokemon four legacy/direct links, especially any disagreement with current TCGdex physical evidence.
+              # Pokemon: inspect the four legacy/direct links and all current Cardmarket IDs cited by either source.
               gid=gids['pokemon']
               cur.execute("""SELECT l.print_id,l.evidence,e.id external_product_id,e.external_id id_product,e.expansion_external_id,e.name market_name,e.website_path,p.collector_number,p.variant,p.is_foil,s.code set_code,c.name card_name,pi.external_id legacy_id,
                   pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_id,
@@ -101,31 +101,30 @@ jobs:
                 WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND l.mapping_method='direct_print_identifier' ORDER BY l.print_id""",(gid,list(A)))
               legacy=[dict(r) for r in cur.fetchall()]
               candidate_ids=sorted({str(x) for r in legacy for x in (r['id_product'],r['legacy_id'],r['physical_id'],r['card_level_id']) if x})
-              cur.execute("""SELECT external_id id_product,expansion_external_id,name,category,website_path,raw_payload FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND external_id=ANY(%s) ORDER BY external_id""",(gid,candidate_ids))
+              cur.execute("""SELECT external_id id_product,expansion_external_id,name,category,website_path,metacard_external_id FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND external_id=ANY(%s) ORDER BY external_id""",(gid,candidate_ids))
               cm={str(r['id_product']):dict(r) for r in cur.fetchall()}
               for r in legacy:
                 r['cardmarket_candidates']={cid:cm.get(cid) for cid in sorted({str(x) for x in (r['id_product'],r['legacy_id'],r['physical_id'],r['card_level_id']) if x})}
               out['pokemon']={'legacy_direct_links':legacy}
 
-              # MTG two newly-current sealed products and likely canonical candidates.
+              # MTG: inspect the two newly-current sealed products and likely canonical candidates.
               gid=gids['mtg']; ids=['902208','902217']
-              cur.execute("SELECT id external_product_id,external_id,expansion_external_id,name,category,website_path,raw_payload FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND external_id=ANY(%s)",(gid,ids))
+              cur.execute("SELECT id external_product_id,external_id,expansion_external_id,name,category,website_path FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND external_id=ANY(%s)",(gid,ids))
               external=[dict(r) for r in cur.fetchall()]
               candidates=[]
               for e in external:
                 words=[w for w in norm(e['name']).split() if len(w)>=5][:5]
-                cur.execute("SELECT p.id product_id,p.name,p.product_type,p.release_date,p.set_id,pv.id variant_id,pv.language,pv.region,pv.packaging,pv.sku FROM products p LEFT JOIN product_variants pv ON pv.product_id=p.id WHERE p.game_id=%s AND lower(p.name) LIKE %s ORDER BY p.id LIMIT 100",(gid,'%'+(words[0] if words else norm(e['name']))+'%'))
+                cur.execute("SELECT p.id product_id,p.name,p.product_type,p.release_date,p.set_id,pv.id variant_id,pv.language,pv.region,pv.packaging,pv.sku FROM products p LEFT JOIN product_variants pv ON pv.product_id=p.id WHERE p.game_id=%s AND lower(p.name) LIKE %s ORDER BY p.id LIMIT 150",(gid,'%'+(words[0] if words else norm(e['name']))+'%'))
                 rows=[dict(r) for r in cur.fetchall()]
-                scored=[]
-                target=set(norm(e['name']).split())
+                scored=[];target=set(norm(e['name']).split())
                 for r in rows:
                   score=len(target & set(norm(r['name']).split()))
-                  if score>=2: scored.append({**r,'token_overlap':score,'normalized_name_equal':norm(r['name'])==norm(e['name'])})
+                  if score>=2:scored.append({**r,'token_overlap':score,'normalized_name_equal':norm(r['name'])==norm(e['name'])})
                 candidates.append({'external':e,'canonical_candidates':sorted(scored,key=lambda x:(-x['token_overlap'],x['product_id']))[:50]})
               out['mtg_sealed']=candidates
           finally:conn.close()
           Path('/tmp/point1-blockers-deep.json').write_text(json.dumps(out,indent=2,default=str,sort_keys=True)+'\n')
-          print(json.dumps({'yugioh':{k:v for k,v in out['yugioh'].items() if not k.endswith('sample')},'pokemon':[{'print_id':r['print_id'],'card_name':r['card_name'],'mapped':r['id_product'],'legacy':r['legacy_id'],'physical':r['physical_id'],'card_level':r['card_level_id']} for r in out['pokemon']['legacy_direct_links']],'mtg_sealed':out['mtg_sealed']},indent=2,default=str))
+          print(json.dumps({'yugioh':{k:v for k,v in out['yugioh'].items() if not k.endswith('sample')},'pokemon':[{'print_id':r['print_id'],'card_name':r['card_name'],'mapped':r['id_product'],'legacy':r['legacy_id'],'physical':r['physical_id'],'card_level':r['card_level_id'],'candidates':r['cardmarket_candidates']} for r in out['pokemon']['legacy_direct_links']],'mtg_sealed':out['mtg_sealed']},indent=2,default=str))
           PY
       - name: Persist
         run: |
