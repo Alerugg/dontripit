@@ -3,11 +3,18 @@ name: Project Cardmarket Exact Prices Now
 on:
   push:
     branches: [catalog-v2]
-    paths: ['.github/workflows/project-cardmarket-exact-prices-now.yml']
+    paths:
+      - '.github/workflows/project-cardmarket-exact-prices-now.yml'
+      - 'backend/app/jobs/cardmarket_link_price_projection.py'
+      - 'backend/scripts/project_cardmarket_link_prices.py'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: project-cardmarket-exact-prices-now
+  cancel-in-progress: false
 
 jobs:
   project:
