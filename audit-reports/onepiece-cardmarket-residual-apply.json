@@ -1,0 +1,11 @@
+{
+  "mode": "apply",
+  "game": "onepiece",
+  "mapping_method": "bandai_global_residual_exact",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "applied_links": 31,
+  "global_identity_unique": 30,
+  "residual_bijection": 1,
+  "total_onepiece_en_mapped_after_apply": 3638,
+  "canonical_en_prints": 4672
+}
