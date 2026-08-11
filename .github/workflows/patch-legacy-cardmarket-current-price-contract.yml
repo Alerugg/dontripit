@@ -1,0 +1,51 @@
+name: Patch Legacy Cardmarket Current Price Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/patch-legacy-cardmarket-current-price-contract.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Patch legacy market-products price reader
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('backend/app/routes/catalog.py')
+          s=p.read_text()
+          old="""        ), latest_prices AS (\n            SELECT external_product_id, currency, price_low, price_mid, price_market,\n                   price_last, as_of,\n                   ROW_NUMBER() OVER (\n                       PARTITION BY external_product_id\n                       ORDER BY as_of DESC, id DESC\n                   ) AS row_number\n            FROM external_market_price_snapshots\n            WHERE price_variant = 'sealed'\n        )\n"""
+          new="""        ), latest_price_capture AS (\n            SELECT ep.game_id,\n                   ep.product_group,\n                   MAX(mp.as_of) AS as_of\n            FROM external_market_price_snapshots mp\n            JOIN external_catalog_products ep ON ep.id = mp.external_product_id\n            WHERE ep.source = 'cardmarket'\n            GROUP BY ep.game_id, ep.product_group\n        ), latest_prices AS (\n            SELECT mp.external_product_id, mp.currency, mp.price_low, mp.price_mid, mp.price_market,\n                   mp.price_last, mp.as_of,\n                   ROW_NUMBER() OVER (\n                       PARTITION BY mp.external_product_id\n                       ORDER BY mp.id DESC\n                   ) AS row_number\n            FROM external_market_price_snapshots mp\n            JOIN external_catalog_products ep ON ep.id = mp.external_product_id\n            JOIN latest_price_capture lpc\n              ON lpc.game_id = ep.game_id\n             AND lpc.product_group = ep.product_group\n             AND lpc.as_of = mp.as_of\n            WHERE ep.source = 'cardmarket'\n              AND mp.currency = 'EUR'\n              AND mp.price_variant = 'sealed'\n        )\n"""
+          if old not in s:
+              raise SystemExit('expected latest_prices block not found')
+          s=s.replace(old,new,1)
+          old2="""        for key in (\"price_low\", \"price_mid\", \"price_market\", \"price_last\"):\n            if row.get(key) is not None:\n                row[key] = float(row[key])\n        items.append(row)\n"""
+          new2="""        meaningful_price = False\n        for key in (\"price_low\", \"price_mid\", \"price_market\", \"price_last\"):\n            value = row.get(key)\n            if value is None:\n                continue\n            value = float(value)\n            if value > 0:\n                row[key] = value\n                meaningful_price = True\n            else:\n                row[key] = None\n        if not meaningful_price:\n            row[\"currency\"] = None\n            row[\"price_as_of\"] = None\n        items.append(row)\n"""
+          if old2 not in s:
+              raise SystemExit('expected price serialization block not found')
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+          PY
+      - name: Static verification
+        run: |
+          python -m py_compile backend/app/routes/catalog.py
+          grep -q "latest_price_capture AS" backend/app/routes/catalog.py
+          grep -q "meaningful_price = False" backend/app/routes/catalog.py
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/routes/catalog.py
+          git diff --cached --check
+          git commit -m 'Require current Cardmarket capture in legacy market products'
+          git push origin HEAD:catalog-v2
