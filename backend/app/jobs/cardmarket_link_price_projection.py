@@ -68,6 +68,34 @@ def _price_variant(*, is_foil: bool, variant: str | None) -> str | None:
     return "nonfoil"
 
 
+def _positive(value) -> bool:
+    if value is None:
+        return False
+    try:
+        return Decimal(str(value)) > 0
+    except Exception:
+        return False
+
+
+def _has_meaningful_price(external_price: ExternalMarketPriceSnapshot) -> bool:
+    # Cardmarket PriceGuide uses zero-valued placeholders in some unavailable
+    # finish blocks. A physical card cannot have a useful public market value
+    # of EUR 0.00, so those rows stay traceable externally but are not projected
+    # as a canonical price.
+    return any(
+        _positive(value)
+        for value in (
+            external_price.price_low,
+            external_price.price_mid,
+            external_price.price_market,
+            external_price.price_last,
+            external_price.avg1,
+            external_price.avg7,
+            external_price.avg30,
+        )
+    )
+
+
 def _money_payload(
     external_price: ExternalMarketPriceSnapshot,
     *,
@@ -80,11 +108,11 @@ def _money_payload(
         "entity_type": "print",
         "entity_id": int(print_id),
         "currency": CARDMARKET_CURRENCY,
-        "price_low": external_price.price_low,
-        "price_mid": external_price.price_mid,
+        "price_low": external_price.price_low if _positive(external_price.price_low) else None,
+        "price_mid": external_price.price_mid if _positive(external_price.price_mid) else None,
         "price_high": None,
-        "price_market": external_price.price_market,
-        "price_last": external_price.price_last,
+        "price_market": external_price.price_market if _positive(external_price.price_market) else None,
+        "price_last": external_price.price_last if _positive(external_price.price_last) else None,
         "quantity": None,
         "raw_json": {
             "idProduct": str(external_product.external_id),
@@ -195,7 +223,7 @@ def build_link_price_projection_plan(
             unsupported_finish += 1
             continue
         external_price = external_prices.get((int(external_product.id), price_variant))
-        if external_price is None:
+        if external_price is None or not _has_meaningful_price(external_price):
             missing_external_price += 1
             continue
         priceable_prints += 1
