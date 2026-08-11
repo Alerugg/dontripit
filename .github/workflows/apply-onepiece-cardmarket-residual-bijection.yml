@@ -1,165 +1,23 @@
-name: Apply One Piece Cardmarket Residual Bijection
+name: RETIRED - One Piece Cardmarket Global Residual Bijection
+
+# RETIRED 2026-08-11.
+# Global name+collector cardinality is NOT sufficient evidence of a physical
+# One Piece reprint/version. A single collector number can have many Cardmarket
+# versions across different official releases. This workflow is deliberately
+# non-writing and cannot create accepted mappings anymore.
 
 on:
-  push:
-    branches: [catalog-v2]
-    paths: ['.github/workflows/apply-onepiece-cardmarket-residual-bijection.yml']
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: apply-onepiece-cardmarket-residual-bijection
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  apply:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
-      PYTHONPATH: .
     steps:
-      - uses: actions/checkout@v4
-        with: {ref: catalog-v2}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - run: pip install -r backend/requirements.txt
-      - name: Rebuild deterministic cohort and apply exact residual links
-        working-directory: backend
+      - name: Explain retirement
         run: |
-          python - <<'PY'
-          import json, os, re, unicodedata
-          from collections import defaultdict, Counter
-          from pathlib import Path
-          import psycopg2
-          from psycopg2.extras import RealDictCursor, execute_values, Json
-
-          METHOD='bandai_global_residual_exact'
-          def norm(v):
-              v=unicodedata.normalize('NFKD', str(v or ''))
-              v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’', "'").replace('&',' and ')
-              return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9]+', ' ', v)).strip()
-          collector_re=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$', re.I)
-          def parse_cm(name):
-              m=collector_re.match(str(name or '').strip())
-              if not m: return None
-              c=m.group('collector').upper()
-              c=re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-', lambda x:f'{x.group(1).upper()}{int(x.group(2)):02d}-', c)
-              return (norm(m.group('name')), c)
-
-          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
-          report={'mode':'apply','game':'onepiece','mapping_method':METHOD}
-          try:
-              with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                  cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")
-                  gid=int(cur.fetchone()['id'])
-                  cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'")
-                  latest=cur.fetchone()['latest']
-                  cur.execute('''SELECT p.id print_id,p.collector_number,p.variant,p.rarity,p.language,c.name card_name,s.code set_code
-                    FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
-                    WHERE c.game_id=%s AND lower(p.language)='en' ''',(gid,))
-                  canon=[dict(r) for r in cur.fetchall()]; canon_by=defaultdict(list)
-                  for r in canon: canon_by[(norm(r['card_name']),str(r['collector_number'] or '').upper())].append(r)
-                  cur.execute('''SELECT id external_product_id,external_id id_product,name,expansion_external_id,metacard_external_id,website_path
-                    FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(gid,latest))
-                  market_by=defaultdict(list)
-                  for r in cur.fetchall():
-                      d=dict(r); q=parse_cm(d['name'])
-                      if q: market_by[q].append(d)
-                  cur.execute('''SELECT l.external_product_id,l.print_id,l.mapping_method,l.confidence,l.link_status,e.external_id id_product,e.name market_name,
-                    p.collector_number,p.variant,c.name card_name FROM external_catalog_print_links l
-                    JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
-                    WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
-                  links=[dict(r) for r in cur.fetchall()]
-                  linked_prints={int(r['print_id']) for r in links}; linked_products={int(r['external_product_id']) for r in links}
-                  link_by_print={int(r['print_id']):r for r in links}; link_by_product={int(r['external_product_id']):r for r in links}
-
-                  candidates=[]; status=Counter()
-                  for key in set(canon_by)|set(market_by):
-                      cs=canon_by.get(key,[]); ms=market_by.get(key,[])
-                      cids={int(x['print_id']) for x in cs}; mids={int(x['external_product_id']) for x in ms}
-                      cross=False
-                      for pid in cids:
-                          lr=link_by_print.get(pid)
-                          if lr and int(lr['external_product_id']) not in mids: cross=True
-                      for eid in mids:
-                          lr=link_by_product.get(eid)
-                          if lr and int(lr['print_id']) not in cids: cross=True
-                      if cross: status['cross_identity']+=1; continue
-                      uc=[x for x in cs if int(x['print_id']) not in linked_prints]
-                      um=[x for x in ms if int(x['external_product_id']) not in linked_products]
-                      if not uc or not um: continue
-                      if len(cs)!=len(ms): status['cardinality_mismatch']+=1; continue
-                      if len(uc)==1 and len(um)==1:
-                          kind='global_identity_unique' if len(cs)==1 else 'residual_bijection'
-                          candidates.append((uc[0],um[0],kind,len(cs)))
-                          status[kind]+=1
-
-                  if len(candidates)!=31 or status['global_identity_unique']!=30 or status['residual_bijection']!=1:
-                      raise AssertionError({'expected_safe_cohort':31,'actual':len(candidates),'status':dict(status)})
-                  if len({int(c['print_id']) for c,_,_,_ in candidates})!=31 or len({int(m['external_product_id']) for _,m,_,_ in candidates})!=31:
-                      raise AssertionError('candidate one-to-one regression')
-
-                  print_ids=[int(c['print_id']) for c,_,_,_ in candidates]; ext_ids=[int(m['external_product_id']) for _,m,_,_ in candidates]
-                  cur.execute('''SELECT l.external_product_id,l.print_id FROM external_catalog_print_links l
-                    WHERE l.link_status IN ('accepted','mapped','exact') AND (l.print_id=ANY(%s) OR l.external_product_id=ANY(%s))''',(print_ids,ext_ids))
-                  if cur.fetchall(): raise AssertionError('candidate became linked before write')
-
-                  rows=[]
-                  for c,m,kind,group_size in candidates:
-                      evidence={
-                        'source':'onepiece_official+cardmarket','identity_basis':['exact_normalized_card_name','exact_collector_number','global_equal_cardinality','no_existing_cross_identity_link','global_one_to_one'],
-                        'resolution_kind':kind,'group_size':group_size,'idProduct':str(m['id_product']),'idExpansion':str(m['expansion_external_id'] or ''),
-                        'canonical_set_code':c['set_code'],'canonical_collector_number':c['collector_number'],'canonical_variant':c['variant'],'canonical_rarity':c['rarity'],
-                      }
-                      if kind=='residual_bijection': evidence['identity_basis'].append('all_other_group_members_already_exactly_linked')
-                      rows.append((int(m['external_product_id']),int(c['print_id']),METHOD,'exact','accepted',False,Json(evidence)))
-                  execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
-                    ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',rows,page_size=500)
-                  cur.execute('''SELECT count(*) links,count(DISTINCT print_id) prints,count(DISTINCT external_product_id) products FROM external_catalog_print_links
-                    WHERE mapping_method=%s AND link_status='accepted' ''',(METHOD,))
-                  stored_row=cur.fetchone()
-                  stored=(int(stored_row['links']),int(stored_row['prints']),int(stored_row['products']))
-                  if stored!=(31,31,31): raise AssertionError({'stored':stored})
-                  cur.execute('''SELECT count(DISTINCT l.print_id) mapped FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
-                    JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
-                    WHERE e.source='cardmarket' AND c.game_id=%s AND lower(p.language)='en' AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
-                  total_mapped=int(cur.fetchone()['mapped'])
-                  if total_mapped!=3638: raise AssertionError({'expected_total_mapped':3638,'actual':total_mapped})
-                  report.update({'latest_cardmarket_snapshot':str(latest),'applied_links':31,'global_identity_unique':30,'residual_bijection':1,'total_onepiece_en_mapped_after_apply':total_mapped,'canonical_en_prints':len(canon)})
-              conn.commit()
-          except Exception:
-              conn.rollback(); raise
-          finally:
-              conn.close()
-          Path('/tmp/onepiece-cardmarket-residual-apply.json').write_text(json.dumps(report,indent=2,default=str)+'\n')
-          print(json.dumps(report,indent=2,default=str))
-          PY
-      - name: Reproject exact Cardmarket prices for One Piece
-        working-directory: backend
-        run: python scripts/project_cardmarket_link_prices.py --game onepiece --apply --report /tmp/onepiece-price-projection-after-residual.json
-      - name: Persist apply summary
-        run: |
-          mkdir -p audit-reports
-          cp /tmp/onepiece-cardmarket-residual-apply.json audit-reports/onepiece-cardmarket-residual-apply.json
-          cp /tmp/onepiece-price-projection-after-residual.json audit-reports/onepiece-price-projection-after-residual.json
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add audit-reports/onepiece-cardmarket-residual-apply.json audit-reports/onepiece-price-projection-after-residual.json
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "Record One Piece residual Cardmarket mapping apply"
-          git push origin HEAD:catalog-v2
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: onepiece-cardmarket-residual-apply-${{ github.run_id }}
-          path: |
-            /tmp/onepiece-cardmarket-residual-apply.json
-            /tmp/onepiece-price-projection-after-residual.json
-          retention-days: 90
+          echo "RETIRED: global name+collector residual bijection is not physical-version-safe."
+          echo "Use the official CatalogRelease/PrintRelease -> Cardmarket expansion validated mapper instead."
+          exit 1
