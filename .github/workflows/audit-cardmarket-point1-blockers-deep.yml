@@ -1,0 +1,145 @@
+name: Audit Cardmarket Point 1 Blockers Deep
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-point1-blockers-deep.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Deep audit blockers
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          A=('accepted','mapped','exact')
+          def norm(v):
+            s=unicodedata.normalize('NFKD',str(v or '')).casefold();s=''.join(c for c in s if not unicodedata.combining(c)).replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',s)).strip()
+          SUFFIXES=(' booster box case',' booster case',' booster display',' booster box',' display',' booster',' structure deck',' starter deck',' speed duel box',' speed duel starter deck',' special edition',' tin',' mega tin',' box',' case')
+          PREFIXES=('yugioh ','yu gi oh ')
+          def bases(name):
+            raw=norm(name);out={raw};changed=True
+            while changed:
+              changed=False
+              for p in PREFIXES:
+                if raw.startswith(p) and len(raw)>len(p):raw=raw[len(p):].strip();out.add(raw);changed=True
+              for s in SUFFIXES:
+                if raw.endswith(s) and len(raw)>len(s):raw=raw[:-len(s)].strip();out.add(raw);changed=True
+            return {x for x in out if x}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id,slug FROM games WHERE slug IN ('yugioh','pokemon','mtg')")
+              gids={r['slug']:int(r['id']) for r in cur.fetchall()}
+
+              # YGO independent product-name anchors, but only call it a contradiction when the target Print has explicit official memberships.
+              gid=gids['yugioh']
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='konami_neuron'",(gid,))
+              rels=[dict(r) for r in cur.fetchall()]; byname=defaultdict(list); relmeta={int(r['id']):r for r in rels}
+              for r in rels:byname[norm(r['name'])].append(r)
+              cur.execute("SELECT print_id,release_id FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id WHERE cr.game_id=%s AND cr.source='konami_neuron'",(gid,))
+              memberships=defaultdict(set)
+              for r in cur.fetchall():memberships[int(r['print_id'])].add(int(r['release_id']))
+              cur.execute("SELECT max(last_seen_at) seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,));latest=cur.fetchone()['seen']
+              cur.execute("SELECT external_id,expansion_external_id,name,category FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s",(gid,latest))
+              byexp=defaultdict(list)
+              for r in cur.fetchall():byexp[str(r['expansion_external_id'] or '')].append(dict(r))
+              anchors={};anchor_conflicts={}
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for b in bases(item['name']):
+                    m=byname.get(b,[])
+                    if len(m)==1:votes[int(m[0]['id'])].append({'idProduct':str(item['external_id']),'name':item['name'],'category':item['category'],'base':b})
+                if len(votes)==1:
+                  rid=next(iter(votes));anchors[exp]={'release_id':rid,'evidence':votes[rid]}
+                elif len(votes)>1:anchor_conflicts[exp]=sorted(votes)
+              cur.execute("""SELECT l.print_id,e.external_id id_product,e.expansion_external_id,c.name card_name,p.collector_number,p.rarity,p.variant,s.code set_code
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND l.mapping_method='sealed_expansion_exact_name'""",(gid,list(A)))
+              true_contra=[];no_membership_anchored=[];matches=0;unanchored=0
+              for r in cur.fetchall():
+                exp=str(r['expansion_external_id'] or '');a=anchors.get(exp);official=memberships.get(int(r['print_id']),set())
+                if not a:unanchored+=1;continue
+                if not official:
+                  no_membership_anchored.append({'print_id':int(r['print_id']),'idProduct':str(r['id_product']),'expansion':exp,'set_code':r['set_code'],'collector_number':r['collector_number'],'card_name':r['card_name'],'anchor_release_id':a['release_id'],'anchor_name':relmeta[a['release_id']]['name']});continue
+                if a['release_id'] in official:matches+=1;continue
+                true_contra.append({'print_id':int(r['print_id']),'idProduct':str(r['id_product']),'expansion':exp,'set_code':r['set_code'],'collector_number':r['collector_number'],'card_name':r['card_name'],'rarity':r['rarity'],'variant':r['variant'],'anchor_release_id':a['release_id'],'anchor_pid':relmeta[a['release_id']]['external_id'],'anchor_name':relmeta[a['release_id']]['name'],'actual_official_release_ids':sorted(official),'actual_official_releases':[{'release_id':rid,'pid':relmeta[rid]['external_id'],'name':relmeta[rid]['name']} for rid in sorted(official) if rid in relmeta]})
+              exp_counts=Counter(x['expansion'] for x in true_contra)
+              out['yugioh']={'unique_product_name_anchors':len(anchors),'anchor_conflicts':len(anchor_conflicts),'official_membership_matches':matches,'anchored_rows_without_official_membership':len(no_membership_anchored),'true_nonempty_membership_contradictions':len(true_contra),'unanchored_old_links':unanchored,'contradictions_by_expansion':dict(exp_counts.most_common()),'true_contradiction_sample':true_contra[:250],'no_membership_sample':no_membership_anchored[:30]}
+
+              # Pokemon four legacy/direct links, especially any disagreement with current TCGdex physical evidence.
+              gid=gids['pokemon']
+              cur.execute("""SELECT l.print_id,l.evidence,e.id external_product_id,e.external_id id_product,e.expansion_external_id,e.name market_name,e.website_path,p.collector_number,p.variant,p.is_foil,s.code set_code,c.name card_name,pi.external_id legacy_id,
+                  pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_id,
+                  pa.attributes_json #>> '{third_party,cardmarket}' card_level_id
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_identifiers pi ON pi.print_id=p.id AND pi.source='cardmarket'
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND l.mapping_method='direct_print_identifier' ORDER BY l.print_id""",(gid,list(A)))
+              legacy=[dict(r) for r in cur.fetchall()]
+              candidate_ids=sorted({str(x) for r in legacy for x in (r['id_product'],r['legacy_id'],r['physical_id'],r['card_level_id']) if x})
+              cur.execute("""SELECT external_id id_product,expansion_external_id,name,category,website_path,raw_payload FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND external_id=ANY(%s) ORDER BY external_id""",(gid,candidate_ids))
+              cm={str(r['id_product']):dict(r) for r in cur.fetchall()}
+              for r in legacy:
+                r['cardmarket_candidates']={cid:cm.get(cid) for cid in sorted({str(x) for x in (r['id_product'],r['legacy_id'],r['physical_id'],r['card_level_id']) if x})}
+              out['pokemon']={'legacy_direct_links':legacy}
+
+              # MTG two newly-current sealed products and likely canonical candidates.
+              gid=gids['mtg']; ids=['902208','902217']
+              cur.execute("SELECT id external_product_id,external_id,expansion_external_id,name,category,website_path,raw_payload FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND external_id=ANY(%s)",(gid,ids))
+              external=[dict(r) for r in cur.fetchall()]
+              candidates=[]
+              for e in external:
+                words=[w for w in norm(e['name']).split() if len(w)>=5][:5]
+                cur.execute("SELECT p.id product_id,p.name,p.product_type,p.release_date,p.set_id,pv.id variant_id,pv.language,pv.region,pv.packaging,pv.sku FROM products p LEFT JOIN product_variants pv ON pv.product_id=p.id WHERE p.game_id=%s AND lower(p.name) LIKE %s ORDER BY p.id LIMIT 100",(gid,'%'+(words[0] if words else norm(e['name']))+'%'))
+                rows=[dict(r) for r in cur.fetchall()]
+                scored=[]
+                target=set(norm(e['name']).split())
+                for r in rows:
+                  score=len(target & set(norm(r['name']).split()))
+                  if score>=2: scored.append({**r,'token_overlap':score,'normalized_name_equal':norm(r['name'])==norm(e['name'])})
+                candidates.append({'external':e,'canonical_candidates':sorted(scored,key=lambda x:(-x['token_overlap'],x['product_id']))[:50]})
+              out['mtg_sealed']=candidates
+          finally:conn.close()
+          Path('/tmp/point1-blockers-deep.json').write_text(json.dumps(out,indent=2,default=str,sort_keys=True)+'\n')
+          print(json.dumps({'yugioh':{k:v for k,v in out['yugioh'].items() if not k.endswith('sample')},'pokemon':[{'print_id':r['print_id'],'card_name':r['card_name'],'mapped':r['id_product'],'legacy':r['legacy_id'],'physical':r['physical_id'],'card_level':r['card_level_id']} for r in out['pokemon']['legacy_direct_links']],'mtg_sealed':out['mtg_sealed']},indent=2,default=str))
+          PY
+      - name: Persist
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/point1-blockers-deep.json audit-reports/cardmarket-point1-blockers-deep.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/cardmarket-point1-blockers-deep.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record deep Cardmarket point 1 blockers audit'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: point1-blockers-deep-${{ github.run_id }}
+          path: /tmp/point1-blockers-deep.json
+          retention-days: 90
