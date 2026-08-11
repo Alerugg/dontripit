@@ -8,10 +8,11 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('sealed market proxy uses the source-owned backend catalog', () => {
+test('sealed market proxy uses the current source-owned backend catalog', () => {
   const route = source('app/api/catalog/market-products/route.js')
   const client = source('lib/catalog/client.js')
-  assert.match(route, /\/api\/v1\/market\/products/)
+  assert.match(route, /\/api\/v1\/market\/current-products/)
+  assert.doesNotMatch(route, /callInternalApi\('\/api\/v1\/market\/products'/)
   assert.match(route, /group:\s*'non_single'/)
   assert.match(client, /fetchMarketProductsByGame/)
   assert.match(client, /\/api\/catalog\/market-products/)
