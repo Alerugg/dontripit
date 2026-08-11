@@ -11,34 +11,16 @@ import {
   toCount,
 } from '../../../../lib/catalog/normalizers/sets'
 
-const INTERNAL_PAGE_SIZE = 50
-const MAX_WEB_SETS = 1000
+const MAX_PAGE_SIZE = 100
+
+function boundedInt(value, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(Math.max(parsed, minimum), maximum)
+}
 
 function toItems(payload) {
   return Array.isArray(payload) ? payload : payload?.items || []
-}
-
-async function fetchAllSets({ game, q, requestedLimit, requestedOffset }) {
-  const items = []
-  const maxItems = Math.min(Math.max(Number(requestedLimit) || 500, 1), MAX_WEB_SETS)
-  let offset = Math.max(Number(requestedOffset) || 0, 0)
-
-  while (items.length < maxItems) {
-    const pageLimit = Math.min(INTERNAL_PAGE_SIZE, maxItems - items.length)
-    const response = await callInternalApi('/api/v1/sets', {
-      params: { game, q, limit: pageLimit, offset },
-      timeoutMs: 20000,
-    })
-    if (!response.ok) return { ok: false, response }
-
-    const page = toItems(response.payload)
-    items.push(...page)
-    if (page.length < pageLimit) break
-    offset += page.length
-    if (offset > 1000) break
-  }
-
-  return { ok: true, items }
 }
 
 async function fetchItemFallbacks(game, candidates = []) {
@@ -66,13 +48,15 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url)
   const game = searchParams.get('game') || ''
   const q = searchParams.get('q') || ''
-  const limit = searchParams.get('limit') || 500
-  const offset = searchParams.get('offset') || 0
+  const limit = boundedInt(searchParams.get('limit'), 24, 1, MAX_PAGE_SIZE)
+  const offset = boundedInt(searchParams.get('offset'), 0, 0, 100000)
 
-  const paged = await fetchAllSets({ game, q, requestedLimit: limit, requestedOffset: offset })
+  const upstream = await callInternalApi('/api/v1/sets', {
+    params: { game, q, limit, offset },
+    timeoutMs: 20000,
+  })
 
-  if (!paged.ok) {
-    const upstream = paged.response
+  if (!upstream.ok) {
     const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
     return NextResponse.json(
       {
@@ -84,7 +68,7 @@ export async function GET(request) {
     )
   }
 
-  const baseItems = paged.items
+  const baseItems = toItems(upstream.payload)
   const fallbackCandidates = baseItems.filter((item) => {
     const count = toCount(item?.card_count ?? item?.count ?? item?.total_cards, 0)
     const candidateName = pickDisplayName(item?.name, item?.title, item?.set_name)
@@ -100,7 +84,7 @@ export async function GET(request) {
     if (searchUpstream.ok) searchItems = toItems(searchUpstream.payload)
   }
 
-  const itemFallbacks = q ? new Map() : await fetchItemFallbacks(game, fallbackCandidates.slice(0, 80))
+  const itemFallbacks = q ? new Map() : await fetchItemFallbacks(game, fallbackCandidates.slice(0, 24))
   const searchMaps = buildSearchMaps(searchItems)
   const items = baseItems.map((item) => {
     const codeKey = normalizeSetCode(item?.code || item?.set_code)
@@ -109,5 +93,11 @@ export async function GET(request) {
     return normalizeSet(item, searchFallback)
   })
 
-  return NextResponse.json({ items, count: items.length })
+  return NextResponse.json({
+    items,
+    count: items.length,
+    total: Number(upstream.payload?.total ?? items.length),
+    limit: Number(upstream.payload?.limit ?? limit),
+    offset: Number(upstream.payload?.offset ?? offset),
+  })
 }
