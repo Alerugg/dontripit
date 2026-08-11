@@ -4,10 +4,11 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app import db
-from app.models import Card, Game, Price, PriceSnapshot, PriceSource, Print, PrintImage, Set
+from app.models import Card, Game, Print, PrintImage, Set
+from app.routes.market_reference import _build_print_market_payloads, _load_print_market_rows
 from app.user_auth_service import resolve_session
 from app.user_models import UserCollectionItem, UserWishlistItem
 
@@ -52,123 +53,54 @@ def _print_exists(session, print_id: int) -> bool:
     return session.execute(select(Print.id).where(Print.id == print_id)).scalar_one_or_none() is not None
 
 
-def _snapshot_payload(snapshot) -> dict:
-    low, mid, market, last, currency, as_of, source, raw_json = snapshot
-    source_name = str(source or "")
-    is_cardmarket = source_name.lower() == "cardmarket"
+def _current_cardmarket_price(session, print_id: int) -> dict | None:
+    """Return only today's exact Cardmarket valuation for a physical Print.
 
-    # Portfolio valuation is intentionally stricter than display pricing.
-    # Cardmarket's imported `price_mid` is the finish-safe conservative metric:
-    # LOWEX+ for non-foil and Foil Low (EX+) for foil. Other sources can still be
-    # shown, but are not mixed into the conservative EUR portfolio total.
-    conservative = mid if is_cardmarket else None
+    Collection/wishlist must never fall back to a sibling printing, another
+    source, a stale canonical snapshot, or a last-known Cardmarket value. The
+    same current-only physical identity reader powers the public Print page.
+    """
+    rows = _load_print_market_rows(session, [print_id])
+    payload = _build_print_market_payloads(rows, [print_id]).get(int(print_id)) or {}
+    price = payload.get("price") if payload.get("status") == "priced" else None
+    if not isinstance(price, dict):
+        return None
+
+    conservative = price.get("conservative")
     display_value = conservative
     display_kind = "conservative" if conservative is not None else None
-    if display_value is None and market is not None:
-        display_value = market
+    if display_value is None and price.get("trend") is not None:
+        display_value = price.get("trend")
         display_kind = "trend"
-    if display_value is None and last is not None:
-        display_value = last
+    if display_value is None and price.get("average") is not None:
+        display_value = price.get("average")
         display_kind = "average"
-    if display_value is None and low is not None:
-        display_value = low
+    if display_value is None and price.get("minimum") is not None:
+        display_value = price.get("minimum")
         display_kind = "minimum"
+    if display_value is None:
+        return None
 
-    finish = raw_json.get("finish") if isinstance(raw_json, dict) else None
     return {
-        "value": float(display_value) if display_value is not None else None,
+        "value": float(display_value),
         "valuation_value": float(conservative) if conservative is not None else None,
-        "minimum": float(low) if low is not None else None,
+        "minimum": float(price["minimum"]) if price.get("minimum") is not None else None,
         "conservative": float(conservative) if conservative is not None else None,
-        "trend": float(market) if market is not None else None,
-        "average": float(last) if last is not None else None,
-        "currency": currency,
-        "source": source_name,
-        "as_of": as_of.isoformat() if as_of else None,
+        "trend": float(price["trend"]) if price.get("trend") is not None else None,
+        "average": float(price["average"]) if price.get("average") is not None else None,
+        "currency": price.get("currency") or "EUR",
+        "source": "cardmarket",
+        "as_of": price.get("as_of"),
         "kind": display_kind,
-        "finish": finish,
+        "finish": price.get("finish"),
         "portfolio_method": "cardmarket_low_ex_plus_or_foil_low" if conservative is not None else None,
     }
 
 
 def _latest_price(session, print_id: int) -> dict | None:
-    columns = (
-        PriceSnapshot.price_low,
-        PriceSnapshot.price_mid,
-        PriceSnapshot.price_market,
-        PriceSnapshot.price_last,
-        PriceSnapshot.currency,
-        PriceSnapshot.as_of,
-        PriceSource.name,
-        PriceSnapshot.raw_json,
-    )
-
-    # Prefer Cardmarket for the collector-facing valuation because its semantics
-    # are explicit and EUR-native. If unavailable, retain the newest other
-    # verified snapshot for display only, never for the conservative total.
-    snapshot = session.execute(
-        select(*columns)
-        .join(PriceSource, PriceSource.id == PriceSnapshot.source_id)
-        .where(
-            PriceSnapshot.entity_type == "print",
-            PriceSnapshot.entity_id == print_id,
-            PriceSource.name == "cardmarket",
-            or_(
-                PriceSnapshot.price_low.is_not(None),
-                PriceSnapshot.price_mid.is_not(None),
-                PriceSnapshot.price_market.is_not(None),
-                PriceSnapshot.price_last.is_not(None),
-            ),
-        )
-        .order_by(PriceSnapshot.as_of.desc())
-        .limit(1)
-    ).first()
-    if snapshot:
-        return _snapshot_payload(snapshot)
-
-    snapshot = session.execute(
-        select(*columns)
-        .join(PriceSource, PriceSource.id == PriceSnapshot.source_id)
-        .where(
-            PriceSnapshot.entity_type == "print",
-            PriceSnapshot.entity_id == print_id,
-            or_(
-                PriceSnapshot.price_low.is_not(None),
-                PriceSnapshot.price_mid.is_not(None),
-                PriceSnapshot.price_market.is_not(None),
-                PriceSnapshot.price_last.is_not(None),
-            ),
-        )
-        .order_by(PriceSnapshot.as_of.desc())
-        .limit(1)
-    ).first()
-    if snapshot:
-        return _snapshot_payload(snapshot)
-
-    observed = session.execute(
-        select(Price.price, Price.currency, Price.captured_at, PriceSource.name)
-        .join(PriceSource, PriceSource.id == Price.source_id)
-        .where(Price.print_id == print_id)
-        .order_by(Price.captured_at.desc())
-        .limit(1)
-    ).first()
-    if observed:
-        value, currency, captured_at, source = observed
-        return {
-            "value": float(value),
-            "valuation_value": None,
-            "minimum": None,
-            "conservative": None,
-            "trend": None,
-            "average": None,
-            "currency": currency,
-            "source": source,
-            "as_of": captured_at.isoformat() if captured_at else None,
-            "kind": "observed",
-            "finish": None,
-            "portfolio_method": None,
-        }
-    return None
+    # Kept as the internal library call-site name for API compatibility. Its
+    # semantics are now deliberately current-only and Cardmarket-only.
+    return _current_cardmarket_price(session, print_id)
 
 
 def _image_url(session, print_id: int) -> str | None:
