@@ -77,9 +77,12 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [query, setQuery] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialAdvancedRan ? '' : initialQuery)
   const [normalPayload, setNormalPayload] = useState(null)
-  const [normalPage, setNormalPage] = useState(1)
-  const [normalType, setNormalType] = useState('all')
-  const [normalCategory, setNormalCategory] = useState('')
+  const [normalPage, setNormalPage] = useState(safePage(searchParams.get('search_page')))
+  const [normalType, setNormalType] = useState(() => {
+    const value = searchParams.get('kind') || 'all'
+    return ['all', 'singles', 'sets', 'sealed', 'matches'].includes(value) ? value : 'all'
+  })
+  const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)

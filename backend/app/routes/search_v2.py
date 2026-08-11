@@ -186,7 +186,7 @@ def search_v2_advanced():
                     body.get("offset"),
                     default=0,
                     minimum=0,
-                    maximum=1_000 if (getattr(g, "api_meta", None) or {}).get("plan") == "public" else 10_000,
+                    maximum=100_000,
                 ),
             )
     except ValueError as exc:

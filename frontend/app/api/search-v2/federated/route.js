@@ -104,7 +104,7 @@ export async function GET(request) {
     return NextResponse.json({ error: 'invalid_params', message: 'q and game are required.' }, { status: 400 })
   }
 
-  const page = boundedInt(searchParams.get('page'), 1, 1, 100)
+  const page = boundedInt(searchParams.get('page'), 1, 1, 5000)
   const limit = boundedInt(searchParams.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)
   const offset = (page - 1) * limit
   const requestedKind = String(searchParams.get('kind') || 'all').trim().toLowerCase()
@@ -187,6 +187,7 @@ export async function GET(request) {
   }))
 
   const singlesTotal = Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)
+  const setsTotal = Number(setsUpstream.payload?.total ?? sets.length)
   const sealedTotal = Number(sealedUpstream.payload?.total ?? sealed.length)
   const categories = Array.isArray(sealedUpstream.payload?.categories)
     ? sealedUpstream.payload.categories
@@ -211,7 +212,7 @@ export async function GET(request) {
     set_intent: setCode ? { set_code: setCode, exact_set_found: Boolean(exactSet) } : null,
     counts: {
       singles: singlesTotal,
-      sets: sets.length,
+      sets: setsTotal,
       sealed: sealedTotal,
       matches: matches.length,
     },
