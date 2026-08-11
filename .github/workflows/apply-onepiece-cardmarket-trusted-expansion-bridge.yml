@@ -1,0 +1,182 @@
+name: Apply One Piece Cardmarket Trusted Expansion Bridge
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-onepiece-cardmarket-trusted-expansion-bridge.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-onepiece-cardmarket-trusted-expansion-bridge
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Rebuild trusted expansion bridge and apply only exact one-to-one links
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os, re, unicodedata
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor, execute_values, Json
+
+          METHOD='bandai_trusted_expansion_exact'
+          def norm(v):
+              v=unicodedata.normalize('NFKD',str(v or ''))
+              v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’',"'").replace('&',' and ')
+              return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',v)).strip()
+          cr=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+          def parse(name):
+              m=cr.match(str(name or '').strip())
+              if not m:return None
+              c=m.group('collector').upper()
+              c=re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-',lambda x:f'{x.group(1).upper()}{int(x.group(2)):02d}-',c)
+              return norm(m.group('name')),c
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
+          report={'mode':'apply','game':'onepiece','mapping_method':METHOD}
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1"); gid=int(cur.fetchone()['id'])
+                  cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'"); latest=cur.fetchone()['latest']
+                  cur.execute('''SELECT p.id print_id,p.collector_number,p.variant,p.rarity,c.name card_name,s.code set_code,
+                    array_agg(DISTINCT pr.release_id) FILTER (WHERE pr.release_id IS NOT NULL) release_ids
+                    FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                    LEFT JOIN print_releases pr ON pr.print_id=p.id
+                    WHERE c.game_id=%s AND lower(p.language)='en'
+                    GROUP BY p.id,p.collector_number,p.variant,p.rarity,c.name,s.code''',(gid,))
+                  canon=[dict(r) for r in cur.fetchall()]
+                  canon_by_id={int(r['print_id']):r for r in canon}; release_identity=defaultdict(list)
+                  for r in canon:
+                      for rid in (r['release_ids'] or []):
+                          release_identity[(int(rid),norm(r['card_name']),str(r['collector_number'] or '').upper())].append(r)
+
+                  cur.execute('''SELECT l.external_product_id,l.print_id,e.external_id id_product,e.expansion_external_id,e.name market_name
+                    FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND e.last_seen_at=%s
+                      AND l.link_status IN ('accepted','mapped','exact')''',(gid,latest))
+                  existing=[dict(r) for r in cur.fetchall()]
+                  linked_prints={int(r['print_id']) for r in existing}; linked_products={int(r['external_product_id']) for r in existing}
+                  if len(linked_prints)!=3638:
+                      raise AssertionError({'expected_existing_exact_prints':3638,'actual':len(linked_prints)})
+
+                  expansion_prints=defaultdict(list)
+                  for r in existing: expansion_prints[str(r['expansion_external_id'] or '')].append(int(r['print_id']))
+                  anchors={}; anchor_stats={}; rejected=Counter()
+                  for exp,pids in expansion_prints.items():
+                      release_sets=[]; missing=False
+                      for pid in sorted(set(pids)):
+                          rs=set(int(x) for x in (canon_by_id.get(pid,{}).get('release_ids') or []))
+                          if not rs: missing=True; break
+                          release_sets.append(rs)
+                      if missing or not release_sets:
+                          rejected['missing_official_release_membership']+=1; continue
+                      common=set.intersection(*release_sets)
+                      if len(common)!=1:
+                          rejected['non_unique_common_release']+=1; continue
+                      distinct=len(set(pids))
+                      if distinct<2:
+                          rejected['insufficient_exact_anchor_prints']+=1; continue
+                      rid=next(iter(common)); anchors[exp]=rid; anchor_stats[exp]={'release_id':rid,'exact_anchor_prints':distinct}
+                  if len(anchors)!=49:
+                      raise AssertionError({'expected_trusted_anchors':49,'actual':len(anchors),'rejected':dict(rejected)})
+
+                  cur.execute('''SELECT id external_product_id,external_id id_product,expansion_external_id,name market_name,metacard_external_id,website_path
+                    FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(gid,latest))
+                  current=[dict(r) for r in cur.fetchall()]
+                  raw=[]; status=Counter()
+                  for m in current:
+                      eid=int(m['external_product_id'])
+                      if eid in linked_products: continue
+                      exp=str(m['expansion_external_id'] or '')
+                      rid=anchors.get(exp)
+                      if rid is None: status['unanchored_expansion']+=1; continue
+                      q=parse(m['market_name'])
+                      if q is None: status['collector_not_parseable']+=1; continue
+                      cands=[c for c in release_identity.get((rid,q[0],q[1]),[]) if int(c['print_id']) not in linked_prints]
+                      if not cands: status['no_unlinked_release_match']+=1; continue
+                      if len(cands)>1: status['release_match_ambiguous']+=1; continue
+                      c=cands[0]
+                      raw.append({'print_id':int(c['print_id']),'external_product_id':eid,'idProduct':str(m['id_product']),'expansion_external_id':exp,
+                        'release_id':rid,'market_name':m['market_name'],'card_name':c['card_name'],'collector_number':c['collector_number'],'variant':c['variant'],
+                        'rarity':c['rarity'],'set_code':c['set_code'],'exact_anchor_prints':anchor_stats[exp]['exact_anchor_prints']})
+                      status['raw_candidate']+=1
+                  pc=Counter(x['print_id'] for x in raw); ec=Counter(x['external_product_id'] for x in raw)
+                  safe=[x for x in raw if pc[x['print_id']]==1 and ec[x['external_product_id']]==1]
+                  status['multiple_products_claim_print']=len(raw)-len(safe); status['safe_candidate']=len(safe)
+                  if len(safe)!=110 or status['multiple_products_claim_print']!=0:
+                      raise AssertionError({'expected_safe':110,'actual':len(safe),'status':dict(status)})
+
+                  pids=[x['print_id'] for x in safe]; eids=[x['external_product_id'] for x in safe]
+                  cur.execute('''SELECT external_product_id,print_id FROM external_catalog_print_links
+                    WHERE link_status IN ('accepted','mapped','exact') AND (print_id=ANY(%s) OR external_product_id=ANY(%s))''',(pids,eids))
+                  conflicts=[dict(r) for r in cur.fetchall()]
+                  if conflicts: raise AssertionError({'candidate_existing_conflicts':conflicts[:20],'count':len(conflicts)})
+
+                  rows=[]
+                  for x in safe:
+                      evidence={'source':'onepiece_official+cardmarket','identity_basis':['trusted_expansion_from_existing_exact_links','single_common_official_release_across_all_anchor_prints','at_least_two_exact_anchor_prints','exact_normalized_card_name','exact_collector_number','unique_unlinked_print_inside_official_release','global_one_to_one','no_existing_conflict'],
+                        'release_id':x['release_id'],'exact_anchor_prints':x['exact_anchor_prints'],'idProduct':x['idProduct'],'idExpansion':x['expansion_external_id'],
+                        'canonical_set_code':x['set_code'],'canonical_collector_number':x['collector_number'],'canonical_variant':x['variant'],'canonical_rarity':x['rarity']}
+                      rows.append((x['external_product_id'],x['print_id'],METHOD,'exact','accepted',False,Json(evidence)))
+                  execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
+                    ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',rows,page_size=500)
+                  cur.execute('''SELECT count(*) links,count(DISTINCT print_id) prints,count(DISTINCT external_product_id) products FROM external_catalog_print_links
+                    WHERE mapping_method=%s AND link_status='accepted' ''',(METHOD,))
+                  stored=cur.fetchone(); triple=(int(stored['links']),int(stored['prints']),int(stored['products']))
+                  if triple!=(110,110,110): raise AssertionError({'stored':triple})
+                  cur.execute('''SELECT count(DISTINCT l.print_id) mapped FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                    WHERE e.source='cardmarket' AND c.game_id=%s AND lower(p.language)='en' AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
+                  total=int(cur.fetchone()['mapped'])
+                  if total!=3748: raise AssertionError({'expected_total':3748,'actual':total})
+                  report.update({'latest_cardmarket_snapshot':str(latest),'trusted_expansion_anchors':len(anchors),'applied_links':110,'total_onepiece_en_mapped_after_apply':total,'canonical_en_prints':len(canon),'status_counts':dict(status)})
+              conn.commit()
+          except Exception:
+              conn.rollback(); raise
+          finally:conn.close()
+          Path('/tmp/op-trusted-expansion-apply.json').write_text(json.dumps(report,indent=2,default=str)+'\n')
+          print(json.dumps(report,indent=2,default=str))
+          PY
+      - name: Reproject exact Cardmarket prices for One Piece
+        working-directory: backend
+        run: python scripts/project_cardmarket_link_prices.py --game onepiece --apply --report /tmp/op-trusted-expansion-price-projection.json
+      - name: Persist apply summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/op-trusted-expansion-apply.json audit-reports/onepiece-cardmarket-trusted-expansion-apply.json
+          cp /tmp/op-trusted-expansion-price-projection.json audit-reports/onepiece-price-projection-after-trusted-expansion.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-cardmarket-trusted-expansion-apply.json audit-reports/onepiece-price-projection-after-trusted-expansion.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Record One Piece trusted expansion Cardmarket apply"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-cardmarket-trusted-expansion-apply-${{ github.run_id }}
+          path: |
+            /tmp/op-trusted-expansion-apply.json
+            /tmp/op-trusted-expansion-price-projection.json
+          retention-days: 90
