@@ -92,6 +92,18 @@ jobs:
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
               --game "$game" --apply --report "/tmp/cardmarket/${game}-prices-apply.json"
           done
+      - name: Project prices only through accepted exact print links
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          for game in mtg yugioh pokemon onepiece riftbound; do
+            python scripts/project_cardmarket_link_prices.py \
+              --game "$game" --report "/tmp/cardmarket/${game}-projection-dry.json"
+            python scripts/project_cardmarket_link_prices.py \
+              --game "$game" --apply --report "/tmp/cardmarket/${game}-projection-apply.json"
+          done
       - name: Generate missing verified image worklist
         working-directory: backend
         env:
