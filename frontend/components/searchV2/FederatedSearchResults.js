@@ -19,8 +19,9 @@ function money(value, currency = 'EUR') {
   }
 }
 
-function SetResults({ items = [], gameSlug }) {
+function SetResults({ items = [], gameSlug, total = null }) {
   if (!items.length) return null
+  const displayTotal = total === null || total === undefined ? items.length : Number(total)
   return (
     <section className="fsr-section">
       <div className="fsr-section-head">
@@ -28,7 +29,7 @@ function SetResults({ items = [], gameSlug }) {
           <p className="eyebrow">Colección</p>
           <h2>Sets que coinciden</h2>
         </div>
-        <span>{items.length}</span>
+        <span>{displayTotal}</span>
       </div>
       <div className="fsr-set-grid">
         {items.map((item) => (
@@ -134,6 +135,12 @@ function Pagination({ page, total, pageSize, onPageChange }) {
   )
 }
 
+function tabCount(value) {
+  if (value === null || value === undefined) return '—'
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : '—'
+}
+
 export default function FederatedSearchResults({
   payload,
   gameSlug,
@@ -149,26 +156,32 @@ export default function FederatedSearchResults({
   if (!payload) return null
   const counts = payload.counts || {}
   const sets = payload.sets || []
+  const setsPage = payload.sets_page || { total: counts.sets || sets.length }
   const singles = payload.singles || { items: [], total: 0 }
   const sealed = payload.sealed || { items: [], total: 0, categories: [] }
   const matches = payload.matches || []
   const isFirstPage = page === 1
 
+  const allCount = [counts.singles, counts.sets, counts.sealed]
+    .filter((value) => value !== null && value !== undefined)
+    .reduce((sum, value) => sum + Number(value || 0), 0)
+
   const tabs = [
-    ['all', 'Todo', Number(counts.singles || 0) + Number(counts.sets || 0) + Number(counts.sealed || 0)],
-    ['singles', 'Singles', Number(counts.singles || 0)],
-    ['sets', 'Colección', Number(counts.sets || 0)],
-    ['sealed', 'Sellado', Number(counts.sealed || 0)],
-    ['matches', 'Coincidencias', Number(counts.matches || 0)],
+    ['all', 'Todo', allCount],
+    ['singles', 'Singles', counts.singles],
+    ['sets', 'Colección', counts.sets],
+    ['sealed', 'Sellado', counts.sealed],
+    ['matches', 'Coincidencias', counts.matches],
   ]
 
-  const showSets = activeType === 'all' || activeType === 'sets'
+  const showSets = activeType === 'sets' || (activeType === 'all' && isFirstPage)
   const showSingles = activeType === 'all' || activeType === 'singles'
-  const showSealed = activeType === 'all' || activeType === 'sealed'
+  const showSealed = activeType === 'sealed' || (activeType === 'all' && isFirstPage)
   const showMatches = activeType === 'matches' || (activeType === 'all' && isFirstPage)
 
   let paginationTotal = 0
   if (activeType === 'singles') paginationTotal = singles.total
+  else if (activeType === 'sets') paginationTotal = setsPage.total
   else if (activeType === 'sealed') paginationTotal = sealed.total
   else if (activeType === 'all') paginationTotal = Number(singles.total || 0)
 
@@ -192,12 +205,12 @@ export default function FederatedSearchResults({
             className={`fsr-tab ${activeType === value ? 'is-active' : ''}`}
             onClick={() => onTypeChange(value)}
           >
-            {label} <span>{count}</span>
+            {label} <span>{tabCount(count)}</span>
           </button>
         ))}
       </div>
 
-      {showSets && isFirstPage ? <SetResults items={sets} gameSlug={gameSlug} /> : null}
+      {showSets ? <SetResults items={sets} gameSlug={gameSlug} total={setsPage.total} /> : null}
 
       {showSingles ? (
         <SearchV2Results
