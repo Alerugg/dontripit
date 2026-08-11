@@ -1,0 +1,15 @@
+{
+  "mode": "dry_run",
+  "game": "pokemon",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "legacy_identifier_rows": 6042,
+  "legacy_unique_idProducts": 6042,
+  "accepted_cardmarket_links": 24341,
+  "status_counts": {
+    "already_linked_same_pair": 6039,
+    "identifier_not_in_current_cardmarket_catalog": 3
+  },
+  "safe_candidates": 0,
+  "safe_prints": 0,
+  "safe_products": 0
+}
