@@ -1,0 +1,128 @@
+name: Audit One Piece Cardmarket Residual Shapes
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-cardmarket-residual-shapes.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Classify current unmatched physical identities and Cardmarket naming shapes
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+            v=unicodedata.normalize('NFKD',str(v or ''));v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’',"'").replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',v)).strip()
+          code_re=re.compile(r'(?<![A-Z0-9])((?:OP|ST|EB|PRB)0?\d{1,2}-\d{3}|P-\d{3})(?![A-Z0-9])',re.I)
+          strict_re=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+          def canon_code(c):
+            c=str(c or '').upper();return re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-',lambda x:f'{x.group(1)}{int(x.group(2)):02d}-',c)
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+              cur.execute('''SELECT p.id print_id,p.collector_number,p.variant,p.rarity,p.print_key,c.name card_name,s.code set_code,
+                array_agg(DISTINCT pr.release_id) FILTER (WHERE pr.release_id IS NOT NULL) release_ids
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id LEFT JOIN print_releases pr ON pr.print_id=p.id
+                WHERE c.game_id=%s AND lower(p.language)='en'
+                GROUP BY p.id,p.collector_number,p.variant,p.rarity,p.print_key,c.name,s.code''',(gid,))
+              canon=[dict(r) for r in cur.fetchall()]
+              cur.execute('''SELECT l.external_product_id,l.print_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
+              links=[dict(r) for r in cur.fetchall()];linked_p={int(r['print_id']) for r in links};linked_e={int(r['external_product_id']) for r in links}
+              cur.execute('''SELECT id external_product_id,external_id id_product,name,expansion_external_id,metacard_external_id,category,website_path
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(gid,latest))
+              market=[dict(r) for r in cur.fetchall()]
+
+            unlinked_c=[r for r in canon if int(r['print_id']) not in linked_p]
+            unlinked_m=[r for r in market if int(r['external_product_id']) not in linked_e]
+            canon_by_code=defaultdict(list);canon_by_identity=defaultdict(list)
+            for r in unlinked_c:
+              code=canon_code(r['collector_number']);canon_by_code[code].append(r);canon_by_identity[(norm(r['card_name']),code)].append(r)
+
+            shape=Counter();extractable=[];strict=[];no_code=[]
+            token_patterns=Counter();identity_counts=Counter()
+            for m in unlinked_m:
+              name=str(m['name'] or '')
+              sm=strict_re.match(name)
+              all_codes=[canon_code(x) for x in code_re.findall(name)]
+              if sm:
+                shape['strict_name_collector']+=1;strict.append(m)
+              elif len(set(all_codes))==1:
+                shape['one_collector_somewhere']+=1
+                code=all_codes[0];pos=code_re.search(name); before=name[:pos.start()].strip(' ()[]:-');after=name[pos.end():].strip(' ()[]:-')
+                record={**m,'collector_extracted':code,'before_collector':before,'after_collector':after,'normalized_before':norm(before),'canonical_unlinked_with_code':len(canon_by_code.get(code,[]))}
+                extractable.append(record)
+                # Derive residual descriptor after removing any exact canonical card name from before/after.
+                candidates=canon_by_code.get(code,[])
+                desc=norm(name.replace(code,''))
+                for c in candidates:
+                  cn=norm(c['card_name'])
+                  if cn and cn in desc: desc=desc.replace(cn,' ').strip()
+                token_patterns[desc or '<none>']+=1
+              elif not all_codes:
+                shape['no_collector_code']+=1;no_code.append(m)
+              else:
+                shape['multiple_collector_codes']+=1
+
+            for (n,code),rows in canon_by_identity.items(): identity_counts[(len(rows),code)]+=1
+            canonical_variant_counts=Counter(str(r['variant'] or 'default') for r in unlinked_c)
+            canonical_rarity_counts=Counter(str(r['rarity'] or '') for r in unlinked_c)
+            # useful exact-code market/canonical cardinality distribution
+            market_code_counts=Counter()
+            for m in unlinked_m:
+              codes=set(canon_code(x) for x in code_re.findall(str(m['name'] or '')))
+              if len(codes)==1:market_code_counts[next(iter(codes))]+=1
+            cardinality=Counter()
+            for code in set(canon_by_code)|set(market_code_counts): cardinality[f"c{len(canon_by_code.get(code,[]))}_m{market_code_counts.get(code,0)}"]+=1
+
+            report={'mode':'dry_run','game':'onepiece','latest_cardmarket_snapshot':str(latest),'canonical_en_prints':len(canon),'accepted_exact_prints':len(linked_p),
+              'unlinked_canonical_prints':len(unlinked_c),'current_cardmarket_singles':len(market),'unlinked_cardmarket_products':len(unlinked_m),
+              'market_name_shape_counts':dict(shape),'top_residual_descriptors':token_patterns.most_common(80),'unlinked_canonical_variant_counts':dict(canonical_variant_counts),
+              'unlinked_canonical_rarity_counts':dict(canonical_rarity_counts),'collector_cardinality_distribution':dict(cardinality),
+              'one_collector_somewhere_sample':extractable[:250],'no_collector_sample':no_code[:100]}
+            summary={k:v for k,v in report.items() if not k.endswith('_sample')}
+            Path('/tmp/op-residual-shapes.json').write_text(json.dumps(report,indent=2,default=str)+'\n')
+            Path('/tmp/op-residual-shapes-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n')
+            print(json.dumps(summary,indent=2,default=str))
+          finally:conn.close()
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/op-residual-shapes-summary.json audit-reports/onepiece-cardmarket-residual-shapes-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-cardmarket-residual-shapes-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update One Piece Cardmarket residual shapes audit"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-cardmarket-residual-shapes-${{ github.run_id }}
+          path: /tmp/op-residual-shapes.json
+          retention-days: 90
