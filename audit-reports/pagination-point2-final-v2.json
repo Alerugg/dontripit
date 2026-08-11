@@ -30,7 +30,7 @@
         369.69,
         332.57
       ],
-      "seconds": 2.978,
+      "seconds": 2.893,
       "total_priced": 151
     },
     "onepiece": {
@@ -63,7 +63,7 @@
         320.0,
         275.0
       ],
-      "seconds": 3.571,
+      "seconds": 3.613,
       "total_priced": 162
     },
     "pokemon": {
@@ -96,7 +96,7 @@
         73.85,
         70.0
       ],
-      "seconds": 2.727,
+      "seconds": 2.915,
       "total_priced": 178
     },
     "yugioh": {
@@ -129,58 +129,58 @@
         2.9,
         2.49
       ],
-      "seconds": 1.88,
+      "seconds": 1.969,
       "total_priced": 52
     }
   },
   "hard_failures": [],
   "http": {
     "op15_1": {
-      "seconds": 1.779,
+      "seconds": 1.84,
       "status": 200
     },
     "op15_2": {
-      "seconds": 1.756,
+      "seconds": 1.936,
       "status": 200
     },
     "prints1200": {
-      "seconds": 1.796,
+      "seconds": 1.804,
       "status": 200
     },
     "search_all": {
-      "seconds": 4.87,
+      "seconds": 5.019,
       "status": 200
     },
     "search_sealed1": {
-      "seconds": 2.584,
+      "seconds": 3.362,
       "status": 200
     },
     "search_sealed2": {
-      "seconds": 2.762,
+      "seconds": 2.84,
       "status": 200
     },
     "search_sets1": {
-      "seconds": 3.964,
+      "seconds": 3.869,
       "status": 200
     },
     "search_sets2": {
-      "seconds": 4.65,
+      "seconds": 3.919,
       "status": 200
     },
     "search_singles1": {
-      "seconds": 5.61,
+      "seconds": 6.453,
       "status": 200
     },
     "search_singles2": {
-      "seconds": 2.79,
+      "seconds": 2.586,
       "status": 200
     },
     "sets1": {
-      "seconds": 3.542,
+      "seconds": 3.532,
       "status": 200
     },
     "sets2": {
-      "seconds": 2.146,
+      "seconds": 2.035,
       "status": 200
     }
   },
