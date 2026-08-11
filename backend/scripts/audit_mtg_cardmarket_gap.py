@@ -36,7 +36,7 @@ def main() -> int:
             cur.execute(
                 """
                 SELECT p.id AS print_id, p.scryfall_id, p.variant, p.language, p.collector_number,
-                       p.image_url, s.code AS set_code, c.id AS card_id, c.name AS card_name,
+                       s.code AS set_code, c.id AS card_id, c.name AS card_name,
                        pa.attributes_json,
                        EXISTS (
                          SELECT 1
