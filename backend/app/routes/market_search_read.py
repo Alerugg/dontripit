@@ -248,7 +248,16 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
                     GROUP BY e.id
                     HAVING count(DISTINCT pv.id) = 1
                 ),
-                latest_price AS (
+                latest_capture AS (
+                    SELECT max(mp.as_of) AS as_of
+                    FROM external_market_price_snapshots mp
+                    JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+                    JOIN games gg ON gg.id = ep.game_id
+                    WHERE ep.source = 'cardmarket'
+                      AND ep.product_group = 'non_single'
+                      AND gg.slug = :game
+                ),
+                current_price AS (
                     SELECT DISTINCT ON (mp.external_product_id)
                            mp.external_product_id,
                            mp.currency,
@@ -262,24 +271,25 @@ def cardmarket_set_products_read(game_slug: str, set_code: str):
                            mp.avg30,
                            mp.as_of AS price_as_of
                     FROM external_market_price_snapshots mp
+                    JOIN latest_capture lc ON lc.as_of = mp.as_of
                     WHERE mp.currency = 'EUR'
                       AND mp.price_variant = 'sealed'
                       AND mp.external_product_id IN :product_ids
-                    ORDER BY mp.external_product_id, mp.as_of DESC, mp.id DESC
+                    ORDER BY mp.external_product_id, mp.id DESC
                 )
                 SELECT cl.*,
-                       lp.currency,
-                       lp.price_variant,
-                       lp.price_low,
-                       lp.price_mid,
-                       lp.price_market,
-                       lp.price_last,
-                       lp.avg1,
-                       lp.avg7,
-                       lp.avg30,
-                       lp.price_as_of
+                       cp.currency,
+                       cp.price_variant,
+                       cp.price_low,
+                       cp.price_mid,
+                       cp.price_market,
+                       cp.price_last,
+                       cp.avg1,
+                       cp.avg7,
+                       cp.avg30,
+                       cp.price_as_of
                 FROM candidate_links cl
-                LEFT JOIN latest_price lp ON lp.external_product_id = cl.external_product_id
+                LEFT JOIN current_price cp ON cp.external_product_id = cl.external_product_id
                 ORDER BY
                     CASE WHEN lower(COALESCE(cl.region, 'global')) = 'global' THEN 0 ELSE 1 END,
                     cl.category ASC,
