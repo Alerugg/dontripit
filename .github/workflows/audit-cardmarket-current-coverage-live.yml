@@ -4,6 +4,8 @@ on:
   push:
     branches: [catalog-v2]
     paths: ['.github/workflows/audit-cardmarket-current-coverage-live.yml']
+  schedule:
+    - cron: '50 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +51,7 @@ jobs:
             JOIN games g ON g.id=e.game_id
             CROSS JOIN latest l
             WHERE e.source='cardmarket' AND e.last_seen_at=l.seen_at
-              AND g.slug IN ('pokemon','onepiece','mtg','yugioh')
+              AND g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
           ),
           exact_print AS (
             SELECT DISTINCT cm.id external_product_id
