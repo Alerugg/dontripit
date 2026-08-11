@@ -15,6 +15,7 @@
 }
 
 .game-collections-directory-copy {
+  width: 100%;
   max-width: 760px;
 }
 
@@ -24,9 +25,72 @@
   line-height: 1.05;
 }
 
-.game-collections-directory-copy p:last-child {
+.game-collections-directory-copy > p:last-of-type {
   margin: 0;
   color: rgba(255, 255, 255, 0.76);
   line-height: 1.55;
   font-size: 1rem;
+}
+
+.game-collections-directory-search {
+  display: grid;
+  gap: .45rem;
+  max-width: 420px;
+  margin-top: 1.25rem;
+}
+
+.game-collections-directory-search span {
+  color: rgba(255,255,255,.68);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.game-collections-directory-search input {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 11px;
+  outline: none;
+  color: #fff;
+  background: rgba(8,7,14,.72);
+}
+
+.game-collections-directory-search input:focus {
+  border-color: rgba(157,120,255,.55);
+  box-shadow: 0 0 0 3px rgba(139,92,246,.1);
+}
+
+.game-collections-directory-summary,
+.game-collections-directory-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgba(255,255,255,.68);
+  font-size: .8rem;
+}
+
+.game-collections-directory-pagination {
+  justify-content: center;
+  padding: 1rem 0 0;
+}
+
+.game-collections-directory-pagination button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(255,255,255,.04);
+  cursor: pointer;
+}
+
+.game-collections-directory-pagination button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .game-collections-directory-summary { align-items: flex-start; flex-direction: column; gap: .35rem; }
+  .game-collections-directory-pagination { flex-wrap: wrap; }
 }
