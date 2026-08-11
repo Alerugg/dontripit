@@ -1,0 +1,1741 @@
+{
+  "games": {
+    "mtg": {
+      "id": 2,
+      "name": "Magic: The Gathering",
+      "slug": "mtg"
+    },
+    "onepiece": {
+      "id": 9,
+      "name": "ONE PIECE Card Game",
+      "slug": "onepiece"
+    },
+    "pokemon": {
+      "id": 1,
+      "name": "Pok\u00e9mon",
+      "slug": "pokemon"
+    },
+    "yugioh": {
+      "id": 5,
+      "name": "Yu-Gi-Oh!",
+      "slug": "yugioh"
+    }
+  },
+  "onepiece_accepted_mapping_methods": [
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 3093,
+      "mapping_method": "op_variant_cm_global_exact",
+      "prints": 3093,
+      "products": 3093
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 316,
+      "mapping_method": "bandai_release_exact",
+      "prints": 316,
+      "products": 316
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 195,
+      "mapping_method": "op_variant_cm_exact",
+      "prints": 195,
+      "products": 195
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 110,
+      "mapping_method": "bandai_trusted_expansion_exact",
+      "prints": 110,
+      "products": 110
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 31,
+      "mapping_method": "bandai_global_residual_exact",
+      "prints": 31,
+      "products": 31
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 9,
+      "mapping_method": "bandai_sealed_residual_exact",
+      "prints": 9,
+      "products": 9
+    },
+    {
+      "confidence": "exact",
+      "link_status": "accepted",
+      "links": 3,
+      "mapping_method": "op_commercial_expansion_exact",
+      "prints": 3,
+      "products": 3
+    }
+  ],
+  "onepiece_expansion_release_consistency": {
+    "conflicts": [
+      {
+        "accepted_links": 130,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5229",
+        "union_official_release_ids": [
+          61,
+          80
+        ]
+      },
+      {
+        "accepted_links": 65,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5230",
+        "union_official_release_ids": [
+          60,
+          61,
+          117
+        ]
+      },
+      {
+        "accepted_links": 144,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5263",
+        "union_official_release_ids": [
+          61,
+          79
+        ]
+      },
+      {
+        "accepted_links": 11,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5300",
+        "union_official_release_ids": [
+          61,
+          79,
+          98,
+          100
+        ]
+      },
+      {
+        "accepted_links": 5,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5302",
+        "union_official_release_ids": [
+          60,
+          61,
+          73,
+          113
+        ]
+      },
+      {
+        "accepted_links": 58,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5303",
+        "union_official_release_ids": [
+          60,
+          61,
+          63,
+          64,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          76,
+          78,
+          80,
+          104,
+          117
+        ]
+      },
+      {
+        "accepted_links": 13,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5312",
+        "union_official_release_ids": [
+          60,
+          61,
+          76,
+          78,
+          98,
+          104
+        ]
+      },
+      {
+        "accepted_links": 142,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5364",
+        "union_official_release_ids": [
+          61,
+          78
+        ]
+      },
+      {
+        "accepted_links": 3,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5413",
+        "union_official_release_ids": [
+          61,
+          78
+        ]
+      },
+      {
+        "accepted_links": 133,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5426",
+        "union_official_release_ids": [
+          61,
+          76,
+          118
+        ]
+      },
+      {
+        "accepted_links": 27,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5511",
+        "union_official_release_ids": [
+          60,
+          117,
+          118
+        ]
+      },
+      {
+        "accepted_links": 130,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5524",
+        "union_official_release_ids": [
+          60,
+          61,
+          75
+        ]
+      },
+      {
+        "accepted_links": 125,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5586",
+        "union_official_release_ids": [
+          60,
+          74
+        ]
+      },
+      {
+        "accepted_links": 16,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5598",
+        "union_official_release_ids": [
+          60,
+          61,
+          73,
+          74,
+          75,
+          96
+        ]
+      },
+      {
+        "accepted_links": 13,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5624",
+        "union_official_release_ids": [
+          61,
+          80
+        ]
+      },
+      {
+        "accepted_links": 8,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5747",
+        "union_official_release_ids": [
+          61,
+          102
+        ]
+      },
+      {
+        "accepted_links": 129,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5755",
+        "union_official_release_ids": [
+          60,
+          72
+        ]
+      },
+      {
+        "accepted_links": 163,
+        "common_official_release_ids": [],
+        "expansion_external_id": "5805",
+        "union_official_release_ids": [
+          61,
+          73,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80
+        ]
+      },
+      {
+        "accepted_links": 242,
+        "common_official_release_ids": [],
+        "expansion_external_id": "6242",
+        "union_official_release_ids": [
+          60,
+          72,
+          74,
+          75,
+          117
+        ]
+      },
+      {
+        "accepted_links": 18,
+        "common_official_release_ids": [],
+        "expansion_external_id": "6338",
+        "union_official_release_ids": [
+          60,
+          61,
+          69,
+          70
+        ]
+      },
+      {
+        "accepted_links": 4,
+        "common_official_release_ids": [],
+        "expansion_external_id": "6501",
+        "union_official_release_ids": [
+          61,
+          80
+        ]
+      }
+    ],
+    "expansions": 75,
+    "non_unique_or_empty_intersection": 21
+  },
+  "onepiece_latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "onepiece_st01_012_cardmarket_products": [
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5237",
+      "external_product_id": 292113,
+      "id_product": "690989",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=690989"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5237",
+      "external_product_id": 292114,
+      "id_product": "690990",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=690990"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5262",
+      "external_product_id": 296490,
+      "id_product": "787489",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=787489"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5262",
+      "external_product_id": 301175,
+      "id_product": "857363",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=857363"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5303",
+      "external_product_id": 294279,
+      "id_product": "749434",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=749434"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5303",
+      "external_product_id": 294280,
+      "id_product": "749435",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=749435"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5303",
+      "external_product_id": 301174,
+      "id_product": "857362",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=857362"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5364",
+      "external_product_id": 292876,
+      "id_product": "720061",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=720061"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5426",
+      "external_product_id": 294186,
+      "id_product": "747879",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=747879"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5426",
+      "external_product_id": 294187,
+      "id_product": "747880",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=747880"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5481",
+      "external_product_id": 293629,
+      "id_product": "733464",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=733464"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5481",
+      "external_product_id": 293630,
+      "id_product": "733465",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=733465"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5482",
+      "external_product_id": 293851,
+      "id_product": "744889",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=744889"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5510",
+      "external_product_id": 299181,
+      "id_product": "829849",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=829849"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5511",
+      "external_product_id": 294528,
+      "id_product": "756315",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=756315"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "5511",
+      "external_product_id": 294529,
+      "id_product": "756316",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=756316"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "6029",
+      "external_product_id": 298004,
+      "id_product": "809574",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=809574"
+    },
+    {
+      "category": "One Piece Single",
+      "expansion_external_id": "6498",
+      "external_product_id": 302270,
+      "id_product": "873863",
+      "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+      "metacard_external_id": "415568",
+      "name": "Monkey.D.Luffy (ST01-012)",
+      "website_path": "/OnePiece/Products?idProduct=873863"
+    }
+  ],
+  "onepiece_suspect_accepted_links": {
+    "by_reason": {
+      "global_cardinality_without_physical_release_proof": 31,
+      "one_to_one_without_release_proof": 31
+    },
+    "count": 31,
+    "sample": [
+      {
+        "card_name": "Lindbergh",
+        "collector_number": "ST35-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST35-002",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-35",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6646",
+          "idProduct": "900564",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6646",
+        "external_product_id": 303681,
+        "id_product": "900564",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Lindbergh (ST35-002)",
+        "official_release_ids": [
+          82
+        ],
+        "print_id": 44841,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Charlotte Katakuri",
+        "collector_number": "ST34-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST34-001",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-34",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6647",
+          "idProduct": "900535",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303665,
+        "id_product": "900535",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Charlotte Katakuri (ST34-001)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44847,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Bartolomeo",
+        "collector_number": "ST36-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST36-004",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-36",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6645",
+          "idProduct": "900581",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6645",
+        "external_product_id": 303698,
+        "id_product": "900581",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Bartolomeo (ST36-004)",
+        "official_release_ids": [
+          81
+        ],
+        "print_id": 44838,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Monkey.D.Garp",
+        "collector_number": "ST33-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST33-005",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-33",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6648",
+          "idProduct": "900317",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6648",
+        "external_product_id": 303653,
+        "id_product": "900317",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Monkey.D.Garp (ST33-005)",
+        "official_release_ids": [
+          84
+        ],
+        "print_id": 44856,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Killer",
+        "collector_number": "ST36-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST36-002",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-36",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6645",
+          "idProduct": "900579",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6645",
+        "external_product_id": 303696,
+        "id_product": "900579",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Killer (ST36-002)",
+        "official_release_ids": [
+          81
+        ],
+        "print_id": 44836,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Smoker",
+        "collector_number": "ST33-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST33-003",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-33",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6648",
+          "idProduct": "900315",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6648",
+        "external_product_id": 303651,
+        "id_product": "900315",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Smoker (ST33-003)",
+        "official_release_ids": [
+          84
+        ],
+        "print_id": 44854,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Charlotte Brulee",
+        "collector_number": "ST34-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST34-003",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-34",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6647",
+          "idProduct": "900537",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303667,
+        "id_product": "900537",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Charlotte Brulee (ST34-003)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44849,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Charlotte Cracker",
+        "collector_number": "ST34-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST34-002",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-34",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6647",
+          "idProduct": "900536",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303666,
+        "id_product": "900536",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Charlotte Cracker (ST34-002)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44848,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Bartholomew Kuma",
+        "collector_number": "ST35-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST35-005",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-35",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6646",
+          "idProduct": "900567",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6646",
+        "external_product_id": 303684,
+        "id_product": "900567",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Bartholomew Kuma (ST35-005)",
+        "official_release_ids": [
+          82
+        ],
+        "print_id": 44844,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Sanji",
+        "collector_number": "ST31-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST31-001",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-31",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6650",
+          "idProduct": "900283",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6650",
+        "external_product_id": 303619,
+        "id_product": "900283",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Sanji (ST31-001)",
+        "official_release_ids": [
+          86
+        ],
+        "print_id": 44874,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Borsalino",
+        "collector_number": "ST33-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST33-004",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-33",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6648",
+          "idProduct": "900316",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6648",
+        "external_product_id": 303652,
+        "id_product": "900316",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Borsalino (ST33-004)",
+        "official_release_ids": [
+          84
+        ],
+        "print_id": 44855,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Sakazuki",
+        "collector_number": "ST33-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST33-002",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-33",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6648",
+          "idProduct": "900314",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6648",
+        "external_product_id": 303650,
+        "id_product": "900314",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Sakazuki (ST33-002)",
+        "official_release_ids": [
+          84
+        ],
+        "print_id": 44853,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Eustass\"Captain\"Kid",
+        "collector_number": "ST36-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST36-005",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-36",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6645",
+          "idProduct": "900582",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6645",
+        "external_product_id": 303699,
+        "id_product": "900582",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Eustass\"\"Captain\"\"Kid (ST36-005)",
+        "official_release_ids": [
+          81
+        ],
+        "print_id": 44839,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Jinbe",
+        "collector_number": "ST31-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST31-002",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-31",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6650",
+          "idProduct": "900284",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6650",
+        "external_product_id": 303620,
+        "id_product": "900284",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Jinbe (ST31-002)",
+        "official_release_ids": [
+          86
+        ],
+        "print_id": 44875,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Koby",
+        "collector_number": "ST33-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST33-001",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-33",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6648",
+          "idProduct": "900313",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6648",
+        "external_product_id": 303649,
+        "id_product": "900313",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Koby (ST33-001)",
+        "official_release_ids": [
+          84
+        ],
+        "print_id": 44852,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Charlotte Linlin",
+        "collector_number": "ST34-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST34-004",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-34",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6647",
+          "idProduct": "900538",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303668,
+        "id_product": "900538",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Charlotte Linlin (ST34-004)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44850,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Baron Tamago & Pekoms",
+        "collector_number": "ST34-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST34-005",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-34",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6647",
+          "idProduct": "900539",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303669,
+        "id_product": "900539",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Baron Tamago & Pekoms (ST34-005)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44851,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Monkey.D.Luffy",
+        "collector_number": "ST31-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST31-004",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-31",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6650",
+          "idProduct": "900286",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6650",
+        "external_product_id": 303622,
+        "id_product": "900286",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Monkey.D.Luffy (ST31-004)",
+        "official_release_ids": [
+          86
+        ],
+        "print_id": 44877,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Charlotte Smoothie",
+        "collector_number": "P-090",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "P-090",
+          "canonical_rarity": "P",
+          "canonical_set_code": "p",
+          "canonical_variant": "r1",
+          "group_size": 2,
+          "idExpansion": "6647",
+          "idProduct": "900534",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one",
+            "all_other_group_members_already_exactly_linked"
+          ],
+          "resolution_kind": "residual_bijection",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6647",
+        "external_product_id": 303664,
+        "id_product": "900534",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Charlotte Smoothie (P-090)",
+        "official_release_ids": [
+          83
+        ],
+        "print_id": 44845,
+        "rarity": "P",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "r1"
+      },
+      {
+        "card_name": "Dracule Mihawk",
+        "collector_number": "ST32-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST32-003",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-32",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6649",
+          "idProduct": "900300",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6649",
+        "external_product_id": 303636,
+        "id_product": "900300",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Dracule Mihawk (ST32-003)",
+        "official_release_ids": [
+          85
+        ],
+        "print_id": 44861,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Brook",
+        "collector_number": "ST31-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST31-003",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-31",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6650",
+          "idProduct": "900285",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6650",
+        "external_product_id": 303621,
+        "id_product": "900285",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Brook (ST31-003)",
+        "official_release_ids": [
+          86
+        ],
+        "print_id": 44876,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Scratchmen Apoo",
+        "collector_number": "ST36-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST36-003",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-36",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6645",
+          "idProduct": "900580",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6645",
+        "external_product_id": 303697,
+        "id_product": "900580",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Scratchmen Apoo (ST36-003)",
+        "official_release_ids": [
+          81
+        ],
+        "print_id": 44837,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Roronoa Zoro",
+        "collector_number": "ST32-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST32-005",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-32",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6649",
+          "idProduct": "900302",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6649",
+        "external_product_id": 303638,
+        "id_product": "900302",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Roronoa Zoro (ST32-005)",
+        "official_release_ids": [
+          85
+        ],
+        "print_id": 44863,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Cavendish",
+        "collector_number": "ST36-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST36-001",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-36",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6645",
+          "idProduct": "900578",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6645",
+        "external_product_id": 303695,
+        "id_product": "900578",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Cavendish (ST36-001)",
+        "official_release_ids": [
+          81
+        ],
+        "print_id": 44835,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Kin'emon",
+        "collector_number": "ST32-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST32-001",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-32",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6649",
+          "idProduct": "900298",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6649",
+        "external_product_id": 303634,
+        "id_product": "900298",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Kin'emon (ST32-001)",
+        "official_release_ids": [
+          85
+        ],
+        "print_id": 44859,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Karasu",
+        "collector_number": "ST35-003",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST35-003",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-35",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6646",
+          "idProduct": "900565",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6646",
+        "external_product_id": 303682,
+        "id_product": "900565",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Karasu (ST35-003)",
+        "official_release_ids": [
+          82
+        ],
+        "print_id": 44842,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Thousand Sunny",
+        "collector_number": "ST31-005",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST31-005",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-31",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6650",
+          "idProduct": "900287",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6650",
+        "external_product_id": 303623,
+        "id_product": "900287",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Thousand Sunny (ST31-005)",
+        "official_release_ids": [
+          86
+        ],
+        "print_id": 44878,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Koala",
+        "collector_number": "ST35-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST35-004",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-35",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6646",
+          "idProduct": "900566",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6646",
+        "external_product_id": 303683,
+        "id_product": "900566",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Koala (ST35-004)",
+        "official_release_ids": [
+          82
+        ],
+        "print_id": 44843,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Hack",
+        "collector_number": "ST35-001",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST35-001",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-35",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6646",
+          "idProduct": "900563",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6646",
+        "external_product_id": 303680,
+        "id_product": "900563",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Hack (ST35-001)",
+        "official_release_ids": [
+          82
+        ],
+        "print_id": 44840,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Kouzuki Oden",
+        "collector_number": "ST32-002",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST32-002",
+          "canonical_rarity": "SR",
+          "canonical_set_code": "st-32",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6649",
+          "idProduct": "900299",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6649",
+        "external_product_id": 303635,
+        "id_product": "900299",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Kouzuki Oden (ST32-002)",
+        "official_release_ids": [
+          85
+        ],
+        "print_id": 44860,
+        "rarity": "SR",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      },
+      {
+        "card_name": "Silvers Rayleigh",
+        "collector_number": "ST32-004",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_collector_number": "ST32-004",
+          "canonical_rarity": "C",
+          "canonical_set_code": "st-32",
+          "canonical_variant": "default",
+          "group_size": 1,
+          "idExpansion": "6649",
+          "idProduct": "900301",
+          "identity_basis": [
+            "exact_normalized_card_name",
+            "exact_collector_number",
+            "global_equal_cardinality",
+            "no_existing_cross_identity_link",
+            "global_one_to_one"
+          ],
+          "resolution_kind": "global_identity_unique",
+          "source": "onepiece_official+cardmarket"
+        },
+        "expansion_external_id": "6649",
+        "external_product_id": 303637,
+        "id_product": "900301",
+        "mapping_method": "bandai_global_residual_exact",
+        "market_name": "Silvers Rayleigh (ST32-004)",
+        "official_release_ids": [
+          85
+        ],
+        "print_id": 44862,
+        "rarity": "C",
+        "reasons": [
+          "global_cardinality_without_physical_release_proof",
+          "one_to_one_without_release_proof"
+        ],
+        "variant": "default"
+      }
+    ]
+  },
+  "target_print_44257": {
+    "card_name": "Monkey.D.Luffy",
+    "cardmarket_links": [
+      {
+        "category": "One Piece Single",
+        "confidence": "exact",
+        "evidence": {
+          "canonical_set_code": "st-01",
+          "canonical_variant": "p1",
+          "cardmarket_id_product": "749435",
+          "certified_audit_run_id": 31424881435,
+          "collector_number": "ST01-012",
+          "source": "one-piece.cards",
+          "source_kind": "secondary_explicit_crosswalk",
+          "source_url": "https://one-piece.cards/cards/en%3AST01-012_p1",
+          "source_variant_id": "en:ST01-012_p1",
+          "validation": [
+            "semantic_variant_id_exact",
+            "collector_exact",
+            "canonical_variant_exact",
+            "current_cardmarket_product",
+            "global_one_to_one",
+            "no_existing_conflict"
+          ]
+        },
+        "expansion_external_id": "5303",
+        "external_product_id": 294280,
+        "id_product": "749435",
+        "last_seen_at": "2026-08-11 09:02:40.181597+00:00",
+        "link_status": "accepted",
+        "mapping_method": "op_variant_cm_global_exact",
+        "market_name": "Monkey.D.Luffy (ST01-012)",
+        "metacard_external_id": "415568",
+        "reviewed": false,
+        "website_path": "/OnePiece/Products?idProduct=749435"
+      }
+    ],
+    "collector_number": "ST01-012",
+    "language": "en",
+    "official_releases": [
+      {
+        "external_id": "569103",
+        "id": 78,
+        "name": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+        "source": "onepiece_official"
+      }
+    ],
+    "print_id": 44257,
+    "rarity": "SP CARD",
+    "set_code": "st-01",
+    "set_name": "STARTER DECK -Straw Hat Crew- [ST-01]",
+    "variant": "p1"
+  }
+}
