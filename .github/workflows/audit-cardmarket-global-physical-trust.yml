@@ -26,7 +26,6 @@ jobs:
         run: |
           python - <<'PY'
           import json,os
-          from collections import defaultdict
           from pathlib import Path
           import psycopg2
           from psycopg2.extras import RealDictCursor
@@ -48,7 +47,7 @@ jobs:
                 methods=[dict(r) for r in cur.fetchall()]
                 for m in methods:
                   cur.execute('''SELECT l.print_id,l.mapping_method,l.confidence,l.reviewed,l.evidence,e.external_id id_product,
-                                        e.expansion_external_id,e.name market_name,p.collector_number,p.variant,p.finish,p.rarity,p.language,
+                                        e.expansion_external_id,e.name market_name,p.collector_number,p.variant,p.rarity,p.language,
                                         c.name card_name,s.code set_code,s.name set_name
                                  FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                                  JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
@@ -59,13 +58,11 @@ jobs:
                 cur.execute('''SELECT count(DISTINCT l.print_id) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)''',(gid,list(ACCEPTED)))
                 d['accepted_prints']=int(cur.fetchone()['n'])
-                # mapping cardinality must be exactly one per displayed print
                 cur.execute('''SELECT l.print_id,count(*) n,array_agg(e.external_id ORDER BY e.external_id) ids
                                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
                                GROUP BY l.print_id HAVING count(*)<>1 ORDER BY n DESC LIMIT 200''',(gid,list(ACCEPTED)))
                 amb=[dict(r) for r in cur.fetchall()]; d['ambiguous_accepted_prints_count']=len(amb); d['ambiguous_accepted_prints_sample']=amb[:30]
-                # stale or mismatched projected snapshots: raw idProduct must equal the sole accepted product.
                 if sid is not None:
                   cur.execute('''WITH accepted AS (
                                    SELECT l.print_id,min(e.external_id) id_product,count(*) n
