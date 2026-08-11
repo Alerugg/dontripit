@@ -84,22 +84,37 @@ export async function fetchGamePrints(filters = {}) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
-export async function fetchSetsByGame(game, options = {}) {
+export async function fetchSetsPage(game, options = {}) {
   const payload = await request('/api/catalog/sets', {
     game: toApiGameSlug(game || ''),
-    limit: options.limit ?? 50,
+    limit: options.limit ?? 24,
     offset: options.offset ?? 0,
     q: options.q ?? '',
   }, { ttlMs: 10 * 60 * 1000 })
 
-  return Array.isArray(payload) ? payload : payload?.items || []
+  if (Array.isArray(payload)) {
+    return { items: payload, total: payload.length, limit: options.limit ?? 24, offset: options.offset ?? 0 }
+  }
+  return {
+    items: payload?.items || [],
+    total: Number(payload?.total ?? payload?.count ?? 0),
+    limit: Number(payload?.limit ?? options.limit ?? 24),
+    offset: Number(payload?.offset ?? options.offset ?? 0),
+  }
+}
+
+export async function fetchSetsByGame(game, options = {}) {
+  const payload = await fetchSetsPage(game, options)
+  return payload.items
 }
 
 export function fetchSetDetail(game, setCode, options = {}) {
   return request('/api/catalog/set-detail', {
     game: toApiGameSlug(game || ''),
     set_code: setCode,
-    limit: options.limit ?? 200,
+    q: options.q ?? '',
+    sort: options.sort ?? 'number_asc',
+    limit: options.limit ?? 36,
     offset: options.offset ?? 0,
   }, { ttlMs: FIVE_MINUTES })
 }
