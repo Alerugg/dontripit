@@ -71,6 +71,7 @@ def current_cardmarket_price_join(*, print_id: str, game_id: str) -> str:
                 SELECT MAX(e2.last_seen_at)
                 FROM external_catalog_products e2
                 WHERE e2.source = 'cardmarket'
+                  AND e2.product_group = 'single'
                   AND e2.game_id = {game_id}
               )
             GROUP BY l.print_id
