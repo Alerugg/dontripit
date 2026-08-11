@@ -5,6 +5,11 @@ on:
     branches: [catalog-v2]
     paths:
       - '.github/workflows/sync-cardmarket-mvp-daily.yml'
+      - 'backend/app/jobs/cardmarket_external_prices.py'
+      - 'backend/app/jobs/cardmarket_link_price_projection.py'
+      - 'backend/scripts/sync_cardmarket_external_prices.py'
+      - 'backend/scripts/project_cardmarket_link_prices.py'
+      - 'backend/scripts/map_cardmarket_sealed_exact.py'
   schedule:
     - cron: '30 4 * * *'
   workflow_dispatch:
