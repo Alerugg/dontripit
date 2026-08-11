@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: audit-onepiece-cardmarket-residual-bijection
@@ -68,7 +68,7 @@ jobs:
                       canon_by[key].append(r)
 
                   cur.execute('''
-                    SELECT id external_product_id,external_id id_product,name,expansion_external_id,id as row_id,metacard_external_id,website_path
+                    SELECT id external_product_id,external_id id_product,name,expansion_external_id,metacard_external_id,website_path
                     FROM external_catalog_products
                     WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s
                   ''',(gid,latest))
@@ -104,7 +104,6 @@ jobs:
               for key in all_keys:
                   cs=canon_by.get(key,[]); ms=market_by.get(key,[])
                   cids={int(x['print_id']) for x in cs}; mids={int(x['external_product_id']) for x in ms}
-                  # Any accepted link involving a member of this identity must stay inside this same identity.
                   cross=[]
                   for pid in cids:
                       lr=link_by_print.get(pid)
@@ -123,8 +122,6 @@ jobs:
                       status['canonical_fully_linked']+=1; continue
                   if not um:
                       status['no_unlinked_market_product']+=1; continue
-
-                  # Strong global-bijection guards.
                   if len(cs)!=len(ms):
                       status['cardinality_mismatch']+=1
                       quarantined.append({'identity':key,'reason':'cardinality_mismatch','canonical':len(cs),'market':len(ms),'unlinked_canonical':len(uc),'unlinked_market':len(um)})
@@ -143,7 +140,6 @@ jobs:
                       status['residual_still_ambiguous']+=1
                       quarantined.append({'identity':key,'reason':'residual_still_ambiguous','canonical':len(cs),'market':len(ms),'unlinked_canonical':len(uc),'unlinked_market':len(um)})
 
-              # Global one-to-one candidate guard.
               pc=Counter(x['print_id'] for x in candidates); ec=Counter(x['external_product_id'] for x in candidates)
               dup=[x for x in candidates if pc[x['print_id']]!=1 or ec[x['external_product_id']]!=1]
               if dup: raise AssertionError({'candidate_global_collision':dup[:20]})
@@ -156,11 +152,23 @@ jobs:
                 'safe_candidate_prints':len({x['print_id'] for x in candidates}),'safe_candidate_products':len({x['external_product_id'] for x in candidates}),
                 'candidates':candidates,'quarantine_sample':quarantined[:300],
               }
-              print(json.dumps({k:v for k,v in report.items() if k not in ('candidates','quarantine_sample')},indent=2,default=str))
+              summary={k:v for k,v in report.items() if k not in ('candidates','quarantine_sample')}
+              print(json.dumps(summary,indent=2,default=str))
               Path('/tmp/onepiece-cardmarket-residual-bijection.json').write_text(json.dumps(report,indent=2,default=str)+'\n')
+              Path('/tmp/onepiece-cardmarket-residual-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n')
           finally:
               conn.close()
           PY
+      - name: Persist latest audit summary for review
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/onepiece-cardmarket-residual-summary.json audit-reports/onepiece-cardmarket-residual-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-cardmarket-residual-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update One Piece Cardmarket residual audit summary"
+          git push origin HEAD:catalog-v2
       - uses: actions/upload-artifact@v4
         if: always()
         with:
