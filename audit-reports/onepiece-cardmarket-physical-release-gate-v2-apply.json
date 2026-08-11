@@ -1,0 +1,63 @@
+{
+  "accepted_prints_after_gate_before_projection": 2641,
+  "before_accepted_links": 3757,
+  "bridge_conflicts": 1,
+  "by_method": {
+    "bandai_global_residual_exact": {
+      "release_mismatch": 10,
+      "release_unproven": 21
+    },
+    "bandai_release_exact": {
+      "release_consistent_standard_en": 315,
+      "release_unproven": 1
+    },
+    "bandai_sealed_residual_exact": {
+      "release_consistent_standard_en": 8,
+      "release_unproven": 1
+    },
+    "bandai_trusted_expansion_exact": {
+      "release_consistent_standard_en": 18,
+      "release_mismatch": 19,
+      "release_unproven": 73
+    },
+    "op_commercial_expansion_exact": {
+      "release_unproven": 3
+    },
+    "op_variant_cm_exact": {
+      "release_consistent_standard_en": 195
+    },
+    "op_variant_cm_global_exact": {
+      "release_consistent_standard_en": 2104,
+      "release_mismatch": 24,
+      "release_unproven": 965
+    }
+  },
+  "classification": {
+    "release_consistent_standard_en": 2640,
+    "release_mismatch": 53,
+    "release_unproven": 1064
+  },
+  "deleted_contaminated_price_snapshots": 2097,
+  "game": "onepiece",
+  "gate": "physical_release_v2",
+  "latest_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "quarantined_links": 1117,
+  "quarantined_prints": 1117,
+  "standard_english_release_expansions": 43,
+  "target_44257_after": [
+    {
+      "confidence": "exact",
+      "expansion_external_id": "5364",
+      "id_product": "720061",
+      "link_status": "accepted",
+      "mapping_method": "bandai_physical_release_unique_exact"
+    },
+    {
+      "confidence": "candidate",
+      "expansion_external_id": "5303",
+      "id_product": "749435",
+      "link_status": "quarantined",
+      "mapping_method": "op_variant_cm_global_exact"
+    }
+  ]
+}

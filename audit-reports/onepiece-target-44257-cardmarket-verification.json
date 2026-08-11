@@ -1,0 +1,50 @@
+{
+  "accepted_target_links": [
+    {
+      "confidence": "exact",
+      "expansion_external_id": "5364",
+      "id_product": "720061",
+      "link_status": "accepted",
+      "mapping_method": "bandai_physical_release_unique_exact"
+    }
+  ],
+  "latest_target_price": {
+    "as_of": "2026-08-11 00:46:06+00:00",
+    "price_last": "389.44",
+    "price_low": "275.00",
+    "price_market": "426.59",
+    "price_mid": "275.00",
+    "raw_json": {
+      "external_avg1": "384.50",
+      "external_avg30": "342.20",
+      "external_avg7": "383.78",
+      "external_product_id": 292876,
+      "finish": "p1",
+      "idProduct": "720061",
+      "mapping_confidence": "exact",
+      "mapping_evidence": {
+        "canonical_rarity": "SP CARD",
+        "canonical_variant": "p1",
+        "collector_number": "ST01-012",
+        "idExpansion": "5364",
+        "idProduct": "720061",
+        "identity_basis": [
+          "standard_english_sealed_product_release_match",
+          "official_PrintRelease",
+          "exact_collector_number",
+          "unique_product_inside_cardmarket_release",
+          "unique_print_inside_official_release",
+          "global_one_to_one"
+        ],
+        "official_release": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+        "release_external_id": "569103",
+        "release_id": 78,
+        "source": "onepiece_official+cardmarket",
+        "supersedes_wrong_idProduct": "749435"
+      },
+      "mapping_method": "bandai_physical_release_unique_exact",
+      "price_variant": "nonfoil",
+      "website_path": "/OnePiece/Products?idProduct=720061"
+    }
+  }
+}
