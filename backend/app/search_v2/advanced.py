@@ -201,7 +201,7 @@ def advanced_onepiece_search(
     if filters:
         raise ValueError(f"Unsupported advanced filters: {sorted(filters)}")
 
-    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    market_join = current_cardmarket_price_join(print_id="p.id", game_slug="onepiece")
     if has_price:
         where.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(where)

@@ -132,7 +132,7 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sor
                 params[f"{key}_max"] = high
                 conditions.append(f"{expr}<=:{key}_max")
 
-    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    market_join = current_cardmarket_price_join(print_id="p.id", game_slug="mtg")
     if has_price:
         conditions.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(conditions)

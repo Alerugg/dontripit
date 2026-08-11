@@ -150,7 +150,7 @@ def advanced_yugioh_search(
                 params["f_link_marker"] = values
             continue
 
-    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    market_join = current_cardmarket_price_join(print_id="p.id", game_slug="yugioh")
     if has_price:
         conditions.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(conditions)

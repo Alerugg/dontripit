@@ -107,7 +107,7 @@ def list_set_ui_prints():
       )
     """ if q else ""
     price_clause = " AND cm.cardmarket_price IS NOT NULL" if has_price else ""
-    market_join = current_cardmarket_price_join(print_id="p.id", game_id="c.game_id")
+    market_join = current_cardmarket_price_join(print_id="p.id", game_slug=game)
     order_sql = _order_sql(sort)
 
     try:
