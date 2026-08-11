@@ -1,0 +1,117 @@
+{
+  "source_url": "https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json",
+  "created_at": "2026-08-11T11:17:41+0200",
+  "root_keys": [
+    "createdAt",
+    "products",
+    "version"
+  ],
+  "rows": 86292,
+  "all_row_keys": [
+    "categoryName",
+    "dateAdded",
+    "idCategory",
+    "idExpansion",
+    "idMetacard",
+    "idProduct",
+    "name"
+  ],
+  "key_counts": {
+    "idProduct": 86292,
+    "name": 86292,
+    "idCategory": 86292,
+    "categoryName": 86292,
+    "idExpansion": 86292,
+    "idMetacard": 86292,
+    "dateAdded": 86292
+  },
+  "nonempty_counts": {
+    "idProduct": 86292,
+    "name": 86292,
+    "idCategory": 86292,
+    "categoryName": 86292,
+    "idExpansion": 86292,
+    "idMetacard": 86292,
+    "dateAdded": 86292
+  },
+  "types": {
+    "idProduct": {
+      "int": 86292
+    },
+    "name": {
+      "str": 86292
+    },
+    "idCategory": {
+      "int": 86292
+    },
+    "categoryName": {
+      "str": 86292
+    },
+    "idExpansion": {
+      "int": 86292
+    },
+    "idMetacard": {
+      "int": 86292
+    },
+    "dateAdded": {
+      "str": 86292
+    }
+  },
+  "identity_like_keys": [
+    "idProduct",
+    "idCategory",
+    "categoryName",
+    "idExpansion",
+    "idMetacard"
+  ],
+  "identity_like_examples": {
+    "idProduct": [
+      "101788",
+      "101789",
+      "101790",
+      "101791",
+      "101792",
+      "101793",
+      "101794",
+      "101795",
+      "101796",
+      "101797",
+      "101798",
+      "101799"
+    ],
+    "idCategory": [
+      "5"
+    ],
+    "categoryName": [
+      "Yugioh Single"
+    ],
+    "idExpansion": [
+      "1011",
+      "1012",
+      "1013",
+      "1014",
+      "1015",
+      "1016",
+      "1017",
+      "1018",
+      "1019",
+      "1020",
+      "1021",
+      "1022"
+    ],
+    "idMetacard": [
+      "101779",
+      "101780",
+      "101781",
+      "101782",
+      "101783",
+      "101784",
+      "101785",
+      "101786",
+      "101787",
+      "101788",
+      "101789",
+      "101790"
+    ]
+  }
+}
