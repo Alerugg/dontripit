@@ -170,7 +170,7 @@ export default function FederatedSearchResults({
   let paginationTotal = 0
   if (activeType === 'singles') paginationTotal = singles.total
   else if (activeType === 'sealed') paginationTotal = sealed.total
-  else if (activeType === 'all') paginationTotal = Math.max(Number(singles.total || 0), Number(sealed.total || 0))
+  else if (activeType === 'all') paginationTotal = Number(singles.total || 0)
 
   return (
     <div className="fsr-shell">

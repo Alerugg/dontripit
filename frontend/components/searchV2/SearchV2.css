@@ -37,6 +37,19 @@
   background: color-mix(in srgb, var(--game-accent, #8b7cff) 10%, rgba(255,255,255,.035));
 }
 
+.sv2-global-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: .75rem 1rem;
+  margin-top: .9rem;
+}
+.sv2-global-controls > label:first-child { display: grid; gap: .38rem; min-width: min(100%, 260px); }
+.sv2-global-controls label > span { color: var(--muted, #9ca3af); font-size: .7rem; font-weight: 700; }
+.sv2-global-controls select { min-height: 42px; padding: 0 .75rem; border: 1px solid rgba(255,255,255,.1); border-radius: 11px; color: inherit; background: rgba(0,0,0,.18); }
+.sv2-price-toggle { display: inline-flex; align-items: center; gap: .5rem; min-height: 42px; cursor: pointer; }
+.sv2-price-toggle input { width: 17px; height: 17px; accent-color: var(--game-accent, #8b7cff); }
+
 .sv2-inline-error {
   margin: .75rem 0 0;
   border: 1px solid rgba(248,113,113,.22);

@@ -48,6 +48,12 @@ const DEFAULT_SEARCH_COPY = {
 
 const ADVANCED_PAGE_SIZE = 24
 const NORMAL_PAGE_SIZE = 24
+const RESULT_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'number_asc', 'number_desc', 'name_asc', 'name_desc'])
+
+function initialSort(searchParams) {
+  const value = searchParams.get('sort') || 'relevance'
+  return RESULT_SORTS.has(value) ? value : 'relevance'
+}
 
 function suggestionForLegacyRow(item) {
   return {
@@ -83,6 +89,8 @@ export default function OnePieceSearchV2Experience({ game }) {
     return ['all', 'singles', 'sets', 'sealed', 'matches'].includes(value) ? value : 'all'
   })
   const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')
+  const [resultSort, setResultSort] = useState(initialSort(searchParams))
+  const [onlyWithPrice, setOnlyWithPrice] = useState(searchParams.get('priced') === '1')
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)
@@ -163,7 +171,10 @@ export default function OnePieceSearchV2Experience({ game }) {
           game: game.slug,
           page: normalPage,
           limit: NORMAL_PAGE_SIZE,
+          kind: normalType,
           category: normalCategory,
+          sort: resultSort,
+          hasPrice: onlyWithPrice,
         })
         if (!cancelled) setNormalPayload(payload)
       } catch (requestError) {
@@ -177,7 +188,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     }
     runSearch()
     return () => { cancelled = true }
-  }, [game.slug, normalCategory, normalPage, submittedQuery])
+  }, [game.slug, normalCategory, normalPage, normalType, onlyWithPrice, resultSort, submittedQuery])
 
   useEffect(() => {
     if (initialAdvancedHydrated.current || !initialAdvancedRan) return
@@ -198,9 +209,11 @@ export default function OnePieceSearchV2Experience({ game }) {
       if (normalType !== 'all') params.set('kind', normalType)
       if (normalCategory) params.set('category', normalCategory)
     }
+    if (resultSort !== 'relevance') params.set('sort', resultSort)
+    if (onlyWithPrice) params.set('priced', '1')
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, pathname, router, submittedQuery])
+  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
@@ -234,10 +247,12 @@ export default function OnePieceSearchV2Experience({ game }) {
     setNormalPage(1)
   }
 
-  async function runAdvanced(nextPage = 1, { reuseApplied = false } = {}) {
+  async function runAdvanced(nextPage = 1, { reuseApplied = false, sortOverride = null, hasPriceOverride = null } = {}) {
     const page = Math.max(1, Number(nextPage) || 1)
     const filters = reuseApplied ? appliedAdvancedFilters : advancedFilters
     const searchQuery = reuseApplied ? advancedQuery : query.trim()
+    const activeSort = sortOverride ?? resultSort
+    const activeHasPrice = hasPriceOverride ?? onlyWithPrice
 
     if (!reuseApplied) {
       setAppliedAdvancedFilters(filters)
@@ -254,6 +269,8 @@ export default function OnePieceSearchV2Experience({ game }) {
         game: game.slug,
         q: searchQuery,
         filters,
+        sort: activeSort,
+        hasPrice: activeHasPrice,
         limit: ADVANCED_PAGE_SIZE,
         offset: (page - 1) * ADVANCED_PAGE_SIZE,
       })
@@ -266,6 +283,18 @@ export default function OnePieceSearchV2Experience({ game }) {
     } finally {
       setAdvancedLoading(false)
     }
+  }
+
+  function changeResultSort(value) {
+    setResultSort(value)
+    setNormalPage(1)
+    if (advancedRan) runAdvanced(1, { reuseApplied: true, sortOverride: value })
+  }
+
+  function changeOnlyWithPrice(value) {
+    setOnlyWithPrice(value)
+    setNormalPage(1)
+    if (advancedRan) runAdvanced(1, { reuseApplied: true, hasPriceOverride: value })
   }
 
   function updateAdvancedFilter(key, value) {
@@ -328,6 +357,25 @@ export default function OnePieceSearchV2Experience({ game }) {
             ))}
           </div>
         ) : null}
+
+        <div className="sv2-global-controls">
+          <label>
+            <span>Ordenar versiones</span>
+            <select value={resultSort} onChange={(event) => changeResultSort(event.target.value)}>
+              <option value="relevance">Relevancia / catálogo</option>
+              <option value="price_desc">Precio: mayor a menor</option>
+              <option value="price_asc">Precio: menor a mayor</option>
+              <option value="number_asc">Número: menor a mayor</option>
+              <option value="number_desc">Número: mayor a menor</option>
+              <option value="name_asc">Nombre A–Z</option>
+              <option value="name_desc">Nombre Z–A</option>
+            </select>
+          </label>
+          <label className="sv2-price-toggle">
+            <input type="checkbox" checked={onlyWithPrice} onChange={(event) => changeOnlyWithPrice(event.target.checked)} />
+            <span>Solo con precio Cardmarket exacto y actual</span>
+          </label>
+        </div>
 
         {facetError ? <p className="sv2-inline-error">{facetError}</p> : null}
 
