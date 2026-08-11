@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.external_catalog_models import (
     ExternalCatalogPrintLink,
@@ -78,10 +78,6 @@ def _positive(value) -> bool:
 
 
 def _has_meaningful_price(external_price: ExternalMarketPriceSnapshot) -> bool:
-    # Cardmarket PriceGuide uses zero-valued placeholders in some unavailable
-    # finish blocks. A physical card cannot have a useful public market value
-    # of EUR 0.00, so those rows stay traceable externally but are not projected
-    # as a canonical price.
     return any(
         _positive(value)
         for value in (
@@ -251,13 +247,56 @@ def build_link_price_projection_plan(
     )
 
 
+def _prune_stale_cardmarket_snapshots(session, *, game: Game, source: PriceSource) -> int:
+    """Delete canonical prices whose physical Cardmarket identity is no longer accepted.
+
+    A price history belongs to a physical product, not merely to a card name or
+    collector number. If a mapping is quarantined/replaced, snapshots projected
+    through that old idProduct must not remain visible. PostgreSQL can enforce
+    this efficiently against the current accepted link set. SQLite/test callers
+    skip this DB-specific maintenance path.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return 0
+    result = session.execute(
+        text(
+            """
+            DELETE FROM price_snapshots ps
+            USING prints p, cards c
+            WHERE ps.source_id = :source_id
+              AND ps.entity_type = 'print'
+              AND p.id = ps.entity_id
+              AND c.id = p.card_id
+              AND c.game_id = :game_id
+              AND NOT EXISTS (
+                SELECT 1
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id = l.external_product_id
+                WHERE l.print_id = ps.entity_id
+                  AND e.source = 'cardmarket'
+                  AND e.game_id = :game_id
+                  AND e.product_group = 'single'
+                  AND l.link_status IN ('accepted','mapped','exact')
+                GROUP BY l.print_id
+                HAVING count(DISTINCT e.id) = 1
+                   AND min(e.external_id) = coalesce(ps.raw_json ->> 'idProduct', '')
+              )
+            """
+        ),
+        {"source_id": int(source.id), "game_id": int(game.id)},
+    )
+    return int(result.rowcount or 0)
+
+
 def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> dict:
     if plan.ambiguous_print_links:
         raise ValueError(f"Refusing Cardmarket projection with {plan.ambiguous_print_links} ambiguous canonical Prints")
     if plan.cross_game_links:
         raise ValueError(f"Refusing Cardmarket projection with {plan.cross_game_links} cross-game links")
-    if plan.as_of is None or not plan.snapshots:
-        return {**plan.summary(), "inserted": 0, "updated": 0}
+
+    game = session.execute(select(Game).where(Game.slug == plan.game_slug)).scalar_one_or_none()
+    if game is None:
+        raise ValueError(f"Unknown game slug {plan.game_slug!r}")
 
     source = session.execute(select(PriceSource).where(PriceSource.name == CARDMARKET_SOURCE)).scalar_one_or_none()
     if source is None:
@@ -270,6 +309,11 @@ def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> 
         session.flush()
     elif source.currency != CARDMARKET_CURRENCY:
         raise ValueError(f"Cardmarket price source has unexpected currency {source.currency!r}")
+
+    pruned_stale_snapshots = _prune_stale_cardmarket_snapshots(session, game=game, source=source)
+
+    if plan.as_of is None or not plan.snapshots:
+        return {**plan.summary(), "inserted": 0, "updated": 0, "pruned_stale_snapshots": pruned_stale_snapshots}
 
     entity_ids = [int(payload["entity_id"]) for payload in plan.snapshots]
     existing_ids = set(session.execute(
@@ -326,4 +370,9 @@ def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> 
             ):
                 setattr(current, field, row_data[field])
 
-    return {**plan.summary(), "inserted": inserted, "updated": updated}
+    return {
+        **plan.summary(),
+        "inserted": inserted,
+        "updated": updated,
+        "pruned_stale_snapshots": pruned_stale_snapshots,
+    }
