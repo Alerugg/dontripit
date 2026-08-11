@@ -4,11 +4,16 @@ import { callInternalApi, getPublicErrorMessage } from '../../../../lib/catalog/
 const DEFAULT_PAGE_SIZE = 24
 const MAX_PAGE_SIZE = 48
 const RESULT_KINDS = new Set(['all', 'singles', 'sets', 'sealed', 'matches'])
+const SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'number_asc', 'number_desc', 'name_asc', 'name_desc'])
 
 function boundedInt(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(parsed)) return fallback
   return Math.min(Math.max(parsed, minimum), maximum)
+}
+
+function truthy(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase())
 }
 
 function normalizeOnePieceSetCode(query, game) {
@@ -109,12 +114,16 @@ export async function GET(request) {
   const offset = (page - 1) * limit
   const requestedKind = String(searchParams.get('kind') || 'all').trim().toLowerCase()
   const kind = RESULT_KINDS.has(requestedKind) ? requestedKind : 'all'
+  const requestedSort = String(searchParams.get('sort') || 'relevance').trim().toLowerCase()
+  const sort = SORTS.has(requestedSort) ? requestedSort : 'relevance'
+  const hasPrice = truthy(searchParams.get('has_price'))
   const category = String(searchParams.get('category') || '').trim()
   const region = String(searchParams.get('region') || '').trim().toLowerCase()
   const setCode = normalizeOnePieceSetCode(q, game)
 
-  // Keep related result types stable while paginating the active list. On the
-  // default/all view, singles own the page index while sealed stays on page 1.
+  // The active tab owns pagination. The all view deliberately follows singles;
+  // sealed/sets stay on page 1 so a page change never repeats one list while
+  // pretending another list advanced.
   const singlesOffset = kind === 'sealed' ? 0 : offset
   const sealedOffset = kind === 'sealed' ? offset : 0
 
@@ -128,13 +137,13 @@ export async function GET(request) {
   })
   const singlesPromise = setCode
     ? callInternalApi('/api/v1/set-ui/prints', {
-        params: { game, set_code: setCode, limit, offset: singlesOffset },
-        timeoutMs: 15000,
+        params: { game, set_code: setCode, sort, has_price: hasPrice ? 1 : '', limit, offset: singlesOffset },
+        timeoutMs: 20000,
       })
     : callInternalApi('/api/v2/search/advanced', {
         method: 'POST',
-        body: { game, q, filters: {}, limit, offset: singlesOffset },
-        timeoutMs: 15000,
+        body: { game, q, filters: {}, sort, has_price: hasPrice, limit, offset: singlesOffset },
+        timeoutMs: 20000,
       })
   const sealedPromise = setCode
     ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
@@ -209,6 +218,8 @@ export async function GET(request) {
     page,
     limit,
     kind,
+    sort,
+    has_price: hasPrice,
     set_intent: setCode ? { set_code: setCode, exact_set_found: Boolean(exactSet) } : null,
     counts: {
       singles: singlesTotal,
