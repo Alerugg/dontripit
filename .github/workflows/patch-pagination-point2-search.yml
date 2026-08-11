@@ -1,0 +1,68 @@
+name: Patch Pagination Point 2 Search
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-pagination-point2-search.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch backend and frontend search pagination
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/app/routes/search_v2.py')
+          text = path.read_text()
+          old = "maximum=1_000 if (getattr(g, \"api_meta\", None) or {}).get(\"plan\") == \"public\" else 10_000,"
+          new = "maximum=100_000,"
+          assert old in text, 'search_v2 public offset guard changed'
+          path.write_text(text.replace(old, new, 1))
+
+          path = Path('frontend/app/api/search-v2/federated/route.js')
+          text = path.read_text()
+          assert "boundedInt(searchParams.get('page'), 1, 1, 100)" in text
+          text = text.replace("boundedInt(searchParams.get('page'), 1, 1, 100)", "boundedInt(searchParams.get('page'), 1, 1, 5000)", 1)
+          old = "  const singlesTotal = Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)\n  const sealedTotal = Number(sealedUpstream.payload?.total ?? sealed.length)"
+          new = "  const singlesTotal = Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)\n  const setsTotal = Number(setsUpstream.payload?.total ?? sets.length)\n  const sealedTotal = Number(sealedUpstream.payload?.total ?? sealed.length)"
+          assert old in text, 'federated totals block changed'
+          text = text.replace(old, new, 1)
+          assert "      sets: sets.length," in text
+          text = text.replace("      sets: sets.length,", "      sets: setsTotal,", 1)
+          path.write_text(text)
+
+          path = Path('frontend/components/searchV2/OnePieceSearchV2Experience.js')
+          text = path.read_text()
+          old = "  const [normalPage, setNormalPage] = useState(1)\n  const [normalType, setNormalType] = useState('all')\n  const [normalCategory, setNormalCategory] = useState('')"
+          new = "  const [normalPage, setNormalPage] = useState(safePage(searchParams.get('search_page')))\n  const [normalType, setNormalType] = useState(() => {\n    const value = searchParams.get('kind') || 'all'\n    return ['all', 'singles', 'sets', 'sealed', 'matches'].includes(value) ? value : 'all'\n  })\n  const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')"
+          assert old in text, 'normal state block changed'
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Static verification
+        run: |
+          python -m py_compile backend/app/routes/search_v2.py backend/app/routes/set_ui.py
+          grep -q "maximum=100_000" backend/app/routes/search_v2.py
+          grep -q "1, 1, 5000" frontend/app/api/search-v2/federated/route.js
+          grep -q "sets: setsTotal" frontend/app/api/search-v2/federated/route.js
+          grep -q "search_page" frontend/components/searchV2/OnePieceSearchV2Experience.js
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/routes/search_v2.py frontend/app/api/search-v2/federated/route.js frontend/components/searchV2/OnePieceSearchV2Experience.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Fix deep search pagination and URL state'
+          git push origin HEAD:catalog-v2
