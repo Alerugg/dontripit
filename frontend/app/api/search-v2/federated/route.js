@@ -119,7 +119,7 @@ export async function GET(request) {
   const sealedOffset = kind === 'sealed' ? offset : 0
 
   const setsPromise = callInternalApi('/api/v1/sets', {
-    params: { game, q, limit: 12, offset: 0 },
+    params: { game, q, limit: 12, offset: 0, meta: 1 },
     timeoutMs: 12000,
   })
   const matchesPromise = callInternalApi('/api/v2/search', {

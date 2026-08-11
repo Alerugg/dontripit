@@ -143,7 +143,7 @@ def _pagination(
     # anonymous bulk-extraction endpoint.
     if _is_public_catalog_request():
         max_limit = min(max_limit, 50)
-        max_offset = min(max_offset, 1_000)
+        max_offset = min(max_offset, 100_000)
     return _int_param("limit", default_limit, max_limit), _int_param("offset", 0, max_offset)
 
 
@@ -579,6 +579,7 @@ def resolve_catalog_prints():
 @catalog_bp.get("/api/v1/sets")
 def list_sets():
     q = request.args.get("q", "").strip()
+    include_meta = str(request.args.get("meta", "")).strip().lower() in {"1", "true", "yes"}
     include_legacy_ambiguous = str(request.args.get("include_legacy_ambiguous", "")).strip().lower() in {"1", "true", "yes"}
     limit, offset = _pagination()
     game, error = _get_game_slug(required=_request_requires_game())
@@ -594,6 +595,8 @@ def list_sets():
     if q:
         where.append("(LOWER(s.name) LIKE :q OR LOWER(s.code) LIKE :q)")
         params["q"] = f"%{q.lower()}%"
+    if game == "onepiece" and not q and not include_legacy_ambiguous:
+        where.append("s.code ~* '^(op|st|eb|prb|p)-[0-9]{1,3}$'")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = text(
@@ -631,9 +634,11 @@ def list_sets():
         """
     )
 
+    count_sql = text(f"SELECT COUNT(*) FROM sets s JOIN games g ON g.id = s.game_id {where_sql}")
     try:
         with db.SessionLocal() as session:
             rows = session.execute(sql, params).mappings().all()
+            total = int(session.execute(count_sql, params).scalar_one())
     except SQLAlchemyError as error:
         return _json_error("sets_query_failed", str(error), 500)
 
@@ -650,6 +655,8 @@ def list_sets():
         row.pop("sample_collector_number", None)
         payload.append(row)
 
+    if include_meta:
+        return jsonify({"items": payload, "total": total, "limit": limit, "offset": offset})
     return jsonify(payload)
 
 
@@ -658,6 +665,7 @@ def list_sets():
 def list_prints():
     set_code = request.args.get("set_code", "").strip()
     card_id = request.args.get("card_id", type=int)
+    include_meta = str(request.args.get("meta", "")).strip().lower() in {"1", "true", "yes"}
     limit, offset = _pagination()
     game, error = _get_game_slug(required=_request_requires_game())
     if error:
@@ -719,9 +727,14 @@ def list_prints():
         """
     )
 
+    count_sql = text(f"SELECT COUNT(*) FROM prints p JOIN sets s ON s.id = p.set_id JOIN games g ON g.id = s.game_id {where_sql}")
     with db.SessionLocal() as session:
         rows = session.execute(sql, params).mappings().all()
-    return jsonify([dict(row) for row in rows])
+        total = int(session.execute(count_sql, params).scalar_one())
+    items = [dict(row) for row in rows]
+    if include_meta:
+        return jsonify({"items": items, "total": total, "limit": limit, "offset": offset})
+    return jsonify(items)
 
 
 @catalog_bp.get("/api/products")

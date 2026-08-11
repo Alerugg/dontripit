@@ -52,7 +52,7 @@ export async function GET(request) {
   const offset = boundedInt(searchParams.get('offset'), 0, 0, 100000)
 
   const upstream = await callInternalApi('/api/v1/sets', {
-    params: { game, q, limit, offset },
+    params: { game, q, limit, offset, meta: 1 },
     timeoutMs: 20000,
   })
 
