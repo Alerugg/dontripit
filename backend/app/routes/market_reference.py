@@ -22,8 +22,14 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return min(max(parsed, minimum), maximum)
 
 
-def _float(value):
-    return float(value) if value is not None else None
+def _positive_float(value):
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _cardmarket_url(website_path: str | None) -> str | None:
@@ -41,13 +47,20 @@ def _cardmarket_url(website_path: str | None) -> str | None:
 
 
 def _price_payload(row: dict, *, finish: str | None = None) -> dict | None:
+    """Render only a meaningful price from the current Cardmarket capture.
+
+    The SQL loaders below deliberately expose no historical fallback: when an
+    exact idProduct is absent from the latest PriceGuide capture for its game,
+    ``price_as_of`` is NULL and this function returns no price. Non-positive
+    technical values are also treated as unavailable rather than as EUR 0.00.
+    """
     if not row or row.get("price_as_of") is None:
         return None
 
-    minimum = _float(row.get("price_low"))
-    conservative = _float(row.get("price_mid"))
-    trend = _float(row.get("price_market"))
-    average = _float(row.get("price_last"))
+    minimum = _positive_float(row.get("price_low"))
+    conservative = _positive_float(row.get("price_mid"))
+    trend = _positive_float(row.get("price_market"))
+    average = _positive_float(row.get("price_last"))
     value = conservative if conservative is not None else trend if trend is not None else average if average is not None else minimum
     if value is None:
         return None
@@ -59,9 +72,9 @@ def _price_payload(row: dict, *, finish: str | None = None) -> dict | None:
         "conservative": conservative,
         "trend": trend,
         "average": average,
-        "avg1": _float(row.get("avg1")),
-        "avg7": _float(row.get("avg7")),
-        "avg30": _float(row.get("avg30")),
+        "avg1": _positive_float(row.get("avg1")),
+        "avg7": _positive_float(row.get("avg7")),
+        "avg30": _positive_float(row.get("avg30")),
         "currency": row.get("currency") or "EUR",
         "source": "cardmarket",
         "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else as_of,
@@ -87,27 +100,44 @@ def _load_print_market_rows(session, print_ids: list[int]) -> list[dict]:
     if not print_ids:
         return []
 
+    # Important: choose the latest capture for the GAME, not the latest row ever
+    # seen for each product. Per-product MAX(as_of) can resurrect a stale price
+    # when Cardmarket stops publishing that idProduct in today's PriceGuide.
     sql = text(
         """
-        WITH latest_prices AS (
-            SELECT external_product_id,
-                   currency,
-                   price_variant,
-                   price_low,
-                   price_mid,
-                   price_market,
-                   price_last,
-                   avg1,
-                   avg7,
-                   avg30,
-                   as_of AS price_as_of,
+        WITH latest_game_capture AS (
+            SELECT e.game_id,
+                   MAX(mp.as_of) AS as_of
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products e ON e.id = mp.external_product_id
+            WHERE e.source = 'cardmarket'
+              AND e.product_group = 'single'
+            GROUP BY e.game_id
+        ), current_prices AS (
+            SELECT mp.external_product_id,
+                   mp.currency,
+                   mp.price_variant,
+                   mp.price_low,
+                   mp.price_mid,
+                   mp.price_market,
+                   mp.price_last,
+                   mp.avg1,
+                   mp.avg7,
+                   mp.avg30,
+                   mp.as_of AS price_as_of,
                    ROW_NUMBER() OVER (
-                       PARTITION BY external_product_id, currency, price_variant
-                       ORDER BY as_of DESC, id DESC
+                       PARTITION BY mp.external_product_id, mp.currency, mp.price_variant
+                       ORDER BY mp.id DESC
                    ) AS row_number
-            FROM external_market_price_snapshots
-            WHERE currency = 'EUR'
-              AND price_variant IN ('nonfoil', 'foil')
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+            JOIN latest_game_capture lgc
+              ON lgc.game_id = ep.game_id
+             AND lgc.as_of = mp.as_of
+            WHERE ep.source = 'cardmarket'
+              AND ep.product_group = 'single'
+              AND mp.currency = 'EUR'
+              AND mp.price_variant IN ('nonfoil', 'foil')
         )
         SELECT l.print_id,
                p.is_foil,
@@ -118,27 +148,33 @@ def _load_print_market_rows(session, print_ids: list[int]) -> list[dict]:
                e.website_path,
                l.mapping_method,
                l.confidence AS mapping_confidence,
-               lp.currency,
-               lp.price_variant,
-               lp.price_low,
-               lp.price_mid,
-               lp.price_market,
-               lp.price_last,
-               lp.avg1,
-               lp.avg7,
-               lp.avg30,
-               lp.price_as_of
+               cp.currency,
+               cp.price_variant,
+               cp.price_low,
+               cp.price_mid,
+               cp.price_market,
+               cp.price_last,
+               cp.avg1,
+               cp.avg7,
+               cp.avg30,
+               cp.price_as_of
         FROM external_catalog_print_links l
         JOIN external_catalog_products e ON e.id = l.external_product_id
         JOIN prints p ON p.id = l.print_id
-        LEFT JOIN latest_prices lp
-          ON lp.external_product_id = e.id
-         AND lp.row_number = 1
-         AND lp.price_variant = CASE WHEN p.is_foil IS TRUE THEN 'foil' ELSE 'nonfoil' END
+        LEFT JOIN current_prices cp
+          ON cp.external_product_id = e.id
+         AND cp.row_number = 1
+         AND cp.price_variant = CASE WHEN p.is_foil IS TRUE THEN 'foil' ELSE 'nonfoil' END
         WHERE l.print_id IN :print_ids
           AND e.source = 'cardmarket'
           AND e.product_group = 'single'
           AND l.link_status IN ('accepted', 'mapped', 'exact')
+          AND e.last_seen_at = (
+              SELECT MAX(e2.last_seen_at)
+              FROM external_catalog_products e2
+              WHERE e2.source = 'cardmarket'
+                AND e2.game_id = e.game_id
+          )
         ORDER BY l.print_id ASC, e.id ASC
         """
     ).bindparams(bindparam("print_ids", expanding=True))
@@ -160,7 +196,7 @@ def _build_print_market_payloads(rows: list[dict], requested_ids: list[int]) -> 
                 "status": "unmapped",
                 "reference": None,
                 "price": None,
-                "reason": "no_accepted_exact_cardmarket_mapping",
+                "reason": "no_current_accepted_exact_cardmarket_mapping",
             }
             continue
         if len(product_ids) != 1:
@@ -268,29 +304,49 @@ def cardmarket_set_products(game_slug: str, set_code: str):
           AND l.link_status IN ('accepted', 'mapped', 'exact')
           AND g.slug = :game
           AND lower(s.code) = :set_code
+          AND e.last_seen_at = (
+              SELECT MAX(e2.last_seen_at)
+              FROM external_catalog_products e2
+              WHERE e2.source = 'cardmarket'
+                AND e2.game_id = e.game_id
+          )
     """
 
     rows_sql = text(
         f"""
-        WITH latest_prices AS (
-            SELECT external_product_id,
-                   currency,
-                   price_variant,
-                   price_low,
-                   price_mid,
-                   price_market,
-                   price_last,
-                   avg1,
-                   avg7,
-                   avg30,
-                   as_of AS price_as_of,
+        WITH target_game AS (
+            SELECT id FROM games WHERE slug = :game LIMIT 1
+        ), latest_capture AS (
+            SELECT MAX(mp.as_of) AS as_of
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+            JOIN target_game tg ON tg.id = ep.game_id
+            WHERE ep.source = 'cardmarket'
+              AND ep.product_group = 'non_single'
+        ), current_prices AS (
+            SELECT mp.external_product_id,
+                   mp.currency,
+                   mp.price_variant,
+                   mp.price_low,
+                   mp.price_mid,
+                   mp.price_market,
+                   mp.price_last,
+                   mp.avg1,
+                   mp.avg7,
+                   mp.avg30,
+                   mp.as_of AS price_as_of,
                    ROW_NUMBER() OVER (
-                       PARTITION BY external_product_id, currency, price_variant
-                       ORDER BY as_of DESC, id DESC
+                       PARTITION BY mp.external_product_id, mp.currency, mp.price_variant
+                       ORDER BY mp.id DESC
                    ) AS row_number
-            FROM external_market_price_snapshots
-            WHERE currency = 'EUR'
-              AND price_variant = 'sealed'
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+            JOIN target_game tg ON tg.id = ep.game_id
+            JOIN latest_capture lc ON lc.as_of = mp.as_of
+            WHERE ep.source = 'cardmarket'
+              AND ep.product_group = 'non_single'
+              AND mp.currency = 'EUR'
+              AND mp.price_variant = 'sealed'
         ), exact_products AS (
             SELECT e.id AS external_product_id,
                    MIN(e.external_id) AS external_id,
@@ -306,20 +362,20 @@ def cardmarket_set_products(game_slug: str, set_code: str):
             HAVING COUNT(DISTINCT pv.id) = 1
         )
         SELECT ep.*,
-               lp.currency,
-               lp.price_variant,
-               lp.price_low,
-               lp.price_mid,
-               lp.price_market,
-               lp.price_last,
-               lp.avg1,
-               lp.avg7,
-               lp.avg30,
-               lp.price_as_of
+               cp.currency,
+               cp.price_variant,
+               cp.price_low,
+               cp.price_mid,
+               cp.price_market,
+               cp.price_last,
+               cp.avg1,
+               cp.avg7,
+               cp.avg30,
+               cp.price_as_of
         FROM exact_products ep
-        LEFT JOIN latest_prices lp
-          ON lp.external_product_id = ep.external_product_id
-         AND lp.row_number = 1
+        LEFT JOIN current_prices cp
+          ON cp.external_product_id = ep.external_product_id
+         AND cp.row_number = 1
         ORDER BY ep.product_name ASC, ep.external_product_id ASC
         LIMIT :limit OFFSET :offset
         """
