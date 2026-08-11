@@ -1,0 +1,82 @@
+name: Audit Cardmarket YGO Source Schema
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-yugioh-source-schema.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Download current official Cardmarket YGO singles feed
+        run: |
+          curl --retry 4 --retry-delay 2 --fail --location --silent --show-error \
+            'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json' \
+            -o /tmp/ygo-singles.json
+      - name: Inventory every source key before Don’tRipIt parsing
+        run: |
+          python - <<'PY'
+          import json,re
+          from collections import Counter,defaultdict
+          from pathlib import Path
+
+          payload=json.loads(Path('/tmp/ygo-singles.json').read_text(encoding='utf-8-sig'))
+          if isinstance(payload,dict):
+              rows=payload.get('products') or payload.get('data') or payload.get('items') or []
+              root_keys=sorted(payload.keys())
+              created=payload.get('createdAt') or payload.get('created_at')
+          elif isinstance(payload,list):
+              rows=payload;root_keys=[];created=None
+          else: raise AssertionError(type(payload).__name__)
+          if not isinstance(rows,list) or not rows: raise AssertionError('no product rows')
+          key_counts=Counter();types=defaultdict(Counter);nonempty=Counter();examples=defaultdict(list)
+          identity_tokens=('rar','number','num','collector','version','edition','lang','foil','variant','finish','print','code','set','expansion','meta','product','category')
+          for row in rows:
+              if not isinstance(row,dict): continue
+              for k,v in row.items():
+                  key_counts[k]+=1;types[k][type(v).__name__]+=1
+                  if v not in (None,'',[],{}):
+                      nonempty[k]+=1
+                      sv=str(v)
+                      if sv not in examples[k] and len(examples[k])<12: examples[k].append(sv[:240])
+          identity_keys=[k for k in key_counts if any(t in k.casefold() for t in identity_tokens)]
+          report={
+            'source_url':'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json',
+            'created_at':created,'root_keys':root_keys,'rows':len(rows),
+            'all_row_keys':sorted(key_counts),'key_counts':dict(key_counts),
+            'nonempty_counts':dict(nonempty),'types':{k:dict(v) for k,v in types.items()},
+            'identity_like_keys':identity_keys,
+            'identity_like_examples':{k:examples[k] for k in identity_keys},
+            'all_key_examples':{k:examples[k] for k in sorted(key_counts)},
+          }
+          Path('/tmp/ygo-source-schema.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          summary={k:v for k,v in report.items() if k!='all_key_examples'}
+          Path('/tmp/ygo-source-schema-summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False)+'\n')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/ygo-source-schema-summary.json audit-reports/cardmarket-yugioh-source-schema-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/cardmarket-yugioh-source-schema-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Update raw Cardmarket YGO source schema audit'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-yugioh-source-schema-${{ github.run_id }}
+          path: /tmp/ygo-source-schema.json
+          retention-days: 90
