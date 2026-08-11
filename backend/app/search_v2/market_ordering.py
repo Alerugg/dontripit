@@ -29,18 +29,22 @@ def _safe_game_slug(value: object) -> str:
 
 
 def current_cardmarket_price_join(*, print_id: str, game_slug: str) -> str:
-    """Return a current-only exact Cardmarket price lateral join.
+    """Return the accepted exact Cardmarket reference plus its current price.
 
-    The game is compiled as a safe constant so PostgreSQL can evaluate the
-    latest PriceGuide capture once per query instead of once per candidate row.
-    A canonical snapshot is still accepted only when its idProduct matches the
-    single accepted physical Cardmarket identity for the Print.
+    The physical mapping is resolved once per candidate Print. Price is optional
+    and must belong to the latest Cardmarket PriceGuide capture for the game and
+    carry that same idProduct. Search can therefore order globally before
+    pagination and render the exact market link without a second API round-trip.
     """
     slug = _safe_game_slug(game_slug)
     game_id_sql = f"(SELECT id FROM games WHERE slug = '{slug}')"
     return f"""
       LEFT JOIN LATERAL (
         SELECT
+          ref.external_product_id AS cardmarket_external_product_id,
+          ref.id_product AS cardmarket_id_product,
+          ref.product_name AS cardmarket_product_name,
+          ref.website_path AS cardmarket_website_path,
           COALESCE(
             NULLIF(ps.price_mid, 0),
             NULLIF(ps.price_market, 0),
@@ -49,39 +53,46 @@ def current_cardmarket_price_join(*, print_id: str, game_slug: str) -> str:
           ) AS cardmarket_price,
           ps.currency AS cardmarket_currency,
           ps.as_of AS cardmarket_as_of
-        FROM price_snapshots ps
-        JOIN price_sources src ON src.id = ps.source_id AND src.name = 'cardmarket'
-        WHERE ps.entity_type = 'print'
-          AND ps.entity_id = {print_id}
-          AND ps.currency = 'EUR'
-          AND ps.as_of = (
-            SELECT MAX(mp.as_of)
-            FROM external_market_price_snapshots mp
-            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
-            WHERE ep.source = 'cardmarket'
-              AND ep.product_group = 'single'
-              AND ep.game_id = {game_id_sql}
-          )
-          AND COALESCE(
-            NULLIF(ps.price_mid, 0),
-            NULLIF(ps.price_market, 0),
-            NULLIF(ps.price_last, 0),
-            NULLIF(ps.price_low, 0)
-          ) IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM external_catalog_print_links l
-            JOIN external_catalog_products e ON e.id = l.external_product_id
-            WHERE l.print_id = {print_id}
-              AND e.source = 'cardmarket'
-              AND e.product_group = 'single'
-              AND e.game_id = {game_id_sql}
-              AND l.link_status IN ('accepted', 'mapped', 'exact')
-              AND e.external_id = COALESCE(ps.raw_json ->> 'idProduct', '')
-            GROUP BY l.print_id
-            HAVING COUNT(DISTINCT e.id) = 1
-          )
-        ORDER BY ps.id DESC
+        FROM LATERAL (
+          SELECT
+            MIN(e.id) AS external_product_id,
+            MIN(e.external_id) AS id_product,
+            MIN(e.name) AS product_name,
+            MIN(e.website_path) AS website_path
+          FROM external_catalog_print_links l
+          JOIN external_catalog_products e ON e.id = l.external_product_id
+          WHERE l.print_id = {print_id}
+            AND e.source = 'cardmarket'
+            AND e.product_group = 'single'
+            AND e.game_id = {game_id_sql}
+            AND l.link_status IN ('accepted', 'mapped', 'exact')
+          HAVING COUNT(DISTINCT e.id) = 1
+        ) ref
+        LEFT JOIN LATERAL (
+          SELECT ps.*
+          FROM price_snapshots ps
+          JOIN price_sources src ON src.id = ps.source_id AND src.name = 'cardmarket'
+          WHERE ps.entity_type = 'print'
+            AND ps.entity_id = {print_id}
+            AND ps.currency = 'EUR'
+            AND ps.as_of = (
+              SELECT MAX(mp.as_of)
+              FROM external_market_price_snapshots mp
+              JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+              WHERE ep.source = 'cardmarket'
+                AND ep.product_group = 'single'
+                AND ep.game_id = {game_id_sql}
+            )
+            AND COALESCE(ps.raw_json ->> 'idProduct', '') = ref.id_product
+            AND COALESCE(
+              NULLIF(ps.price_mid, 0),
+              NULLIF(ps.price_market, 0),
+              NULLIF(ps.price_last, 0),
+              NULLIF(ps.price_low, 0)
+            ) IS NOT NULL
+          ORDER BY ps.id DESC
+          LIMIT 1
+        ) ps ON TRUE
         LIMIT 1
       ) cm ON TRUE
     """
