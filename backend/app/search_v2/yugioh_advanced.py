@@ -165,6 +165,7 @@ def advanced_yugioh_search(
             psp.attributes_json AS print_attributes,
             csp.attributes_json AS card_attributes,
             COUNT(*) OVER () AS total_count,
+            cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,
             cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
             ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
           FROM print_search_profiles psp
@@ -194,6 +195,7 @@ def advanced_yugioh_search(
           matched.release_names_json,
           matched.card_attributes,
           matched.print_attributes,
+          matched.cardmarket_external_product_id, matched.cardmarket_id_product, matched.cardmarket_product_name, matched.cardmarket_website_path,
           matched.cardmarket_price, matched.cardmarket_currency, matched.cardmarket_as_of,
           (
             SELECT pi.url FROM print_images pi
@@ -233,6 +235,10 @@ def advanced_yugioh_search(
                 "variant_family": row["variant_family"],
                 "primary_image_url": row["primary_image_url"],
                 "attributes": attrs,
+                "cardmarket_external_product_id": row["cardmarket_external_product_id"],
+                "cardmarket_id_product": row["cardmarket_id_product"],
+                "cardmarket_product_name": row["cardmarket_product_name"],
+                "cardmarket_website_path": row["cardmarket_website_path"],
                 "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
                 "cardmarket_currency": row["cardmarket_currency"],
                 "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],

@@ -251,7 +251,8 @@ def advanced_pokemon_search(
                 p.collector_number AS sort_collector_number,
                 COALESCE(psp.variant_family, '') AS sort_variant_family,
                 COALESCE(psp.exact_variant, '') AS sort_exact_variant
-              ,cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
+              ,cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,
+                cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
                 ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
               {filter_from}
               WHERE {where_sql}
@@ -273,6 +274,7 @@ def advanced_pokemon_search(
               psp.exact_variant,
               psp.variant_family,
               psp.attributes_json,
+              m.cardmarket_external_product_id, m.cardmarket_id_product, m.cardmarket_product_name, m.cardmarket_website_path,
               m.cardmarket_price, m.cardmarket_currency, m.cardmarket_as_of,
               (
                 SELECT pi.url FROM print_images pi
@@ -309,6 +311,10 @@ def advanced_pokemon_search(
             "variant_family": row["variant_family"],
             "attributes": row["attributes_json"] or {},
             "primary_image_url": row["primary_image_url"],
+            "cardmarket_external_product_id": row["cardmarket_external_product_id"],
+            "cardmarket_id_product": row["cardmarket_id_product"],
+            "cardmarket_product_name": row["cardmarket_product_name"],
+            "cardmarket_website_path": row["cardmarket_website_path"],
             "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
             "cardmarket_currency": row["cardmarket_currency"],
             "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],

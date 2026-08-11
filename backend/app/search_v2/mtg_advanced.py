@@ -141,6 +141,7 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sor
         WITH matched AS MATERIALIZED (
           SELECT psp.print_id,psp.card_id,psp.attributes_json AS print_attributes,
                  csp.attributes_json AS card_attributes,COUNT(*) OVER() AS total_count,
+                 cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,
                  cm.cardmarket_price,cm.cardmarket_currency,cm.cardmarket_as_of,
                  ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
           FROM print_search_profiles psp
@@ -156,6 +157,7 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sor
         SELECT matched.total_count,p.id AS print_id,c.id AS card_id,c.card_key,c.name,
                s.code AS set_code,s.name AS set_name,p.collector_number,p.language,p.rarity,
                psp.exact_variant,psp.variant_family,matched.card_attributes,matched.print_attributes,
+               matched.cardmarket_external_product_id,matched.cardmarket_id_product,matched.cardmarket_product_name,matched.cardmarket_website_path,
                matched.cardmarket_price,matched.cardmarket_currency,matched.cardmarket_as_of,
                (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC,pi.id LIMIT 1) AS primary_image_url
         FROM matched
@@ -175,6 +177,10 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sor
             "collector_number":row["collector_number"],"language":row["language"],"rarity":row["rarity"],
             "exact_variant":row["exact_variant"],"variant_family":row["variant_family"],
             "primary_image_url":row["primary_image_url"],"attributes":attrs,
+            "cardmarket_external_product_id":row["cardmarket_external_product_id"],
+            "cardmarket_id_product":row["cardmarket_id_product"],
+            "cardmarket_product_name":row["cardmarket_product_name"],
+            "cardmarket_website_path":row["cardmarket_website_path"],
             "cardmarket_price":float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
             "cardmarket_currency":row["cardmarket_currency"],
             "cardmarket_as_of":row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"],"isoformat") else row["cardmarket_as_of"],
