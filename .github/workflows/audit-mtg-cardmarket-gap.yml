@@ -1,0 +1,41 @@
+name: Audit MTG Cardmarket Gap
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-cardmarket-gap.yml'
+      - 'backend/scripts/audit_mtg_cardmarket_gap.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Classify remaining MTG gap
+        working-directory: backend
+        run: python scripts/audit_mtg_cardmarket_gap.py --report /tmp/mtg-cardmarket-gap.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-cardmarket-gap-${{ github.run_id }}
+          path: /tmp/mtg-cardmarket-gap.json
+          retention-days: 30
+          if-no-files-found: error
