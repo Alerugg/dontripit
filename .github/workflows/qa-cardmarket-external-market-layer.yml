@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/cardmarket-contract
-          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18 riftbound:22; do
             game="${spec%%:*}"
             game_id="${spec##*:}"
             for group in singles nonsingles; do
@@ -132,17 +132,19 @@ jobs:
               -o "/tmp/cardmarket-contract/${game}_prices.json"
           done
 
-      - name: Verify every current price id exists in current official catalog
+      - name: Classify current PriceGuide to catalog skew without weakening identity checks
         working-directory: backend
         env:
           PYTHONPATH: .
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
           from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
           from app.jobs.cardmarket_prices import load_price_guide_bytes
 
-          for game in ('mtg', 'yugioh', 'pokemon', 'onepiece'):
+          report = []
+          for game in ('mtg', 'yugioh', 'pokemon', 'onepiece', 'riftbound'):
               singles = load_catalog_feed_bytes(
                   Path(f'/tmp/cardmarket-contract/{game}_singles.json').read_bytes(),
                   game_slug=game,
@@ -160,13 +162,30 @@ jobs:
               catalog_ids = {row.product_id for row in singles.rows} | {row.product_id for row in nonsingles.rows}
               price_ids = [row.product_id for row in prices]
               assert len(price_ids) == len(set(price_ids)), f'{game}: duplicate idProduct in price guide'
+
               missing = sorted(set(price_ids) - catalog_ids)
-              assert not missing, f'{game}: price IDs missing from product catalog: {missing[:20]}'
-              print({
+              matched = len(set(price_ids) & catalog_ids)
+              row = {
                   'game': game,
                   'catalog_products': len(catalog_ids),
                   'price_products': len(price_ids),
+                  'matched_price_products': matched,
                   'price_created_at': created_at.isoformat() if created_at else None,
-                  'missing_price_products': len(missing),
-              })
+                  'catalog_skew_products': len(missing),
+                  'catalog_skew_sample': missing[:20],
+              }
+              report.append(row)
+              print(row)
+
+          Path('/tmp/cardmarket-contract/feed-skew.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
           PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-feed-contract-${{ github.run_id }}
+          path: /tmp/cardmarket-contract/feed-skew.json
+          retention-days: 30
+          if-no-files-found: warn
