@@ -122,9 +122,10 @@ jobs:
                       rows.append((int(m['external_product_id']),int(c['print_id']),METHOD,'exact','accepted',False,Json(evidence)))
                   execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
                     ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',rows,page_size=500)
-                  cur.execute('''SELECT count(*),count(DISTINCT print_id),count(DISTINCT external_product_id) FROM external_catalog_print_links
+                  cur.execute('''SELECT count(*) links,count(DISTINCT print_id) prints,count(DISTINCT external_product_id) products FROM external_catalog_print_links
                     WHERE mapping_method=%s AND link_status='accepted' ''',(METHOD,))
-                  stored=tuple(map(int,cur.fetchone().values()))
+                  stored_row=cur.fetchone()
+                  stored=(int(stored_row['links']),int(stored_row['prints']),int(stored_row['products']))
                   if stored!=(31,31,31): raise AssertionError({'stored':stored})
                   cur.execute('''SELECT count(DISTINCT l.print_id) mapped FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                     JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
