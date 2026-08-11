@@ -1,0 +1,181 @@
+name: Audit Cardmarket Point 1 Final Gate V3
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-point1-final-gate-v3.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: audit-cardmarket-point1-final-gate-v3
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Static price-contract and retired-writer checks
+        run: |
+          python -m py_compile \
+            backend/app/routes/catalog.py \
+            backend/app/routes/market_reference.py \
+            backend/app/routes/market_print_summary.py \
+            backend/app/routes/market_search_read.py \
+            backend/app/routes/market_current_products.py \
+            backend/app/routes/user_library.py \
+            backend/app/jobs/cardmarket_link_price_projection.py
+          python - <<'PY'
+          from pathlib import Path
+          required={
+            'backend/app/routes/market_reference.py':['latest_game_capture','no_current_cardmarket_priceguide_row','_positive_float'],
+            'backend/app/routes/market_print_summary.py':['latest_game_capture','COALESCE(ps.raw_json ->> \'idProduct\'','_positive_number'],
+            'backend/app/routes/market_search_read.py':['latest_capture','current_price'],
+            'backend/app/routes/market_current_products.py':['latest_price_capture','latest_cardmarket_game_capture_only'],
+            'backend/app/routes/catalog.py':['latest_price_capture AS','meaningful_price = False'],
+            'backend/app/routes/user_library.py':['_current_cardmarket_price','current-only and Cardmarket-only'],
+            'backend/app/jobs/cardmarket_link_price_projection.py':['_prune_stale_cardmarket_snapshots'],
+          }
+          for path,tokens in required.items():
+            text=Path(path).read_text()
+            missing=[t for t in tokens if t not in text]
+            if missing: raise AssertionError({path:missing})
+          for path in [
+            '.github/workflows/apply-onepiece-cardmarket-residual-bijection.yml',
+            '.github/workflows/apply-onepiece-cardmarket-trusted-expansion-bridge.yml',
+            '.github/workflows/apply-onepiece-explicit-crosswalk-global.yml',
+          ]:
+            text=Path(path).read_text().lower()
+            if 'retired' not in text: raise AssertionError(f'unsafe One Piece writer not retired: {path}')
+          op=__import__('json').loads(Path('audit-reports/onepiece-cardmarket-physical-release-gate-v2-apply.json').read_text())
+          assert op['classification']=={'release_consistent_standard_en':2640,'release_mismatch':53,'release_unproven':1064},op
+          assert op['quarantined_links']==1117,op
+          assert op['by_method']['op_variant_cm_global_exact']['release_consistent_standard_en']==2104,op
+          print('static_contracts=PASS')
+          PY
+      - name: Fast production DB identity gate
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          A=('accepted','mapped','exact')
+          EXPECTED_PRINTS={'mtg':147851,'onepiece':2641,'pokemon':24341,'yugioh':24253}
+          EXPECTED_SEALED={'mtg':5031,'onepiece':753,'pokemon':5006,'yugioh':2385}
+          EXPECTED_METHODS={
+            'mtg':{'scryfall_cardmarket_id':147851},
+            'onepiece':{
+              'op_variant_cm_global_exact':2104,'bandai_release_exact':315,'op_variant_cm_exact':195,
+              'bandai_trusted_expansion_exact':18,'bandai_sealed_residual_exact':8,'bandai_physical_release_unique_exact':1,
+            },
+            'pokemon':{'tcgdex_cardmarket_id':24337,'pokemon_cardmarket_identity_certified':4},
+            'yugioh':{'sealed_expansion_exact_name':22253,'ygo_konami_product_name_exact':1864,'ygo_konami_release_exact':93,'ygo_konami_subrelease_exact':43},
+          }
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.autocommit=True
+          report={'pass':False,'hard_failures':[],'singles':{},'sealed':{},'certifications':{},'regressions':{},'policy':{
+            'display_only_exact_physical_mapping':True,
+            'missing_current_price_is_null':True,
+            'sibling_reprint_price_fallback':False,
+            'riftbound_excluded':True,
+          }}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET statement_timeout='90s'")
+              c.execute("SELECT id,slug FROM games WHERE slug IN ('mtg','onepiece','pokemon','yugioh')")
+              games={r['slug']:int(r['id']) for r in c.fetchall()}
+              for slug,expected in EXPECTED_PRINTS.items():
+                gid=games[slug]
+                c.execute('''SELECT count(*) links,count(DISTINCT l.print_id) prints
+                  FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)''',(gid,list(A)))
+                x=c.fetchone();links=int(x['links']);prints=int(x['prints'])
+                c.execute('''SELECT count(*) n FROM (SELECT l.print_id FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
+                  GROUP BY l.print_id HAVING count(DISTINCT e.id)<>1) q''',(gid,list(A)))
+                ambiguous=int(c.fetchone()['n'])
+                c.execute('''SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN cards ca ON ca.id=p.card_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND ca.game_id<>e.game_id''',(gid,list(A)))
+                cross=int(c.fetchone()['n'])
+                c.execute('''SELECT l.mapping_method,count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
+                  GROUP BY l.mapping_method ORDER BY l.mapping_method''',(gid,list(A)))
+                methods={str(r['mapping_method']):int(r['n']) for r in c.fetchall()}
+                report['singles'][slug]={'accepted_links':links,'accepted_exact_prints':prints,'ambiguous_prints':ambiguous,'cross_game_links':cross,'methods':methods}
+                if links!=expected or prints!=expected:report['hard_failures'].append(f'{slug}:accepted exact count {links}/{prints} != {expected}')
+                if ambiguous:report['hard_failures'].append(f'{slug}:ambiguous={ambiguous}')
+                if cross:report['hard_failures'].append(f'{slug}:cross_game={cross}')
+                if methods!=EXPECTED_METHODS[slug]:report['hard_failures'].append(f'{slug}:method_counts_changed {methods}')
+
+              # Current sealed identity is complete for every current product; no price assumption here.
+              for slug,expected in EXPECTED_SEALED.items():
+                gid=games[slug]
+                c.execute("SELECT max(last_seen_at) seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,));latest=c.fetchone()['seen']
+                c.execute('''WITH current AS (
+                    SELECT id FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s
+                  ), lc AS (
+                    SELECT cur.id,count(DISTINCT l.product_variant_id) n,min(p.game_id) canonical_game,count(DISTINCT p.game_id) game_count
+                    FROM current cur LEFT JOIN external_catalog_product_variant_links l ON l.external_product_id=cur.id AND l.link_status=ANY(%s)
+                    LEFT JOIN product_variants pv ON pv.id=l.product_variant_id LEFT JOIN products p ON p.id=pv.product_id GROUP BY cur.id
+                  )
+                  SELECT count(*) total,count(*) FILTER(WHERE n=1 AND game_count=1 AND canonical_game=%s) exact,
+                         count(*) FILTER(WHERE n=0) missing,count(*) FILTER(WHERE n>1) multi,
+                         count(*) FILTER(WHERE n>0 AND (game_count<>1 OR canonical_game<>%s)) cross
+                  FROM lc''',(gid,latest,list(A),gid,gid))
+                x=c.fetchone();row={k:int(x[k]) for k in ('total','exact','missing','multi','cross')};report['sealed'][slug]=row
+                if row['total']!=expected or row['exact']!=expected or row['missing'] or row['multi'] or row['cross']:
+                  report['hard_failures'].append(f'sealed:{slug}:{row} expected_total={expected}')
+
+              # Reviewed certification invariants.
+              c.execute("SELECT count(*) n FROM external_catalog_print_links WHERE mapping_method='pokemon_cardmarket_identity_certified' AND confidence='exact' AND link_status=ANY(%s) AND reviewed=true",(list(A),));pc=int(c.fetchone()['n'])
+              c.execute("SELECT count(*) n FROM external_catalog_print_links WHERE mapping_method='ygo_konami_subrelease_exact' AND confidence='exact' AND link_status=ANY(%s) AND reviewed=true",(list(A),));yc=int(c.fetchone()['n'])
+              report['certifications']={'pokemon_reviewed_overrides':pc,'yugioh_reviewed_subreleases':yc}
+              if pc!=4:report['hard_failures'].append(f'pokemon:reviewed_override_count={pc}')
+              if yc!=43:report['hard_failures'].append(f'yugioh:reviewed_subrelease_count={yc}')
+
+              # Regression that exposed the original physical-version bug.
+              c.execute('''SELECT e.external_id id_product,e.expansion_external_id,l.mapping_method,l.link_status
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=44257 AND e.source='cardmarket' ORDER BY l.link_status,e.external_id''')
+              all_44257=[dict(r) for r in c.fetchall()]
+              accepted=[r for r in all_44257 if r['link_status'] in A]
+              report['regressions']['onepiece_44257']={'all_links':all_44257,'accepted':accepted}
+              if len(accepted)!=1 or str(accepted[0]['id_product'])!='720061':report['hard_failures'].append(f'onepiece:44257={accepted}')
+              if not any(str(r['id_product'])=='749435' and r['link_status']=='quarantined' for r in all_44257):report['hard_failures'].append('onepiece:749435_not_quarantined')
+
+              report['pass']=not report['hard_failures']
+          finally:conn.close()
+          Path('/tmp/cardmarket-point1-final-gate-v3.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          if not report['pass']:raise SystemExit(2)
+          PY
+      - name: Persist closure report
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/cardmarket-point1-final-gate-v3.json audit-reports/cardmarket-point1-final-gate-v3.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/cardmarket-point1-final-gate-v3.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record Cardmarket point 1 final closure gate'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-point1-final-gate-v3-${{ github.run_id }}
+          path: /tmp/cardmarket-point1-final-gate-v3.json
+          retention-days: 90
