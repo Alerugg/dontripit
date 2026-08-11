@@ -1,0 +1,255 @@
+name: Audit Cardmarket Point 1 Final Gate V2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-point1-final-gate-v2.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: audit-cardmarket-point1-final-gate-v2
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Run closure gate
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACTIVE=('mtg','onepiece','pokemon','yugioh')
+          ACCEPTED=('accepted','mapped','exact')
+          def norm(v):
+            s=unicodedata.normalize('NFKD',str(v or '')).casefold();s=''.join(c for c in s if not unicodedata.combining(c)).replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',s)).strip()
+          YGO_SUFFIXES=(' booster box case',' booster case',' booster display',' booster box',' display',' booster',' structure deck',' starter deck',' speed duel box',' speed duel starter deck',' special edition',' tin',' mega tin',' box',' case')
+          YGO_PREFIXES=('yugioh ','yu gi oh ')
+          def ygo_bases(name):
+            raw=norm(name);out={raw};changed=True
+            while changed:
+              changed=False
+              for p in YGO_PREFIXES:
+                if raw.startswith(p) and len(raw)>len(p):raw=raw[len(p):].strip();out.add(raw);changed=True
+              for s in YGO_SUFFIXES:
+                if raw.endswith(s) and len(raw)>len(s):raw=raw[:-len(s)].strip();out.add(raw);changed=True
+            return {x for x in out if x}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          out={'gate':'cardmarket-point1-v2','pass':False,'hard_failures':[],'singles':{},'sealed':{},'regressions':{},'certifications':{},'policy':{
+            'wrong_price_for_sibling_physical_version':'forbidden',
+            'unresolved_exact_identity':'show_no_cardmarket_price',
+            'accepted_mapping_without_meaningful_current_price':'show_no_cardmarket_price',
+            'riftbound':'excluded_pending_riot_production_api'
+          }}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id,slug FROM games WHERE slug=ANY(%s)",(list(ACTIVE),));games={r['slug']:int(r['id']) for r in cur.fetchall()}
+              cur.execute("SELECT id FROM price_sources WHERE name='cardmarket' LIMIT 1");pr=cur.fetchone();source_id=int(pr['id']) if pr else None
+
+              # Exact singles integrity and transparent coverage.
+              for slug in ACTIVE:
+                gid=games[slug]
+                cur.execute("SELECT count(*) n FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(gid,));canonical=int(cur.fetchone()['n'])
+                cur.execute("SELECT max(last_seen_at) seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,));latest=cur.fetchone()['seen']
+                cur.execute('''SELECT count(*) links,count(DISTINCT l.print_id) mapped_prints,count(DISTINCT l.external_product_id) mapped_products
+                  FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)''',(gid,list(ACCEPTED)))
+                x=dict(cur.fetchone());links=int(x['links']);mapped=int(x['mapped_prints']);products=int(x['mapped_products'])
+                cur.execute('''SELECT count(*) n FROM (
+                  SELECT l.print_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
+                  GROUP BY l.print_id HAVING count(DISTINCT e.id)<>1) q''',(gid,list(ACCEPTED)));amb=int(cur.fetchone()['n'])
+                cur.execute('''SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND c.game_id<>e.game_id''',(gid,list(ACCEPTED)));cross=int(cur.fetchone()['n'])
+                cur.execute('''SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND e.last_seen_at<>%s''',(gid,list(ACCEPTED),latest));noncurrent=int(cur.fetchone()['n'])
+                cur.execute('''SELECT l.mapping_method,count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) GROUP BY l.mapping_method ORDER BY n DESC''',(gid,list(ACCEPTED)))
+                methods={str(r['mapping_method']):int(r['n']) for r in cur.fetchall()}
+                # Current external price availability through accepted exact mapping, using same finish semantics as projector.
+                cur.execute('''WITH accepted AS (
+                    SELECT l.print_id,min(e.id) external_product_id,min(e.external_id) id_product,count(DISTINCT e.id) n
+                    FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
+                    GROUP BY l.print_id
+                  ), latest_market AS (
+                    SELECT max(mp.as_of) as_of FROM external_market_price_snapshots mp JOIN external_catalog_products e ON e.id=mp.external_product_id
+                    WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                  )
+                  SELECT count(*) FILTER (WHERE a.n=1 AND EXISTS(
+                    SELECT 1 FROM external_market_price_snapshots mp, latest_market lm
+                    WHERE mp.external_product_id=a.external_product_id AND mp.as_of=lm.as_of AND mp.currency='EUR'
+                      AND (coalesce(mp.price_low,0)>0 OR coalesce(mp.price_mid,0)>0 OR coalesce(mp.price_market,0)>0 OR coalesce(mp.price_last,0)>0 OR coalesce(mp.avg1,0)>0 OR coalesce(mp.avg7,0)>0 OR coalesce(mp.avg30,0)>0)
+                  )) price_available
+                  FROM accepted a''',(gid,list(ACCEPTED),gid))
+                price_available=int(cur.fetchone()['price_available'] or 0)
+                stale=0
+                if source_id:
+                  cur.execute('''WITH accepted AS (
+                      SELECT l.print_id,min(e.external_id) id_product,count(DISTINCT e.id) n
+                      FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                      WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) GROUP BY l.print_id
+                    ), latest_ps AS (
+                      SELECT DISTINCT ON (ps.entity_id) ps.entity_id print_id,ps.raw_json FROM price_snapshots ps
+                      JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id
+                      WHERE ps.source_id=%s AND ps.entity_type='print' AND c.game_id=%s ORDER BY ps.entity_id,ps.as_of DESC,ps.id DESC
+                    )
+                    SELECT count(*) n FROM latest_ps ps LEFT JOIN accepted a ON a.print_id=ps.print_id
+                    WHERE a.print_id IS NULL OR a.n<>1 OR coalesce(ps.raw_json->>'idProduct','')<>coalesce(a.id_product,'')''',(gid,list(ACCEPTED),source_id,gid));stale=int(cur.fetchone()['n'])
+                out['singles'][slug]={
+                  'canonical_prints':canonical,'accepted_links':links,'accepted_exact_prints':mapped,'accepted_exact_products':products,
+                  'unresolved_exact_identity':max(canonical-mapped,0),'accepted_with_meaningful_current_external_price':price_available,
+                  'accepted_without_meaningful_current_external_price':max(mapped-price_available,0),'ambiguous_accepted_prints':amb,
+                  'cross_game_links':cross,'accepted_links_to_noncurrent_products':noncurrent,'stale_or_mismatched_latest_snapshots':stale,
+                  'methods':methods,'cardmarket_capture':str(latest)
+                }
+                for name,val in [('accepted_link_cardinality_mismatch',abs(links-mapped)),('accepted_product_cardinality_mismatch',abs(products-mapped)),('ambiguous_accepted_prints',amb),('cross_game_links',cross),('accepted_links_to_noncurrent_products',noncurrent),('stale_or_mismatched_latest_snapshots',stale)]:
+                  if val:out['hard_failures'].append(f'{slug}:{name}={val}')
+
+              # MTG must be source-explicit Scryfall identities only.
+              if set(out['singles']['mtg']['methods'])!={'scryfall_cardmarket_id'}:out['hard_failures'].append('mtg:unexpected_mapping_methods')
+
+              # Pokemon source contract: 24,337 TCGdex exact IDs plus four reviewed semantic overrides.
+              pgid=games['pokemon']
+              cur.execute('''SELECT l.print_id,e.external_id,l.mapping_method,l.reviewed,l.evidence,e.name market_name,c.name card_name,pi.external_id legacy_id,
+                    pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_id,
+                    pa.attributes_json #>> '{third_party,cardmarket}' card_id
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                LEFT JOIN print_identifiers pi ON pi.print_id=p.id AND pi.source='cardmarket'
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)''',(pgid,list(ACCEPTED)))
+              pokemon=[dict(r) for r in cur.fetchall()];bad_direct=[];cert=[]
+              for r in pokemon:
+                ext=str(r['external_id']);method=str(r['mapping_method'])
+                if method=='tcgdex_cardmarket_id':
+                  declared=str(r['physical_id'] or r['card_id'] or '')
+                  if declared!=ext:bad_direct.append({'print_id':r['print_id'],'idProduct':ext,'declared':declared})
+                elif method=='pokemon_cardmarket_identity_certified':
+                  ev=r['evidence'] if isinstance(r['evidence'],dict) else {}
+                  ok=bool(r['reviewed']) and str(r['legacy_id'] or '')==ext and norm(r['market_name'])==norm(r['card_name']) and ev.get('certification')=='cardmarket_semantic_identity_exact'
+                  cert.append({'print_id':int(r['print_id']),'idProduct':ext,'ok':ok,'source_conflict':ev.get('source_conflict')})
+                else:out['hard_failures'].append(f"pokemon:unexpected_mapping_method={method}")
+              out['certifications']['pokemon']={'tcgdex_exact_rows':sum(r['mapping_method']=='tcgdex_cardmarket_id' for r in pokemon),'tcgdex_id_mismatches':len(bad_direct),'certified_overrides':cert}
+              if bad_direct:out['hard_failures'].append(f'pokemon:tcgdex_id_mismatches={len(bad_direct)}')
+              if len(cert)!=4 or any(not x['ok'] for x in cert):out['hard_failures'].append('pokemon:four_certified_overrides_not_intact')
+
+              # YGO: exact subrelease certifications are accepted; generic old links must not contradict non-empty official membership under an independent product-name anchor.
+              ygid=games['yugioh']
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='konami_neuron'",(ygid,));rels=[dict(r) for r in cur.fetchall()];rel_by_name=defaultdict(list)
+              for r in rels:rel_by_name[norm(r['name'])].append(r)
+              cur.execute("SELECT print_id,release_id FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id WHERE cr.game_id=%s AND cr.source='konami_neuron'",(ygid,));memberships=defaultdict(set)
+              for r in cur.fetchall():memberships[int(r['print_id'])].add(int(r['release_id']))
+              cur.execute("SELECT max(last_seen_at) seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(ygid,));ylatest=cur.fetchone()['seen']
+              cur.execute("SELECT external_id,expansion_external_id,name FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s",(ygid,ylatest));byexp=defaultdict(list)
+              for r in cur.fetchall():byexp[str(r['expansion_external_id'] or '')].append(dict(r))
+              anchors={}
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for base in ygo_bases(item['name']):
+                    m=rel_by_name.get(base,[])
+                    if len(m)==1:votes[int(m[0]['id'])].append(item)
+                if len(votes)==1:anchors[exp]=next(iter(votes))
+              cur.execute('''SELECT l.print_id,e.expansion_external_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND l.mapping_method='sealed_expansion_exact_name' ''',(ygid,list(ACCEPTED)))
+              generic=[dict(r) for r in cur.fetchall()];true_contradictions=[];official_matches=0;source_membership_gaps=0
+              for r in generic:
+                anchor=anchors.get(str(r['expansion_external_id'] or ''));official=memberships.get(int(r['print_id']),set())
+                if not anchor:continue
+                if not official:source_membership_gaps+=1;continue
+                if anchor in official:official_matches+=1
+                else:true_contradictions.append({'print_id':int(r['print_id']),'expansion':str(r['expansion_external_id']),'anchor_release_id':anchor,'official_release_ids':sorted(official)})
+              cur.execute('''SELECT l.print_id,e.external_id id_product,l.reviewed,l.evidence FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s) AND l.mapping_method='ygo_konami_subrelease_exact' ''',(ygid,list(ACCEPTED)))
+              sub=[dict(r) for r in cur.fetchall()];sub_bad=[]
+              for r in sub:
+                ev=r['evidence'] if isinstance(r['evidence'],dict) else {}
+                rid=ev.get('official_konami_release_id');ok=bool(r['reviewed']) and ev.get('certification')=='konami_official_subrelease_exact' and rid in memberships.get(int(r['print_id']),set()) and str(ev.get('cardmarket_idProduct'))==str(r['id_product'])
+                if not ok:sub_bad.append({'print_id':r['print_id'],'idProduct':r['id_product']})
+              out['certifications']['yugioh']={'generic_exact_rows':len(generic),'generic_rows_with_official_anchor_membership_match':official_matches,'generic_rows_with_missing_konami_membership_data':source_membership_gaps,'generic_true_official_contradictions':len(true_contradictions),'certified_official_subrelease_rows':len(sub),'invalid_subrelease_certifications':len(sub_bad)}
+              if true_contradictions:out['hard_failures'].append(f'yugioh:generic_true_official_contradictions={len(true_contradictions)}')
+              if len(sub)!=43 or sub_bad:out['hard_failures'].append('yugioh:43_subrelease_certifications_not_intact')
+
+              # All current Cardmarket sealed products must have an exact one-to-one canonical identity; pricing availability is separate.
+              for slug in ACTIVE:
+                gid=games[slug]
+                cur.execute("SELECT max(last_seen_at) seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,));latest=cur.fetchone()['seen']
+                cur.execute('''WITH current AS (
+                    SELECT id,external_id FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s
+                  ), links AS (
+                    SELECT c.id external_product_id,c.external_id,count(DISTINCT l.product_variant_id) n,min(l.product_variant_id) variant_id
+                    FROM current c LEFT JOIN external_catalog_product_variant_links l ON l.external_product_id=c.id AND l.link_status=ANY(%s)
+                    GROUP BY c.id,c.external_id
+                  )
+                  SELECT count(*) total,count(*) FILTER(WHERE n=1) mapped,count(*) FILTER(WHERE n=0) missing,count(*) FILTER(WHERE n>1) multi FROM links''',(gid,latest,list(ACCEPTED)));q=cur.fetchone();total=int(q['total']);mapped=int(q['mapped']);missing=int(q['missing']);multi=int(q['multi'])
+                cur.execute('''WITH current AS (
+                    SELECT e.id,e.external_id FROM external_catalog_products e WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='non_single' AND e.last_seen_at=%s
+                  ) SELECT count(*) n FROM current c JOIN external_catalog_product_variant_links l ON l.external_product_id=c.id AND l.link_status=ANY(%s)
+                    JOIN product_variants pv ON pv.id=l.product_variant_id JOIN products p ON p.id=pv.product_id WHERE p.game_id<>%s''',(gid,latest,list(ACCEPTED),gid));cross=int(cur.fetchone()['n'])
+                cur.execute('''WITH current AS (
+                    SELECT e.id FROM external_catalog_products e WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='non_single' AND e.last_seen_at=%s
+                  ), lm AS (
+                    SELECT max(mp.as_of) as_of FROM external_market_price_snapshots mp JOIN current c ON c.id=mp.external_product_id
+                  ) SELECT count(DISTINCT c.id) priced FROM current c, lm WHERE EXISTS(
+                    SELECT 1 FROM external_market_price_snapshots mp WHERE mp.external_product_id=c.id AND mp.as_of=lm.as_of AND mp.currency='EUR'
+                    AND (coalesce(mp.price_low,0)>0 OR coalesce(mp.price_mid,0)>0 OR coalesce(mp.price_market,0)>0 OR coalesce(mp.price_last,0)>0 OR coalesce(mp.avg1,0)>0 OR coalesce(mp.avg7,0)>0 OR coalesce(mp.avg30,0)>0)
+                  )''',(gid,latest));priced=int(cur.fetchone()['priced'] or 0)
+                out['sealed'][slug]={'current_cardmarket_products':total,'exact_identity_mapped':mapped,'missing_identity_mapping':missing,'multiple_accepted_variants':multi,'cross_game_links':cross,'with_meaningful_current_cardmarket_price':priced,'without_meaningful_current_cardmarket_price':max(total-priced,0)}
+                if missing or multi or cross:out['hard_failures'].append(f'sealed:{slug}:identity_failure missing={missing} multi={multi} cross={cross}')
+
+              # Regression that exposed the original issue.
+              cur.execute('''SELECT e.external_id id_product,e.name,e.expansion_external_id,l.mapping_method FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=44257 AND e.source='cardmarket' AND l.link_status=ANY(%s)''',(list(ACCEPTED),));luffy=[dict(r) for r in cur.fetchall()]
+              latest_luffy=None
+              if source_id:
+                cur.execute("SELECT raw_json,price_low,price_market,price_last,as_of FROM price_snapshots WHERE source_id=%s AND entity_type='print' AND entity_id=44257 ORDER BY as_of DESC,id DESC LIMIT 1",(source_id,));r=cur.fetchone();latest_luffy=dict(r) if r else None
+              out['regressions']['onepiece_print_44257']={'accepted_links':luffy,'latest_snapshot':latest_luffy}
+              if len(luffy)!=1 or str(luffy[0]['id_product'] if luffy else '')!='720061':out['hard_failures'].append('onepiece:44257_mapping_regressed')
+              if latest_luffy and str((latest_luffy['raw_json'] or {}).get('idProduct') or '')!='720061':out['hard_failures'].append('onepiece:44257_price_regressed')
+
+              # The unsafe OP global methods must stay disabled from workflows; accepted legacy rows remain only until physically certified/quarantined by current evidence.
+              out['pass']=not out['hard_failures']
+          finally:conn.close()
+
+          Path('/tmp/cardmarket-point1-final-gate-v2.json').write_text(json.dumps(out,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps({'pass':out['pass'],'hard_failures':out['hard_failures'],'singles':out['singles'],'sealed':out['sealed'],'certifications':out['certifications'],'luffy':out['regressions']['onepiece_print_44257']},indent=2,default=str,sort_keys=True))
+          if not out['pass']:raise SystemExit(2)
+          PY
+      - name: Persist closure report
+        if: always()
+        run: |
+          test -f /tmp/cardmarket-point1-final-gate-v2.json || exit 1
+          mkdir -p audit-reports
+          cp /tmp/cardmarket-point1-final-gate-v2.json audit-reports/cardmarket-point1-final-gate-v2.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/cardmarket-point1-final-gate-v2.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record Cardmarket point 1 closure gate v2'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-point1-final-gate-v2-${{ github.run_id }}
+          path: /tmp/cardmarket-point1-final-gate-v2.json
+          retention-days: 90
