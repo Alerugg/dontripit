@@ -33,6 +33,12 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return min(max(parsed, minimum), maximum)
 
 
+def _bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _query(value) -> str:
     return str(value or "").strip()[:MAX_QUERY_LENGTH]
 
@@ -176,6 +182,8 @@ def search_v2_advanced():
                 session,
                 filters=filters,
                 query=_query(body.get("q")),
+                sort=str(body.get("sort") or "relevance"),
+                has_price=_bool(body.get("has_price")),
                 limit=_bounded_int(
                     body.get("limit"),
                     default=50,
