@@ -1,0 +1,284 @@
+{
+  "hard_failures": [],
+  "pass": true,
+  "point1_regression": {
+    "accepted": [
+      {
+        "id_product": "720061",
+        "link_status": "accepted",
+        "mapping_method": "bandai_physical_release_unique_exact"
+      }
+    ],
+    "quarantined": [
+      {
+        "id_product": "749435",
+        "link_status": "quarantined",
+        "mapping_method": "op_variant_cm_global_exact"
+      }
+    ]
+  },
+  "public_http": {
+    "op15": {
+      "page1_prices": [
+        600.0,
+        85.0,
+        70.0,
+        59.99,
+        56.5
+      ],
+      "page2_prices": [
+        48.99,
+        43.5,
+        27.0,
+        25.0,
+        25.0
+      ],
+      "total_priced": 146,
+      "unfiltered_total": 149
+    },
+    "op15_price_page1": {
+      "seconds": 1.842,
+      "status": 200
+    },
+    "op15_price_page2": {
+      "seconds": 1.693,
+      "status": 200
+    },
+    "prints_deep": {
+      "ids": [
+        218590,
+        218591,
+        161379,
+        161380,
+        167707
+      ],
+      "offset": 1200,
+      "seconds": 1.819,
+      "status": 200,
+      "total": 161144
+    },
+    "sealed": {
+      "page1_ids": [
+        303843,
+        304066,
+        304209,
+        304425,
+        304467
+      ],
+      "page2_ids": [
+        304042,
+        304210,
+        304501,
+        304502,
+        304532
+      ],
+      "total": 30
+    },
+    "sealed_page1": {
+      "seconds": 8.822,
+      "status": 200
+    },
+    "sealed_page2": {
+      "seconds": 9.245,
+      "status": 200
+    },
+    "search": {
+      "page1_ids": [
+        40802,
+        41755,
+        41756,
+        42141,
+        43047
+      ],
+      "page1_prices": [
+        9000,
+        6000,
+        2800,
+        2550,
+        2000
+      ],
+      "page2_ids": [
+        41757,
+        42653,
+        43046,
+        43746,
+        44257
+      ],
+      "page2_prices": [
+        1199,
+        350,
+        345,
+        320,
+        275
+      ],
+      "total": 162
+    },
+    "search_page1": {
+      "seconds": 19.795,
+      "status": 200
+    },
+    "search_page2": {
+      "seconds": 14.859,
+      "status": 200
+    },
+    "sets": {
+      "page1_ids": [
+        29729,
+        29903,
+        29992,
+        29993,
+        30003
+      ],
+      "page2_ids": [
+        29994,
+        29995,
+        29996,
+        29997,
+        29998
+      ],
+      "total": 986
+    },
+    "sets_page1": {
+      "seconds": 3.67,
+      "status": 200
+    },
+    "sets_page2": {
+      "seconds": 2.143,
+      "status": 200
+    }
+  },
+  "search": {
+    "mtg": {
+      "failures": [],
+      "page1_ids": [
+        173426,
+        259820,
+        286750,
+        236354,
+        244777
+      ],
+      "page1_prices": [
+        110000.0,
+        8999.0,
+        3950.0,
+        2100.0,
+        1300.0
+      ],
+      "page2_ids": [
+        171845,
+        220225,
+        283041,
+        281038,
+        176122
+      ],
+      "page2_prices": [
+        867.67,
+        800.0,
+        799.99,
+        369.69,
+        332.57
+      ],
+      "seconds": 1.975,
+      "total_priced": 151
+    },
+    "onepiece": {
+      "failures": [],
+      "page1_ids": [
+        43047,
+        41755,
+        41756,
+        40802,
+        42141
+      ],
+      "page1_prices": [
+        9000.0,
+        6000.0,
+        2800.0,
+        2550.0,
+        2000.0
+      ],
+      "page2_ids": [
+        43046,
+        41757,
+        42653,
+        43746,
+        44257
+      ],
+      "page2_prices": [
+        1199.0,
+        350.0,
+        345.0,
+        320.0,
+        275.0
+      ],
+      "seconds": 3.453,
+      "total_priced": 162
+    },
+    "pokemon": {
+      "failures": [],
+      "page1_ids": [
+        49939,
+        98600,
+        59951,
+        96647,
+        63479
+      ],
+      "page1_prices": [
+        40000.0,
+        950.0,
+        565.0,
+        500.0,
+        490.0
+      ],
+      "page2_ids": [
+        61953,
+        53509,
+        99015,
+        61934,
+        52974
+      ],
+      "page2_prices": [
+        299.11,
+        200.0,
+        155.99,
+        73.85,
+        70.0
+      ],
+      "seconds": 2.374,
+      "total_priced": 178
+    },
+    "yugioh": {
+      "failures": [],
+      "page1_ids": [
+        117797,
+        125521,
+        117663,
+        105482,
+        146848
+      ],
+      "page1_prices": [
+        304.99,
+        80.0,
+        79.99,
+        68.99,
+        24.98
+      ],
+      "page2_ids": [
+        104124,
+        145326,
+        145287,
+        124991,
+        128097
+      ],
+      "page2_prices": [
+        18.5,
+        14.0,
+        10.5,
+        2.9,
+        2.49
+      ],
+      "seconds": 1.546,
+      "total_priced": 52
+    }
+  }
+}
