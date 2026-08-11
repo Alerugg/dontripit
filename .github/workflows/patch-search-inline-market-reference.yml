@@ -1,0 +1,81 @@
+name: Patch Search Inline Market Reference
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-search-inline-market-reference.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Carry exact market reference through advanced search
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          refs_sql = "cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,"
+          refs_item = '''            "cardmarket_external_product_id": row["cardmarket_external_product_id"],\n            "cardmarket_id_product": row["cardmarket_id_product"],\n            "cardmarket_product_name": row["cardmarket_product_name"],\n            "cardmarket_website_path": row["cardmarket_website_path"],\n'''
+
+          p=Path('backend/app/search_v2/advanced.py'); s=p.read_text()
+          needle='''          cm.cardmarket_price,\n          cm.cardmarket_currency,\n          cm.cardmarket_as_of,\n'''
+          repl=f'''          {refs_sql}\n          cm.cardmarket_price,\n          cm.cardmarket_currency,\n          cm.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''            "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n'''
+          assert needle in s; s=s.replace(needle,refs_item+needle,1); p.write_text(s)
+
+          p=Path('backend/app/search_v2/pokemon_advanced.py'); s=p.read_text()
+          needle=''',cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n'''
+          repl=f''',{refs_sql}\n                cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''              m.cardmarket_price, m.cardmarket_currency, m.cardmarket_as_of,\n'''
+          repl='''              m.cardmarket_external_product_id, m.cardmarket_id_product, m.cardmarket_product_name, m.cardmarket_website_path,\n              m.cardmarket_price, m.cardmarket_currency, m.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''            "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n'''
+          assert needle in s; s=s.replace(needle,refs_item+needle,1); p.write_text(s)
+
+          p=Path('backend/app/search_v2/yugioh_advanced.py'); s=p.read_text()
+          needle='''            cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n'''
+          repl=f'''            {refs_sql}\n            cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''          matched.cardmarket_price, matched.cardmarket_currency, matched.cardmarket_as_of,\n'''
+          repl='''          matched.cardmarket_external_product_id, matched.cardmarket_id_product, matched.cardmarket_product_name, matched.cardmarket_website_path,\n          matched.cardmarket_price, matched.cardmarket_currency, matched.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''                "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n'''
+          refs_item_y=refs_item.replace('            ', '                ')
+          assert needle in s; s=s.replace(needle,refs_item_y+needle,1); p.write_text(s)
+
+          p=Path('backend/app/search_v2/mtg_advanced.py'); s=p.read_text()
+          needle='''                 cm.cardmarket_price,cm.cardmarket_currency,cm.cardmarket_as_of,\n'''
+          repl=f'''                 {refs_sql}\n                 cm.cardmarket_price,cm.cardmarket_currency,cm.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''               matched.cardmarket_price,matched.cardmarket_currency,matched.cardmarket_as_of,\n'''
+          repl='''               matched.cardmarket_external_product_id,matched.cardmarket_id_product,matched.cardmarket_product_name,matched.cardmarket_website_path,\n               matched.cardmarket_price,matched.cardmarket_currency,matched.cardmarket_as_of,\n'''
+          assert needle in s; s=s.replace(needle,repl,1)
+          needle='''            "cardmarket_price":float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n'''
+          refs_item_m=refs_item.replace('            ', '            ').replace(': row[', ':row[').replace('],\n', '],\n')
+          assert needle in s; s=s.replace(needle,refs_item_m+needle,1); p.write_text(s)
+          PY
+      - name: Verify syntax
+        run: |
+          python -m py_compile backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py
+          grep -R "cardmarket_id_product" backend/app/search_v2/*advanced.py
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/search_v2
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Return exact Cardmarket reference with search rows'
+          git push origin HEAD:catalog-v2
