@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql
 from app.search_v2.normalization import normalize_search_text
 
 
@@ -66,12 +67,15 @@ def advanced_yugioh_search(
     *,
     filters: dict,
     query: str | None = None,
+    sort: str = "relevance",
+    has_price: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Yu-Gi-Oh advanced search requires PostgreSQL")
 
+    sort = normalize_search_sort(sort)
     if not isinstance(filters, dict):
         raise ValueError("filters must be an object")
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
@@ -146,7 +150,11 @@ def advanced_yugioh_search(
                 params["f_link_marker"] = values
             continue
 
+    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    if has_price:
+        conditions.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(conditions)
+    order_sql = print_order_sql(sort, default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(p.rarity,'')) ASC, p.id ASC")
     sql = text(
         f"""
         WITH matched AS MATERIALIZED (
@@ -156,12 +164,18 @@ def advanced_yugioh_search(
             psp.release_names_json,
             psp.attributes_json AS print_attributes,
             csp.attributes_json AS card_attributes,
-            COUNT(*) OVER () AS total_count
+            COUNT(*) OVER () AS total_count,
+            cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
+            ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
           FROM print_search_profiles psp
           JOIN card_search_profiles csp ON csp.card_id=psp.card_id
           JOIN games g ON g.id=psp.game_id
+          JOIN prints p ON p.id=psp.print_id
+          JOIN cards c ON c.id=psp.card_id
+          JOIN sets s ON s.id=p.set_id
+          {market_join}
           WHERE {where_sql}
-          ORDER BY psp.card_id ASC, psp.print_id ASC
+          ORDER BY {order_sql}
           LIMIT :limit OFFSET :offset
         )
         SELECT
@@ -180,6 +194,7 @@ def advanced_yugioh_search(
           matched.release_names_json,
           matched.card_attributes,
           matched.print_attributes,
+          matched.cardmarket_price, matched.cardmarket_currency, matched.cardmarket_as_of,
           (
             SELECT pi.url FROM print_images pi
             WHERE pi.print_id=p.id
@@ -191,7 +206,7 @@ def advanced_yugioh_search(
         JOIN cards c ON c.id=matched.card_id
         JOIN sets s ON s.id=p.set_id
         JOIN print_search_profiles psp ON psp.print_id=p.id
-        ORDER BY c.name ASC, s.code ASC, p.collector_number ASC, p.rarity ASC, p.id ASC
+        ORDER BY matched.sort_position ASC
         """
     )
     rows = session.execute(sql, params).mappings().all()
@@ -218,6 +233,9 @@ def advanced_yugioh_search(
                 "variant_family": row["variant_family"],
                 "primary_image_url": row["primary_image_url"],
                 "attributes": attrs,
+                "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
+                "cardmarket_currency": row["cardmarket_currency"],
+                "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],
             }
         )
 
@@ -229,4 +247,6 @@ def advanced_yugioh_search(
         "offset": bounded_offset,
         "filters": filters,
         "query": str(query or "").strip() or None,
+        "sort": sort,
+        "has_price": bool(has_price),
     }

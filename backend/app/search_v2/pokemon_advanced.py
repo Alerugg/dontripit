@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql
 from app.search_v2.normalization import normalize_language, normalize_search_text
 
 
@@ -66,6 +67,8 @@ def advanced_pokemon_search(
     *,
     filters: dict | None = None,
     query: str | None = None,
+    sort: str = "relevance",
+    has_price: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
@@ -80,6 +83,7 @@ def advanced_pokemon_search(
 
     game_id = int(session.execute(text("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")).scalar_one())
     filters = dict(filters or {})
+    sort = normalize_search_sort(sort)
     unknown = sorted(set(filters) - POKEMON_ALLOWED_FILTERS)
     if unknown:
         raise ValueError(f"Unsupported Pokémon advanced filters: {unknown}")
@@ -216,14 +220,23 @@ def advanced_pokemon_search(
     if filters:
         raise ValueError(f"Unsupported Pokémon advanced filters: {sorted(filters)}")
 
+    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    if has_price:
+        where.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(where)
-
-    total = int(
-        session.execute(
-            text(f"SELECT COUNT(*) FROM print_search_profiles psp WHERE {where_sql}"),
-            params,
-        ).scalar_one() or 0
+    filter_from = f"""
+      FROM print_search_profiles psp
+      JOIN prints p ON p.id=psp.print_id
+      JOIN cards c ON c.id=psp.card_id
+      JOIN sets s ON s.id=p.set_id
+      {market_join}
+    """
+    order_sql = print_order_sql(
+        sort,
+        default="lower(c.name) ASC, s.release_date ASC NULLS LAST, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, psp.variant_family ASC, psp.exact_variant ASC, psp.print_id ASC",
     )
+
+    total = int(session.execute(text(f"SELECT COUNT(*) {filter_from} WHERE {where_sql}"), params).scalar_one() or 0)
 
     rows = session.execute(
         text(
@@ -238,14 +251,11 @@ def advanced_pokemon_search(
                 p.collector_number AS sort_collector_number,
                 COALESCE(psp.variant_family, '') AS sort_variant_family,
                 COALESCE(psp.exact_variant, '') AS sort_exact_variant
-              FROM print_search_profiles psp
-              JOIN prints p ON p.id=psp.print_id
-              JOIN cards c ON c.id=psp.card_id
-              JOIN sets s ON s.id=p.set_id
+              ,cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
+                ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
+              {filter_from}
               WHERE {where_sql}
-              ORDER BY c.name ASC, s.release_date ASC NULLS LAST, s.code ASC,
-                       p.collector_number ASC, psp.variant_family ASC,
-                       psp.exact_variant ASC, psp.print_id ASC
+              ORDER BY {order_sql}
               LIMIT :limit OFFSET :offset
             )
             SELECT
@@ -263,6 +273,7 @@ def advanced_pokemon_search(
               psp.exact_variant,
               psp.variant_family,
               psp.attributes_json,
+              m.cardmarket_price, m.cardmarket_currency, m.cardmarket_as_of,
               (
                 SELECT pi.url FROM print_images pi
                 WHERE pi.print_id=psp.print_id
@@ -274,10 +285,7 @@ def advanced_pokemon_search(
             JOIN prints p ON p.id=m.print_id
             JOIN cards c ON c.id=m.card_id
             JOIN sets s ON s.id=p.set_id
-            ORDER BY m.sort_name ASC, m.sort_release_date ASC NULLS LAST,
-                     m.sort_set_code ASC, m.sort_collector_number ASC,
-                     m.sort_variant_family ASC, m.sort_exact_variant ASC,
-                     m.print_id ASC
+            ORDER BY m.sort_position ASC
             """
         ),
         params,
@@ -301,7 +309,10 @@ def advanced_pokemon_search(
             "variant_family": row["variant_family"],
             "attributes": row["attributes_json"] or {},
             "primary_image_url": row["primary_image_url"],
+            "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
+            "cardmarket_currency": row["cardmarket_currency"],
+            "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],
         }
         for row in rows
     ]
-    return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"]}
+    return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"], "sort": sort, "has_price": bool(has_price)}

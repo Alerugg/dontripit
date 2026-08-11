@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql
 from app.search_v2.normalization import normalize_search_text
 
 
@@ -69,9 +70,10 @@ def _range(value, key: str, cast: str):
     return low, high
 
 
-def advanced_mtg_search(session, *, filters: dict, query: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sort: str = "relevance", has_price: bool = False, limit: int = 50, offset: int = 0) -> dict:
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("MTG advanced search requires PostgreSQL")
+    sort = normalize_search_sort(sort)
     if not isinstance(filters, dict):
         raise ValueError("filters must be an object")
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
@@ -130,25 +132,36 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, lim
                 params[f"{key}_max"] = high
                 conditions.append(f"{expr}<=:{key}_max")
 
+    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")
+    if has_price:
+        conditions.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(conditions)
+    order_sql = print_order_sql(sort, default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(psp.exact_variant,'')) ASC, p.id ASC")
     sql = text(f"""
         WITH matched AS MATERIALIZED (
           SELECT psp.print_id,psp.card_id,psp.attributes_json AS print_attributes,
-                 csp.attributes_json AS card_attributes,COUNT(*) OVER() AS total_count
+                 csp.attributes_json AS card_attributes,COUNT(*) OVER() AS total_count,
+                 cm.cardmarket_price,cm.cardmarket_currency,cm.cardmarket_as_of,
+                 ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position
           FROM print_search_profiles psp
           JOIN card_search_profiles csp ON csp.card_id=psp.card_id
           JOIN games g ON g.id=psp.game_id
+          JOIN prints p ON p.id=psp.print_id
+          JOIN cards c ON c.id=psp.card_id
+          JOIN sets s ON s.id=p.set_id
+          {market_join}
           WHERE {where_sql}
-          ORDER BY psp.card_id,psp.print_id LIMIT :limit OFFSET :offset
+          ORDER BY {order_sql} LIMIT :limit OFFSET :offset
         )
         SELECT matched.total_count,p.id AS print_id,c.id AS card_id,c.card_key,c.name,
                s.code AS set_code,s.name AS set_name,p.collector_number,p.language,p.rarity,
                psp.exact_variant,psp.variant_family,matched.card_attributes,matched.print_attributes,
+               matched.cardmarket_price,matched.cardmarket_currency,matched.cardmarket_as_of,
                (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC,pi.id LIMIT 1) AS primary_image_url
         FROM matched
         JOIN prints p ON p.id=matched.print_id JOIN cards c ON c.id=matched.card_id
         JOIN sets s ON s.id=p.set_id JOIN print_search_profiles psp ON psp.print_id=p.id
-        ORDER BY c.name,s.code,p.collector_number,psp.exact_variant,p.id
+        ORDER BY matched.sort_position
     """)
     rows = session.execute(sql, params).mappings().all()
     total = int(rows[0]["total_count"] or 0) if rows else 0
@@ -162,5 +175,8 @@ def advanced_mtg_search(session, *, filters: dict, query: str | None = None, lim
             "collector_number":row["collector_number"],"language":row["language"],"rarity":row["rarity"],
             "exact_variant":row["exact_variant"],"variant_family":row["variant_family"],
             "primary_image_url":row["primary_image_url"],"attributes":attrs,
+            "cardmarket_price":float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,
+            "cardmarket_currency":row["cardmarket_currency"],
+            "cardmarket_as_of":row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"],"isoformat") else row["cardmarket_as_of"],
         })
-    return {"items":items,"count":len(items),"total":total,"limit":bounded_limit,"offset":bounded_offset,"filters":filters,"query":str(query or "").strip() or None}
+    return {"items":items,"count":len(items),"total":total,"limit":bounded_limit,"offset":bounded_offset,"filters":filters,"query":str(query or "").strip() or None,"sort":sort,"has_price":bool(has_price)}
