@@ -19,6 +19,7 @@ from app.routes.admin_metrics import admin_metrics_bp
 from app.routes.docs import docs_bp
 from app.routes.games import games_bp
 from app.routes.health import health_bp
+from app.routes.market_current_products import market_current_products_bp
 from app.routes.market_reference import market_reference_bp
 from app.routes.market_search_read import market_search_read_bp
 from app.routes.market_print_summary import market_print_summary_bp
@@ -56,6 +57,7 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(set_ui_bp)
     flask_app.register_blueprint(search_bp)
     flask_app.register_blueprint(search_v2_bp)
+    flask_app.register_blueprint(market_current_products_bp)
     flask_app.register_blueprint(market_reference_bp)
     flask_app.register_blueprint(market_search_read_bp)
     flask_app.register_blueprint(market_print_summary_bp)
