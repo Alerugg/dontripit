@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
+import { marketFromSearchItem, safeCardmarketUrl } from '../../../../lib/searchV2/market'
 
 const DEFAULT_PAGE_SIZE = 24
 const MAX_PAGE_SIZE = 48
@@ -28,17 +29,8 @@ function toItems(payload) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
-function safeCardmarketUrl(websitePath) {
-  const raw = String(websitePath || '').trim()
-  if (!raw) return null
-  if (raw.startsWith('/')) return `https://www.cardmarket.com${raw}`
-  try {
-    const parsed = new URL(raw)
-    if (parsed.protocol === 'https:' && ['cardmarket.com', 'www.cardmarket.com'].includes(parsed.hostname.toLowerCase())) return raw
-  } catch {
-    return null
-  }
-  return null
+function skipped(payload = { items: [], total: null }) {
+  return { ok: true, status: 200, payload, skipped: true }
 }
 
 function normalizePrint(item = {}) {
@@ -121,39 +113,47 @@ export async function GET(request) {
   const region = String(searchParams.get('region') || '').trim().toLowerCase()
   const setCode = normalizeOnePieceSetCode(q, game)
 
-  // The active tab owns pagination. The all view deliberately follows singles;
-  // sealed/sets stay on page 1 so a page change never repeats one list while
-  // pretending another list advanced.
-  const singlesOffset = kind === 'sealed' ? 0 : offset
-  const sealedOffset = kind === 'sealed' ? offset : 0
+  const needsSingles = kind === 'singles' || kind === 'all'
+  const needsSealed = kind === 'sealed' || (kind === 'all' && page === 1)
+  const needsMatches = kind === 'matches' || (kind === 'all' && page === 1)
+  const setsOffset = kind === 'sets' ? offset : 0
+  const setsLimit = kind === 'sets' ? limit : 12
 
+  // Sets are inexpensive and keep their tab count stable while the user pages
+  // singles/sealed. Heavy singles/sealed readers are only called when visible.
   const setsPromise = callInternalApi('/api/v1/sets', {
-    params: { game, q, limit: 12, offset: 0, meta: 1 },
+    params: { game, q, limit: setsLimit, offset: setsOffset, meta: 1 },
     timeoutMs: 12000,
   })
-  const matchesPromise = callInternalApi('/api/v2/search', {
-    params: { q, game, limit: 12 },
-    timeoutMs: 12000,
-  })
-  const singlesPromise = setCode
-    ? callInternalApi('/api/v1/set-ui/prints', {
-        params: { game, set_code: setCode, sort, has_price: hasPrice ? 1 : '', limit, offset: singlesOffset },
-        timeoutMs: 20000,
+  const matchesPromise = needsMatches
+    ? callInternalApi('/api/v2/search', {
+        params: { q, game, limit: 12 },
+        timeoutMs: 12000,
       })
-    : callInternalApi('/api/v2/search/advanced', {
-        method: 'POST',
-        body: { game, q, filters: {}, sort, has_price: hasPrice, limit, offset: singlesOffset },
-        timeoutMs: 20000,
-      })
-  const sealedPromise = setCode
-    ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
-        params: { limit, offset: sealedOffset, category, region },
-        timeoutMs: 15000,
-      })
-    : callInternalApi('/api/v1/market/products', {
-        params: { game, group: 'non_single', q, limit, offset: sealedOffset, category, region },
-        timeoutMs: 15000,
-      })
+    : Promise.resolve(skipped({ items: [], total: null }))
+  const singlesPromise = needsSingles
+    ? (setCode
+        ? callInternalApi('/api/v1/set-ui/prints', {
+            params: { game, set_code: setCode, sort, has_price: hasPrice ? 1 : '', limit, offset },
+            timeoutMs: 20000,
+          })
+        : callInternalApi('/api/v2/search/advanced', {
+            method: 'POST',
+            body: { game, q, filters: {}, sort, has_price: hasPrice, limit, offset },
+            timeoutMs: 20000,
+          }))
+    : Promise.resolve(skipped({ items: [], total: null }))
+  const sealedPromise = needsSealed
+    ? (setCode
+        ? callInternalApi(`/api/v1/market/set-products/${encodeURIComponent(game)}/${encodeURIComponent(setCode)}`, {
+            params: { limit, offset: kind === 'sealed' ? offset : 0, category, region },
+            timeoutMs: 15000,
+          })
+        : callInternalApi('/api/v1/market/current-products', {
+            params: { game, group: 'non_single', q, limit, offset: kind === 'sealed' ? offset : 0, category },
+            timeoutMs: 15000,
+          }))
+    : Promise.resolve(skipped({ items: [], total: null, categories: [] }))
 
   const [setsUpstream, matchesUpstream, singlesUpstream, sealedUpstream] = await Promise.all([
     setsPromise,
@@ -169,35 +169,16 @@ export async function GET(request) {
   const singles = singlesUpstream.ok ? toItems(singlesUpstream.payload).map(normalizePrint) : []
   const matches = matchesUpstream.ok ? toItems(matchesUpstream.payload) : []
   const sealed = sealedUpstream.ok ? toItems(sealedUpstream.payload).map(normalizeSealed) : []
+  const enrichedSingles = singles.map((item) => ({ ...item, market: marketFromSearchItem(item) }))
 
-  let marketByPrint = new Map()
-  if (singles.length) {
-    const ids = singles.map((item) => item.print_id).filter(Boolean)
-    const marketUpstream = await callInternalApi('/api/v1/market/prints/cardmarket-batch', {
-      params: { ids: ids.join(',') },
-      timeoutMs: 15000,
-    })
-    if (marketUpstream.ok) {
-      marketByPrint = new Map(
-        toItems(marketUpstream.payload).map((item) => [String(item.print_id), item]),
-      )
-    }
-  }
-
-  const enrichedSingles = singles.map((item) => ({
-    ...item,
-    market: marketByPrint.get(String(item.print_id)) || {
-      print_id: item.print_id,
-      status: 'unavailable',
-      reference: null,
-      price: null,
-      reason: 'cardmarket_reference_request_unavailable',
-    },
-  }))
-
-  const singlesTotal = Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)
+  const singlesTotal = singlesUpstream.skipped
+    ? null
+    : Number(singlesUpstream.payload?.total ?? singlesUpstream.payload?.count ?? singles.length)
   const setsTotal = Number(setsUpstream.payload?.total ?? sets.length)
-  const sealedTotal = Number(sealedUpstream.payload?.total ?? sealed.length)
+  const sealedTotal = sealedUpstream.skipped
+    ? null
+    : Number(sealedUpstream.payload?.total ?? sealed.length)
+  const matchesTotal = matchesUpstream.skipped ? null : Number(matchesUpstream.payload?.total ?? matches.length)
   const categories = Array.isArray(sealedUpstream.payload?.categories)
     ? sealedUpstream.payload.categories
     : categoryOptions(sealed)
@@ -225,11 +206,12 @@ export async function GET(request) {
       singles: singlesTotal,
       sets: setsTotal,
       sealed: sealedTotal,
-      matches: matches.length,
+      matches: matchesTotal,
     },
     sets,
+    sets_page: { page: kind === 'sets' ? page : 1, total: setsTotal, limit: setsLimit },
     exact_set: exactSet,
-    singles: { items: enrichedSingles, total: singlesTotal, page: kind === 'sealed' ? 1 : page, limit },
+    singles: { items: enrichedSingles, total: singlesTotal, page: needsSingles ? page : 1, limit },
     sealed: {
       items: sealed,
       total: sealedTotal,
