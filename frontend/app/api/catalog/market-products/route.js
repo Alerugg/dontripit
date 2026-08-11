@@ -3,7 +3,7 @@ import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '.
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
-  const upstream = await callInternalApi('/api/v1/market/products', {
+  const upstream = await callInternalApi('/api/v1/market/current-products', {
     params: {
       game: searchParams.get('game') || '',
       group: 'non_single',
