@@ -1,0 +1,27 @@
+{
+  "mode": "dry_run",
+  "game": "yugioh",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "current_exact_prints": 24253,
+  "exact_links": 24253,
+  "metacards_seen_in_exact_links": 12361,
+  "trusted_metacards_single_canonical_card": 12360,
+  "conflicting_metacards": 1,
+  "product_name_anchors": 325,
+  "validated_anchors": 256,
+  "validation_counts": {
+    "anchor_conflict": 69,
+    "with_existing": 233,
+    "name_only": 23
+  },
+  "status_counts": {
+    "still_ambiguous_or_cardinality_mismatch": 17138,
+    "no_official_print_for_metacard_identity": 326,
+    "cross_group_existing_link": 3,
+    "global_collision_or_linked_removed": 0,
+    "final_safe": 0
+  },
+  "safe_candidates": 0,
+  "safe_prints": 0,
+  "safe_products": 0
+}
