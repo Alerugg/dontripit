@@ -861,15 +861,30 @@ def list_market_products():
             SELECT external_product_id, COUNT(*) AS link_count
             FROM external_catalog_product_variant_links
             GROUP BY external_product_id
+        ), latest_price_capture AS (
+            SELECT ep.game_id,
+                   ep.product_group,
+                   MAX(mp.as_of) AS as_of
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+            WHERE ep.source = 'cardmarket'
+            GROUP BY ep.game_id, ep.product_group
         ), latest_prices AS (
-            SELECT external_product_id, currency, price_low, price_mid, price_market,
-                   price_last, as_of,
+            SELECT mp.external_product_id, mp.currency, mp.price_low, mp.price_mid, mp.price_market,
+                   mp.price_last, mp.as_of,
                    ROW_NUMBER() OVER (
-                       PARTITION BY external_product_id
-                       ORDER BY as_of DESC, id DESC
+                       PARTITION BY mp.external_product_id
+                       ORDER BY mp.id DESC
                    ) AS row_number
-            FROM external_market_price_snapshots
-            WHERE price_variant = 'sealed'
+            FROM external_market_price_snapshots mp
+            JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+            JOIN latest_price_capture lpc
+              ON lpc.game_id = ep.game_id
+             AND lpc.product_group = ep.product_group
+             AND lpc.as_of = mp.as_of
+            WHERE ep.source = 'cardmarket'
+              AND mp.currency = 'EUR'
+              AND mp.price_variant = 'sealed'
         )
         SELECT e.id,
                e.external_id,
@@ -960,9 +975,20 @@ def list_market_products():
         for key in ("last_seen_at", "snapshot_at", "price_as_of"):
             if hasattr(row.get(key), "isoformat"):
                 row[key] = row[key].isoformat()
+        meaningful_price = False
         for key in ("price_low", "price_mid", "price_market", "price_last"):
-            if row.get(key) is not None:
-                row[key] = float(row[key])
+            value = row.get(key)
+            if value is None:
+                continue
+            value = float(value)
+            if value > 0:
+                row[key] = value
+                meaningful_price = True
+            else:
+                row[key] = None
+        if not meaningful_price:
+            row["currency"] = None
+            row["price_as_of"] = None
         items.append(row)
     return jsonify({
         "items": items,
