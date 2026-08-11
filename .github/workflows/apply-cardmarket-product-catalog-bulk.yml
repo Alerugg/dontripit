@@ -82,11 +82,15 @@ jobs:
                 JOIN price_snapshots ps ON ps.entity_type='product_variant' AND ps.entity_id=pi.product_variant_id
                   AND ps.source_id=%s''',(source_id,))
               priced=int(c.fetchone()['priced'])
+              c.execute('SELECT slug,count(*) n FROM current_cm_non_single GROUP BY slug ORDER BY slug')
+              by_game={r['slug']:int(r['n']) for r in c.fetchall()}
           conn.close()
-          proof={'total':total,'identifiers':int(identity['identifiers']),'accepted_links':accepted,
+          proof={'total':total,'by_game':by_game,'identifiers':int(identity['identifiers']),'accepted_links':accepted,
                  'cross_game':int(identity['cross_game']),'canonically_priced':priced,
                  'price_coverage_pct':round(priced*100/total,3) if total else 0}
-          if proof['total']!=13173 or proof['identifiers']!=total or accepted!=total or proof['cross_game']!=0:
+          # Never hard-code a catalog size: Cardmarket adds commercial products over time.
+          # Instead require complete one-to-one identity coverage for whatever the current feed contains.
+          if proof['total']<13173 or proof['identifiers']!=total or accepted!=total or proof['cross_game']!=0:
               raise AssertionError(proof)
           if priced<int(total*0.75):
               raise AssertionError({'reason':'unexpected price coverage regression','proof':proof})
