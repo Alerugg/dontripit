@@ -1,0 +1,47 @@
+name: Project Cardmarket Exact Prices Now
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/project-cardmarket-exact-prices-now.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Dry-run and apply exact linked print prices for every canonical game
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/projection
+          for game in mtg yugioh pokemon onepiece riftbound; do
+            python scripts/project_cardmarket_link_prices.py --game "$game" --report "/tmp/projection/${game}-dry.json"
+            python scripts/project_cardmarket_link_prices.py --game "$game" --apply --report "/tmp/projection/${game}-apply.json"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-exact-projection-${{ github.run_id }}
+          path: /tmp/projection/*.json
+          retention-days: 30
+          if-no-files-found: warn
