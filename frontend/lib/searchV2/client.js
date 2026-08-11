@@ -27,7 +27,7 @@ export async function searchV2({ q, game, limit = 24 } = {}) {
   return payload?.items || []
 }
 
-export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 'all', category = '', region = '' } = {}) {
+export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 'all', category = '', region = '', sort = 'relevance', hasPrice = false } = {}) {
   const response = await fetch(`/api/search-v2/federated${toQuery({
     q,
     game: toApiGameSlug(game || ''),
@@ -36,6 +36,8 @@ export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 
     kind,
     category,
     region,
+    sort,
+    has_price: hasPrice ? 1 : '',
   })}`, {
     method: 'GET',
     cache: 'no-store',
@@ -69,12 +71,12 @@ export async function fetchFacetValuesV2({ game, key, q = '', limit = 30 } = {})
   return payload?.items || []
 }
 
-export async function advancedSearchV2({ game, q = '', filters = {}, limit = 50, offset = 0 } = {}) {
+export async function advancedSearchV2({ game, q = '', filters = {}, sort = 'relevance', hasPrice = false, limit = 50, offset = 0 } = {}) {
   const response = await fetch('/api/search-v2/advanced', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     cache: 'no-store',
-    body: JSON.stringify({ game: toApiGameSlug(game || ''), q, filters, limit, offset }),
+    body: JSON.stringify({ game: toApiGameSlug(game || ''), q, filters, sort, has_price: Boolean(hasPrice), limit, offset }),
   })
   return readJson(response)
 }
