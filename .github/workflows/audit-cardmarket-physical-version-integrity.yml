@@ -1,0 +1,164 @@
+name: Audit Cardmarket Physical Version Integrity
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-physical-version-integrity.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: audit-cardmarket-physical-version-integrity
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary
+      - name: Audit accepted physical-version mappings
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACCEPTED=('accepted','mapped','exact')
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          report={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id,slug,name FROM games WHERE slug IN ('onepiece','pokemon','mtg','yugioh') ORDER BY slug")
+              games={r['slug']:dict(r) for r in cur.fetchall()}
+              report['games']=games
+
+              # Exact production trace for the user-reported failure.
+              cur.execute('''SELECT p.id AS print_id,p.collector_number,p.variant,p.rarity,p.language,
+                                    c.name AS card_name,s.code AS set_code,s.name AS set_name
+                             FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                             WHERE p.id=44257''')
+              target=dict(cur.fetchone() or {})
+              if target:
+                cur.execute('''SELECT cr.id,cr.external_id,cr.name,cr.source
+                               FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id
+                               WHERE pr.print_id=%s ORDER BY cr.id''',(target['print_id'],))
+                target['official_releases']=[dict(r) for r in cur.fetchall()]
+                cur.execute('''SELECT l.external_product_id,l.mapping_method,l.confidence,l.link_status,l.reviewed,l.evidence,
+                                      e.external_id AS id_product,e.name AS market_name,e.expansion_external_id,
+                                      e.category,e.website_path,e.metacard_external_id,e.last_seen_at
+                               FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                               WHERE l.print_id=%s AND e.source='cardmarket'
+                               ORDER BY l.updated_at DESC NULLS LAST''',(target['print_id'],))
+                target['cardmarket_links']=[dict(r) for r in cur.fetchall()]
+              report['target_print_44257']=target
+
+              gid=int(games['onepiece']['id'])
+              cur.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,))
+              latest=cur.fetchone()['max']
+              report['onepiece_latest_cardmarket_snapshot']=str(latest)
+              cur.execute('''SELECT id AS external_product_id,external_id AS id_product,name,expansion_external_id,
+                                    category,website_path,metacard_external_id,last_seen_at
+                             FROM external_catalog_products
+                             WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s
+                               AND (upper(name) LIKE '%%ST01-012%%' OR upper(name) LIKE '%%ST01 012%%')
+                             ORDER BY expansion_external_id,external_id''',(gid,latest))
+              report['onepiece_st01_012_cardmarket_products']=[dict(r) for r in cur.fetchall()]
+
+              # Mapping-method distribution. Accuracy audit must be method-aware.
+              cur.execute('''SELECT l.mapping_method,l.confidence,l.link_status,count(*) AS links,
+                                    count(DISTINCT l.print_id) AS prints,count(DISTINCT l.external_product_id) AS products
+                             FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                               AND l.link_status=ANY(%s)
+                             GROUP BY l.mapping_method,l.confidence,l.link_status
+                             ORDER BY links DESC''',(gid,list(ACCEPTED)))
+              report['onepiece_accepted_mapping_methods']=[dict(r) for r in cur.fetchall()]
+
+              # Validate any evidence.release_id against actual official PrintRelease membership.
+              cur.execute('''SELECT l.external_product_id,l.print_id,l.mapping_method,l.confidence,l.evidence,
+                                    e.external_id AS id_product,e.name AS market_name,e.expansion_external_id,
+                                    p.collector_number,p.variant,p.rarity,c.name AS card_name
+                             FROM external_catalog_print_links l
+                             JOIN external_catalog_products e ON e.id=l.external_product_id
+                             JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                               AND l.link_status=ANY(%s)''',(gid,list(ACCEPTED)))
+              links=[dict(r) for r in cur.fetchall()]
+              cur.execute('''SELECT pr.print_id,array_agg(DISTINCT pr.release_id ORDER BY pr.release_id) AS release_ids
+                             FROM print_releases pr JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE c.game_id=%s GROUP BY pr.print_id''',(gid,))
+              memberships={int(r['print_id']):[int(x) for x in (r['release_ids'] or [])] for r in cur.fetchall()}
+              suspect=[]; by_reason=Counter()
+              weak_methods={'bandai_global_residual_exact'}
+              for x in links:
+                ev=x.get('evidence') or {}
+                reasons=[]
+                if x.get('mapping_method') in weak_methods:
+                  reasons.append('global_cardinality_without_physical_release_proof')
+                rid=ev.get('release_id') if isinstance(ev,dict) else None
+                if rid is not None and int(rid) not in memberships.get(int(x['print_id']),[]):
+                  reasons.append('evidence_release_not_in_print_memberships')
+                basis=ev.get('identity_basis',[]) if isinstance(ev,dict) else []
+                basis=[str(v) for v in (basis or [])]
+                if any(v in basis for v in ('global_equal_cardinality','global_one_to_one')) and not (
+                    rid is not None or 'official_PrintRelease' in basis or 'sealed_product_release_match' in basis or 'trusted_expansion_from_existing_exact_links' in basis):
+                  reasons.append('one_to_one_without_release_proof')
+                if reasons:
+                  for r in reasons: by_reason[r]+=1
+                  suspect.append({**x,'reasons':reasons,'official_release_ids':memberships.get(int(x['print_id']),[])})
+              report['onepiece_suspect_accepted_links']={'count':len(suspect),'by_reason':dict(by_reason),'sample':suspect[:250]}
+
+              # Expansion -> official release consistency from all accepted links.
+              by_exp=defaultdict(list)
+              for x in links:
+                by_exp[str(x.get('expansion_external_id') or '')].append(x)
+              exp_rows=[]; exp_conflicts=[]
+              for exp,xs in sorted(by_exp.items()):
+                sets=[]
+                for x in xs:
+                  rs=set(memberships.get(int(x['print_id']),[]))
+                  if rs: sets.append(rs)
+                common=set.intersection(*sets) if sets else set()
+                union=set.union(*sets) if sets else set()
+                row={'expansion_external_id':exp,'accepted_links':len(xs),'common_official_release_ids':sorted(common),'union_official_release_ids':sorted(union)}
+                exp_rows.append(row)
+                if sets and len(common)!=1:
+                  exp_conflicts.append(row)
+              report['onepiece_expansion_release_consistency']={'expansions':len(exp_rows),'non_unique_or_empty_intersection':len(exp_conflicts),'conflicts':exp_conflicts}
+          finally:
+            conn.close()
+
+          out=Path('/tmp/cardmarket-physical-version-integrity.json')
+          out.write_text(json.dumps(report,indent=2,default=str,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,default=str,sort_keys=True))
+          PY
+      - name: Persist audit report
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/cardmarket-physical-version-integrity.json audit-reports/cardmarket-physical-version-integrity.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/cardmarket-physical-version-integrity.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Record Cardmarket physical version integrity audit"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-physical-version-integrity-${{ github.run_id }}
+          path: /tmp/cardmarket-physical-version-integrity.json
+          retention-days: 90
