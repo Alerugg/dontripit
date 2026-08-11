@@ -1,0 +1,117 @@
+{
+  "certifications": {
+    "pokemon_reviewed_overrides": 4,
+    "yugioh_reviewed_subreleases": 43
+  },
+  "hard_failures": [],
+  "pass": true,
+  "policy": {
+    "display_only_exact_physical_mapping": true,
+    "missing_current_price_is_null": true,
+    "riftbound_excluded": true,
+    "sibling_reprint_price_fallback": false
+  },
+  "regressions": {
+    "onepiece_44257": {
+      "accepted": [
+        {
+          "expansion_external_id": "5364",
+          "id_product": "720061",
+          "link_status": "accepted",
+          "mapping_method": "bandai_physical_release_unique_exact"
+        }
+      ],
+      "all_links": [
+        {
+          "expansion_external_id": "5364",
+          "id_product": "720061",
+          "link_status": "accepted",
+          "mapping_method": "bandai_physical_release_unique_exact"
+        },
+        {
+          "expansion_external_id": "5303",
+          "id_product": "749435",
+          "link_status": "quarantined",
+          "mapping_method": "op_variant_cm_global_exact"
+        }
+      ]
+    }
+  },
+  "sealed": {
+    "mtg": {
+      "cross": 0,
+      "exact": 5031,
+      "missing": 0,
+      "multi": 0,
+      "total": 5031
+    },
+    "onepiece": {
+      "cross": 0,
+      "exact": 753,
+      "missing": 0,
+      "multi": 0,
+      "total": 753
+    },
+    "pokemon": {
+      "cross": 0,
+      "exact": 5006,
+      "missing": 0,
+      "multi": 0,
+      "total": 5006
+    },
+    "yugioh": {
+      "cross": 0,
+      "exact": 2385,
+      "missing": 0,
+      "multi": 0,
+      "total": 2385
+    }
+  },
+  "singles": {
+    "mtg": {
+      "accepted_exact_prints": 147851,
+      "accepted_links": 147851,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "methods": {
+        "scryfall_cardmarket_id": 147851
+      }
+    },
+    "onepiece": {
+      "accepted_exact_prints": 2641,
+      "accepted_links": 2641,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "methods": {
+        "bandai_physical_release_unique_exact": 1,
+        "bandai_release_exact": 315,
+        "bandai_sealed_residual_exact": 8,
+        "bandai_trusted_expansion_exact": 18,
+        "op_variant_cm_exact": 195,
+        "op_variant_cm_global_exact": 2104
+      }
+    },
+    "pokemon": {
+      "accepted_exact_prints": 24341,
+      "accepted_links": 24341,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "methods": {
+        "pokemon_cardmarket_identity_certified": 4,
+        "tcgdex_cardmarket_id": 24337
+      }
+    },
+    "yugioh": {
+      "accepted_exact_prints": 24253,
+      "accepted_links": 24253,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "methods": {
+        "sealed_expansion_exact_name": 22253,
+        "ygo_konami_product_name_exact": 1864,
+        "ygo_konami_release_exact": 93,
+        "ygo_konami_subrelease_exact": 43
+      }
+    }
+  }
+}
