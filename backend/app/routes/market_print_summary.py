@@ -64,13 +64,19 @@ def _cardmarket_url(raw_json: dict | None) -> str | None:
 
 @market_print_summary_bp.get("/api/v1/market/prints/summary")
 def market_print_summary():
-    """Return the latest exact Cardmarket projection for up to 100 Prints.
+    """Return only current exact Cardmarket projections for up to 100 Prints.
 
-    This endpoint never performs identity matching. It reads only canonical
-    PriceSnapshot rows previously projected through accepted exact Cardmarket
-    links, so search/filter UI cannot accidentally borrow a price from another
-    artwork, finish or physical printing. Cardmarket's zero placeholders are
-    treated as unavailable rather than displayed as EUR 0.00.
+    Identity is never inferred here. A canonical PriceSnapshot is visible only
+    when all of these remain true now:
+      * the Print has exactly one accepted current Cardmarket idProduct;
+      * that idProduct is from the current Cardmarket catalog capture;
+      * the canonical snapshot was projected at the latest PriceGuide capture
+        for that game; and
+      * the snapshot carries the same idProduct.
+
+    Historical canonical snapshots remain available to historical APIs, but a
+    missing row in today's Cardmarket PriceGuide can no longer masquerade as a
+    current price in search/filter UI.
     """
 
     try:
@@ -83,6 +89,51 @@ def market_print_summary():
 
     sql = text(
         """
+        WITH accepted AS (
+          SELECT l.print_id,
+                 MIN(e.external_id) AS id_product,
+                 MIN(e.game_id) AS game_id,
+                 COUNT(DISTINCT e.id) AS product_count
+          FROM external_catalog_print_links l
+          JOIN external_catalog_products e ON e.id = l.external_product_id
+          WHERE e.source = 'cardmarket'
+            AND e.product_group = 'single'
+            AND l.link_status IN ('accepted','mapped','exact')
+            AND l.print_id IN :print_ids
+            AND e.last_seen_at = (
+              SELECT MAX(e2.last_seen_at)
+              FROM external_catalog_products e2
+              WHERE e2.source = 'cardmarket'
+                AND e2.game_id = e.game_id
+            )
+          GROUP BY l.print_id
+          HAVING COUNT(DISTINCT e.id) = 1
+        ), latest_game_capture AS (
+          SELECT e.game_id,
+                 MAX(mp.as_of) AS as_of
+          FROM external_market_price_snapshots mp
+          JOIN external_catalog_products e ON e.id = mp.external_product_id
+          WHERE e.source = 'cardmarket'
+            AND e.product_group = 'single'
+          GROUP BY e.game_id
+        ), current_projection AS (
+          SELECT ps.*,
+                 a.id_product,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY ps.entity_id
+                   ORDER BY ps.id DESC
+                 ) AS row_rank
+          FROM price_snapshots ps
+          JOIN price_sources src ON src.id = ps.source_id
+          JOIN accepted a ON a.print_id = ps.entity_id
+          JOIN latest_game_capture lgc
+            ON lgc.game_id = a.game_id
+           AND lgc.as_of = ps.as_of
+          WHERE ps.entity_type = 'print'
+            AND lower(src.name) = 'cardmarket'
+            AND ps.entity_id IN :print_ids
+            AND COALESCE(ps.raw_json ->> 'idProduct', '') = a.id_product
+        )
         SELECT entity_id AS print_id,
                currency,
                price_low,
@@ -92,18 +143,7 @@ def market_print_summary():
                price_last,
                as_of,
                raw_json
-        FROM (
-          SELECT ps.*,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY ps.entity_id
-                   ORDER BY ps.as_of DESC, ps.id DESC
-                 ) AS row_rank
-          FROM price_snapshots ps
-          JOIN price_sources src ON src.id = ps.source_id
-          WHERE ps.entity_type = 'print'
-            AND lower(src.name) = 'cardmarket'
-            AND ps.entity_id IN :print_ids
-        ) ranked
+        FROM current_projection
         WHERE row_rank = 1
         ORDER BY entity_id ASC
         """
