@@ -1,0 +1,113 @@
+name: Patch Search Global Ordering Point 2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-search-global-ordering-point2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch advanced search ordering before pagination
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # One Piece
+          p=Path('backend/app/search_v2/advanced.py'); s=p.read_text()
+          s=s.replace('from app.search_v2.normalization import (', 'from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql\nfrom app.search_v2.normalization import (', 1)
+          s=s.replace('    query: str | None = None,\n    limit: int = 50,', '    query: str | None = None,\n    sort: str = "relevance",\n    has_price: bool = False,\n    limit: int = 50,', 1)
+          s=s.replace('    filters = dict(filters or {})\n', '    filters = dict(filters or {})\n    sort = normalize_search_sort(sort)\n', 1)
+          marker='    if filters:\n        raise ValueError(f"Unsupported advanced filters: {sorted(filters)}")\n\n    where_sql = " AND ".join(where)\n'
+          repl='    if filters:\n        raise ValueError(f"Unsupported advanced filters: {sorted(filters)}")\n\n    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")\n    if has_price:\n        where.append("cm.cardmarket_price IS NOT NULL")\n    where_sql = " AND ".join(where)\n'
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker='''    base_from = """\n      FROM print_search_profiles psp\n      JOIN prints p ON p.id = psp.print_id\n      JOIN cards c ON c.id = psp.card_id\n      JOIN sets s ON s.id = p.set_id\n      JOIN games g ON g.id = psp.game_id\n    """\n'''
+          repl='''    base_from = f"""\n      FROM print_search_profiles psp\n      JOIN prints p ON p.id = psp.print_id\n      JOIN cards c ON c.id = psp.card_id\n      JOIN sets s ON s.id = p.set_id\n      JOIN games g ON g.id = psp.game_id\n      {market_join}\n    """\n    order_sql = print_order_sql(\n        sort,\n        default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, CASE WHEN psp.exact_variant='default' THEN 0 ELSE 1 END, psp.exact_variant ASC, psp.print_id ASC",\n    )\n'''
+          assert marker in s; s=s.replace(marker,repl,1)
+          s=s.replace('''          psp.attributes_json,\n          (\n''','''          psp.attributes_json,\n          cm.cardmarket_price,\n          cm.cardmarket_currency,\n          cm.cardmarket_as_of,\n          (\n''',1)
+          old='''        ORDER BY c.name ASC, s.code ASC, p.collector_number ASC,\n                 CASE WHEN psp.exact_variant = 'default' THEN 0 ELSE 1 END,\n                 psp.exact_variant ASC, psp.print_id ASC\n'''
+          assert old in s; s=s.replace(old,'        ORDER BY {order_sql}\n',1)
+          s=s.replace('''            "primary_image_url": row["primary_image_url"],\n''','''            "primary_image_url": row["primary_image_url"],\n            "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n            "cardmarket_currency": row["cardmarket_currency"],\n            "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],\n''',1)
+          s=s.replace('return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"]}', 'return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"], "sort": sort, "has_price": bool(has_price)}', 1)
+          p.write_text(s)
+
+          # Pokemon
+          p=Path('backend/app/search_v2/pokemon_advanced.py'); s=p.read_text()
+          s=s.replace('from app.search_v2.normalization import normalize_language, normalize_search_text', 'from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql\nfrom app.search_v2.normalization import normalize_language, normalize_search_text',1)
+          s=s.replace('    query: str | None = None,\n    limit: int = 50,', '    query: str | None = None,\n    sort: str = "relevance",\n    has_price: bool = False,\n    limit: int = 50,',1)
+          s=s.replace('    filters = dict(filters or {})\n', '    filters = dict(filters or {})\n    sort = normalize_search_sort(sort)\n',1)
+          marker='''    where_sql = " AND ".join(where)\n\n    total = int(\n        session.execute(\n            text(f"SELECT COUNT(*) FROM print_search_profiles psp WHERE {where_sql}"),\n            params,\n        ).scalar_one() or 0\n    )\n\n    rows = session.execute(\n'''
+          repl='''    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")\n    if has_price:\n        where.append("cm.cardmarket_price IS NOT NULL")\n    where_sql = " AND ".join(where)\n    filter_from = f"""\n      FROM print_search_profiles psp\n      JOIN prints p ON p.id=psp.print_id\n      JOIN cards c ON c.id=psp.card_id\n      JOIN sets s ON s.id=p.set_id\n      {market_join}\n    """\n    order_sql = print_order_sql(\n        sort,\n        default="lower(c.name) ASC, s.release_date ASC NULLS LAST, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, psp.variant_family ASC, psp.exact_variant ASC, psp.print_id ASC",\n    )\n\n    total = int(session.execute(text(f"SELECT COUNT(*) {filter_from} WHERE {where_sql}"), params).scalar_one() or 0)\n\n    rows = session.execute(\n'''
+          assert marker in s; s=s.replace(marker,repl,1)
+          old='''              FROM print_search_profiles psp\n              JOIN prints p ON p.id=psp.print_id\n              JOIN cards c ON c.id=psp.card_id\n              JOIN sets s ON s.id=p.set_id\n              WHERE {where_sql}\n              ORDER BY c.name ASC, s.release_date ASC NULLS LAST, s.code ASC,\n                       p.collector_number ASC, psp.variant_family ASC,\n                       psp.exact_variant ASC, psp.print_id ASC\n'''
+          new='''              ,cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n                ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position\n              {filter_from}\n              WHERE {where_sql}\n              ORDER BY {order_sql}\n'''
+          assert old in s; s=s.replace(old,new,1)
+          s=s.replace('''              psp.attributes_json,\n              (\n''','''              psp.attributes_json,\n              m.cardmarket_price, m.cardmarket_currency, m.cardmarket_as_of,\n              (\n''',1)
+          old='''            ORDER BY m.sort_name ASC, m.sort_release_date ASC NULLS LAST,\n                     m.sort_set_code ASC, m.sort_collector_number ASC,\n                     m.sort_variant_family ASC, m.sort_exact_variant ASC,\n                     m.print_id ASC\n'''
+          assert old in s; s=s.replace(old,'            ORDER BY m.sort_position ASC\n',1)
+          s=s.replace('''            "primary_image_url": row["primary_image_url"],\n''','''            "primary_image_url": row["primary_image_url"],\n            "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n            "cardmarket_currency": row["cardmarket_currency"],\n            "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],\n''',1)
+          s=s.replace('return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"]}', 'return {"items": items, "total": total, "limit": params["limit"], "offset": params["offset"], "sort": sort, "has_price": bool(has_price)}',1)
+          p.write_text(s)
+
+          # Yu-Gi-Oh
+          p=Path('backend/app/search_v2/yugioh_advanced.py'); s=p.read_text()
+          s=s.replace('from app.search_v2.normalization import normalize_search_text', 'from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql\nfrom app.search_v2.normalization import normalize_search_text',1)
+          s=s.replace('    query: str | None = None,\n    limit: int = 50,', '    query: str | None = None,\n    sort: str = "relevance",\n    has_price: bool = False,\n    limit: int = 50,',1)
+          s=s.replace('    if not isinstance(filters, dict):\n', '    sort = normalize_search_sort(sort)\n    if not isinstance(filters, dict):\n',1)
+          marker='''    where_sql = " AND ".join(conditions)\n    sql = text(\n'''
+          repl='''    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")\n    if has_price:\n        conditions.append("cm.cardmarket_price IS NOT NULL")\n    where_sql = " AND ".join(conditions)\n    order_sql = print_order_sql(sort, default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(p.rarity,'')) ASC, p.id ASC")\n    sql = text(\n'''
+          assert marker in s; s=s.replace(marker,repl,1)
+          old='''          FROM print_search_profiles psp\n          JOIN card_search_profiles csp ON csp.card_id=psp.card_id\n          JOIN games g ON g.id=psp.game_id\n          WHERE {where_sql}\n          ORDER BY psp.card_id ASC, psp.print_id ASC\n'''
+          new='''          FROM print_search_profiles psp\n          JOIN card_search_profiles csp ON csp.card_id=psp.card_id\n          JOIN games g ON g.id=psp.game_id\n          JOIN prints p ON p.id=psp.print_id\n          JOIN cards c ON c.id=psp.card_id\n          JOIN sets s ON s.id=p.set_id\n          {market_join}\n          WHERE {where_sql}\n          ORDER BY {order_sql}\n'''
+          assert old in s; s=s.replace(old,new,1)
+          s=s.replace('''            COUNT(*) OVER () AS total_count\n''','''            COUNT(*) OVER () AS total_count,\n            cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,\n            ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position\n''',1)
+          s=s.replace('''          matched.print_attributes,\n          (\n''','''          matched.print_attributes,\n          matched.cardmarket_price, matched.cardmarket_currency, matched.cardmarket_as_of,\n          (\n''',1)
+          old='''        ORDER BY c.name ASC, s.code ASC, p.collector_number ASC, p.rarity ASC, p.id ASC\n'''
+          assert old in s; s=s.replace(old,'        ORDER BY matched.sort_position ASC\n',1)
+          s=s.replace('''                "attributes": attrs,\n''','''                "attributes": attrs,\n                "cardmarket_price": float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n                "cardmarket_currency": row["cardmarket_currency"],\n                "cardmarket_as_of": row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"], "isoformat") else row["cardmarket_as_of"],\n''',1)
+          s=s.replace('''        "query": str(query or "").strip() or None,\n''','''        "query": str(query or "").strip() or None,\n        "sort": sort,\n        "has_price": bool(has_price),\n''',1)
+          p.write_text(s)
+
+          # MTG
+          p=Path('backend/app/search_v2/mtg_advanced.py'); s=p.read_text()
+          s=s.replace('from app.search_v2.normalization import normalize_search_text', 'from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql\nfrom app.search_v2.normalization import normalize_search_text',1)
+          s=s.replace('def advanced_mtg_search(session, *, filters: dict, query: str | None = None, limit: int = 50, offset: int = 0) -> dict:', 'def advanced_mtg_search(session, *, filters: dict, query: str | None = None, sort: str = "relevance", has_price: bool = False, limit: int = 50, offset: int = 0) -> dict:',1)
+          s=s.replace('    if not isinstance(filters, dict):\n', '    sort = normalize_search_sort(sort)\n    if not isinstance(filters, dict):\n',1)
+          marker='''    where_sql = " AND ".join(conditions)\n    sql = text(f"""\n'''
+          repl='''    market_join = current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")\n    if has_price:\n        conditions.append("cm.cardmarket_price IS NOT NULL")\n    where_sql = " AND ".join(conditions)\n    order_sql = print_order_sql(sort, default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(psp.exact_variant,'')) ASC, p.id ASC")\n    sql = text(f"""\n'''
+          assert marker in s; s=s.replace(marker,repl,1)
+          old='''          FROM print_search_profiles psp\n          JOIN card_search_profiles csp ON csp.card_id=psp.card_id\n          JOIN games g ON g.id=psp.game_id\n          WHERE {where_sql}\n          ORDER BY psp.card_id,psp.print_id LIMIT :limit OFFSET :offset\n'''
+          new='''          FROM print_search_profiles psp\n          JOIN card_search_profiles csp ON csp.card_id=psp.card_id\n          JOIN games g ON g.id=psp.game_id\n          JOIN prints p ON p.id=psp.print_id\n          JOIN cards c ON c.id=psp.card_id\n          JOIN sets s ON s.id=p.set_id\n          {market_join}\n          WHERE {where_sql}\n          ORDER BY {order_sql} LIMIT :limit OFFSET :offset\n'''
+          assert old in s; s=s.replace(old,new,1)
+          s=s.replace('''                 csp.attributes_json AS card_attributes,COUNT(*) OVER() AS total_count\n''','''                 csp.attributes_json AS card_attributes,COUNT(*) OVER() AS total_count,\n                 cm.cardmarket_price,cm.cardmarket_currency,cm.cardmarket_as_of,\n                 ROW_NUMBER() OVER (ORDER BY {order_sql}) AS sort_position\n''',1)
+          s=s.replace('''               psp.exact_variant,psp.variant_family,matched.card_attributes,matched.print_attributes,\n''','''               psp.exact_variant,psp.variant_family,matched.card_attributes,matched.print_attributes,\n               matched.cardmarket_price,matched.cardmarket_currency,matched.cardmarket_as_of,\n''',1)
+          s=s.replace('''        ORDER BY c.name,s.code,p.collector_number,psp.exact_variant,p.id\n''','''        ORDER BY matched.sort_position\n''',1)
+          s=s.replace('''            "primary_image_url":row["primary_image_url"],"attributes":attrs,\n''','''            "primary_image_url":row["primary_image_url"],"attributes":attrs,\n            "cardmarket_price":float(row["cardmarket_price"]) if row["cardmarket_price"] is not None else None,\n            "cardmarket_currency":row["cardmarket_currency"],\n            "cardmarket_as_of":row["cardmarket_as_of"].isoformat() if hasattr(row["cardmarket_as_of"],"isoformat") else row["cardmarket_as_of"],\n''',1)
+          s=s.replace('return {"items":items,"count":len(items),"total":total,"limit":bounded_limit,"offset":bounded_offset,"filters":filters,"query":str(query or "").strip() or None}', 'return {"items":items,"count":len(items),"total":total,"limit":bounded_limit,"offset":bounded_offset,"filters":filters,"query":str(query or "").strip() or None,"sort":sort,"has_price":bool(has_price)}',1)
+          p.write_text(s)
+          PY
+      - name: Static verification
+        run: |
+          python -m py_compile backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py backend/app/routes/search_v2.py
+          grep -R "cardmarket_price IS NOT NULL" backend/app/search_v2/*advanced.py
+          grep -R "ORDER BY matched.sort_position" backend/app/search_v2/{yugioh_advanced.py,mtg_advanced.py}
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/search_v2 backend/app/routes/search_v2.py
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Sort and filter full search results before pagination'
+          git push origin HEAD:catalog-v2
