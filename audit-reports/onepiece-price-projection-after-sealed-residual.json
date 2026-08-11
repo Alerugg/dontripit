@@ -1,0 +1,18 @@
+{
+  "accepted_links": 3757,
+  "ambiguous_print_links": 0,
+  "as_of": "2026-08-11T00:46:06+00:00",
+  "canonical_prints": 3757,
+  "cross_game_links": 0,
+  "currency": "EUR",
+  "game": "onepiece",
+  "inserted": 9,
+  "missing_external_price": 7,
+  "mode": "apply",
+  "priceable_prints": 3750,
+  "snapshot_count": 3750,
+  "source": "cardmarket",
+  "unsupported_finish": 0,
+  "updated": 3741,
+  "write_ready": true
+}
