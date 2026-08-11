@@ -29,6 +29,20 @@ function resolveItemType(item) {
   return { label: 'Carta', className: 'badge-card' }
 }
 
+function formatMarketPrice(item) {
+  const value = Number(item?.market?.display_price)
+  if (!Number.isFinite(value)) return null
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency: item?.market?.currency || 'EUR',
+      maximumFractionDigits: 2,
+    }).format(value)
+  } catch {
+    return `${value.toFixed(2)} ${item?.market?.currency || 'EUR'}`
+  }
+}
+
 export default function CatalogCard({ item, view = 'grid', queryState, debugImage = false }) {
   const title = item.name || item.title || 'Carta sin título'
   const exactPrintId = item.print_id || (item.type === 'print' ? item.id : null)
@@ -41,6 +55,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         ? getCardHref(item.game, resolvedCardId, queryState)
         : '#'
   const itemType = resolveItemType(item)
+  const marketPrice = formatMarketPrice(item)
 
   return (
     <Link href={href} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
@@ -72,6 +87,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
             {buildMetaChips(item).map((meta) => (
               <span key={meta} className="catalog-meta-chip">{meta}</span>
             ))}
+            {marketPrice ? <span className="catalog-meta-chip">Cardmarket {marketPrice}</span> : null}
           </div>
           {item.variant_count ? <span className="catalog-variant-pill">{item.variant_count} versiones</span> : null}
         </div>
