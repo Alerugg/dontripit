@@ -101,6 +101,7 @@ def main() -> int:
         expansion_mapped_prints: dict[str, set[int]] = defaultdict(set)
         all_external_by_expansion: dict[str, list[dict]] = defaultdict(list)
         accepted_external_ids: set[int] = set()
+        accepted_print_ids: set[int] = set()
         for row in products:
             expansion_id = str(row["expansion_external_id"] or "")
             if not expansion_id:
@@ -111,6 +112,7 @@ def main() -> int:
                 print_id = int(row["print_id"])
                 expansion_mapped_prints[expansion_id].add(print_id)
                 accepted_external_ids.add(int(row["external_product_id"]))
+                accepted_print_ids.add(print_id)
 
         bridge_rows = []
         bridge_by_expansion: dict[str, str] = {}
@@ -171,6 +173,9 @@ def main() -> int:
                     unresolved["no_exact_name_in_release" if not print_ids else "multiple_exact_prints_in_release"] += 1
                     continue
                 print_id = next(iter(print_ids))
+                if print_id in accepted_print_ids:
+                    unresolved["target_already_has_exact_cardmarket_link"] += 1
+                    continue
                 target_to_external[print_id].add(external_pk)
                 candidates.append(
                     {
@@ -186,6 +191,7 @@ def main() -> int:
                             "existing_exact_links_release_intersection",
                             "exact_normalized_card_name_inside_official_konami_product",
                             "unique_canonical_print_inside_release",
+                            "target_has_no_existing_exact_cardmarket_link",
                         ],
                     }
                 )
@@ -206,6 +212,7 @@ def main() -> int:
             "summary": {
                 "cardmarket_single_rows": len(products),
                 "accepted_exact_external_products": len(accepted_external_ids),
+                "accepted_exact_target_prints": len(accepted_print_ids),
                 "konami_memberships": len(release_rows),
                 "cardmarket_expansions_with_existing_exact_links": len(expansion_mapped_prints),
                 "bridged_expansions": len(bridge_rows),
