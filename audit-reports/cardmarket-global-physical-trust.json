@@ -2236,27 +2236,36 @@
         ]
       },
       {
-        "confidence": "1.0",
+        "confidence": "exact",
         "link_status": "accepted",
         "links": 4,
-        "mapping_method": "direct_print_identifier",
+        "mapping_method": "pokemon_cardmarket_identity_certified",
         "prints": 4,
         "products": 4,
-        "reviewed": false,
+        "reviewed": true,
         "sample": [
           {
             "card_name": "Charon's Choice",
             "collector_number": "RT6",
-            "confidence": "1.0",
-            "evidence": null,
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Charon's Choice",
+              "cardmarket_product_name": "Charon's Choice",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "278574",
+              "collector_number": "RT6",
+              "legacy_print_identifier": "278574",
+              "source_conflict": null,
+              "tcgdex_declared_id": "278574"
+            },
             "expansion_external_id": "1563",
             "id_product": "278574",
             "language": "en",
-            "mapping_method": "direct_print_identifier",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
             "market_name": "Charon's Choice",
             "print_id": 53078,
             "rarity": "Rare",
-            "reviewed": false,
+            "reviewed": true,
             "set_code": "RR",
             "set_name": "Rising Rivals",
             "variant": "v2-ad016762ee2df38d"
@@ -2264,16 +2273,25 @@
           {
             "card_name": "Mr. Briney\u2019s Compassion",
             "collector_number": "8",
-            "confidence": "1.0",
-            "evidence": null,
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Mr. Briney\u2019s Compassion",
+              "cardmarket_product_name": "Mr. Briney's Compassion",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "277439",
+              "collector_number": "8",
+              "legacy_print_identifier": "277439",
+              "source_conflict": null,
+              "tcgdex_declared_id": null
+            },
             "expansion_external_id": "1614",
             "id_product": "277439",
             "language": "en",
-            "mapping_method": "direct_print_identifier",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
             "market_name": "Mr. Briney's Compassion",
             "print_id": 53375,
             "rarity": "Uncommon",
-            "reviewed": false,
+            "reviewed": true,
             "set_code": "P2",
             "set_name": "POP Series 2",
             "variant": "v2-4794c364245529b3"
@@ -2281,16 +2299,25 @@
           {
             "card_name": "Bill\u2019s Maintenance",
             "collector_number": "6",
-            "confidence": "1.0",
-            "evidence": null,
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Bill\u2019s Maintenance",
+              "cardmarket_product_name": "Bill's Maintenance",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "277488",
+              "collector_number": "6",
+              "legacy_print_identifier": "277488",
+              "source_conflict": null,
+              "tcgdex_declared_id": null
+            },
             "expansion_external_id": "1617",
             "id_product": "277488",
             "language": "en",
-            "mapping_method": "direct_print_identifier",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
             "market_name": "Bill's Maintenance",
             "print_id": 53424,
             "rarity": "Uncommon",
-            "reviewed": false,
+            "reviewed": true,
             "set_code": "P5",
             "set_name": "POP Series 5",
             "variant": "v2-4794c364245529b3"
@@ -2298,16 +2325,30 @@
           {
             "card_name": "Potion",
             "collector_number": "15",
-            "confidence": "1.0",
-            "evidence": null,
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Potion",
+              "cardmarket_product_name": "Potion",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "297277",
+              "collector_number": "15",
+              "legacy_print_identifier": "297277",
+              "source_conflict": {
+                "declared_expansion": "1758",
+                "declared_id": "297246",
+                "declared_product_name": "Pikipek [Rock Smash]",
+                "resolution": "source_id_rejected_because_it_resolves_to_different_card_name"
+              },
+              "tcgdex_declared_id": "297246"
+            },
             "expansion_external_id": "1758",
             "id_product": "297277",
             "language": "en",
-            "mapping_method": "direct_print_identifier",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
             "market_name": "Potion",
             "print_id": 63858,
             "rarity": "Uncommon",
-            "reviewed": false,
+            "reviewed": true,
             "set_code": "TK10A",
             "set_name": "SM trainer Kit (Alolan Raichu)",
             "variant": "v2-4794c364245529b3"
@@ -2328,10 +2369,10 @@
       {
         "confidence": "exact",
         "link_status": "accepted",
-        "links": 22296,
+        "links": 22253,
         "mapping_method": "sealed_expansion_exact_name",
-        "prints": 22296,
-        "products": 22296,
+        "prints": 22253,
+        "products": 22253,
         "reviewed": false,
         "sample": [
           {
@@ -3291,6 +3332,433 @@
             "set_code": "CRV",
             "set_name": "Cybernetic Revolution",
             "variant": "rarity-common"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 43,
+        "mapping_method": "ygo_konami_subrelease_exact",
+        "prints": 43,
+        "products": 43,
+        "reviewed": true,
+        "sample": [
+          {
+            "card_name": "Ultimaya Tzolkin",
+            "collector_number": "CORE-ENSE1",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59671,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286938",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE1",
+              "idExpansion": "1657",
+              "idMetacard": "220154",
+              "idProduct": "286938",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286938",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Ultimaya Tzolkin",
+            "print_id": 109529,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Frightfur Tiger",
+            "collector_number": "CORE-ENSE2",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59496,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286939",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE2",
+              "idExpansion": "1657",
+              "idMetacard": "220499",
+              "idProduct": "286939",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286939",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Frightfur Tiger",
+            "print_id": 109530,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Engraver of the Mark",
+            "collector_number": "CORE-ENSE3",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 66724,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286940",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE3",
+              "idExpansion": "1657",
+              "idMetacard": "221316",
+              "idProduct": "286940",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286940",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Engraver of the Mark",
+            "print_id": 109531,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Destruction Sword Flash",
+            "collector_number": "CORE-ENSE4",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 61637,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286941",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE4",
+              "idExpansion": "1657",
+              "idMetacard": "221317",
+              "idProduct": "286941",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286941",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Destruction Sword Flash",
+            "print_id": 109532,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Ultimaya Tzolkin",
+            "collector_number": "DOCS-ENSE1",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59671,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286933",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE1",
+              "idExpansion": "1677",
+              "idMetacard": "220154",
+              "idProduct": "286933",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286933",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Ultimaya Tzolkin",
+            "print_id": 112806,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Frightfur Tiger",
+            "collector_number": "DOCS-ENSE2",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59496,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286934",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE2",
+              "idExpansion": "1677",
+              "idMetacard": "220499",
+              "idProduct": "286934",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286934",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Frightfur Tiger",
+            "print_id": 112807,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Engraver of the Mark",
+            "collector_number": "DOCS-ENSE3",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 66724,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286935",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE3",
+              "idExpansion": "1677",
+              "idMetacard": "221316",
+              "idProduct": "286935",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286935",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Engraver of the Mark",
+            "print_id": 112808,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Destruction Sword Flash",
+            "collector_number": "DOCS-ENSE4",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 61637,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286936",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE4",
+              "idExpansion": "1677",
+              "idMetacard": "221317",
+              "idProduct": "286936",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286936",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Destruction Sword Flash",
+            "print_id": 112809,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
           }
         ]
       }
