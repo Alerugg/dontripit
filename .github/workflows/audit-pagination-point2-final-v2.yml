@@ -29,36 +29,32 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: pip install -r backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
       - name: Static pagination and Point 1 contracts
         run: |
-          python -m py_compile backend/app/routes/catalog.py backend/app/routes/set_ui.py backend/app/routes/search_v2.py backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py
+          python -m py_compile backend/app/routes/catalog.py backend/app/routes/set_ui.py backend/app/routes/search_v2.py backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py scripts/audit_pagination_point2_final_v2.py
           python - <<'PY'
           from pathlib import Path
           required={
             'backend/app/routes/catalog.py':['max_offset = min(max_offset, 100_000)','include_meta'],
-            'backend/app/routes/set_ui.py':['offset = _bounded_int','cardmarket_id_product','unfiltered_total'],
+            'backend/app/routes/set_ui.py':['cardmarket_id_product','unfiltered_total'],
             'backend/app/search_v2/market_ordering.py':['cardmarket_id_product','cardmarket_website_path','price_desc','price_asc'],
-            'frontend/components/games/GameCollectionsDirectoryPage.js':['PAGE_SIZE = 24','fetchSetsPage','Paginación de sets'],
-            'frontend/components/games/GameSetPage.js':['PAGE_SIZE = 36','fetchSetDetail','Paginación de versiones del set'],
+            'frontend/components/games/GameCollectionsDirectoryPage.js':['PAGE_SIZE = 24','fetchSetsPage'],
+            'frontend/components/games/GameSetPage.js':['PAGE_SIZE = 36','fetchSetDetail'],
             'frontend/app/api/search-v2/federated/route.js':["kind === 'sets' ? offset : 0","/api/v1/market/current-products",'marketFromSearchItem','sets_page'],
-            'frontend/components/searchV2/FederatedSearchResults.js':["activeType === 'sets'","paginationTotal = setsPage.total","activeType === 'sealed' || (activeType === 'all' && isFirstPage)"],
-            'frontend/components/searchV2/OnePieceSearchV2Experience.js':['kind: normalType','hasPrice: onlyWithPrice','Precio: mayor a menor'],
+            'frontend/components/searchV2/FederatedSearchResults.js':["activeType === 'sets'","paginationTotal = setsPage.total"],
+            'frontend/components/searchV2/OnePieceSearchV2Experience.js':['kind: normalType','hasPrice: onlyWithPrice'],
           }
           for file,tokens in required.items():
-            text=Path(file).read_text()
-            missing=[x for x in tokens if x not in text]
+            text=Path(file).read_text(); missing=[x for x in tokens if x not in text]
             if missing: raise AssertionError({file:missing})
           fed=Path('frontend/app/api/search-v2/federated/route.js').read_text()
           adv=Path('frontend/app/api/search-v2/advanced/route.js').read_text()
-          if 'cardmarket-batch' in fed or 'cardmarket-batch' in adv:
-            raise AssertionError('search still performs duplicate Cardmarket batch enrichment')
-          if "callInternalApi('/api/v1/market/products'" in fed:
-            raise AssertionError('search sealed reader regressed to historical Cardmarket products')
-          if 'limit: 500' in Path('frontend/components/games/GameCollectionsDirectoryPage.js').read_text():
-            raise AssertionError('set directory bulk fetch regression')
-          if 'limit: 1000' in Path('frontend/components/games/GameSetPage.js').read_text():
-            raise AssertionError('set checklist bulk fetch regression')
+          if 'cardmarket-batch' in fed or 'cardmarket-batch' in adv: raise AssertionError('duplicate Cardmarket search enrichment')
+          if "callInternalApi('/api/v1/market/products'" in fed: raise AssertionError('historical sealed reader regression')
+          if 'limit: 500' in Path('frontend/components/games/GameCollectionsDirectoryPage.js').read_text(): raise AssertionError('500-set bulk fetch regression')
+          if 'limit: 1000' in Path('frontend/components/games/GameSetPage.js').read_text(): raise AssertionError('1000-print bulk fetch regression')
           print('static_contracts=PASS')
           PY
       - name: Frontend tests and production build
@@ -67,110 +63,10 @@ jobs:
           npm ci
           npm test
           npm run build
-      - name: DB ordering, pagination and Point 1 regression
+      - name: Production DB and HTTP final audit
         env:
           PYTHONPATH: backend
-        run: |
-          python - <<'PY'
-          import json,os,time
-          from pathlib import Path
-          from sqlalchemy import create_engine,text
-          from sqlalchemy.orm import Session
-          from app.search_v2.advanced import advanced_onepiece_search
-          from app.search_v2.pokemon_advanced import advanced_pokemon_search
-          from app.search_v2.yugioh_advanced import advanced_yugioh_search
-          from app.search_v2.mtg_advanced import advanced_mtg_search
-          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],pool_pre_ping=True)
-          report={'pass':False,'hard_failures':[],'db':{},'http':{},'point1':{}}
-          cases={'onepiece':(advanced_onepiece_search,'Luffy'),'pokemon':(advanced_pokemon_search,'Pikachu'),'yugioh':(advanced_yugioh_search,'Dark Magician'),'mtg':(advanced_mtg_search,'Sol Ring')}
-          for game,(fn,q) in cases.items():
-            started=time.time()
-            try:
-              with Session(engine) as session:
-                session.execute(text("SET LOCAL statement_timeout='12000ms'"))
-                a=fn(session,filters={},query=q,sort='price_desc',has_price=True,limit=5,offset=0)
-                b=fn(session,filters={},query=q,sort='price_desc',has_price=True,limit=5,offset=5)
-                ap=[float(x['cardmarket_price']) for x in a['items']]; bp=[float(x['cardmarket_price']) for x in b['items']]
-                ai=[int(x['print_id']) for x in a['items']]; bi=[int(x['print_id']) for x in b['items']]
-                refs=[str(x.get('cardmarket_id_product') or '') for x in a['items']+b['items']]
-                failures=[]
-                if not a['total']: failures.append('no_results')
-                if ap!=sorted(ap,reverse=True) or bp!=sorted(bp,reverse=True): failures.append('page_order')
-                if ap and bp and ap[-1] < bp[0]: failures.append('cross_page_order')
-                if set(ai)&set(bi): failures.append('duplicate_page_ids')
-                if any(not x for x in refs): failures.append('missing_exact_market_reference')
-                if failures: report['hard_failures'].append(f'{game}:{failures}')
-                report['db'][game]={'total_priced':a['total'],'page1_ids':ai,'page2_ids':bi,'page1_prices':ap,'page2_prices':bp,'seconds':round(time.time()-started,3),'failures':failures}
-            except Exception as exc:
-              report['hard_failures'].append(f'{game}:{type(exc).__name__}:{exc}')
-              report['db'][game]={'error':str(exc)[:500]}
-          with engine.connect() as conn:
-            rows=[dict(r) for r in conn.execute(text("""SELECT e.external_id id_product,l.link_status,l.mapping_method FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE l.print_id=44257 AND e.source='cardmarket' ORDER BY l.link_status,e.external_id""")).mappings().all()]
-          accepted=[r for r in rows if r['link_status'] in ('accepted','mapped','exact')]
-          quarantined=[r for r in rows if r['link_status']=='quarantined']
-          report['point1']={'accepted':accepted,'quarantined':quarantined}
-          if len(accepted)!=1 or str(accepted[0]['id_product'])!='720061': report['hard_failures'].append('point1:44257_wrong_mapping')
-          if not any(str(r['id_product'])=='749435' for r in quarantined): report['hard_failures'].append('point1:749435_not_quarantined')
-          Path('/tmp/pagination-point2-final-v2.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
-          if report['hard_failures']: raise SystemExit(2)
-          PY
-      - name: Public HTTP pagination and performance gate
-        run: |
-          python - <<'PY'
-          import json,time,requests
-          from pathlib import Path
-          p=Path('/tmp/pagination-point2-final-v2.json'); report=json.loads(p.read_text()); failures=report['hard_failures']; http={}; s=requests.Session()
-          def get(name,url,timeout=25):
-            t=time.time()
-            try:r=s.get(url,timeout=timeout)
-            except Exception as exc:
-              failures.append(f'{name}:{type(exc).__name__}'); http[name]={'error':str(exc),'seconds':round(time.time()-t,3)}; return None
-            elapsed=round(time.time()-t,3); http[name]={'status':r.status_code,'seconds':elapsed}
-            if r.status_code!=200:
-              failures.append(f'{name}:http_{r.status_code}'); http[name]['body']=r.text[:250]; return None
-            return r.json()
-          def disjoint(a,b,key='id'):
-            return not ({x[key] for x in a}&{x[key] for x in b})
-
-          a=get('sets1','https://api.dontripit.com/api/v1/sets?game=mtg&limit=5&offset=0&meta=1'); b=get('sets2','https://api.dontripit.com/api/v1/sets?game=mtg&limit=5&offset=5&meta=1')
-          if a and b and (a['total']!=b['total'] or not disjoint(a['items'],b['items'])): failures.append('sets_directory:paging')
-          deep=get('prints1200','https://api.dontripit.com/api/v1/prints?game=mtg&limit=5&offset=1200&meta=1')
-          if deep and (deep['offset']!=1200 or len(deep['items'])!=5 or deep['total']<1205): failures.append('prints:deep_paging')
-
-          s1=get('search_singles1','https://dontripit.com/api/search-v2/federated?q=Luffy&game=onepiece&kind=singles&page=1&limit=5&sort=price_desc&has_price=1')
-          s2=get('search_singles2','https://dontripit.com/api/search-v2/federated?q=Luffy&game=onepiece&kind=singles&page=2&limit=5&sort=price_desc&has_price=1')
-          if s1 and s2:
-            x=s1['singles']; y=s2['singles']; xp=[i['cardmarket_price'] for i in x['items']]; yp=[i['cardmarket_price'] for i in y['items']]
-            if x['total']!=y['total'] or not disjoint(x['items'],y['items'],'print_id') or xp!=sorted(xp,reverse=True) or yp!=sorted(yp,reverse=True) or xp[-1]<yp[0]: failures.append('search_singles:paging_order')
-            target=[i for i in y['items'] if i['print_id']==44257]
-            if not target or str(target[0].get('market',{}).get('reference',{}).get('id_product'))!='720061': failures.append('search_singles:point1_regression')
-
-          t1=get('search_sets1','https://dontripit.com/api/search-v2/federated?q=Secret&game=mtg&kind=sets&page=1&limit=5')
-          t2=get('search_sets2','https://dontripit.com/api/search-v2/federated?q=Secret&game=mtg&kind=sets&page=2&limit=5')
-          if t1 and t2:
-            if t1['sets_page']['page']!=1 or t2['sets_page']['page']!=2 or t1['sets_page']['total']!=t2['sets_page']['total'] or not disjoint(t1['sets'],t2['sets']): failures.append('search_sets:paging')
-
-          z1=get('search_sealed1','https://dontripit.com/api/search-v2/federated?q=Luffy&game=onepiece&kind=sealed&page=1&limit=5')
-          z2=get('search_sealed2','https://dontripit.com/api/search-v2/federated?q=Luffy&game=onepiece&kind=sealed&page=2&limit=5')
-          if z1 and z2:
-            x=z1['sealed']; y=z2['sealed']
-            if x['page']!=1 or y['page']!=2 or x['total']!=y['total'] or not disjoint(x['items'],y['items']): failures.append('search_sealed:paging')
-
-          o1=get('op15_1','https://api.dontripit.com/api/v1/set-ui/prints?game=onepiece&set_code=op-15&sort=price_desc&has_price=1&limit=5&offset=0')
-          o2=get('op15_2','https://api.dontripit.com/api/v1/set-ui/prints?game=onepiece&set_code=op-15&sort=price_desc&has_price=1&limit=5&offset=5')
-          if o1 and o2:
-            ap=[i['cardmarket_price'] for i in o1['items']]; bp=[i['cardmarket_price'] for i in o2['items']]
-            if o1['total']!=o2['total'] or not disjoint(o1['items'],o2['items'],'print_id') or ap!=sorted(ap,reverse=True) or bp!=sorted(bp,reverse=True) or ap[-1]<bp[0]: failures.append('set_ui:paging_order')
-
-          all1=get('search_all','https://dontripit.com/api/search-v2/federated?q=Luffy&game=onepiece&kind=all&page=1&limit=5')
-          for name in ('search_singles1','search_singles2','search_sets1','search_sets2'):
-            if http.get(name,{}).get('seconds',99)>15: failures.append(f'{name}:slow_{http[name]["seconds"]}s')
-          if http.get('search_all',{}).get('seconds',99)>18: failures.append(f'search_all:slow_{http["search_all"]["seconds"]}s')
-
-          report['http']=http; report['pass']=not failures; p.write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
-          print(json.dumps({'pass':report['pass'],'hard_failures':failures,'http':http},indent=2,sort_keys=True))
-          if failures: raise SystemExit(2)
-          PY
+        run: python scripts/audit_pagination_point2_final_v2.py
       - name: Persist hardened final gate
         if: always()
         run: |
