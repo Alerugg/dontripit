@@ -1,0 +1,236 @@
+name: Apply One Piece Cardmarket Physical Release Gate V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-onepiece-cardmarket-physical-release-gate-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-onepiece-cardmarket-physical-release-gate-v2
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Quarantine unproven/wrong reprints and repair reported Luffy
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor,Json
+
+          ACCEPTED=('accepted','mapped','exact')
+          def norm(v):
+            v=unicodedata.normalize('NFKD',str(v or ''))
+            v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’',"'").replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',v)).strip()
+          def release_core(name):
+            raw=re.sub(r'\s*\[[^\]]+\]\s*$','',str(name or '').strip()).strip()
+            m=re.match(r'^(?:BOOSTER PACK|STARTER DECK|EXTRA BOOSTER|PREMIUM BOOSTER|ULTIMATE DECK)\s*-(.+)-\s*$',raw,flags=re.I)
+            return norm(m.group(1) if m else raw)
+          def standard_en(name):
+            x=norm(name)
+            bad=('non english','japanese','asia region legal','pre release')
+            return not any(t in x for t in bad)
+          def sealed_bases(name):
+            raw=str(name or '').strip();out={norm(raw)}
+            for prefix in ('Starter Deck: ','Ultimate Deck: '):
+              if raw.casefold().startswith(prefix.casefold()):out.add(norm(raw[len(prefix):]))
+            for pat in (r'\s+Booster Box Case\s*\(.*\)$',r'\s+Booster Box$',r'\s+Sleeved Booster$',r'\s+Booster Display$',r'\s+Booster$'):
+              x=re.sub(pat,'',raw,flags=re.I).strip()
+              if x!=raw:out.add(norm(x))
+            return {x for x in out if x}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']);conn.autocommit=False
+          report={'game':'onepiece','gate':'physical_release_v2'}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece'");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='onepiece_official'",(gid,))
+              rels=[dict(r) for r in cur.fetchall()];idx=defaultdict(list);rmeta={}
+              for r in rels:
+                rid=int(r['id']);idx[release_core(r['name'])].append(r);rmeta[rid]={'external_id':str(r['external_id']),'name':r['name']}
+
+              # Independent standard-English Cardmarket expansion -> official release bridge from sealed names.
+              cur.execute("SELECT external_id,expansion_external_id,name,category FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s",(gid,latest))
+              byexp=defaultdict(list)
+              for r in cur.fetchall():byexp[str(r['expansion_external_id'] or '')].append(dict(r))
+              exp_rel={};exp_ev={};bridge_conflicts={}
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  if not standard_en(item['name']):continue
+                  for base in sealed_bases(item['name']):
+                    ms=idx.get(base,[])
+                    if len(ms)==1:
+                      rid=int(ms[0]['id']);votes[rid].append({'idProduct':str(item['external_id']),'name':item['name'],'category':item['category'],'matched_core':base})
+                if len(votes)==1:
+                  rid=next(iter(votes));exp_rel[exp]=rid;exp_ev[exp]=votes[rid]
+                elif len(votes)>1:bridge_conflicts[exp]={str(k):v for k,v in votes.items()}
+              if len(exp_rel)<40:raise AssertionError({'standard_english_release_bridge_regression':len(exp_rel)})
+
+              cur.execute('''SELECT pr.print_id,cr.id release_id FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id
+                             JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s''',(gid,))
+              memberships=defaultdict(set)
+              for r in cur.fetchall():memberships[int(r['print_id'])].add(int(r['release_id']))
+
+              cur.execute('''SELECT l.id link_id,l.print_id,l.external_product_id,l.mapping_method,l.confidence,l.evidence,
+                                    e.external_id id_product,e.expansion_external_id,e.name market_name
+                             FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)
+                             ORDER BY l.id''',(gid,list(ACCEPTED)))
+              links=[dict(r) for r in cur.fetchall()]
+              keep=[];quarantine=[];class_counts=Counter();by_method=defaultdict(Counter)
+              for x in links:
+                exp=str(x.get('expansion_external_id') or '');rid=exp_rel.get(exp);official=memberships.get(int(x['print_id']),set())
+                if rid is not None and rid in official:
+                  cls='release_consistent_standard_en';keep.append(x)
+                elif rid is not None:
+                  cls='release_mismatch';quarantine.append((x,cls,rid))
+                else:
+                  cls='release_unproven';quarantine.append((x,cls,None))
+                class_counts[cls]+=1;by_method[x['mapping_method']][cls]+=1
+
+              # Must catch the user-reported wrong Winner Cards link.
+              target_old=[x for x in links if int(x['print_id'])==44257]
+              if len(target_old)!=1 or str(target_old[0]['id_product'])!='749435':
+                raise AssertionError({'target_old_mapping_unexpected':target_old})
+              if not any(int(x[0]['print_id'])==44257 for x in quarantine):
+                raise AssertionError('reported wrong Luffy was not quarantined by physical release gate')
+
+              # Quarantine without deleting provenance/history of the mapping row.
+              quarantined_print_ids=set()
+              for x,reason,derived_rid in quarantine:
+                ev=dict(x.get('evidence') or {})
+                ev['physical_release_gate_v2']={
+                  'status':'quarantined','reason':reason,'cardmarket_expansion_external_id':str(x.get('expansion_external_id') or ''),
+                  'sealed_derived_release_id':derived_rid,'official_release_ids':sorted(memberships.get(int(x['print_id']),set()))
+                }
+                cur.execute("UPDATE external_catalog_print_links SET link_status='quarantined',confidence='candidate',reviewed=false,evidence=%s,updated_at=now() WHERE id=%s",(Json(ev),int(x['link_id'])))
+                quarantined_print_ids.add(int(x['print_id']))
+
+              # Exact repair: Pillars standard-English expansion + collector/name + unique official print in release 78.
+              pillar_exp=[e for e,r in exp_rel.items() if r==78]
+              if pillar_exp!=['5364'] and set(pillar_exp)!={'5364'}:
+                raise AssertionError({'expected_only_standard_en_pillars_expansion_5364':pillar_exp})
+              cur.execute('''SELECT id external_product_id,external_id id_product,name,expansion_external_id,website_path,metacard_external_id
+                             FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s
+                               AND expansion_external_id='5364' AND upper(name) LIKE '%%ST01-012%%' ''',(gid,latest))
+              market_candidates=[dict(r) for r in cur.fetchall()]
+              if len(market_candidates)!=1 or str(market_candidates[0]['id_product'])!='720061':
+                raise AssertionError({'expected_unique_pillars_luffy_720061':market_candidates})
+              m=market_candidates[0]
+              cur.execute('''SELECT p.id print_id,p.collector_number,p.variant,p.rarity,c.name card_name FROM print_releases pr
+                             JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE pr.release_id=78 AND upper(p.collector_number)='ST01-012' AND lower(p.language)='en' ''')
+              canon=[dict(r) for r in cur.fetchall()]
+              if len(canon)!=1 or int(canon[0]['print_id'])!=44257:
+                raise AssertionError({'expected_unique_official_pillars_luffy_44257':canon})
+              cur.execute("SELECT l.id,l.print_id,l.link_status FROM external_catalog_print_links l WHERE l.external_product_id=%s AND l.link_status=ANY(%s)",(int(m['external_product_id']),list(ACCEPTED)))
+              conflicts=[dict(r) for r in cur.fetchall()]
+              if conflicts:raise AssertionError({'correct_product_already_claimed':conflicts})
+              evidence={
+                'source':'onepiece_official+cardmarket','identity_basis':['standard_english_sealed_product_release_match','official_PrintRelease','exact_collector_number','unique_product_inside_cardmarket_release','unique_print_inside_official_release','global_one_to_one'],
+                'release_id':78,'release_external_id':rmeta[78]['external_id'],'official_release':rmeta[78]['name'],'idExpansion':'5364','idProduct':'720061',
+                'collector_number':'ST01-012','canonical_variant':canon[0]['variant'],'canonical_rarity':canon[0]['rarity'],'supersedes_wrong_idProduct':'749435'
+              }
+              cur.execute('''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence)
+                             VALUES(%s,44257,'bandai_physical_release_unique_exact','exact','accepted',true,%s)
+                             ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence='exact',link_status='accepted',reviewed=true,evidence=EXCLUDED.evidence,updated_at=now()''',(int(m['external_product_id']),Json(evidence)))
+
+              # Remove canonical Cardmarket price history for every quarantined print: it was projected through an unproven/wrong identity.
+              cur.execute("SELECT id FROM price_sources WHERE name='cardmarket'");ps=cur.fetchone();deleted_snapshots=0
+              if ps and quarantined_print_ids:
+                cur.execute("DELETE FROM price_snapshots WHERE source_id=%s AND entity_type='print' AND entity_id=ANY(%s)",(int(ps['id']),sorted(quarantined_print_ids)))
+                deleted_snapshots=cur.rowcount
+
+              cur.execute('''SELECT count(DISTINCT l.print_id) mapped FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND lower(p.language)='en' AND l.link_status=ANY(%s)''',(gid,list(ACCEPTED)))
+              after=int(cur.fetchone()['mapped'])
+              cur.execute('''SELECT e.external_id id_product,e.expansion_external_id,l.mapping_method,l.confidence,l.link_status
+                             FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE l.print_id=44257 AND e.source='cardmarket' ORDER BY CASE WHEN l.link_status='accepted' THEN 0 ELSE 1 END,l.id''')
+              target_after=[dict(r) for r in cur.fetchall()]
+              if [x for x in target_after if x['link_status']=='accepted'] != [next(x for x in target_after if x['link_status']=='accepted')]:
+                pass
+              acc=[x for x in target_after if x['link_status']=='accepted']
+              if len(acc)!=1 or str(acc[0]['id_product'])!='720061':raise AssertionError({'target_after':target_after})
+              report.update({'latest_snapshot':str(latest),'standard_english_release_expansions':len(exp_rel),'bridge_conflicts':len(bridge_conflicts),
+                             'before_accepted_links':len(links),'classification':dict(class_counts),'by_method':{k:dict(v) for k,v in by_method.items()},
+                             'quarantined_links':len(quarantine),'quarantined_prints':len(quarantined_print_ids),'deleted_contaminated_price_snapshots':deleted_snapshots,
+                             'accepted_prints_after_gate_before_projection':after,'target_44257_after':target_after})
+            conn.commit()
+          except Exception:
+            conn.rollback();raise
+          finally:conn.close()
+          p=Path('/tmp/op-physical-release-gate-v2-apply.json');p.write_text(json.dumps(report,indent=2,default=str,sort_keys=True)+'\n');print(p.read_text())
+          PY
+      - name: Reproject only remaining accepted exact Cardmarket prices
+        working-directory: backend
+        run: python scripts/project_cardmarket_link_prices.py --game onepiece --apply --report /tmp/op-physical-release-gate-v2-projection.json
+      - name: Verify target price/product after projection
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute('''SELECT e.external_id id_product,e.expansion_external_id,l.mapping_method,l.link_status,l.confidence
+                             FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE l.print_id=44257 AND e.source='cardmarket' AND l.link_status IN ('accepted','mapped','exact')''')
+              links=[dict(r) for r in cur.fetchall()]
+              if len(links)!=1 or links[0]['id_product']!='720061':raise AssertionError({'accepted_target_links':links})
+              cur.execute('''SELECT ps.as_of,ps.price_low,ps.price_mid,ps.price_market,ps.price_last,ps.raw_json
+                             FROM price_snapshots ps JOIN price_sources s ON s.id=ps.source_id
+                             WHERE s.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=44257
+                             ORDER BY ps.as_of DESC LIMIT 1''')
+              price=dict(cur.fetchone() or {})
+              if not price or str((price.get('raw_json') or {}).get('idProduct'))!='720061':raise AssertionError({'target_price':price})
+              out={'accepted_target_links':links,'latest_target_price':price}
+          finally:conn.close()
+          Path('/tmp/op-target-44257-verification.json').write_text(json.dumps(out,indent=2,default=str,sort_keys=True)+'\n');print(json.dumps(out,indent=2,default=str))
+          PY
+      - name: Persist reports
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/op-physical-release-gate-v2-apply.json audit-reports/onepiece-cardmarket-physical-release-gate-v2-apply.json
+          cp /tmp/op-physical-release-gate-v2-projection.json audit-reports/onepiece-cardmarket-physical-release-gate-v2-projection.json
+          cp /tmp/op-target-44257-verification.json audit-reports/onepiece-target-44257-cardmarket-verification.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-cardmarket-physical-release-gate-v2-apply.json audit-reports/onepiece-cardmarket-physical-release-gate-v2-projection.json audit-reports/onepiece-target-44257-cardmarket-verification.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Apply strict One Piece physical Cardmarket mapping gate'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op-physical-release-gate-v2-${{ github.run_id }}
+          path: /tmp/op-*.json
+          retention-days: 90
