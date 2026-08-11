@@ -5,19 +5,17 @@
   "canonical_en_prints": 4672,
   "current_parseable_cardmarket_singles": 11305,
   "unparseable_cardmarket_singles": 559,
-  "accepted_existing_links": 3607,
-  "accepted_existing_prints": 3607,
-  "accepted_existing_products": 3607,
+  "accepted_existing_links": 3757,
+  "accepted_existing_prints": 3757,
+  "accepted_existing_products": 3757,
   "status_counts": {
-    "canonical_fully_linked": 2023,
-    "cardinality_mismatch": 656,
+    "cardinality_mismatch": 568,
+    "canonical_fully_linked": 2142,
     "no_unlinked_market_product": 4,
-    "global_identity_unique": 30,
-    "residual_bijection": 1,
-    "residual_still_ambiguous": 3,
-    "existing_cross_identity_conflict": 8
+    "existing_cross_identity_conflict": 8,
+    "residual_still_ambiguous": 3
   },
-  "safe_candidates": 31,
-  "safe_candidate_prints": 31,
-  "safe_candidate_products": 31
+  "safe_candidates": 0,
+  "safe_candidate_prints": 0,
+  "safe_candidate_products": 0
 }
