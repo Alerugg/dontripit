@@ -1,5 +1,6 @@
 name: Audit Cardmarket Mapping Coverage Live
 
+# Manual refresh marker: 2026-08-11 point-1 exact Cardmarket gaps
 on:
   push:
     branches: [catalog-v2]
