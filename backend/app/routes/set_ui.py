@@ -129,6 +129,8 @@ def list_set_ui_prints():
                        c.name AS card_name, c.name AS name,
                        s.code AS set_code, s.name AS set_name,
                        p.collector_number, p.language, p.rarity, p.is_foil, p.variant,
+                       cm.cardmarket_external_product_id, cm.cardmarket_id_product,
+                       cm.cardmarket_product_name, cm.cardmarket_website_path,
                        cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
                        (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC, pi.id ASC LIMIT 1) AS primary_image_url
             """
