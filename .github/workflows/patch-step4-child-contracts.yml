@@ -54,16 +54,18 @@ jobs:
 
           mtg = Path('.github/workflows/project-mtg-cardmarket-prices.yml')
           text = mtg.read_text(encoding='utf-8')
-          old = """                       count(*) FILTER (\n                         WHERE ps.price_low IS NOT NULL OR ps.price_mid IS NOT NULL\n                            OR ps.price_market IS NOT NULL OR ps.price_last IS NOT NULL\n                       ) AS valued,\n                       count(DISTINCT ps.entity_id) AS prints\n"""
-          new = """                       count(*) FILTER (\n                         WHERE ps.price_low IS NOT NULL OR ps.price_mid IS NOT NULL\n                            OR ps.price_market IS NOT NULL OR ps.price_last IS NOT NULL\n                       ) AS valued,\n                       count(*) FILTER (\n                         WHERE (ps.price_low IS NOT NULL AND ps.price_low <= 0)\n                            OR (ps.price_mid IS NOT NULL AND ps.price_mid <= 0)\n                            OR (ps.price_market IS NOT NULL AND ps.price_market <= 0)\n                            OR (ps.price_last IS NOT NULL AND ps.price_last <= 0)\n                       ) AS nonpositive,\n                       count(DISTINCT ps.entity_id) AS prints\n"""
-          if old not in text and 'AS nonpositive' not in text:
+          old_select = """                       count(*) FILTER (WHERE ps.price_low IS NOT NULL OR ps.price_mid IS NOT NULL OR ps.price_market IS NOT NULL OR ps.price_last IS NOT NULL) AS valued,\n                       count(DISTINCT ps.entity_id) AS prints\n"""
+          new_select = """                       count(*) FILTER (WHERE ps.price_low IS NOT NULL OR ps.price_mid IS NOT NULL OR ps.price_market IS NOT NULL OR ps.price_last IS NOT NULL) AS valued,\n                       count(*) FILTER (\n                         WHERE (ps.price_low IS NOT NULL AND ps.price_low <= 0)\n                            OR (ps.price_mid IS NOT NULL AND ps.price_mid <= 0)\n                            OR (ps.price_market IS NOT NULL AND ps.price_market <= 0)\n                            OR (ps.price_last IS NOT NULL AND ps.price_last <= 0)\n                       ) AS nonpositive,\n                       count(DISTINCT ps.entity_id) AS prints\n"""
+          if old_select in text:
+              text = text.replace(old_select, new_select, 1)
+          elif 'AS nonpositive' not in text:
               raise SystemExit('MTG proof SELECT shape changed; refusing blind patch')
-          text = text.replace(old, new)
           old_check = """          proof={k:(v.isoformat() if hasattr(v,'isoformat') else int(v)) for k,v in dict(row).items()}\n          if proof['prints'] < 80000 or proof['valued'] != proof['prints']:\n              raise AssertionError(proof)\n"""
           new_check = """          proof={k:(v.isoformat() if hasattr(v,'isoformat') else int(v)) for k,v in dict(row).items()}\n          proof['unpriced'] = proof['prints'] - proof['valued']\n          # A current Cardmarket row may legitimately have no publishable numeric value.\n          # Keep it NULL; never borrow a sibling/historical/zero price.\n          if proof['prints'] < 80000 or proof['valued'] > proof['prints'] or proof['nonpositive'] != 0:\n              raise AssertionError(proof)\n"""
-          if old_check not in text and "proof['unpriced']" not in text:
+          if old_check in text:
+              text = text.replace(old_check, new_check, 1)
+          elif "proof['unpriced']" not in text:
               raise SystemExit('MTG proof assertion shape changed; refusing blind patch')
-          text = text.replace(old_check, new_check)
           mtg.write_text(text, encoding='utf-8')
 
           gate = Path('.github/workflows/audit-cardmarket-point4-production-gate.yml')
