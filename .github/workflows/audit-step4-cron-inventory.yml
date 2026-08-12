@@ -73,8 +73,6 @@ jobs:
               'hard_failures':[],
           }
           with engine.connect() as c:
-              def scalar(sql,params=None):
-                  return c.execute(text(sql),params or {}).scalar()
               def rows(sql,params=None):
                   return [dict(r) for r in c.execute(text(sql),params or {}).mappings().all()]
               out['db']['print_counts']=rows('''
@@ -88,7 +86,7 @@ jobs:
                 FROM external_catalog_print_links l
                 JOIN external_catalog_products ep ON ep.id=l.external_product_id
                 JOIN games g ON g.id=ep.game_id
-                WHERE l.source='cardmarket' AND l.link_status='accepted' AND ep.source='cardmarket'
+                WHERE l.link_status='accepted' AND ep.source='cardmarket'
                 GROUP BY g.slug ORDER BY g.slug
               ''')
               cols={r['column_name'] for r in rows("SELECT column_name FROM information_schema.columns WHERE table_name='price_snapshots'")}
@@ -103,11 +101,10 @@ jobs:
                   ''')
               else:
                   out['db']['price_freshness']={'skipped':'price_snapshots schema differs','columns':sorted(cols)}
-              # Exact regression: wrong Luffy mapping must never be accepted again.
               out['db']['luffy_44257']=rows('''
                 SELECT ep.external_id id_product,l.link_status,l.mapping_method
                 FROM external_catalog_print_links l JOIN external_catalog_products ep ON ep.id=l.external_product_id
-                WHERE l.source='cardmarket' AND l.print_id=44257 ORDER BY ep.external_id
+                WHERE ep.source='cardmarket' AND l.print_id=44257 ORDER BY ep.external_id
               ''')
 
           for item in scheduled:
@@ -128,12 +125,14 @@ jobs:
       - name: Persist inventory
         if: always()
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add audit-reports/step4-cron-inventory.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Persist step 4 cron inventory'
-            git push origin HEAD:catalog-v2
+          if [ -f audit-reports/step4-cron-inventory.json ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add audit-reports/step4-cron-inventory.json
+            if ! git diff --cached --quiet; then
+              git commit -m 'Persist step 4 cron inventory'
+              git push origin HEAD:catalog-v2
+            fi
           fi
       - uses: actions/upload-artifact@v4
         if: always()
