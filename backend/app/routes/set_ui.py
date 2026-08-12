@@ -132,6 +132,24 @@ def list_set_ui_prints():
                        cm.cardmarket_external_product_id, cm.cardmarket_id_product,
                        cm.cardmarket_product_name, cm.cardmarket_website_path,
                        cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
+                       COALESCE((
+                         SELECT jsonb_agg(
+                           jsonb_build_object(
+                             'id', cr.id,
+                             'source', cr.source,
+                             'external_id', cr.external_id,
+                             'name', cr.name,
+                             'code', cr.code,
+                             'release_type', cr.release_type,
+                             'release_date', cr.release_date,
+                             'language', cr.language,
+                             'region', cr.region
+                           ) ORDER BY cr.release_date NULLS LAST, cr.id
+                         )
+                         FROM print_releases pr2
+                         JOIN catalog_releases cr ON cr.id=pr2.release_id
+                         WHERE pr2.print_id=p.id
+                       ), '[]'::jsonb) AS physical_releases,
                        (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC, pi.id ASC LIMIT 1) AS primary_image_url
             """
 
@@ -177,6 +195,8 @@ def list_set_ui_prints():
             row["cardmarket_price"] = float(row["cardmarket_price"])
         if hasattr(row.get("cardmarket_as_of"), "isoformat"):
             row["cardmarket_as_of"] = row["cardmarket_as_of"].isoformat()
+        releases = row.get("physical_releases") or []
+        row["physical_release_names"] = [release.get("name") for release in releases if isinstance(release, dict) and release.get("name")]
         items.append(row)
 
     return jsonify({
