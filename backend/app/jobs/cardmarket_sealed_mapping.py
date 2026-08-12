@@ -15,6 +15,7 @@ from app.models import Game, Product, ProductIdentifier, ProductVariant
 
 
 CARDMARKET_SOURCE = "cardmarket"
+ACTIVE_GAME_SLUGS = ("mtg", "pokemon", "yugioh", "onepiece")
 _ACCEPTED_LINK_STATUSES = {"accepted", "mapped", "exact"}
 
 
@@ -53,6 +54,7 @@ class SealedMappingPlan:
         safe = statuses.get("identifier_verified", 0) + statuses.get("exact_candidate", 0)
         return {
             "source": CARDMARKET_SOURCE,
+            "games": list(ACTIVE_GAME_SLUGS),
             "external_products": len(self.decisions),
             "already_mapped": statuses.get("already_mapped", 0),
             "safe_candidates": safe,
@@ -92,8 +94,6 @@ def _category_is_compatible(product_type: str | None, category: str | None, name
     }
     accepted_tokens = aliases.get(kind)
     if accepted_tokens is None:
-        # Catalogs may use a more specific canonical type. Requiring its full
-        # normalized text in Cardmarket evidence remains conservative.
         accepted_tokens = (kind,) if len(kind) >= 4 else ()
     return any(token in market_text for token in accepted_tokens)
 
@@ -101,9 +101,11 @@ def _category_is_compatible(product_type: str | None, category: str | None, name
 def build_sealed_mapping_plan(session) -> SealedMappingPlan:
     """Propose only provable Cardmarket non-single -> canonical variant links.
 
-    Source-owned products remain usable even when canonical identity is absent.
-    Exact-name candidates must be unique on both sides, have one physical
-    variant, and carry compatible category evidence. The function is read-only.
+    Riftbound is deliberately excluded here at the shared job layer, not merely
+    in a caller, until Riot production API identity is certified. Source-owned
+    products remain usable even when canonical identity is absent. Exact-name
+    candidates must be unique on both sides, have one physical variant, and
+    carry compatible category evidence. The function is read-only.
     """
     external_rows = session.execute(
         select(ExternalCatalogProduct, Game.slug)
@@ -111,6 +113,7 @@ def build_sealed_mapping_plan(session) -> SealedMappingPlan:
         .where(
             ExternalCatalogProduct.source == CARDMARKET_SOURCE,
             ExternalCatalogProduct.product_group == "non_single",
+            Game.slug.in_(ACTIVE_GAME_SLUGS),
         )
         .order_by(Game.slug, ExternalCatalogProduct.external_id)
     ).all()
@@ -121,23 +124,43 @@ def build_sealed_mapping_plan(session) -> SealedMappingPlan:
             ExternalCatalogProductVariantLink.product_variant_id,
             Product.game_id,
         )
+        .join(ExternalCatalogProduct, ExternalCatalogProduct.id == ExternalCatalogProductVariantLink.external_product_id)
+        .join(Game, Game.id == ExternalCatalogProduct.game_id)
         .join(ProductVariant, ProductVariant.id == ExternalCatalogProductVariantLink.product_variant_id)
         .join(Product, Product.id == ProductVariant.product_id)
-        .where(ExternalCatalogProductVariantLink.link_status.in_(_ACCEPTED_LINK_STATUSES))
+        .where(
+            ExternalCatalogProductVariantLink.link_status.in_(_ACCEPTED_LINK_STATUSES),
+            ExternalCatalogProduct.source == CARDMARKET_SOURCE,
+            ExternalCatalogProduct.product_group == "non_single",
+            Game.slug.in_(ACTIVE_GAME_SLUGS),
+        )
     ).all()
     accepted_by_external: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for external_product_id, variant_id, game_id in accepted_rows:
         accepted_by_external[int(external_product_id)].append((int(variant_id), int(game_id)))
 
     all_linked_external_ids = set(
-        session.execute(select(ExternalCatalogProductVariantLink.external_product_id)).scalars().all()
+        session.execute(
+            select(ExternalCatalogProductVariantLink.external_product_id)
+            .join(ExternalCatalogProduct, ExternalCatalogProduct.id == ExternalCatalogProductVariantLink.external_product_id)
+            .join(Game, Game.id == ExternalCatalogProduct.game_id)
+            .where(
+                ExternalCatalogProduct.source == CARDMARKET_SOURCE,
+                ExternalCatalogProduct.product_group == "non_single",
+                Game.slug.in_(ACTIVE_GAME_SLUGS),
+            )
+        ).scalars().all()
     )
 
     legacy_rows = session.execute(
         select(ProductIdentifier.external_id, ProductVariant.id, Product.game_id)
         .join(ProductVariant, ProductVariant.id == ProductIdentifier.product_variant_id)
         .join(Product, Product.id == ProductVariant.product_id)
-        .where(ProductIdentifier.source == CARDMARKET_SOURCE)
+        .join(Game, Game.id == Product.game_id)
+        .where(
+            ProductIdentifier.source == CARDMARKET_SOURCE,
+            Game.slug.in_(ACTIVE_GAME_SLUGS),
+        )
     ).all()
     legacy_by_external = {
         str(external_id): (int(variant_id), int(game_id))
@@ -147,13 +170,23 @@ def build_sealed_mapping_plan(session) -> SealedMappingPlan:
     canonical_rows = session.execute(
         select(Product, Game.slug)
         .join(Game, Game.id == Product.game_id)
+        .where(Game.slug.in_(ACTIVE_GAME_SLUGS))
         .order_by(Product.id)
     ).all()
     products_by_key: dict[tuple[str, str], list[Product]] = defaultdict(list)
     for product, game_slug in canonical_rows:
         products_by_key[(str(game_slug), normalize_product_name(product.name))].append(product)
 
-    variant_rows = session.execute(select(ProductVariant).order_by(ProductVariant.id)).scalars().all()
+    active_product_ids = [int(product.id) for product, _ in canonical_rows]
+    variant_rows = (
+        session.execute(
+            select(ProductVariant)
+            .where(ProductVariant.product_id.in_(active_product_ids))
+            .order_by(ProductVariant.id)
+        ).scalars().all()
+        if active_product_ids
+        else []
+    )
     variants_by_product: dict[int, list[ProductVariant]] = defaultdict(list)
     for variant in variant_rows:
         variants_by_product[int(variant.product_id)].append(variant)
