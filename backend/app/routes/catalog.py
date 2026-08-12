@@ -317,6 +317,10 @@ def get_card_detail(card_id: int):
             card = session.execute(card_sql, {"card_id": card_id}).mappings().first()
             if card is None:
                 return _json_error("not_found", f"card {card_id} not found", 404)
+            prints_total = int(session.execute(
+                text("SELECT COUNT(*) FROM prints WHERE card_id = :card_id"),
+                {"card_id": card_id},
+            ).scalar_one())
             prints = session.execute(prints_sql, {"card_id": card_id}).mappings().all()
             sets = session.execute(sets_sql, {"card_id": card_id}).mappings().all()
     except SQLAlchemyError as error:
@@ -343,6 +347,14 @@ def get_card_detail(card_id: int):
                 for row in prints
             ],
             "sets": [dict(row) for row in sets],
+            "prints_pagination": {
+                "total": prints_total,
+                "limit": 50,
+                "offset": 0,
+                "complete": len(prints) >= prints_total,
+                "next_offset": len(prints) if len(prints) < prints_total else None,
+                "reader": f"/api/v1/cards/{card_id}/prints",
+            },
         }
     )
 
