@@ -23,12 +23,12 @@ function money(value, currency = 'EUR') {
 }
 
 function ResultImage({ src, name, gameSlug }) {
-  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug === 'magic' ? 'Magic' : gameSlug || 'TCG'
-  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : gameSlug === 'magic' ? 'MTG' : undefined
+  const label = gameSlug === 'onepiece' ? 'One Piece' : gameSlug === 'pokemon' ? 'Pokémon' : gameSlug === 'yugioh' ? 'Yu-Gi-Oh!' : gameSlug === 'mtg' || gameSlug === 'magic' ? 'Magic' : gameSlug || 'TCG'
+  const initials = gameSlug === 'onepiece' ? 'OP' : gameSlug === 'pokemon' ? 'PKM' : gameSlug === 'yugioh' ? 'YGO' : gameSlug === 'mtg' || gameSlug === 'magic' ? 'MTG' : undefined
   return (
     <FallbackImage
       src={src}
-      alt={name}
+      alt={name || 'Nombre no disponible'}
       className="sv2-result-image"
       placeholderClassName="sv2-image-placeholder"
       label={label}
@@ -41,6 +41,7 @@ function CardResult({ item, gameSlug, query }) {
   const matched = item.matched_print || {}
   const attrs = item.attributes || {}
   const versions = Number(item.variant_count || 1)
+  const cardName = item.name || 'Nombre no disponible'
 
   return (
     <Link
@@ -48,13 +49,13 @@ function CardResult({ item, gameSlug, query }) {
       className="sv2-result-card"
     >
       <div className="sv2-result-image-wrap">
-        <ResultImage src={matched.primary_image_url} name={item.name} gameSlug={gameSlug} />
+        <ResultImage src={matched.primary_image_url} name={cardName} gameSlug={gameSlug} />
       </div>
       <div className="sv2-result-copy">
         <div className="sv2-result-title-row">
           <div>
             <span className="sv2-result-kind">Carta</span>
-            <h3>{item.name}</h3>
+            <h3>{cardName}</h3>
           </div>
           <span className="sv2-variant-count">{versions} {versions === 1 ? 'versión' : 'versiones'}</span>
         </div>
@@ -77,6 +78,13 @@ function CardResult({ item, gameSlug, query }) {
   )
 }
 
+function releaseNames(item, physical) {
+  if (Array.isArray(item?.physical_release_names) && item.physical_release_names.length) return item.physical_release_names
+  if (Array.isArray(item?.releases) && item.releases.length) return item.releases
+  if (Array.isArray(physical?.release_names) && physical.release_names.length) return physical.release_names
+  return []
+}
+
 function PrintResult({ item, gameSlug }) {
   const physical = item.attributes || {}
   const stamps = Array.isArray(physical.stamps) ? physical.stamps : []
@@ -89,25 +97,30 @@ function PrintResult({ item, gameSlug }) {
     marketPrice?.conservative ?? marketPrice?.value ?? marketPrice?.trend ?? marketPrice?.average ?? marketPrice?.minimum,
     marketPrice?.currency || 'EUR',
   )
+  const exactReleaseNames = releaseNames(item, physical)
+  const cardName = item.name || item.title || 'Nombre no disponible'
 
   return (
     <article className="sv2-result-card sv2-result-card-print">
       <Link href={href} style={{ display: 'contents', color: 'inherit', textDecoration: 'none' }}>
         <div className="sv2-result-image-wrap">
-          <ResultImage src={item.primary_image_url} name={item.name} gameSlug={gameSlug} />
+          <ResultImage src={item.primary_image_url} name={cardName} gameSlug={gameSlug} />
         </div>
         <div className="sv2-result-copy">
           <div className="sv2-result-title-row">
             <div>
-              <span className="sv2-result-kind is-exact">Versión exacta</span>
-              <h3>{item.name}</h3>
+              <span className="sv2-result-kind is-exact">Versión exacta · Print {printId}</span>
+              <h3>{cardName}</h3>
             </div>
           </div>
           <p className="sv2-collector-line">
             <strong>{item.collector_number}</strong>
             {item.set_code ? <span>{String(item.set_code).toUpperCase()}</span> : null}
           </p>
-          {item.set_name ? <small className="sv2-release-line">{item.set_name}</small> : null}
+          {exactReleaseNames.length ? (
+            <small className="sv2-release-line"><strong>Lanzamiento físico:</strong> {exactReleaseNames[0]}{exactReleaseNames.length > 1 ? ` +${exactReleaseNames.length - 1}` : ''}</small>
+          ) : null}
+          {item.set_name ? <small className="sv2-release-line"><strong>Set/carta de origen:</strong> {item.set_name}</small> : null}
           <div className="sv2-badges">
             {badge(item.rarity)}
             {badge(item.language?.toUpperCase())}
@@ -124,13 +137,7 @@ function PrintResult({ item, gameSlug }) {
             {gameSlug === 'yugioh' && physical.atk !== undefined && physical.atk !== null ? badge(`ATK ${physical.atk}`) : null}
             {gameSlug === 'yugioh' && physical.def !== undefined && physical.def !== null ? badge(`DEF ${physical.def}`) : null}
           </div>
-          {item.releases?.length ? (
-            <small className="sv2-release-line">{item.releases[0]}{item.releases.length > 1 ? ` +${item.releases.length - 1}` : ''}</small>
-          ) : null}
-          {gameSlug === 'yugioh' && Array.isArray(physical.release_names) && physical.release_names.length ? (
-            <small className="sv2-release-line">{physical.release_names[0]}{physical.release_names.length > 1 ? ` +${physical.release_names.length - 1}` : ''}</small>
-          ) : null}
-          <span className="sv2-result-action">Abrir esta versión →</span>
+          <span className="sv2-result-action">Abrir esta versión exacta →</span>
         </div>
       </Link>
 
@@ -138,6 +145,7 @@ function PrintResult({ item, gameSlug }) {
         <div style={{ gridColumn: '2', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.45rem', marginTop: '-.2rem' }}>
           <strong style={{ fontSize: '.88rem' }}>{priceLabel || 'Sin Price Guide actual'}</strong>
           <span style={{ fontSize: '.7rem', opacity: .6 }}>Cardmarket</span>
+          {marketReference?.id_product ? <span style={{ fontSize: '.7rem', opacity: .65 }}>idProduct {marketReference.id_product}</span> : null}
           {marketReference?.url ? (
             <a
               href={marketReference.url}
@@ -146,7 +154,7 @@ function PrintResult({ item, gameSlug }) {
               className="sv2-result-action"
               style={{ marginLeft: 'auto' }}
             >
-              Comprar ↗
+              Cardmarket exacto ↗
             </a>
           ) : null}
         </div>
