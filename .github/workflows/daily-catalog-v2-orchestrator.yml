@@ -33,6 +33,8 @@ jobs:
             const targetRef = process.env.TARGET_REF;
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+            // This workflow owns the production schedule. catalog-v2 children are
+            // dispatched sequentially here and do not own daily production crons.
             // Production scope is intentionally limited to MTG, Pokemon,
             // Yu-Gi-Oh and One Piece. Riftbound is excluded from automation.
             const pipeline = [
