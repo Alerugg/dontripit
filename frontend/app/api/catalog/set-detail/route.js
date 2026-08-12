@@ -14,20 +14,25 @@ function toItems(payload) {
 }
 
 function normalizePrint(item = {}) {
-  const cardName = item.card_name || item.name || ''
+  const cardName = String(item.card_name || item.name || '').trim() || null
   const exactVariant = item.variant && item.variant !== 'default' ? item.variant : null
+  const physicalReleases = Array.isArray(item.physical_releases) ? item.physical_releases : []
   return {
     ...item,
     id: item.print_id || item.id,
     print_id: item.print_id || item.id,
     type: 'print',
-    name: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
-    title: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,
+    name: cardName,
+    title: cardName,
     variant: exactVariant,
     exact_variant: exactVariant,
     primary_image_url: item.primary_image_url || item.image_url,
     variant_count: 1,
     finish: item.is_foil ? 'foil' : 'non-foil',
+    physical_releases: physicalReleases,
+    physical_release_names: Array.isArray(item.physical_release_names)
+      ? item.physical_release_names
+      : physicalReleases.map((release) => release?.name).filter(Boolean),
   }
 }
 
