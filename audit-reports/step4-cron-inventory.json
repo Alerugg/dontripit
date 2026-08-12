@@ -1,0 +1,250 @@
+{
+  "generated_at": "2026-08-12T10:40:46.685228+00:00",
+  "workflow_count": 313,
+  "scheduled_workflows": [
+    {
+      "path": ".github/workflows/audit-cardmarket-current-coverage-live.yml",
+      "has_schedule": true,
+      "crons": [
+        "50 4 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": false,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": true,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/cardmarket-pokemon-daily.yml",
+      "has_schedule": true,
+      "crons": [
+        "30 3 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": false,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/ingest.yml",
+      "has_schedule": true,
+      "crons": [
+        "0 3 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": false,
+      "mentions_daily_refresh": true,
+      "mentions_cardmarket": false,
+      "mentions_riftbound": true,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/project-mtg-cardmarket-prices.yml",
+      "has_schedule": true,
+      "crons": [
+        "15 5 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": false,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/project-onepiece-cardmarket-prices.yml",
+      "has_schedule": true,
+      "crons": [
+        "45 5 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/project-pokemon-cardmarket-prices.yml",
+      "has_schedule": true,
+      "crons": [
+        "25 5 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": false,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/project-yugioh-cardmarket-prices.yml",
+      "has_schedule": true,
+      "crons": [
+        "35 5 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": false,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/refresh-onepiece-yugioh-canonical-v2.yml",
+      "has_schedule": true,
+      "crons": [
+        "30 2 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": false,
+      "mentions_riftbound": false,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/sync-cardmarket-master-production-v2.yml",
+      "has_schedule": true,
+      "crons": [
+        "20 4 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": true,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/sync-cardmarket-mvp-daily.yml",
+      "has_schedule": true,
+      "crons": [
+        "30 4 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": true,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/sync-cardmarket-website-paths.yml",
+      "has_schedule": true,
+      "crons": [
+        "55 4 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": true,
+      "mentions_riftbound": false,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    },
+    {
+      "path": ".github/workflows/sync-regional-tcg-content-v4.yml",
+      "has_schedule": true,
+      "crons": [
+        "15 5 * * *"
+      ],
+      "has_workflow_dispatch": true,
+      "has_concurrency": true,
+      "mentions_daily_refresh": false,
+      "mentions_cardmarket": false,
+      "mentions_riftbound": false,
+      "mentions_onepiece": true,
+      "unsafe_onepiece": false
+    }
+  ],
+  "scheduled_count": 12,
+  "db": {
+    "print_counts": [
+      {
+        "game": "mtg",
+        "prints": 161144
+      },
+      {
+        "game": "onepiece",
+        "prints": 4672
+      },
+      {
+        "game": "pokemon",
+        "prints": 33757
+      },
+      {
+        "game": "yugioh",
+        "prints": 44226
+      }
+    ],
+    "accepted_cardmarket": [
+      {
+        "game": "mtg",
+        "accepted_prints": 147851
+      },
+      {
+        "game": "onepiece",
+        "accepted_prints": 2641
+      },
+      {
+        "game": "pokemon",
+        "accepted_prints": 24341
+      },
+      {
+        "game": "yugioh",
+        "accepted_prints": 24253
+      }
+    ],
+    "price_freshness": {
+      "skipped": "price_snapshots schema differs",
+      "columns": [
+        "as_of",
+        "currency",
+        "entity_id",
+        "entity_type",
+        "id",
+        "price_high",
+        "price_last",
+        "price_low",
+        "price_market",
+        "price_mid",
+        "quantity",
+        "raw_json",
+        "source_id"
+      ]
+    },
+    "luffy_44257": [
+      {
+        "id_product": "720061",
+        "link_status": "accepted",
+        "mapping_method": "bandai_physical_release_unique_exact"
+      },
+      {
+        "id_product": "749435",
+        "link_status": "quarantined",
+        "mapping_method": "op_variant_cm_global_exact"
+      }
+    ]
+  },
+  "hard_failures": [
+    "riftbound_present_in_active_schedule:.github/workflows/audit-cardmarket-current-coverage-live.yml",
+    "riftbound_present_in_active_schedule:.github/workflows/ingest.yml",
+    "riftbound_present_in_active_schedule:.github/workflows/sync-cardmarket-master-production-v2.yml",
+    "riftbound_present_in_active_schedule:.github/workflows/sync-cardmarket-mvp-daily.yml"
+  ],
+  "pass": false
+}
