@@ -1,0 +1,52 @@
+name: Audit Step 3 Search Count Reconciliation
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-step3-search-count-reconciliation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Reconcile Sol Ring exact print counts
+        env:
+          PYTHONPATH: backend
+        run: |
+          python - <<'PY'
+          import json,os
+          from sqlalchemy import create_engine,text
+          from sqlalchemy.orm import Session
+          from app.search_v2.mtg_advanced import advanced_mtg_search
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],pool_pre_ping=True)
+          out={}
+          with engine.connect() as c:
+            out['prints']=int(c.execute(text('SELECT COUNT(*) FROM prints WHERE card_id=127206')).scalar_one())
+            out['psp_rows']=int(c.execute(text('SELECT COUNT(*) FROM print_search_profiles WHERE card_id=127206')).scalar_one())
+            out['psp_distinct']=int(c.execute(text('SELECT COUNT(DISTINCT print_id) FROM print_search_profiles WHERE card_id=127206')).scalar_one())
+            out['csp_rows']=int(c.execute(text('SELECT COUNT(*) FROM card_search_profiles WHERE card_id=127206')).scalar_one())
+            out['psp_duplicates']=[dict(r) for r in c.execute(text('''SELECT print_id,COUNT(*) n FROM print_search_profiles WHERE card_id=127206 GROUP BY print_id HAVING COUNT(*)>1 ORDER BY n DESC,print_id LIMIT 20''')).mappings().all()]
+            out['csp_duplicates']=[dict(r) for r in c.execute(text('''SELECT card_id,COUNT(*) n FROM card_search_profiles WHERE card_id=127206 GROUP BY card_id HAVING COUNT(*)>1''')).mappings().all()]
+            out['other_name_matches']=[dict(r) for r in c.execute(text('''SELECT c.id,c.name,COUNT(DISTINCT p.id) prints FROM cards c JOIN prints p ON p.card_id=c.id JOIN games g ON g.id=c.game_id WHERE g.slug='mtg' AND lower(c.name) LIKE '%sol ring%' GROUP BY c.id,c.name ORDER BY c.id''')).mappings().all()]
+          with Session(engine) as s:
+            a=advanced_mtg_search(s,filters={},query='Sol Ring',sort='name_asc',has_price=False,limit=50,offset=0)
+            out['advanced_total']=a['total']
+            out['advanced_first50_unique']=len({x['print_id'] for x in a['items']})
+            out['advanced_first50_dupes']=len(a['items'])-out['advanced_first50_unique']
+          print(json.dumps(out,indent=2,default=str))
+          PY
