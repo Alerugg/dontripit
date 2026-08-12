@@ -288,6 +288,49 @@ def _prune_stale_cardmarket_snapshots(session, *, game: Game, source: PriceSourc
     return int(result.rowcount or 0)
 
 
+def _prune_unpriceable_current_snapshots(
+    session,
+    *,
+    game: Game,
+    source: PriceSource,
+    as_of: datetime | None,
+    priceable_print_ids: list[int],
+) -> int:
+    """Remove empty/unsupported rows from the current Cardmarket capture.
+
+    The public contract is binary: an exact physical Print either has a meaningful
+    positive price in the current Cardmarket Price Guide or its current price is
+    unavailable. Keeping a canonical snapshot at the current timestamp for a Print
+    that is not priceable makes an empty row look like current market evidence.
+    Remove those rows; readers then correctly return NULL without falling back to
+    historical or sibling prices. Older history is intentionally preserved.
+    """
+    if as_of is None or session.get_bind().dialect.name != "postgresql":
+        return 0
+    result = session.execute(
+        text(
+            """
+            DELETE FROM price_snapshots ps
+            USING prints p, cards c
+            WHERE ps.source_id = :source_id
+              AND ps.entity_type = 'print'
+              AND ps.as_of = :as_of
+              AND p.id = ps.entity_id
+              AND c.id = p.card_id
+              AND c.game_id = :game_id
+              AND NOT (ps.entity_id = ANY(:priceable_print_ids))
+            """
+        ),
+        {
+            "source_id": int(source.id),
+            "game_id": int(game.id),
+            "as_of": as_of,
+            "priceable_print_ids": list(priceable_print_ids),
+        },
+    )
+    return int(result.rowcount or 0)
+
+
 def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> dict:
     if plan.ambiguous_print_links:
         raise ValueError(f"Refusing Cardmarket projection with {plan.ambiguous_print_links} ambiguous canonical Prints")
@@ -311,11 +354,25 @@ def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> 
         raise ValueError(f"Cardmarket price source has unexpected currency {source.currency!r}")
 
     pruned_stale_snapshots = _prune_stale_cardmarket_snapshots(session, game=game, source=source)
+    priceable_print_ids = [int(payload["entity_id"]) for payload in plan.snapshots]
+    pruned_unpriceable_current_snapshots = _prune_unpriceable_current_snapshots(
+        session,
+        game=game,
+        source=source,
+        as_of=plan.as_of,
+        priceable_print_ids=priceable_print_ids,
+    )
 
     if plan.as_of is None or not plan.snapshots:
-        return {**plan.summary(), "inserted": 0, "updated": 0, "pruned_stale_snapshots": pruned_stale_snapshots}
+        return {
+            **plan.summary(),
+            "inserted": 0,
+            "updated": 0,
+            "pruned_stale_snapshots": pruned_stale_snapshots,
+            "pruned_unpriceable_current_snapshots": pruned_unpriceable_current_snapshots,
+        }
 
-    entity_ids = [int(payload["entity_id"]) for payload in plan.snapshots]
+    entity_ids = priceable_print_ids
     existing_ids = set(session.execute(
         select(PriceSnapshot.entity_id).where(
             PriceSnapshot.entity_type == "print",
@@ -375,4 +432,5 @@ def apply_link_price_projection_plan(session, plan: LinkPriceProjectionPlan) -> 
         "inserted": inserted,
         "updated": updated,
         "pruned_stale_snapshots": pruned_stale_snapshots,
+        "pruned_unpriceable_current_snapshots": pruned_unpriceable_current_snapshots,
     }
