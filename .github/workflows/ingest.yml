@@ -33,11 +33,6 @@ on:
         required: false
         default: '500'
         type: string
-      riftbound_limit:
-        description: 'Riftbound ingest limit; 0 = skip'
-        required: false
-        default: '200'
-        type: string
       incremental:
         description: 'Use incremental mode'
         required: false
@@ -56,12 +51,11 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
       GITHUB_TOKEN: ${{ github.token }}
       ONEPIECE_SOURCE: remote
-      RIFTBOUND_API_BASE_URL: ${{ secrets.RIFTBOUND_API_BASE_URL }}
-      RIFTBOUND_API_KEY: ${{ secrets.RIFTBOUND_API_KEY }}
-      RIFTBOUND_FALLBACK_BASE_URL: ${{ secrets.RIFTBOUND_FALLBACK_BASE_URL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -76,15 +70,9 @@ jobs:
           if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
           if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
           if [ -n "${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN is set for One Piece source access"; fi
-          echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the next catalog rebuild."
-          echo "MTG general ingest is quarantined; only dedicated Identity V2/storage workflows may exercise Scryfall until certification."
-          if [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; then
-            echo "Riftbound official source is configured"
-          elif [ -n "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
-            echo "Riftbound fallback source is configured"
-          else
-            echo "Riftbound remote source is NOT configured; connector will be skipped"
-          fi
+          echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the catalog rebuild."
+          echo "MTG general ingest is quarantined; dedicated Scryfall Identity V2 workflows own MTG."
+          echo "Riftbound is hard-paused in scheduled/general ingest until Riot production API certification."
 
       - name: Run Alembic migrations
         run: alembic upgrade head
@@ -96,21 +84,19 @@ jobs:
           EVENT_NAME="${{ github.event_name }}"
           ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
           YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
-          RIFTBOUND_LIMIT_INPUT="${{ github.event.inputs.riftbound_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
           ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
-          # MTG is intentionally forced off in this general pipeline. The current
-          # Scryfall catalog is far larger than the available Neon headroom and the
-          # exact finish identity model is still under V2 certification.
+          # MTG stays off here; dedicated certified Scryfall V2 workflows own it.
           MTG_LIMIT="0"
           YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
-          RIFTBOUND_LIMIT="${RIFTBOUND_LIMIT_INPUT:-200}"
+          # Hard safety gate: do not allow schedule, repository variables, secrets or
+          # manual inputs to mutate Riftbound before Riot production API certification.
+          RIFTBOUND_LIMIT="0"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
 
           # The legacy TCGdex connector collapsed distinct Pokémon identities and
-          # does not separate Pokémon TCG Pocket. Never let it mutate the rebuilt
-          # physical catalog. V2 bootstrap/refresh replaces it after certification.
+          # does not separate Pokémon TCG Pocket. V2 owns the physical catalog.
           SKIP_POKEMON="true"
 
           if [ "${EVENT_NAME}" = "schedule" ]; then
@@ -121,11 +107,6 @@ jobs:
             else
               ONEPIECE_LIMIT="0"
             fi
-          fi
-
-          if ! { [ -n "${RIFTBOUND_API_BASE_URL:-}" ] && [ -n "${RIFTBOUND_API_KEY:-}" ]; } \
-             && [ -z "${RIFTBOUND_FALLBACK_BASE_URL:-}" ]; then
-            RIFTBOUND_LIMIT="0"
           fi
 
           ARGS=(
