@@ -33,6 +33,8 @@ jobs:
             const targetRef = process.env.TARGET_REF;
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+            // Production scope is intentionally limited to MTG, Pokemon,
+            // Yu-Gi-Oh and One Piece. Riftbound is excluded from automation.
             const pipeline = [
               ['sync-cardmarket-mvp-daily.yml', 'Cardmarket mirror and price guide'],
               ['apply-mtg-cardmarket-direct-links.yml', 'MTG exact mapping'],
@@ -47,6 +49,7 @@ jobs:
               ['sync-regional-tcg-content-v4.yml', 'Regional official content'],
               ['repair-canonical-images.yml', 'Exact-source image repair'],
               ['audit-roadmap-1-8-live.yml', 'Roadmap 1-8 audit'],
+              ['verify-catalog-v2-physical-truth-gates.yml', 'Final physical truth and current price integrity gate'],
             ];
 
             async function api(label, fn, attempts = 6) {
