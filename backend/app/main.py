@@ -10,6 +10,7 @@ from app.auth.service import ensure_active_api_key
 from app.db import init_engine
 from app import db
 from app.routes.catalog import catalog_bp
+from app.routes.card_prints import card_prints_bp
 from app.routes.admin import admin_bp
 from app.routes.admin_ingest import admin_ingest_bp
 from app.routes.admin_ingest_status import admin_ingest_status_bp
@@ -54,6 +55,7 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(health_bp)
     flask_app.register_blueprint(games_bp)
     flask_app.register_blueprint(catalog_bp)
+    flask_app.register_blueprint(card_prints_bp)
     flask_app.register_blueprint(set_ui_bp)
     flask_app.register_blueprint(search_bp)
     flask_app.register_blueprint(search_v2_bp)
