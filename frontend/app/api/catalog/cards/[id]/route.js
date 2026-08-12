@@ -78,9 +78,10 @@ export async function GET(_, { params }) {
       return printCardId === requestedCardId
     }).sort(comparePrints)
     : []
-  const normalizedSets = Array.isArray(payload?.sets)
-    ? payload.sets.filter((setItem) => normalizedPrints.some((print) => String(print?.set_code || '').toLowerCase() === String(setItem?.code || '').toLowerCase()))
-    : []
+
+  // The backend's sets relation is already scoped by card_id. Do not derive it
+  // from the first page of prints: highly reprinted cards can span dozens of sets.
+  const normalizedSets = Array.isArray(payload?.sets) ? payload.sets : []
 
   return NextResponse.json({
     ...payload,
