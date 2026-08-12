@@ -13,6 +13,16 @@ from app.jobs.cardmarket_link_price_projection import (
 )
 
 
+PAUSED_GAMES = {"riftbound"}
+
+
+def _write_report(result: dict, report_path: str | None) -> None:
+    rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)
+    print(rendered)
+    if report_path:
+        Path(report_path).write_text(rendered + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -24,6 +34,24 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--report")
     args = parser.parse_args()
+
+    # Riftbound is intentionally excluded from canonical/price refresh until the
+    # official Riot production API source is available. Existing generic callers
+    # may still pass --game riftbound; treat that as a successful no-op so an old
+    # loop cannot accidentally mutate or certify Riftbound data.
+    if args.game in PAUSED_GAMES:
+        _write_report(
+            {
+                "game": args.game,
+                "mode": "apply" if args.apply else "dry_run",
+                "paused": True,
+                "skipped": True,
+                "reason": "official_source_pending",
+                "write_ready": True,
+            },
+            args.report,
+        )
+        return 0
 
     database_url = os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL")
     if not database_url:
@@ -41,10 +69,7 @@ def main() -> int:
             session.rollback()
             result["mode"] = "dry_run"
 
-    rendered = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)
-    print(rendered)
-    if args.report:
-        Path(args.report).write_text(rendered + "\n", encoding="utf-8")
+    _write_report(result, args.report)
 
     # Ambiguous/cross-game identity is a hard failure. Missing prices and
     # unsupported finishes are classifications, not reasons to guess values.
