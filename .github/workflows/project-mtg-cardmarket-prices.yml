@@ -1,8 +1,6 @@
 name: Project MTG Cardmarket Prices
 
 on:
-  schedule:
-    - cron: '15 5 * * *'
   push:
     branches: [catalog-v2]
     paths:
