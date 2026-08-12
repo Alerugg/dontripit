@@ -52,8 +52,21 @@ jobs:
               preflight=plan.summary()
               if not preflight['write_ready']:
                   raise AssertionError(preflight)
-              if preflight['accepted_links'] < 24000 or preflight['priceable_prints'] < 24000:
-                  raise AssertionError(f'Pokemon Cardmarket regression: {preflight}')
+              # Mapping coverage is the regression sentinel. Price coverage is source-owned:
+              # exact mapped prints without a meaningful current Cardmarket price stay
+              # explicitly classified as missing_external_price instead of being guessed.
+              if preflight['accepted_links'] < 24000:
+                  raise AssertionError(f'Pokemon Cardmarket mapping regression: {preflight}')
+              classified=(
+                  preflight['priceable_prints']
+                  + preflight['missing_external_price']
+                  + preflight['unsupported_finish']
+                  + preflight['ambiguous_print_links']
+              )
+              if classified != preflight['canonical_prints']:
+                  raise AssertionError(f'Pokemon Cardmarket classification mismatch: {preflight}')
+              if preflight['snapshot_count'] != preflight['priceable_prints']:
+                  raise AssertionError(f'Pokemon Cardmarket snapshot plan mismatch: {preflight}')
               result=apply_link_price_projection_plan(session,plan)
               session.commit()
           report={'preflight':preflight,'apply':result}
@@ -66,6 +79,9 @@ jobs:
           import json, os
           from pathlib import Path
           from sqlalchemy import create_engine,text
+          report=json.loads(Path('/tmp/pokemon-cardmarket-price-projection.json').read_text())
+          expected=int(report['preflight']['priceable_prints'])
+          expected_as_of=report['preflight']['as_of']
           engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           with engine.connect() as conn:
               row=conn.execute(text('''
@@ -86,10 +102,10 @@ jobs:
                 GROUP BY latest.as_of
               ''')).mappings().one()
           proof={k:(v.isoformat() if hasattr(v,'isoformat') else int(v)) for k,v in dict(row).items()}
-          if proof['prints'] < 24000 or proof['valued'] != proof['prints']:
-              raise AssertionError(proof)
+          if proof['prints'] != expected or proof['valued'] != proof['prints'] or proof['snapshots'] != proof['prints']:
+              raise AssertionError({'proof':proof,'expected_priceable_prints':expected,'expected_as_of':expected_as_of})
           Path('/tmp/pokemon-cardmarket-price-proof.json').write_text(json.dumps(proof,indent=2,sort_keys=True)+'\n')
-          print(json.dumps(proof,indent=2,sort_keys=True))
+          print(json.dumps({'proof':proof,'expected_priceable_prints':expected,'expected_as_of':expected_as_of},indent=2,sort_keys=True))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
