@@ -1,0 +1,87 @@
+{
+  "accepted_cardmarket": {
+    "accepted_prints": 199086,
+    "ambiguous_accepted_prints": 0,
+    "wrong_game_or_group": 0
+  },
+  "card_detail_cap": {
+    "frontend_fallback_card_number": true,
+    "has_limit_50": true
+  },
+  "games": {
+    "mtg": {
+      "blank_card_names": 0,
+      "blank_set_names": 0,
+      "cards_over_50_prints": 53,
+      "max_prints_card": {
+        "card_id": 137795,
+        "name": "Forest",
+        "print_count": 1204
+      },
+      "placeholder_card_names": 0,
+      "prints": 161144
+    },
+    "onepiece": {
+      "blank_card_names": 0,
+      "blank_set_names": 0,
+      "cards_over_50_prints": 0,
+      "max_prints_card": {
+        "card_id": 15300,
+        "name": "Urouge",
+        "print_count": 11
+      },
+      "placeholder_card_names": 0,
+      "prints": 4672
+    },
+    "pokemon": {
+      "blank_card_names": 0,
+      "blank_set_names": 0,
+      "cards_over_50_prints": 0,
+      "max_prints_card": {
+        "card_id": 51478,
+        "name": "Buddy-Buddy Poffin",
+        "print_count": 20
+      },
+      "placeholder_card_names": 0,
+      "prints": 33757
+    },
+    "yugioh": {
+      "blank_card_names": 0,
+      "blank_set_names": 0,
+      "cards_over_50_prints": 5,
+      "max_prints_card": {
+        "card_id": 72296,
+        "name": "Blue-Eyes White Dragon",
+        "print_count": 78
+      },
+      "placeholder_card_names": 0,
+      "prints": 44226
+    }
+  },
+  "hard_failures": [
+    "card_detail:silent_limit_50"
+  ],
+  "onepiece_release_probe": {
+    "physical_releases": [
+      {
+        "code": null,
+        "external_id": "569103",
+        "id": 78,
+        "language": "en",
+        "name": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+        "region": "global-en",
+        "source": "onepiece_official"
+      }
+    ],
+    "print": {
+      "card_name": "Monkey.D.Luffy",
+      "collector_number": "ST01-012",
+      "id": 44257,
+      "rarity": "SP CARD",
+      "set_code": "st-01",
+      "set_name": "STARTER DECK -Straw Hat Crew- [ST-01]",
+      "variant": "p1"
+    }
+  },
+  "pass": false
+}
