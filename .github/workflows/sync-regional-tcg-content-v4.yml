@@ -6,8 +6,6 @@ on:
     paths:
       - 'backend/app/jobs/regional_content_v4.py'
       - '.github/workflows/sync-regional-tcg-content-v4.yml'
-  schedule:
-    - cron: '15 5 * * *'
   workflow_dispatch:
 
 permissions:
