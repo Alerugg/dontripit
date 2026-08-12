@@ -1,0 +1,184 @@
+name: Verify Catalog V2 Physical Truth Gates
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-catalog-v2-physical-truth-gates.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-catalog-v2-physical-truth-gates
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Verify exact physical identities and current Cardmarket projections
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACCEPTED = ('accepted', 'mapped', 'exact')
+          ACTIVE_GAMES = ('mtg', 'pokemon', 'yugioh', 'onepiece')
+          TARGET_PRINT = 44257
+          TARGET_PRODUCT = '720061'
+          QUARANTINED_PRODUCT = '749435'
+
+          conn = psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          report = {'gate': 'catalog_v2_physical_truth', 'active_games': list(ACTIVE_GAMES)}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute('''
+                SELECT p.id print_id, p.collector_number, p.variant, p.language,
+                       c.name card_name, g.slug game_slug
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE p.id=%s
+              ''', (TARGET_PRINT,))
+              anchor = dict(cur.fetchone() or {})
+              if not anchor or anchor.get('game_slug') != 'onepiece':
+                raise AssertionError({'anchor_print_missing_or_wrong_game': anchor})
+
+              cur.execute('''
+                SELECT l.id link_id, l.link_status, l.mapping_method, l.confidence,
+                       e.external_id id_product, e.expansion_external_id
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=%s AND e.source='cardmarket'
+                  AND l.link_status=ANY(%s)
+                ORDER BY l.id
+              ''', (TARGET_PRINT, list(ACCEPTED)))
+              accepted_target = [dict(r) for r in cur.fetchall()]
+              if len(accepted_target) != 1 or str(accepted_target[0]['id_product']) != TARGET_PRODUCT:
+                raise AssertionError({'accepted_target_links': accepted_target})
+
+              cur.execute('''
+                SELECT l.id link_id, l.link_status, l.mapping_method, l.confidence,
+                       e.external_id id_product
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=%s AND e.source='cardmarket' AND e.external_id=%s
+                ORDER BY l.id
+              ''', (TARGET_PRINT, QUARANTINED_PRODUCT))
+              old_target = [dict(r) for r in cur.fetchall()]
+              if not old_target or not any(r['link_status'] == 'quarantined' for r in old_target):
+                raise AssertionError({'wrong_product_not_quarantined': old_target})
+              if any(r['link_status'] in ACCEPTED for r in old_target):
+                raise AssertionError({'wrong_product_still_accepted': old_target})
+
+              cur.execute('''
+                SELECT ps.as_of, ps.price_low, ps.price_mid, ps.price_market, ps.price_last, ps.raw_json
+                FROM price_snapshots ps
+                JOIN price_sources s ON s.id=ps.source_id
+                WHERE s.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=%s
+                ORDER BY ps.as_of DESC
+                LIMIT 1
+              ''', (TARGET_PRINT,))
+              anchor_price = dict(cur.fetchone() or {})
+              raw = anchor_price.get('raw_json') or {}
+              values = [anchor_price.get(k) for k in ('price_low','price_mid','price_market','price_last')]
+              if not anchor_price or str(raw.get('idProduct')) != TARGET_PRODUCT:
+                raise AssertionError({'anchor_price_wrong_product': anchor_price})
+              if not any(v is not None and float(v) > 0 for v in values):
+                raise AssertionError({'anchor_price_not_positive': anchor_price})
+
+              game_proofs = {}
+              for slug in ACTIVE_GAMES:
+                cur.execute('''
+                  WITH src AS (SELECT id FROM price_sources WHERE name='cardmarket'),
+                  game AS (SELECT id FROM games WHERE slug=%s),
+                  latest AS (
+                    SELECT max(ps.as_of) AS as_of
+                    FROM price_snapshots ps
+                    JOIN src ON src.id=ps.source_id
+                    JOIN prints p ON p.id=ps.entity_id AND ps.entity_type='print'
+                    JOIN cards c ON c.id=p.card_id
+                    JOIN game ON game.id=c.game_id
+                  ), rows AS (
+                    SELECT ps.entity_id, ps.raw_json, ps.price_low, ps.price_mid, ps.price_market, ps.price_last
+                    FROM latest
+                    JOIN price_snapshots ps ON ps.as_of=latest.as_of
+                    JOIN src ON src.id=ps.source_id
+                    JOIN prints p ON p.id=ps.entity_id AND ps.entity_type='print'
+                    JOIN cards c ON c.id=p.card_id
+                    JOIN game ON game.id=c.game_id
+                  )
+                  SELECT latest.as_of,
+                         count(rows.entity_id) snapshots,
+                         count(DISTINCT rows.entity_id) prints,
+                         count(rows.entity_id) FILTER (
+                           WHERE coalesce(rows.price_low,0) > 0 OR coalesce(rows.price_mid,0) > 0
+                              OR coalesce(rows.price_market,0) > 0 OR coalesce(rows.price_last,0) > 0
+                         ) positive,
+                         count(rows.entity_id) FILTER (
+                           WHERE NOT EXISTS (
+                             SELECT 1
+                             FROM external_catalog_print_links l
+                             JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE l.print_id=rows.entity_id
+                               AND e.source='cardmarket'
+                               AND l.link_status=ANY(%s)
+                               AND e.external_id=(rows.raw_json->>'idProduct')
+                           )
+                         ) stale_or_mismatched
+                  FROM latest LEFT JOIN rows ON true
+                  GROUP BY latest.as_of
+                ''', (slug, list(ACCEPTED)))
+                row = dict(cur.fetchone() or {})
+                if not row.get('as_of') or int(row.get('prints') or 0) <= 0:
+                  raise AssertionError({'game_without_current_cardmarket_projection': slug, 'proof': row})
+                if int(row['snapshots']) != int(row['prints']):
+                  raise AssertionError({'duplicate_current_cardmarket_snapshots': slug, 'proof': row})
+                if int(row['positive']) != int(row['prints']):
+                  raise AssertionError({'nonpositive_current_cardmarket_snapshot': slug, 'proof': row})
+                if int(row['stale_or_mismatched']) != 0:
+                  raise AssertionError({'stale_or_mismatched_cardmarket_projection': slug, 'proof': row})
+                game_proofs[slug] = row
+
+              report.update({
+                'anchor_print': anchor,
+                'accepted_target_links': accepted_target,
+                'quarantined_wrong_product': old_target,
+                'latest_anchor_price': anchor_price,
+                'game_proofs': game_proofs,
+                'riftbound_in_active_pipeline': False,
+                'read_only': True,
+              })
+          finally:
+            conn.close()
+
+          out = Path('/tmp/catalog-v2-physical-truth-gates.json')
+          out.write_text(json.dumps(report, indent=2, sort_keys=True, default=str) + '\n')
+          print(out.read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalog-v2-physical-truth-gates-${{ github.run_id }}
+          path: /tmp/catalog-v2-physical-truth-gates.json
+          retention-days: 90
+          if-no-files-found: warn
