@@ -1,8 +1,6 @@
 name: Project Yu-Gi-Oh Cardmarket Prices
 
 on:
-  schedule:
-    - cron: '35 5 * * *'
   push:
     branches: [catalog-v2]
     paths: ['.github/workflows/project-yugioh-cardmarket-prices.yml']
