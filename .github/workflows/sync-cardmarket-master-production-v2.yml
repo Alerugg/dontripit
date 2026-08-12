@@ -41,13 +41,14 @@ jobs:
           if [ -z "${DATABASE_URL_UNPOOLED:-}" ] && [ -z "${DATABASE_URL:-}" ]; then exit 1; fi
       - name: Upgrade schema
         run: alembic upgrade head
-      - name: Download all current Cardmarket MVP feeds
+      - name: Download current Cardmarket feeds for active games
         shell: bash
         working-directory: .
         run: |
           set -euo pipefail
           mkdir -p /tmp/cardmarket
-          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18 riftbound:22; do
+          # Riftbound is intentionally excluded until the Riot production API is certified.
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
             game=${spec%%:*}; gid=${spec##*:}
             for group in singles nonsingles; do
               curl --retry 5 --retry-all-errors --retry-delay 2 --fail --location --silent --show-error \
@@ -66,7 +67,7 @@ jobs:
           from pathlib import Path
           from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
           from app.jobs.cardmarket_prices import load_price_guide_bytes
-          specs=['mtg','yugioh','pokemon','onepiece','riftbound']
+          specs=['mtg','yugioh','pokemon','onepiece']
           all_ids=set(); summary={}
           for game in specs:
             feeds={}
@@ -87,7 +88,7 @@ jobs:
               1 for x in prices
               if any(v is not None for v in (x.foil_avg,x.foil_low,x.foil_trend,x.foil_avg1,x.foil_avg7,x.foil_avg30))
             )
-            if game in {'mtg','yugioh','pokemon','riftbound'}:
+            if game in {'mtg','yugioh','pokemon'}:
               assert finish_price_products > 0, f'{game}: current feed finish prices were not parsed'
             summary[game]={
               'singles':len(feeds['single']),
@@ -105,7 +106,6 @@ jobs:
             --catalog yugioh:single:/tmp/cardmarket/yugioh_singles.json --catalog yugioh:non_single:/tmp/cardmarket/yugioh_nonsingles.json \
             --catalog pokemon:single:/tmp/cardmarket/pokemon_singles.json --catalog pokemon:non_single:/tmp/cardmarket/pokemon_nonsingles.json \
             --catalog onepiece:single:/tmp/cardmarket/onepiece_singles.json --catalog onepiece:non_single:/tmp/cardmarket/onepiece_nonsingles.json \
-            --catalog riftbound:single:/tmp/cardmarket/riftbound_singles.json --catalog riftbound:non_single:/tmp/cardmarket/riftbound_nonsingles.json \
             --report /tmp/cardmarket/catalog-preflight.json
       - name: Apply complete Cardmarket catalog
         run: |
@@ -114,16 +114,15 @@ jobs:
             --catalog yugioh:single:/tmp/cardmarket/yugioh_singles.json --catalog yugioh:non_single:/tmp/cardmarket/yugioh_nonsingles.json \
             --catalog pokemon:single:/tmp/cardmarket/pokemon_singles.json --catalog pokemon:non_single:/tmp/cardmarket/pokemon_nonsingles.json \
             --catalog onepiece:single:/tmp/cardmarket/onepiece_singles.json --catalog onepiece:non_single:/tmp/cardmarket/onepiece_nonsingles.json \
-            --catalog riftbound:single:/tmp/cardmarket/riftbound_singles.json --catalog riftbound:non_single:/tmp/cardmarket/riftbound_nonsingles.json \
             --apply --report /tmp/cardmarket/catalog-apply.json
-      - name: Preflight and apply all Cardmarket Price Guides
+      - name: Preflight and apply active Cardmarket Price Guides
         shell: bash
         run: |
           set -euo pipefail
-          for game in mtg yugioh pokemon onepiece riftbound; do
+          for game in mtg yugioh pokemon onepiece; do
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" --game "$game" --report "/tmp/cardmarket/${game}-prices-preflight.json"
           done
-          for game in mtg yugioh pokemon onepiece riftbound; do
+          for game in mtg yugioh pokemon onepiece; do
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" --game "$game" --apply --report "/tmp/cardmarket/${game}-prices-apply.json"
           done
       - name: Prove latest capture exactly matches downloaded Product Catalogues
@@ -134,17 +133,17 @@ jobs:
           from sqlalchemy import create_engine,text
           from app.jobs.cardmarket_master_inventory import load_catalog_feed_bytes
           expected={}
-          games=('mtg','yugioh','pokemon','onepiece','riftbound')
+          games=('mtg','yugioh','pokemon','onepiece')
           for game in games:
             for fg,pg in [('singles','single'),('nonsingles','non_single')]:
               f=load_catalog_feed_bytes(Path(f'/tmp/cardmarket/{game}_{fg}.json').read_bytes(),game_slug=game,product_group=pg)
               expected[(game,pg)]=len(f.rows)
           engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           with engine.connect() as conn:
-            latest=conn.execute(text("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'" )).scalar_one()
+            latest=conn.execute(text("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket' AND game_id IN (SELECT id FROM games WHERE slug IN ('mtg','yugioh','pokemon','onepiece'))" )).scalar_one()
             rows=conn.execute(text('''
               SELECT g.slug,e.product_group,count(*) FROM external_catalog_products e JOIN games g ON g.id=e.game_id
-              WHERE e.source='cardmarket' AND e.last_seen_at=:latest AND g.slug IN ('mtg','yugioh','pokemon','onepiece','riftbound')
+              WHERE e.source='cardmarket' AND e.last_seen_at=:latest AND g.slug IN ('mtg','yugioh','pokemon','onepiece')
               GROUP BY g.slug,e.product_group
             '''),{'latest':latest}).all()
             actual={(str(g),str(pg)):int(c) for g,pg,c in rows}
@@ -152,13 +151,14 @@ jobs:
               WITH latest_price AS (
                 SELECT e.game_id,max(p.as_of) as as_of
                 FROM external_market_price_snapshots p JOIN external_catalog_products e ON e.id=p.external_product_id
-                WHERE e.source='cardmarket' GROUP BY e.game_id
+                WHERE e.source='cardmarket' AND e.game_id IN (SELECT id FROM games WHERE slug IN ('mtg','yugioh','pokemon','onepiece'))
+                GROUP BY e.game_id
               )
               SELECT g.slug,count(DISTINCT p.external_product_id),max(p.as_of)
               FROM latest_price l JOIN games g ON g.id=l.game_id
               JOIN external_catalog_products e ON e.game_id=l.game_id AND e.source='cardmarket'
               JOIN external_market_price_snapshots p ON p.external_product_id=e.id AND p.as_of=l.as_of
-              WHERE g.slug IN ('mtg','yugioh','pokemon','onepiece','riftbound')
+              WHERE g.slug IN ('mtg','yugioh','pokemon','onepiece')
               GROUP BY g.slug
             ''')).all()
           if actual!=expected: raise AssertionError({'expected':expected,'actual':actual,'latest':latest.isoformat()})
