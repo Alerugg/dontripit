@@ -6,7 +6,7 @@ import TopNav from '../../../components/layout/TopNav'
 import FallbackImage from '../../../components/common/FallbackImage'
 import StatePanel from '../../../components/catalog/StatePanel'
 import LibraryActions from '../../../components/library/LibraryActions'
-import { fetchPrintById } from '../../../lib/catalog/client'
+import { fetchPrintById, fetchPrintPhysicalReleases } from '../../../lib/catalog/client'
 import { getCardHref, getGameExplorerHref, getSetHref } from '../../../lib/catalog/routes'
 import { getGameConfig, normalizeGameSlug } from '../../../lib/catalog/games'
 import './PrintDetailPage.css'
@@ -27,6 +27,16 @@ function money(value, currency = 'EUR') {
   } catch {
     return `${value} ${currency}`
   }
+}
+
+function releaseDisplayCode(release) {
+  if (release?.code) return String(release.code).toUpperCase()
+  const match = String(release?.name || '').match(/\[([^\]]+)\]/)
+  return match?.[1] ? match[1].toUpperCase() : null
+}
+
+function compactCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
 }
 
 function PriceMetric({ label, value, currency, featured = false }) {
@@ -93,7 +103,7 @@ function PriceBlock({ price, cardmarket }) {
           rel="noopener noreferrer sponsored"
           className="dri-btn"
         >
-          Comprar en Cardmarket ↗
+          Comprar esta versión en Cardmarket ↗
         </a>
       ) : null}
     </section>
@@ -103,6 +113,7 @@ function PriceBlock({ price, cardmarket }) {
 export default function PrintDetailPage({ params }) {
   const { id } = use(params)
   const [printDetail, setPrintDetail] = useState(null)
+  const [physicalReleases, setPhysicalReleases] = useState([])
   const [price, setPrice] = useState(null)
   const [cardmarket, setCardmarket] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -115,18 +126,21 @@ export default function PrintDetailPage({ params }) {
       setLoading(true)
       setError('')
       try {
-        const [payload, priceResponse] = await Promise.all([
+        const [payload, releaseResponse, priceResponse] = await Promise.all([
           fetchPrintById(id),
+          fetchPrintPhysicalReleases(id).catch(() => ({ physical_releases: [] })),
           fetch(`/api/prices/print/${id}`, { cache: 'no-store' }).then((response) => response.ok ? response.json() : { price: null, cardmarket: null }).catch(() => ({ price: null, cardmarket: null })),
         ])
         if (!cancelled) {
           setPrintDetail(payload)
+          setPhysicalReleases(Array.isArray(releaseResponse?.physical_releases) ? releaseResponse.physical_releases : [])
           setPrice(priceResponse?.price || null)
           setCardmarket(priceResponse?.cardmarket || priceResponse?.price?.cardmarket || null)
         }
       } catch (requestError) {
         if (!cancelled) {
           setPrintDetail(null)
+          setPhysicalReleases([])
           setPrice(null)
           setCardmarket(null)
           setError(requestError.message)
@@ -145,16 +159,21 @@ export default function PrintDetailPage({ params }) {
   const gameLabel = getGameConfig(gameSlug)?.name || rawGameSlug
   const cardId = printDetail?.card?.id || ''
   const cardHref = getCardHref(gameSlug, cardId)
-  const setHref = printDetail?.set_code ? getSetHref(gameSlug, printDetail.set_code) : getGameExplorerHref(gameSlug)
+  const originSetHref = printDetail?.set_code ? getSetHref(gameSlug, printDetail.set_code) : getGameExplorerHref(gameSlug)
   const finishLabel = printDetail?.foil || printDetail?.is_foil ? 'Foil' : 'No foil'
   const variantLabel = printDetail?.variant && printDetail.variant !== 'default' ? printDetail.variant : null
+  const primaryRelease = physicalReleases[0] || null
+  const physicalReleaseCode = releaseDisplayCode(primaryRelease)
+  const physicalReleaseHref = physicalReleaseCode ? getSetHref(gameSlug, physicalReleaseCode.toLowerCase()) : null
+  const originCode = printDetail?.set_code?.toUpperCase?.() || printDetail?.set_code || null
+  const releaseDiffersFromOrigin = physicalReleaseCode && originCode && compactCode(physicalReleaseCode) !== compactCode(originCode)
 
   return (
     <main>
       <TopNav />
 
       <section className="detail-shell">
-        {loading && <StatePanel title="Cargando versión" description="Preparando la edición física exacta y su mercado." />}
+        {loading && <StatePanel title="Cargando versión" description="Preparando la edición física exacta, su lanzamiento y su mercado." />}
         {!loading && error && <StatePanel title="No pudimos cargar esta versión" description={error} error />}
 
         {!loading && !error && printDetail && (
@@ -163,7 +182,7 @@ export default function PrintDetailPage({ params }) {
               <div className="detail-media detail-media-card">
                 <FallbackImage
                   src={printDetail.primary_image_url}
-                  alt={printDetail.card?.name || 'Carta'}
+                  alt={printDetail.card?.name || printDetail.title || 'Nombre no disponible'}
                   className="detail-image"
                   placeholderClassName="catalog-placeholder image-fallback"
                   label={gameLabel}
@@ -176,18 +195,27 @@ export default function PrintDetailPage({ params }) {
               <nav className="detail-breadcrumbs" aria-label="breadcrumb">
                 <Link href={getGameExplorerHref(gameSlug)}>{gameLabel}</Link>
                 <span>→</span>
-                <Link href={setHref}>{printDetail.set_name || printDetail.set_code || 'Set'}</Link>
+                {primaryRelease?.name && physicalReleaseHref ? (
+                  <Link href={physicalReleaseHref}>{primaryRelease.name}</Link>
+                ) : primaryRelease?.name ? (
+                  <span>{primaryRelease.name}</span>
+                ) : (
+                  <Link href={originSetHref}>{printDetail.set_name || originCode || 'Set'}</Link>
+                )}
                 <span>→</span>
-                <Link href={cardHref}>{printDetail.card?.name || 'Carta'}</Link>
+                <Link href={cardHref}>{printDetail.card?.name || printDetail.title || 'Nombre no disponible'}</Link>
               </nav>
 
               <div className="dri-exact-head">
                 <div className="dri-exact-head-copy detail-title-block">
-                  <p className="eyebrow">Versión exacta</p>
-                  <h1>{printDetail.card?.name || 'Carta'}</h1>
+                  <p className="eyebrow">Versión física exacta</p>
+                  <h1>{printDetail.card?.name || printDetail.title || 'Nombre no disponible'}</h1>
                   <p className="detail-intro">
-                    {[printDetail.set_code?.toUpperCase?.() || printDetail.set_code, printDetail.collector_number ? `#${printDetail.collector_number}` : null, printDetail.language?.toUpperCase(), printDetail.rarity, finishLabel, variantLabel].filter(Boolean).join(' · ')}
+                    {[physicalReleaseCode || originCode, printDetail.collector_number ? `#${printDetail.collector_number}` : null, printDetail.language?.toUpperCase(), printDetail.rarity, finishLabel, variantLabel, `Print ID ${printDetail.id}`].filter(Boolean).join(' · ')}
                   </p>
+                  {releaseDiffersFromOrigin ? (
+                    <p className="detail-meta">Esta impresión usa una carta cuyo código/origen es <strong>{originCode}</strong>, pero la copia física mostrada fue publicada en <strong>{physicalReleaseCode}</strong>. No son la misma versión comercial.</p>
+                  ) : null}
                 </div>
                 <span className="dri-exact-status">Identidad física</span>
               </div>
@@ -196,27 +224,32 @@ export default function PrintDetailPage({ params }) {
                 <div className="dri-exact-actions-copy">
                   <p className="eyebrow">Tu colección</p>
                   <h2>¿Esta es la versión correcta?</h2>
-                  <p>Guárdala aquí. Las acciones se aplican a esta edición concreta, no solo al nombre de la carta.</p>
+                  <p>Guárdala aquí. Las acciones se aplican al Print ID {printDetail.id}, no solo al nombre de la carta.</p>
                 </div>
                 <LibraryActions printId={printDetail.id} />
               </section>
 
               <section className="meta-grid panel-soft">
-                <MetaLine label="Set" value={printDetail.set_name} />
-                <MetaLine label="Código" value={printDetail.set_code?.toUpperCase?.() || printDetail.set_code} />
+                <MetaLine label="Carta" value={printDetail.card?.name || printDetail.title} />
+                <MetaLine label="Print ID" value={printDetail.id} />
+                {primaryRelease?.name ? <MetaLine label="Lanzamiento físico" value={primaryRelease.name} /> : null}
+                {physicalReleaseCode ? <MetaLine label="Código del lanzamiento" value={physicalReleaseCode} /> : null}
+                <MetaLine label={primaryRelease?.name ? "Set/carta de origen" : "Set"} value={printDetail.set_name} />
+                <MetaLine label={primaryRelease?.name ? "Código de origen" : "Código"} value={originCode} />
                 <MetaLine label="Número" value={printDetail.collector_number} />
                 <MetaLine label="Rareza" value={printDetail.rarity} />
                 <MetaLine label="Variante" value={variantLabel} />
                 <MetaLine label="Acabado" value={finishLabel} />
                 <MetaLine label="Idioma" value={printDetail.language?.toUpperCase()} />
-                {cardmarket?.id_product ? <MetaLine label="Cardmarket idProduct" value={cardmarket.id_product} /> : null}
+                {cardmarket?.id_product ? <MetaLine label="Cardmarket idProduct exacto" value={cardmarket.id_product} /> : null}
               </section>
 
               <div className="dri-exact-navigation">
-                <Link href={cardHref} className="dri-btn dri-btn-ghost">← Ver las demás versiones</Link>
-                <Link href={setHref} className="dri-btn dri-btn-ghost">Ver el set completo</Link>
+                <Link href={cardHref} className="dri-btn dri-btn-ghost">← Ver todas las versiones</Link>
+                {physicalReleaseHref ? <Link href={physicalReleaseHref} className="dri-btn dri-btn-ghost">Ver lanzamiento físico</Link> : null}
+                {(!physicalReleaseHref || releaseDiffersFromOrigin) && printDetail.set_code ? <Link href={originSetHref} className="dri-btn dri-btn-ghost">Ver set de origen</Link> : null}
                 {cardmarket?.url ? (
-                  <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn">Cardmarket ↗</a>
+                  <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn">Cardmarket exacto ↗</a>
                 ) : null}
               </div>
             </div>
