@@ -1,24 +1,13 @@
-name: Sync Cardmarket MVP Daily
+name: Cardmarket MVP Manual Backfill
 
 on:
-  push:
-    branches: [catalog-v2]
-    paths:
-      - '.github/workflows/sync-cardmarket-mvp-daily.yml'
-      - 'backend/app/jobs/cardmarket_external_prices.py'
-      - 'backend/app/jobs/cardmarket_link_price_projection.py'
-      - 'backend/scripts/sync_cardmarket_external_prices.py'
-      - 'backend/scripts/project_cardmarket_link_prices.py'
-      - 'backend/scripts/map_cardmarket_sealed_exact.py'
-  schedule:
-    - cron: '30 4 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: sync-cardmarket-mvp-daily
+  group: cardmarket-mvp-manual-backfill
   cancel-in-progress: false
 
 jobs:
@@ -40,12 +29,13 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: python -m pip install -r requirements.txt
-      - name: Download all official Cardmarket catalog and price feeds
+      - name: Download official Cardmarket feeds for active games
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/cardmarket
-          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18 riftbound:22; do
+          # Manual recovery/backfill only. Riftbound remains paused until Riot production API certification.
+          for spec in mtg:1 yugioh:3 pokemon:6 onepiece:18; do
             game="${spec%%:*}"
             game_id="${spec##*:}"
             for group in singles nonsingles; do
@@ -72,8 +62,6 @@ jobs:
             --catalog pokemon:non_single:/tmp/cardmarket/pokemon_nonsingles.json
             --catalog onepiece:single:/tmp/cardmarket/onepiece_singles.json
             --catalog onepiece:non_single:/tmp/cardmarket/onepiece_nonsingles.json
-            --catalog riftbound:single:/tmp/cardmarket/riftbound_singles.json
-            --catalog riftbound:non_single:/tmp/cardmarket/riftbound_nonsingles.json
           )
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --report /tmp/cardmarket/catalog-dry.json
           python scripts/sync_cardmarket_catalog.py "${ARGS[@]}" --apply --report /tmp/cardmarket/catalog-apply.json
@@ -85,13 +73,13 @@ jobs:
           set -euo pipefail
           python scripts/map_cardmarket_sealed_exact.py --report /tmp/cardmarket/sealed-mapping-dry.json
           python scripts/map_cardmarket_sealed_exact.py --apply --report /tmp/cardmarket/sealed-mapping-apply.json
-      - name: Validate and apply all current Cardmarket prices
+      - name: Validate and apply current Cardmarket prices
         working-directory: backend
         env:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          for game in mtg yugioh pokemon onepiece riftbound; do
+          for game in mtg yugioh pokemon onepiece; do
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
               --game "$game" --report "/tmp/cardmarket/${game}-prices-dry.json"
             python scripts/sync_cardmarket_external_prices.py "/tmp/cardmarket/${game}_prices.json" \
@@ -103,7 +91,7 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          for game in mtg yugioh pokemon onepiece riftbound; do
+          for game in mtg yugioh pokemon onepiece; do
             python scripts/project_cardmarket_link_prices.py \
               --game "$game" --report "/tmp/cardmarket/${game}-projection-dry.json"
             python scripts/project_cardmarket_link_prices.py \
@@ -120,7 +108,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cardmarket-mvp-daily-${{ github.run_id }}
+          name: cardmarket-mvp-manual-${{ github.run_id }}
           path: |
             /tmp/cardmarket/*-*.json
             /tmp/cardmarket/missing-images.csv
