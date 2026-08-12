@@ -1,6 +1,9 @@
 name: Verify Catalog V2 Physical Truth Gates
 
 on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/verify-catalog-v2-physical-truth-gates.yml']
   workflow_dispatch:
 
 permissions:
@@ -48,7 +51,6 @@ jobs:
           report = {'gate': 'catalog_v2_physical_truth', 'active_games': list(ACTIVE_GAMES)}
           try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-              # Anchor must remain the exact One Piece physical print.
               cur.execute('''
                 SELECT p.id print_id, p.collector_number, p.variant, p.language,
                        c.name card_name, g.slug game_slug
@@ -61,7 +63,6 @@ jobs:
               if not anchor or anchor.get('game_slug') != 'onepiece':
                 raise AssertionError({'anchor_print_missing_or_wrong_game': anchor})
 
-              # Exactly one accepted Cardmarket mapping, and it must be 720061.
               cur.execute('''
                 SELECT l.id link_id, l.link_status, l.mapping_method, l.confidence,
                        e.external_id id_product, e.expansion_external_id
@@ -75,7 +76,6 @@ jobs:
               if len(accepted_target) != 1 or str(accepted_target[0]['id_product']) != TARGET_PRODUCT:
                 raise AssertionError({'accepted_target_links': accepted_target})
 
-              # The historically wrong Winner Cards product must remain quarantined and never accepted.
               cur.execute('''
                 SELECT l.id link_id, l.link_status, l.mapping_method, l.confidence,
                        e.external_id id_product
@@ -90,7 +90,6 @@ jobs:
               if any(r['link_status'] in ACCEPTED for r in old_target):
                 raise AssertionError({'wrong_product_still_accepted': old_target})
 
-              # Latest Cardmarket projection for the anchor must derive from 720061 and carry a positive public price.
               cur.execute('''
                 SELECT ps.as_of, ps.price_low, ps.price_mid, ps.price_market, ps.price_last, ps.raw_json
                 FROM price_snapshots ps
@@ -107,8 +106,6 @@ jobs:
               if not any(v is not None and float(v) > 0 for v in values):
                 raise AssertionError({'anchor_price_not_positive': anchor_price})
 
-              # For every active game, inspect its latest projected Cardmarket batch. Every current row
-              # must carry a positive public value and its raw idProduct must still match an accepted link.
               game_proofs = {}
               for slug in ACTIVE_GAMES:
                 cur.execute('''
