@@ -78,6 +78,13 @@ def _positive(value) -> bool:
 
 
 def _has_meaningful_price(external_price: ExternalMarketPriceSnapshot) -> bool:
+    """Only treat fields projected into the public canonical snapshot as priced.
+
+    Cardmarket moving averages remain source evidence in raw_json, but readers
+    intentionally expose only the canonical low/mid/market/last fields. An
+    avg-only source row therefore means "no current public price" and must not
+    create an empty canonical snapshot.
+    """
     return any(
         _positive(value)
         for value in (
@@ -85,9 +92,6 @@ def _has_meaningful_price(external_price: ExternalMarketPriceSnapshot) -> bool:
             external_price.price_mid,
             external_price.price_market,
             external_price.price_last,
-            external_price.avg1,
-            external_price.avg7,
-            external_price.avg30,
         )
     )
 
