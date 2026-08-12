@@ -19,99 +19,135 @@ concurrency:
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      TARGET_REF: catalog-v2
+    timeout-minutes: 240
     steps:
-      - name: Cancel superseded slow product loader if still active
-        shell: bash
-        run: |
-          set -euo pipefail
-          code=$(curl -sS -o /tmp/cancel-stale.json -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPO}/actions/runs/31389068740/cancel")
-          if [ "$code" = "202" ] || [ "$code" = "409" ]; then
-            echo "Stale ORM loader cancel response: ${code}"
-          else
-            echo "Unexpected stale-run cancel response: ${code}"
-            cat /tmp/cancel-stale.json || true
-            exit 1
-          fi
-
       - name: Dispatch certified catalog-v2 pipeline sequentially
-        shell: bash
-        run: |
-          set -euo pipefail
+        uses: actions/github-script@v7
+        env:
+          TARGET_REF: catalog-v2
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const targetRef = process.env.TARGET_REF;
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-          api="https://api.github.com/repos/${REPO}"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+            const pipeline = [
+              ['sync-cardmarket-mvp-daily.yml', 'Cardmarket mirror and price guide'],
+              ['apply-mtg-cardmarket-direct-links.yml', 'MTG exact mapping'],
+              ['apply-pokemon-cardmarket-direct-links.yml', 'Pokemon exact mapping'],
+              ['apply-yugioh-cardmarket-exact-singles.yml', 'Yu-Gi-Oh exact mapping'],
+              ['apply-onepiece-cardmarket-release-exact-singles.yml', 'One Piece exact mapping'],
+              ['project-mtg-cardmarket-prices.yml', 'MTG prices'],
+              ['project-pokemon-cardmarket-prices.yml', 'Pokemon prices'],
+              ['project-yugioh-cardmarket-prices.yml', 'Yu-Gi-Oh prices'],
+              ['project-onepiece-cardmarket-prices.yml', 'One Piece prices'],
+              ['apply-cardmarket-product-catalog-bulk.yml', 'Non-single catalog and prices'],
+              ['sync-regional-tcg-content-v4.yml', 'Regional official content'],
+              ['repair-canonical-images.yml', 'Exact-source image repair'],
+              ['audit-roadmap-1-8-live.yml', 'Roadmap 1-8 audit'],
+            ];
 
-          run_workflow() {
-            local wf="$1"
-            local label="$2"
-            local started
-            started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "::group::${label} (${wf})"
-            code="$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' -X POST "${auth[@]}" \
-              "${api}/actions/workflows/${wf}/dispatches" \
-              -d "{\"ref\":\"${TARGET_REF}\"}")"
-            if [ "$code" != "204" ]; then
-              echo "Dispatch failed HTTP ${code}:"
-              cat /tmp/dispatch.json || true
-              exit 1
-            fi
+            async function api(label, fn, attempts = 6) {
+              let last;
+              for (let attempt = 1; attempt <= attempts; attempt += 1) {
+                try {
+                  return await fn();
+                } catch (error) {
+                  last = error;
+                  const status = Number(error?.status || 0);
+                  const retryable = !status || status === 409 || status === 429 || status >= 500;
+                  if (!retryable || attempt === attempts) throw error;
+                  const waitMs = Math.min(30000, 1500 * (2 ** (attempt - 1)));
+                  core.warning(`${label} failed (attempt ${attempt}/${attempts}, status ${status || 'transport'}); retrying in ${waitMs}ms: ${error.message}`);
+                  await sleep(waitMs);
+                }
+              }
+              throw last;
+            }
 
-            run_id=""
-            for _ in $(seq 1 60); do
-              payload="$(curl -fsS "${auth[@]}" "${api}/actions/workflows/${wf}/runs?branch=${TARGET_REF}&event=workflow_dispatch&per_page=20")"
-              run_id="$(jq -r --arg started "$started" '.workflow_runs | map(select(.created_at >= $started)) | sort_by(.created_at) | last | .id // empty' <<<"$payload")"
-              [ -n "$run_id" ] && break
-              sleep 5
-            done
-            if [ -z "$run_id" ]; then
-              echo "Could not resolve dispatched run for ${wf}"
-              exit 1
-            fi
-            echo "Resolved run ${run_id}"
+            async function branchSha() {
+              const response = await api('resolve target branch', () => github.rest.repos.getBranch({
+                owner, repo, branch: targetRef,
+              }));
+              return response.data.commit.sha;
+            }
 
-            for _ in $(seq 1 360); do
-              run="$(curl -fsS "${auth[@]}" "${api}/actions/runs/${run_id}")"
-              status="$(jq -r '.status' <<<"$run")"
-              conclusion="$(jq -r '.conclusion // ""' <<<"$run")"
-              if [ "$status" = "completed" ]; then
-                echo "Run ${run_id} completed: ${conclusion}"
-                if [ "$conclusion" != "success" ]; then
-                  echo "$run" | jq '{id,name,html_url,status,conclusion,head_sha,run_started_at,updated_at}'
-                  exit 1
-                fi
-                echo "::endgroup::"
-                return 0
-              fi
-              sleep 5
-            done
-            echo "Run ${run_id} exceeded orchestrator wait window"
-            exit 1
-          }
+            async function resolveRun(workflowId, expectedSha, dispatchedAt) {
+              for (let attempt = 1; attempt <= 90; attempt += 1) {
+                const response = await api(`list runs ${workflowId}`, () => github.rest.actions.listWorkflowRuns({
+                  owner,
+                  repo,
+                  workflow_id: workflowId,
+                  branch: targetRef,
+                  event: 'workflow_dispatch',
+                  per_page: 50,
+                }));
+                const lowerBound = dispatchedAt - 15000;
+                const candidates = response.data.workflow_runs
+                  .filter(run => run.head_branch === targetRef)
+                  .filter(run => run.head_sha === expectedSha)
+                  .filter(run => Date.parse(run.created_at) >= lowerBound)
+                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                if (candidates.length) return candidates[0];
+                await sleep(4000);
+              }
+              throw new Error(`Could not resolve dispatched run for ${workflowId} at ${expectedSha}`);
+            }
 
-          run_workflow sync-cardmarket-mvp-daily.yml "Cardmarket mirror and price guide"
+            async function waitForRun(workflowId, runId) {
+              const deadline = Date.now() + 55 * 60 * 1000;
+              while (Date.now() < deadline) {
+                const response = await api(`get run ${runId}`, () => github.rest.actions.getWorkflowRun({
+                  owner, repo, run_id: runId,
+                }));
+                const run = response.data;
+                if (run.status === 'completed') return run;
+                await sleep(10000);
+              }
+              throw new Error(`${workflowId} run ${runId} exceeded 55 minute wait window`);
+            }
 
-          run_workflow apply-mtg-cardmarket-direct-links.yml "MTG exact mapping"
-          run_workflow apply-pokemon-cardmarket-direct-links.yml "Pokemon exact mapping"
-          run_workflow apply-yugioh-cardmarket-exact-singles.yml "Yu-Gi-Oh exact mapping"
-          run_workflow apply-onepiece-cardmarket-release-exact-singles.yml "One Piece exact mapping"
+            const summary = [];
+            for (const [workflowId, label] of pipeline) {
+              core.startGroup(`${label} (${workflowId})`);
+              const expectedSha = await branchSha();
+              const dispatchedAt = Date.now();
+              await api(`dispatch ${workflowId}`, () => github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                ref: targetRef,
+              }));
+              const resolved = await resolveRun(workflowId, expectedSha, dispatchedAt);
+              core.info(`Resolved child run ${resolved.id}: ${resolved.html_url}`);
+              const completed = await waitForRun(workflowId, resolved.id);
+              const row = {
+                workflow: workflowId,
+                label,
+                run_id: completed.id,
+                conclusion: completed.conclusion,
+                head_sha: completed.head_sha,
+                url: completed.html_url,
+              };
+              summary.push(row);
+              core.info(JSON.stringify(row));
+              core.endGroup();
+              if (completed.conclusion !== 'success') {
+                core.setFailed(`${label} failed: child run ${completed.id} concluded ${completed.conclusion}`);
+                break;
+              }
+            }
 
-          run_workflow project-mtg-cardmarket-prices.yml "MTG prices"
-          run_workflow project-pokemon-cardmarket-prices.yml "Pokemon prices"
-          run_workflow project-yugioh-cardmarket-prices.yml "Yu-Gi-Oh prices"
-          run_workflow project-onepiece-cardmarket-prices.yml "One Piece prices"
+            await core.summary
+              .addHeading('Daily Catalog V2 pipeline')
+              .addTable([
+                [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}],
+                ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion)]),
+              ])
+              .write();
 
-          run_workflow apply-cardmarket-product-catalog-bulk.yml "Non-single catalog and prices"
-          run_workflow sync-regional-tcg-content-v4.yml "Regional official content"
-          run_workflow repair-canonical-images.yml "Exact-source image repair"
-          run_workflow audit-roadmap-1-8-live.yml "Roadmap 1-8 audit"
-
-          echo "Certified daily catalog-v2 pipeline completed successfully."
+            if (summary.length === pipeline.length && summary.every(row => row.conclusion === 'success')) {
+              core.info('Certified daily catalog-v2 pipeline completed successfully.');
+            }
