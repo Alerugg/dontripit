@@ -1,8 +1,6 @@
 name: Project Pokemon Cardmarket Prices
 
 on:
-  schedule:
-    - cron: '25 5 * * *'
   push:
     branches: [catalog-v2]
     paths: ['.github/workflows/project-pokemon-cardmarket-prices.yml']
