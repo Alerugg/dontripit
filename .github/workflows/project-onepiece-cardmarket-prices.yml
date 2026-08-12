@@ -1,8 +1,6 @@
 name: Project One Piece Cardmarket Prices
 
 on:
-  schedule:
-    - cron: '45 5 * * *'
   push:
     branches: [catalog-v2]
     paths: ['.github/workflows/project-onepiece-cardmarket-prices.yml']
