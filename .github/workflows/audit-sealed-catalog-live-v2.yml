@@ -1,0 +1,71 @@
+name: Audit Sealed Catalog Live V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-catalog-live-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet psycopg2-binary
+      - name: Audit canonical sealed identities prices and images
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          from psycopg2.extras import RealDictCursor
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url)
+          with conn, conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET LOCAL statement_timeout='120s'")
+              c.execute('''CREATE TEMP TABLE current_sealed ON COMMIT DROP AS
+                SELECT e.id external_product_id,e.external_id,g.slug,pv.id variant_id,p.product_type
+                FROM external_catalog_products e
+                JOIN games g ON g.id=e.game_id
+                JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=e.external_id
+                JOIN product_variants pv ON pv.id=pi.product_variant_id
+                JOIN products p ON p.id=pv.product_id
+                JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.product_variant_id=pv.id AND l.link_status='accepted'
+                WHERE e.source='cardmarket' AND e.product_group='non_single'
+                  AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                  AND p.product_type IN ('intro_pack','booster_pack','booster_box','deck_display','tournament_pack','fatpack','starter_deck','promo_product','preconstructed_deck','box_set','tin','theme_deck','blister','elite_trainer_box','trainer_kit','structure_deck','special_edition','collector_tin')''')
+              c.execute('CREATE INDEX ON current_sealed(variant_id)')
+              c.execute('CREATE INDEX ON current_sealed(external_product_id)')
+              c.execute("SELECT id FROM price_sources WHERE name='cardmarket'")
+              source_id=int(c.fetchone()['id'])
+              c.execute('''SELECT slug,count(*) total,
+                count(*) FILTER (WHERE EXISTS (SELECT 1 FROM product_images i WHERE i.product_variant_id=s.variant_id)) images,
+                count(*) FILTER (WHERE EXISTS (SELECT 1 FROM price_snapshots ps WHERE ps.entity_type='product_variant' AND ps.entity_id=s.variant_id AND ps.source_id=%s AND coalesce(ps.price_low,ps.price_mid,ps.price_market,ps.price_last) IS NOT NULL)) priced
+                FROM current_sealed s GROUP BY slug ORDER BY slug''',(source_id,))
+              by_game=[dict(r) for r in c.fetchall()]
+              c.execute('SELECT product_type,count(*) total FROM current_sealed GROUP BY product_type ORDER BY total DESC,product_type')
+              by_type=[dict(r) for r in c.fetchall()]
+              c.execute('SELECT count(*) total FROM current_sealed')
+              sealed_total=int(c.fetchone()['total'])
+              c.execute("SELECT count(*) n FROM product_identifiers pi JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id JOIN games g ON g.id=p.game_id WHERE pi.source='cardmarket' AND g.slug='riftbound'")
+              riftbound_cardmarket=int(c.fetchone()['n'])
+              c.execute("SELECT DISTINCT k FROM external_catalog_products e CROSS JOIN LATERAL jsonb_object_keys(coalesce(e.raw_json::jsonb,'{}'::jsonb)) k WHERE e.source='cardmarket' AND e.product_group='non_single' ORDER BY k")
+              raw_keys=[r['k'] for r in c.fetchall()]
+              c.execute('''WITH latest AS (SELECT external_product_id,max(as_of) as_of FROM external_market_price_snapshots GROUP BY external_product_id)
+                SELECT count(*) n FROM current_sealed s LEFT JOIN latest x ON x.external_product_id=s.external_product_id WHERE x.external_product_id IS NULL''')
+              no_external_price=int(c.fetchone()['n'])
+          conn.close()
+          payload={'sealed_total':sealed_total,'by_game':by_game,'by_type':by_type,'riftbound_cardmarket_identifiers':riftbound_cardmarket,'sealed_without_any_external_price_row':no_external_price,'external_raw_json_keys':raw_keys}
+          print(json.dumps(payload,indent=2,sort_keys=True,default=str))
+          if riftbound_cardmarket:
+              raise SystemExit('Riftbound must remain excluded from Cardmarket product mapping')
+          PY
