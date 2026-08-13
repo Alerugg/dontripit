@@ -29,7 +29,7 @@ jobs:
           import urllib.parse, urllib.request
 
           base='https://dontripit.com'
-          headers={'User-Agent':'Dontripit-Point9-QA/1.0'}
+          headers={'User-Agent':'Dontripit-Point9-QA/1.1'}
 
           def request(path, expect_json=False, attempts=24):
               last=None
@@ -57,6 +57,10 @@ jobs:
           for forbidden in ['€1.284,40','♡24 cartas','Cookies · pendiente de configuración final']:
               assert forbidden not in home, f'legacy/fake UI leaked on home: {forbidden}'
 
+          register_html=request('/register')
+          assert 'marketing_consent' not in register_html, 'newsletter consent control still present in registration HTML'
+          assert 'Quiero recibir novedades' not in register_html, 'newsletter launch copy still present in registration HTML'
+
           sets=request('/api/catalog/sets?game=onepiece&limit=500&offset=0',expect_json=True)
           items=sets.get('items',sets if isinstance(sets,list) else [])
           assert len(items)>=40, f'One Piece public set archive unexpectedly small: {len(items)}'
@@ -65,9 +69,28 @@ jobs:
           set_code=str(op15.get('code'))
           print(json.dumps({'onepiece_public_sets':len(items),'op15_code':set_code},sort_keys=True))
 
-          detail=request('/api/catalog/set-detail?'+urllib.parse.urlencode({'game':'onepiece','set_code':set_code,'limit':1000,'offset':0}),expect_json=True)
-          cards=detail.get('cards') or []
-          assert len(cards)>50, f'OP15 checklist still truncated at public page size: {len(cards)}'
+          page_size=50
+          offset=0
+          cards=[]
+          reported_total=None
+          first_page_has_more=False
+          while True:
+              detail=request('/api/catalog/set-detail?'+urllib.parse.urlencode({'game':'onepiece','set_code':set_code,'limit':page_size,'offset':offset}),expect_json=True)
+              page_cards=detail.get('cards') or []
+              if reported_total is None:
+                  reported_total=int(detail.get('total_cards') or detail.get('total') or 0)
+                  first_page_has_more=bool(detail.get('has_more'))
+              cards.extend(page_cards)
+              has_more=bool(detail.get('has_more'))
+              if not has_more:
+                  break
+              assert page_cards, 'pagination reports has_more but returned no cards'
+              offset += len(page_cards)
+              assert offset <= 5000, 'pagination safety limit reached'
+
+          assert reported_total and reported_total>50, f'OP15 catalog is unexpectedly small: {reported_total}'
+          assert first_page_has_more, 'OP15 first page should advertise has_more'
+          assert len(cards)==reported_total, f'OP15 pagination incomplete: {len(cards)}/{reported_total}'
           fallback_names=[row for row in cards if str(row.get('name','')).startswith('Carta #')]
           assert len(fallback_names) <= max(3, int(len(cards)*0.05)), f'too many unresolved card names: {len(fallback_names)}/{len(cards)}'
           exact=next((row for row in cards if row.get('id') and row.get('card_id')),None)
@@ -79,9 +102,12 @@ jobs:
           request(f'/games/onepiece/cards/{card_id}')
           print(json.dumps({
               'op15_versions_loaded':len(cards),
+              'reported_total':reported_total,
+              'pagination':'pass',
               'fallback_names':len(fallback_names),
               'exact_print_route':'pass',
               'card_route':'pass',
               'fake_home_metrics':'absent',
+              'newsletter_ui':'absent',
           },sort_keys=True))
           PY
