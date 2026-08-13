@@ -36,8 +36,17 @@ test('point 9 SEO and accessibility baseline is present', () => {
   assert.match(accessibility, /focus-visible/)
 })
 
-test('point 9 launch hides newsletter opt-in', () => {
-  const guard = source('app/register/layout.js')
-  assert.match(guard, /marketing_consent/)
-  assert.match(guard, /display: none/)
+test('point 10 removes newsletter consent from launch registration', () => {
+  const auth = source('components/auth/AuthShell.js')
+  const registerLayout = source('app/register/layout.js')
+  assert.doesNotMatch(auth, /marketing_consent|Quiero recibir novedades/i)
+  assert.doesNotMatch(registerLayout, /marketing_consent|display:\s*none/i)
+})
+
+test('point 10 keeps all auth entry routes out of search indexes', () => {
+  for (const file of ['app/login/layout.js', 'app/register/layout.js', 'app/forgot-password/layout.js', 'app/reset-password/layout.js']) {
+    const route = source(file)
+    assert.match(route, /index:\s*false/)
+    assert.match(route, /follow:\s*false/)
+  }
 })
