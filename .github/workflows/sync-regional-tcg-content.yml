@@ -1,0 +1,96 @@
+name: Daily Regional TCG Content
+
+on:
+  schedule:
+    - cron: '10 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-regional-tcg-content
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Require production database
+        run: |
+          if [ -z "${DATABASE_URL_UNPOOLED:-}" ] && [ -z "${DATABASE_URL:-}" ]; then exit 1; fi
+      - name: Upgrade schema
+        run: alembic upgrade head
+      - name: Persist official JP EU US news and releases
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app import db
+          from app.jobs.regional_content import ingest_official_regional_content
+
+          db.init_engine()
+          with db.SessionLocal() as session:
+              report = ingest_official_regional_content(session, strict=True)
+              session.commit()
+          if report['failed_sources']:
+              raise AssertionError(report)
+          Path('/tmp/regional-tcg-content.json').write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
+          PY
+      - name: Prove current 4-game regional coverage
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timedelta, timezone
+          from sqlalchemy import create_engine, text
+          from app.jobs.regional_content import CANONICAL_SOURCE_KEYS
+
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+          with engine.connect() as conn:
+              rows = conn.execute(text('''
+                SELECT g.slug,c.region,count(*) items
+                FROM regional_tcg_content c JOIN games g ON g.id=c.game_id
+                WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh')
+                  AND c.source_key = ANY(:keys)
+                  AND c.last_seen_at >= :cutoff
+                GROUP BY g.slug,c.region ORDER BY g.slug,c.region
+              '''), {'keys': list(CANONICAL_SOURCE_KEYS), 'cutoff': cutoff}).all()
+              riftbound = conn.execute(text('''
+                SELECT count(*) FROM regional_tcg_content c
+                JOIN games g ON g.id=c.game_id WHERE g.slug='riftbound'
+              ''')).scalar_one()
+          proof = [{'game': str(g), 'region': str(r), 'items': int(n)} for g,r,n in rows]
+          required = {(g,r) for g in ('pokemon','onepiece','mtg','yugioh') for r in ('jp','eu','us')}
+          actual = {(x['game'], x['region']) for x in proof}
+          if actual != required:
+              raise AssertionError({'missing': sorted(required-actual), 'unexpected': sorted(actual-required), 'proof': proof})
+          if int(riftbound) != 0:
+              raise AssertionError({'riftbound_rows': int(riftbound)})
+          print('REGIONAL_DAILY_PASS ' + json.dumps({'cells': proof, 'riftbound_rows': int(riftbound)}, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regional-tcg-content-${{ github.run_id }}
+          path: /tmp/regional-tcg-content.json
+          retention-days: 90
+          if-no-files-found: warn
