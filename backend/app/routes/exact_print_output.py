@@ -52,17 +52,19 @@ def enforce_exact_print_image_response(response):
     try:
         with db.SessionLocal() as session:
             rows = session.execute(sql, {"ids": sorted(set(ids))}).mappings().all()
+        exact = {int(row["id"]): row["exact_image_url"] for row in rows}
     except SQLAlchemyError:
-        return response
-    exact = {int(row["id"]): row["exact_image_url"] for row in rows}
+        exact = {}
+
+    # Fail closed: if exact ownership cannot be verified, expose no image rather
+    # than preserving a potentially borrowed sibling-print image from legacy SQL.
     for item in items:
         pid = _print_id(item)
-        if pid not in exact:
-            continue
+        exact_url = exact.get(pid)
         if "image_url" in item:
-            item["image_url"] = exact[pid]
+            item["image_url"] = exact_url
         if "primary_image_url" in item:
-            item["primary_image_url"] = exact[pid]
+            item["primary_image_url"] = exact_url
     response.set_data(current_app.json.dumps(payload))
     response.content_type = "application/json"
     return response
