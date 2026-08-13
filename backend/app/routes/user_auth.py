@@ -193,6 +193,9 @@ def reset_password():
             session.rollback()
             return jsonify({"error": "reset_token_invalid", "message": "Este enlace ha caducado o ya fue utilizado."}), 400
         user, reset_token = resolved
+        if password_matches(user, new_password):
+            session.rollback()
+            return jsonify({"error": "password_reused", "message": "Elige una contraseña diferente a la actual."}), 400
         user.password_hash = password_hash(new_password)
         reset_token.used_at = utcnow()
         revoke_all_user_sessions(session, user.id)
