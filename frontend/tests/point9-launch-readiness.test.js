@@ -50,3 +50,17 @@ test('point 10 keeps all auth entry routes out of search indexes', () => {
     assert.match(route, /follow:\s*false/)
   }
 })
+
+test('point 10 account deletion is authenticated, explicit and cascades user-owned data', () => {
+  const bff = source('app/api/auth/me/route.js')
+  const backend = source('../backend/app/routes/user_auth.py')
+  const models = source('../backend/app/user_models.py')
+  assert.match(bff, /export async function DELETE/)
+  assert.match(bff, /\/api\/v2\/auth\/account/)
+  assert.match(bff, /clearSessionCookie/)
+  assert.match(backend, /@user_auth_bp\.delete\("\/api\/v2\/auth\/account"\)/)
+  assert.match(backend, /confirmation != "ELIMINAR"/)
+  assert.match(backend, /password_matches\(user, password\)/)
+  assert.match(backend, /session\.delete\(user\)/)
+  assert.ok((models.match(/ondelete="CASCADE"/g) || []).length >= 4)
+})
