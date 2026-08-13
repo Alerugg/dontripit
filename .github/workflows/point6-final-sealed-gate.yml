@@ -19,38 +19,87 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet psycopg2-binary
-      - name: Read-only sealed coverage and price projection audit
+      - name: Strict sealed coverage and price projection audit
         run: |
           python - <<'PY'
           import json, os, psycopg2
           from psycopg2.extras import RealDictCursor
-          active=('mtg','onepiece','pokemon','yugioh')
-          sealed=('intro_pack','booster_pack','booster_box','deck_display','tournament_pack','fatpack','starter_deck','promo_product','preconstructed_deck','box_set','tin','theme_deck','blister','elite_trainer_box','trainer_kit','structure_deck','special_edition','collector_tin')
+
+          ACTIVE=('mtg','onepiece','pokemon','yugioh')
+          SEALED=(
+            'intro_pack','booster_pack','booster_box','deck_display','tournament_pack','fatpack',
+            'starter_deck','promo_product','preconstructed_deck','box_set','tin','theme_deck','blister',
+            'elite_trainer_box','trainer_kit','structure_deck','special_edition','collector_tin'
+          )
+          BASELINE=9676
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
-          conn.set_session(readonly=True,autocommit=True)
-          with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SET statement_timeout='180s'")
+          with conn, conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute("SET LOCAL statement_timeout='300s'")
             c.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'")
             latest=c.fetchone()['latest']
-            c.execute("""SELECT g.slug,count(DISTINCT pv.id) canonical FROM product_variants pv JOIN products p ON p.id=pv.product_id JOIN games g ON g.id=p.game_id WHERE g.slug=ANY(%s) AND p.product_type=ANY(%s) GROUP BY g.slug ORDER BY g.slug""",(list(active),list(sealed)))
-            canonical={r['slug']:int(r['canonical']) for r in c.fetchall()}
-            c.execute("""WITH l AS (SELECT DISTINCT g.slug,e.id external_id,pv.id variant_id FROM external_catalog_products e JOIN games g ON g.id=e.game_id JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=e.external_id JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id AND p.game_id=e.game_id JOIN external_catalog_product_variant_links x ON x.external_product_id=e.id AND x.product_variant_id=pv.id AND x.link_status='accepted' WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.last_seen_at=%s AND g.slug=ANY(%s) AND p.product_type=ANY(%s)), p AS (SELECT DISTINCT l.slug,l.external_id,l.variant_id FROM l JOIN external_market_price_snapshots x ON x.external_product_id=l.external_id WHERE greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0), cp AS (SELECT DISTINCT ps.entity_id variant_id FROM price_snapshots ps JOIN price_sources s ON s.id=ps.source_id AND lower(s.name)='cardmarket' WHERE ps.entity_type='product_variant' AND greatest(coalesce(ps.price_low,0),coalesce(ps.price_mid,0),coalesce(ps.price_market,0),coalesce(ps.price_last,0))>0) SELECT l.slug,count(DISTINCT l.variant_id) linked,count(DISTINCT p.variant_id) priceable,count(DISTINCT CASE WHEN p.variant_id IS NULL THEN l.variant_id END) no_public_price,count(DISTINCT CASE WHEN p.variant_id IS NOT NULL AND cp.variant_id IS NOT NULL THEN l.variant_id END) projected,count(DISTINCT CASE WHEN p.variant_id IS NOT NULL AND cp.variant_id IS NULL THEN l.variant_id END) price_gaps FROM l LEFT JOIN p ON p.external_id=l.external_id AND p.variant_id=l.variant_id LEFT JOIN cp ON cp.variant_id=l.variant_id GROUP BY l.slug ORDER BY l.slug""",(latest,list(active),list(sealed)))
+            c.execute('''CREATE TEMP TABLE current_sealed ON COMMIT DROP AS
+              SELECT DISTINCT e.id external_product_id,e.external_id,g.slug,pv.id variant_id,p.product_type
+              FROM external_catalog_products e
+              JOIN games g ON g.id=e.game_id
+              JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=e.external_id
+              JOIN product_variants pv ON pv.id=pi.product_variant_id
+              JOIN products p ON p.id=pv.product_id AND p.game_id=e.game_id
+              JOIN external_catalog_product_variant_links l
+                ON l.external_product_id=e.id AND l.product_variant_id=pv.id AND l.link_status='accepted'
+              WHERE e.source='cardmarket' AND e.product_group='non_single'
+                AND e.last_seen_at=%s AND g.slug=ANY(%s) AND p.product_type=ANY(%s)
+            ''',(latest,list(ACTIVE),list(SEALED)))
+            c.execute('CREATE INDEX current_sealed_external_idx ON current_sealed(external_product_id)')
+            c.execute('CREATE INDEX current_sealed_variant_idx ON current_sealed(variant_id)')
+            c.execute("SELECT id FROM price_sources WHERE lower(name)='cardmarket' LIMIT 1")
+            source_id=int(c.fetchone()['id'])
+
+            positive_external='''EXISTS (SELECT 1 FROM external_market_price_snapshots x WHERE x.external_product_id=s.external_product_id AND greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0)'''
+            positive_canonical='''EXISTS (SELECT 1 FROM price_snapshots ps WHERE ps.entity_type='product_variant' AND ps.entity_id=s.variant_id AND ps.source_id=%s AND greatest(coalesce(ps.price_low,0),coalesce(ps.price_mid,0),coalesce(ps.price_market,0),coalesce(ps.price_last,0))>0)'''
+            q=f'''SELECT slug,count(*) linked,
+              count(*) FILTER (WHERE {positive_external}) priceable,
+              count(*) FILTER (WHERE NOT {positive_external}) no_public_price,
+              count(*) FILTER (WHERE {positive_external} AND {positive_canonical}) projected,
+              count(*) FILTER (WHERE {positive_external} AND NOT {positive_canonical}) price_gaps
+              FROM current_sealed s GROUP BY slug ORDER BY slug'''
+            c.execute(q,(source_id,source_id))
             rows=[dict(r) for r in c.fetchall()]
-            c.execute("""WITH l AS (SELECT DISTINCT e.id external_id,pv.id variant_id FROM external_catalog_products e JOIN games g ON g.id=e.game_id JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=e.external_id JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id JOIN external_catalog_product_variant_links x ON x.external_product_id=e.id AND x.product_variant_id=pv.id AND x.link_status='accepted' WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.last_seen_at=%s AND g.slug=ANY(%s) AND p.product_type=ANY(%s)) SELECT (SELECT count(*) FROM (SELECT external_id FROM l GROUP BY external_id HAVING count(DISTINCT variant_id)>1)a) ambiguous_external,(SELECT count(*) FROM (SELECT variant_id FROM l GROUP BY variant_id HAVING count(DISTINCT external_id)>1)b) duplicate_variant""",(latest,list(active),list(sealed)))
-            integrity=dict(c.fetchone())
-            c.execute("""SELECT count(DISTINCT pi.product_variant_id) n FROM product_identifiers pi JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id JOIN games g ON g.id=p.game_id WHERE pi.source='cardmarket' AND g.slug='riftbound'""")
+
+            c.execute('''SELECT
+              (SELECT count(*) FROM (SELECT external_product_id FROM current_sealed GROUP BY external_product_id HAVING count(DISTINCT variant_id)>1) a) ambiguous_external,
+              (SELECT count(*) FROM (SELECT variant_id FROM current_sealed GROUP BY variant_id HAVING count(DISTINCT external_product_id)>1) b) duplicate_variant''')
+            integrity={k:int(v) for k,v in dict(c.fetchone()).items()}
+            c.execute("SELECT count(DISTINCT pi.product_variant_id) n FROM product_identifiers pi JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id JOIN games g ON g.id=p.game_id WHERE pi.source='cardmarket' AND g.slug='riftbound'")
             riftbound=int(c.fetchone()['n'])
+            c.execute('SELECT count(*) n FROM current_sealed')
+            total=int(c.fetchone()['n'])
           conn.close()
+
           by_game={r['slug']:{k:(int(v) if k!='slug' else v) for k,v in r.items()} for r in rows}
           totals={k:sum(v[k] for v in by_game.values()) for k in ('linked','priceable','no_public_price','projected','price_gaps')}
           failures=[]
-          for game in active:
-            if game not in canonical or game not in by_game: failures.append(game+': missing active game')
-            elif by_game[game]['linked']!=canonical[game]: failures.append(f"{game}: canonical={canonical[game]} linked={by_game[game]['linked']}")
-            elif by_game[game]['price_gaps']!=0: failures.append(f"{game}: price gaps={by_game[game]['price_gaps']}")
-          if int(integrity['ambiguous_external']) or int(integrity['duplicate_variant']): failures.append('mapping ambiguity')
+          if set(by_game)!=set(ACTIVE): failures.append(f'active games mismatch={sorted(by_game)}')
+          if total<BASELINE: failures.append(f'sealed mapping regression={total} baseline={BASELINE}')
+          if totals['linked']!=total: failures.append(f'linked total mismatch={totals["linked"]}/{total}')
+          if totals['priceable']+totals['no_public_price']!=total: failures.append('price classification incomplete')
+          if totals['price_gaps']!=0 or totals['projected']!=totals['priceable']:
+            failures.append(f'price projection gaps={totals["price_gaps"]} projected={totals["projected"]} priceable={totals["priceable"]}')
+          if integrity['ambiguous_external'] or integrity['duplicate_variant']:
+            failures.append(f'mapping integrity={integrity}')
           if riftbound: failures.append(f'riftbound leakage={riftbound}')
-          report={'mode':'read_only','point':6,'latest_catalog':str(latest),'canonical':canonical,'coverage':by_game,'totals':totals,'integrity':integrity,'riftbound_leakage':riftbound,'gate':'PASS' if not failures else 'FAIL','failures':failures}
-          print('POINT6_FINAL '+json.dumps(report,indent=2,sort_keys=True))
+
+          report={
+            'mode':'read_only_except_temp_table',
+            'point':6,
+            'latest_catalog':str(latest),
+            'baseline_minimum':BASELINE,
+            'coverage':by_game,
+            'totals':totals,
+            'mapping_integrity':integrity,
+            'riftbound_leakage':riftbound,
+            'gate':'PASS' if not failures else 'FAIL',
+            'failures':failures,
+          }
+          print('POINT6_FINAL '+json.dumps(report,indent=2,sort_keys=True,default=str))
           if failures: raise SystemExit('; '.join(failures))
           PY
