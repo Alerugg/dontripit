@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from sqlalchemy import select
 
 from app import db
 from app.routes import user_auth
+from app.user_auth_service import utcnow
 from app.user_models import User, UserPasswordResetToken, UserSession
 
 
@@ -18,6 +21,24 @@ def _register(client, *, email="eva@example.com", password="CorrectHorseBattery1
             "marketing_consent": False,
         },
     )
+
+
+def _capture_reset_token(client, monkeypatch, *, email="eva@example.com"):
+    captured = {}
+    monkeypatch.setattr(user_auth, "email_delivery_configured", lambda: True)
+
+    def fake_send(*, to_email, token):
+        captured["to_email"] = to_email
+        captured["token"] = token
+        return True
+
+    monkeypatch.setattr(user_auth, "send_password_reset_email", fake_send)
+    response = client.post("/api/v2/auth/forgot-password", json={"email": email})
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert captured["to_email"] == email
+    assert captured["token"]
+    return captured["token"]
 
 
 def test_register_logout_login_roundtrip_uses_same_password(client):
@@ -54,22 +75,7 @@ def test_password_reset_is_one_time_changes_password_and_revokes_sessions(client
     assert registered.status_code == 201
     first_session = registered.get_json()["session_token"]
 
-    captured = {}
-    monkeypatch.setattr(user_auth, "email_delivery_configured", lambda: True)
-
-    def fake_send(*, to_email, token):
-        captured["to_email"] = to_email
-        captured["token"] = token
-        return True
-
-    monkeypatch.setattr(user_auth, "send_password_reset_email", fake_send)
-
-    requested = client.post("/api/v2/auth/forgot-password", json={"email": "eva@example.com"})
-    assert requested.status_code == 200
-    assert requested.get_json()["ok"] is True
-    assert captured["to_email"] == "eva@example.com"
-    raw_reset_token = captured["token"]
-    assert raw_reset_token
+    raw_reset_token = _capture_reset_token(client, monkeypatch)
 
     with db.SessionLocal() as session:
         reset_row = session.execute(select(UserPasswordResetToken)).scalar_one()
@@ -111,6 +117,75 @@ def test_password_reset_is_one_time_changes_password_and_revokes_sessions(client
         user = session.execute(select(User).where(User.email == "eva@example.com")).scalar_one()
         sessions = session.execute(select(UserSession).where(UserSession.user_id == user.id)).scalars().all()
         assert len(sessions) == 1
+
+
+def test_second_reset_request_invalidates_first_token(client, monkeypatch):
+    assert _register(client).status_code == 201
+    tokens = []
+    monkeypatch.setattr(user_auth, "email_delivery_configured", lambda: True)
+
+    def fake_send(*, to_email, token):
+        assert to_email == "eva@example.com"
+        tokens.append(token)
+        return True
+
+    monkeypatch.setattr(user_auth, "send_password_reset_email", fake_send)
+    assert client.post("/api/v2/auth/forgot-password", json={"email": "eva@example.com"}).status_code == 200
+    assert client.post("/api/v2/auth/forgot-password", json={"email": "eva@example.com"}).status_code == 200
+    assert len(tokens) == 2
+    assert tokens[0] != tokens[1]
+
+    first = client.post(
+        "/api/v2/auth/reset-password",
+        json={"token": tokens[0], "password": "UnusedPassword123!"},
+    )
+    assert first.status_code == 400
+    assert first.get_json()["error"] == "reset_token_invalid"
+
+    second = client.post(
+        "/api/v2/auth/reset-password",
+        json={"token": tokens[1], "password": "ValidPassword123!"},
+    )
+    assert second.status_code == 200
+
+
+def test_expired_reset_token_is_rejected(client, monkeypatch):
+    assert _register(client).status_code == 201
+    raw_token = _capture_reset_token(client, monkeypatch)
+
+    with db.SessionLocal() as session:
+        reset_row = session.execute(select(UserPasswordResetToken)).scalar_one()
+        reset_row.expires_at = utcnow() - timedelta(minutes=1)
+        session.commit()
+
+    response = client.post(
+        "/api/v2/auth/reset-password",
+        json={"token": raw_token, "password": "ValidPassword123!"},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "reset_token_invalid"
+
+    with db.SessionLocal() as session:
+        assert session.execute(select(UserPasswordResetToken)).scalars().all() == []
+
+
+def test_reset_rejects_current_password_without_consuming_token(client, monkeypatch):
+    old_password = "CorrectHorseBattery1!"
+    assert _register(client, password=old_password).status_code == 201
+    raw_token = _capture_reset_token(client, monkeypatch)
+
+    reused_password = client.post(
+        "/api/v2/auth/reset-password",
+        json={"token": raw_token, "password": old_password},
+    )
+    assert reused_password.status_code == 400
+    assert reused_password.get_json()["error"] == "password_reused"
+
+    valid_retry = client.post(
+        "/api/v2/auth/reset-password",
+        json={"token": raw_token, "password": "DifferentPassword123!"},
+    )
+    assert valid_retry.status_code == 200
 
 
 def test_forgot_password_does_not_reveal_account_when_delivery_is_configured(client, monkeypatch):
