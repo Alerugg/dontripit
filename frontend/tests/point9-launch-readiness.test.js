@@ -64,3 +64,35 @@ test('point 10 account deletion is authenticated, explicit and cascades user-own
   assert.match(backend, /session\.delete\(user\)/)
   assert.ok((models.match(/ondelete="CASCADE"/g) || []).length >= 4)
 })
+
+test('collector-first home stays truthful and does not import mock prices', () => {
+  const home = source('components/home/PublicHome.js')
+  assert.match(home, /la versión correcta/)
+  assert.match(home, /activeGames\.length/)
+  assert.match(home, /Cardmarket/)
+  assert.match(home, /Sin fechas inventadas/)
+  assert.match(home, /SiteFooter/)
+  assert.doesNotMatch(home, /312,40|68,95|3\.240|12480|Pikachu · Reverse/)
+})
+
+test('launch front has explicit responsive layouts for home, game hubs and dashboard', () => {
+  const home = source('app/canva-workspace.css')
+  const hub = source('components/games/GameExplorerPage.css')
+  const dashboard = source('components/dashboard/DashboardPage.css')
+  assert.match(home, /@media \(max-width: 860px\)/)
+  assert.match(home, /@media \(max-width: 680px\)/)
+  assert.match(home, /@media \(max-width: 430px\)/)
+  assert.match(home, /prefers-reduced-motion/)
+  assert.match(hub, /@media \(max-width: 720px\)/)
+  assert.match(hub, /overflow-x: auto/)
+  assert.match(dashboard, /@media \(max-width: 680px\)/)
+  assert.match(dashboard, /@media \(max-width: 440px\)/)
+})
+
+test('home game selector remains keyboard and screen-reader explicit', () => {
+  const search = source('components/home/HomeSearch.js')
+  assert.match(search, /aria-pressed/)
+  assert.match(search, /aria-label=/)
+  assert.match(search, /type="search"/)
+  assert.match(search, /data-game=/)
+})
