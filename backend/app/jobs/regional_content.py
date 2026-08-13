@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import json
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,90 +24,34 @@ class OfficialSource:
 
 
 SOURCES = (
-    OfficialSource(
-        "pokemon_us", "pokemon", ("us",), "en-US", "Pokémon TCG US",
-        "https://www.pokemon.com/us/pokemon-tcg", ("/us/pokemon-news/", "/us/news/"),
-    ),
-    OfficialSource(
-        "pokemon_eu", "pokemon", ("eu",), "en-GB", "Pokémon TCG Europe",
-        "https://www.pokemon.com/uk/pokemon-tcg", ("/uk/pokemon-news/", "/uk/news/"),
-    ),
-    OfficialSource(
-        "pokemon_jp", "pokemon", ("jp",), "ja-JP", "Pokémon Card Japan",
-        "https://www.pokemon-card.com/info/", ("/info/",),
-    ),
-    OfficialSource(
-        "onepiece_global", "onepiece", ("us", "eu"), "en", "ONE PIECE CARD GAME Global",
-        "https://en.onepiece-cardgame.com/topics/", ("/topics/",),
-    ),
-    OfficialSource(
-        "onepiece_jp", "onepiece", ("jp",), "ja-JP", "ONE PIECE CARD GAME Japan",
-        "https://www.onepiece-cardgame.com/topics/", ("/topics/",),
-    ),
-    OfficialSource(
-        "yugioh_us", "yugioh", ("us",), "en-US", "Yu-Gi-Oh! TCG North America",
-        "https://www.yugioh-card.com/en/news/", ("/en/",),
-    ),
-    OfficialSource(
-        "yugioh_eu", "yugioh", ("eu",), "en-GB", "Yu-Gi-Oh! TCG Europe",
-        "https://www.yugioh-card.com/eu/category/news/", ("/eu/",),
-    ),
-    OfficialSource(
-        "yugioh_jp", "yugioh", ("jp",), "ja-JP", "Yu-Gi-Oh! OCG Japan",
-        "https://www.konami.com/yugioh/news/", ("/yugioh/",),
-    ),
-    OfficialSource(
-        "mtg_us", "mtg", ("us",), "en-US", "Magic: The Gathering / Wizards US",
-        "https://magic.wizards.com/en/news", ("/en/news/",),
-    ),
-    OfficialSource(
-        "mtg_eu", "mtg", ("eu",), "es-ES", "Magic: The Gathering / Wizards Europe",
-        "https://magic.wizards.com/es/news", ("/es/news/",),
-    ),
-    OfficialSource(
-        "mtg_jp", "mtg", ("jp",), "ja-JP", "Magic: The Gathering Japan",
-        "https://mtg-jp.com/reading/", ("/reading/", "/products/"),
-    ),
+    OfficialSource("pokemon_us", "pokemon", ("us",), "en-US", "Pokémon TCG US", "https://www.pokemon.com/us/pokemon-tcg", ("/us/pokemon-news/", "/us/news/")),
+    OfficialSource("pokemon_jp", "pokemon", ("jp",), "ja-JP", "Pokémon Card Japan", "https://www.pokemon-card.com/info/", ("/info/",)),
+    OfficialSource("onepiece_global", "onepiece", ("us", "eu"), "en", "ONE PIECE CARD GAME Global", "https://en.onepiece-cardgame.com/topics/", ("/topics/",)),
+    OfficialSource("onepiece_jp", "onepiece", ("jp",), "ja-JP", "ONE PIECE CARD GAME Japan", "https://www.onepiece-cardgame.com/topics/", ("/topics/",)),
+    OfficialSource("yugioh_us", "yugioh", ("us",), "en-US", "Yu-Gi-Oh! TCG North America", "https://www.yugioh-card.com/en/news/", ("/en/",)),
+    OfficialSource("yugioh_eu", "yugioh", ("eu",), "en-GB", "Yu-Gi-Oh! TCG Europe", "https://www.yugioh-card.com/eu/category/news/", ("/eu/",)),
+    OfficialSource("yugioh_jp", "yugioh", ("jp",), "ja-JP", "Yu-Gi-Oh! OCG Japan", "https://www.konami.com/yugioh/news/", ("/yugioh/",)),
+    OfficialSource("mtg_us", "mtg", ("us",), "en-US", "Magic: The Gathering / Wizards US", "https://magic.wizards.com/en/news", ("/en/news/",)),
+    OfficialSource("mtg_eu", "mtg", ("eu",), "es-ES", "Magic: The Gathering / Wizards Europe", "https://magic.wizards.com/es/news", ("/es/news/",)),
+    OfficialSource("mtg_jp", "mtg", ("jp",), "ja-JP", "Magic: The Gathering Japan", "https://mtg-jp.com/reading/", ("/reading/", "/products/")),
 )
 
+TPCI_SCHEDULE_URL = "https://press.pokemon.com/en/Items/_SchedulePage/lvyoogoqvy"
+TPCI_SOURCE_KEY = "pokemon_eu_tpci_press"
+CANONICAL_SOURCE_KEYS = tuple(source.key for source in SOURCES) + (TPCI_SOURCE_KEY,)
+DEPRECATED_SOURCE_KEYS = ("pokemon_eu",)
 USER_AGENT = "DontRipItCatalog/1.0 (+https://github.com/Alerugg/dontripit)"
 DATE_PATTERNS = (
     re.compile(r"\b(20\d{2})[./-](\d{1,2})[./-](\d{1,2})\b"),
     re.compile(r"\b(20\d{2})年(\d{1,2})月(\d{1,2})日\b"),
 )
-EN_MONTHS = {
-    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
-    "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
-}
-ES_MONTHS = {
-    "ene": 1, "enero": 1, "feb": 2, "febrero": 2, "mar": 3, "marzo": 3,
-    "abr": 4, "abril": 4, "may": 5, "mayo": 5, "jun": 6, "junio": 6,
-    "jul": 7, "julio": 7, "ago": 8, "agosto": 8, "sep": 9, "sept": 9,
-    "septiembre": 9, "oct": 10, "octubre": 10, "nov": 11, "noviembre": 11,
-    "dic": 12, "diciembre": 12,
-}
+EN_MONTHS = {"january":1,"february":2,"march":3,"april":4,"may":5,"june":6,"july":7,"august":8,"september":9,"october":10,"november":11,"december":12,"jan":1,"feb":2,"mar":3,"apr":4,"jun":6,"jul":7,"aug":8,"sep":9,"sept":9,"oct":10,"nov":11,"dec":12}
+ES_MONTHS = {"ene":1,"enero":1,"feb":2,"febrero":2,"mar":3,"marzo":3,"abr":4,"abril":4,"may":5,"mayo":5,"jun":6,"junio":6,"jul":7,"julio":7,"ago":8,"agosto":8,"sep":9,"sept":9,"septiembre":9,"oct":10,"octubre":10,"nov":11,"noviembre":11,"dic":12,"diciembre":12}
 MONTHS = {**EN_MONTHS, **ES_MONTHS}
-MONTH_FIRST_RE = re.compile(
-    r"\b(" + "|".join(sorted((re.escape(x) for x in MONTHS), key=len, reverse=True)) +
-    r")\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(20\d{2})\b", re.I,
-)
-DAY_FIRST_RE = re.compile(
-    r"\b(\d{1,2})\s+(" + "|".join(sorted((re.escape(x) for x in MONTHS), key=len, reverse=True)) +
-    r")[,]?\s+(20\d{2})\b", re.I,
-)
-
-RELEASE_TERMS = (
-    "release date", "official release", "releases on", "arrives on", "available on",
-    "on sale", "booster", "expansion", "starter deck", "structure deck", "display",
-    "elite trainer box", "tin pack", "premium card collection", "product", "products",
-    "発売日", "商品情報", "拡張パック", "構築デッキ", "ブースタ", "スターターデッキ",
-)
-SKIP_TITLES = {
-    "home", "news", "latest news", "products", "product", "learn more", "read more",
-    "more", "all", "see all", "topics", "image", "shop", "events", "play",
-}
+MONTH_FIRST_RE = re.compile(r"\b(" + "|".join(sorted((re.escape(x) for x in MONTHS), key=len, reverse=True)) + r")\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(20\d{2})\b", re.I)
+DAY_FIRST_RE = re.compile(r"\b(\d{1,2})\s+(" + "|".join(sorted((re.escape(x) for x in MONTHS), key=len, reverse=True)) + r")[,]?\s+(20\d{2})\b", re.I)
+RELEASE_TERMS = ("release date","official release","releases on","arrives on","available on","on sale","booster","expansion","starter deck","structure deck","display","elite trainer box","tin pack","premium card collection","product","products","発売日","商品情報","拡張パック","構築デッキ","ブースタ","スターターデッキ")
+SKIP_TITLES = {"home","news","latest news","products","product","learn more","read more","more","all","see all","topics","image","shop","events","play"}
 
 
 def _clean(value: object) -> str:
@@ -142,16 +87,12 @@ def _date_from_text(value: str | None) -> date | None:
 def _release_date_from_text(value: str | None) -> date | None:
     text_value = _clean(value)
     folded = text_value.casefold()
-    anchors = (
-        "release date", "official release", "releases on", "arrives on", "available on",
-        "on sale", "発売日", "公式発売日", "先行販売開始日",
-    )
-    positions = [folded.find(anchor.casefold()) for anchor in anchors]
-    positions = [pos for pos in positions if pos >= 0]
-    for pos in positions:
-        candidate = _date_from_text(text_value[pos : pos + 180])
-        if candidate:
-            return candidate
+    for anchor in ("release date","official release","releases on","arrives on","available on","on sale","発売日","公式発売日","先行販売開始日"):
+        pos = folded.find(anchor.casefold())
+        if pos >= 0:
+            candidate = _date_from_text(text_value[pos:pos + 180])
+            if candidate:
+                return candidate
     return None
 
 
@@ -159,9 +100,7 @@ def _kind(title: str, context: str, release_date: date | None) -> str:
     if release_date:
         return "release"
     folded = f"{title} {context}".casefold()
-    if any(term.casefold() in folded for term in RELEASE_TERMS):
-        return "product"
-    return "news"
+    return "product" if any(term.casefold() in folded for term in RELEASE_TERMS) else "news"
 
 
 def _context(anchor) -> str:
@@ -180,7 +119,7 @@ def _title(anchor) -> str:
     value = _clean(anchor.get_text(" ", strip=True))
     if value and value.casefold() not in SKIP_TITLES and not value.casefold().startswith("image"):
         return value
-    for name in ("h1", "h2", "h3", "h4", "strong"):
+    for name in ("h1","h2","h3","h4","strong"):
         heading = anchor.find(name)
         if heading:
             value = _clean(heading.get_text(" ", strip=True))
@@ -188,7 +127,7 @@ def _title(anchor) -> str:
                 return value
     parent = anchor.parent
     if parent:
-        for name in ("h1", "h2", "h3", "h4"):
+        for name in ("h1","h2","h3","h4"):
             heading = parent.find(name)
             if heading:
                 value = _clean(heading.get_text(" ", strip=True))
@@ -202,9 +141,7 @@ def _is_candidate(source: OfficialSource, absolute_url: str, title: str) -> bool
         return False
     target = urlparse(absolute_url)
     origin = urlparse(source.url)
-    if target.netloc.casefold() != origin.netloc.casefold():
-        return False
-    if absolute_url.rstrip("/") == source.url.rstrip("/"):
+    if target.netloc.casefold() != origin.netloc.casefold() or absolute_url.rstrip("/") == source.url.rstrip("/"):
         return False
     return any(token in target.path for token in source.path_tokens)
 
@@ -230,15 +167,13 @@ def _detail_metadata(http: requests.Session, url: str) -> tuple[date | None, dat
         if published:
             break
     published = published or _date_from_text(text_value[:4000])
-    release = _release_date_from_text(text_value)
-    return published, release, text_value[:4000]
+    return published, _release_date_from_text(text_value), text_value[:4000]
 
 
 def scrape_source(source: OfficialSource, http: requests.Session | None = None) -> list[dict]:
     http = http or requests.Session()
     http.headers.setdefault("User-Agent", USER_AGENT)
-    html = _fetch(http, source.url)
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(_fetch(http, source.url), "html.parser")
     candidates: list[dict] = []
     seen_urls: set[str] = set()
     for anchor in soup.find_all("a", href=True):
@@ -247,23 +182,11 @@ def scrape_source(source: OfficialSource, http: requests.Session | None = None) 
         if absolute in seen_urls or not _is_candidate(source, absolute, title):
             continue
         context = _context(anchor)
-        published = _date_from_text(context)
-        release = _release_date_from_text(context)
-        candidates.append(
-            {
-                "item_url": absolute,
-                "title": title[:1000],
-                "context": context[:2500],
-                "published_date": published,
-                "release_date": release,
-            }
-        )
+        candidates.append({"item_url":absolute,"title":title[:1000],"context":context[:2500],"published_date":_date_from_text(context),"release_date":_release_date_from_text(context)})
         seen_urls.add(absolute)
         if len(candidates) >= source.max_items * 2:
             break
-
-    # Prefer dated candidates; unresolved dates get a bounded detail request.
-    candidates.sort(key=lambda row: (row["published_date"] is not None, row["published_date"] or date.min), reverse=True)
+    candidates.sort(key=lambda row:(row["published_date"] is not None,row["published_date"] or date.min), reverse=True)
     result = []
     detail_budget = max(6, source.max_items // 2)
     for candidate in candidates:
@@ -276,37 +199,78 @@ def scrape_source(source: OfficialSource, http: requests.Session | None = None) 
             release = release or detail_release
             detail_budget -= 1
         context = candidate["context"] + " " + detail_context
-        result.append(
-            {
-                "item_url": candidate["item_url"],
-                "title": candidate["title"],
-                "published_date": published,
-                "release_date": release,
-                "kind": _kind(candidate["title"], context, release),
-                "source_context": candidate["context"][:1200],
-            }
-        )
+        result.append({"item_url":candidate["item_url"],"title":candidate["title"],"published_date":published,"release_date":release,"kind":_kind(candidate["title"],context,release),"source_context":candidate["context"][:1200]})
         if len(result) >= source.max_items:
             break
     return result
 
 
+def _slug(value: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    return value[:160] or "pokemon-tcg"
+
+
+def _fetch_tpci_eu_schedule(http: requests.Session) -> list[dict]:
+    response = http.get(TPCI_SCHEDULE_URL, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for tr in soup.find_all("tr"):
+        cells = [_clean(cell.get_text(" ", strip=True)) for cell in tr.find_all(["td", "th"])]
+        if len(cells) < 2:
+            continue
+        title = cells[0]
+        folded = title.casefold()
+        if "pokémon tcg" not in folded and "pokemon tcg" not in folded and "trading card game" not in folded:
+            continue
+        release = None
+        for cell in reversed(cells[1:]):
+            release = _date_from_text(cell)
+            if release:
+                break
+        identity = f"{title}|{release.isoformat() if release else 'tba'}"
+        if identity in seen:
+            continue
+        seen.add(identity)
+        anchor = tr.find("a", href=True)
+        item_url = str(anchor.get("href")) if anchor else ""
+        if item_url.startswith("/"):
+            item_url = "https://press.pokemon.com" + item_url
+        if not item_url.startswith("http"):
+            item_url = TPCI_SCHEDULE_URL + "#" + quote(_slug(identity), safe="-")
+        rows.append({"title":title,"release_date":release,"item_url":item_url,"raw_cells":cells})
+    if not rows:
+        raise RuntimeError("TPCI official product schedule yielded zero Pokemon TCG rows")
+    return rows
+
+
+def _upsert_tpci_eu(session, rows: list[dict], now: datetime) -> int:
+    game_id = session.execute(text("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")).scalar_one()
+    for row in rows:
+        session.execute(text("""
+            INSERT INTO regional_tcg_content
+              (game_id,region,locale,kind,source_key,source_name,source_url,item_url,title,published_date,release_date,raw_json,first_seen_at,last_seen_at)
+            VALUES
+              (:game_id,'eu','en-GB','release',:source_key,'The Pokemon Company International Official Press Site',:source_url,:item_url,:title,NULL,:release_date,CAST(:raw_json AS jsonb),:now,:now)
+            ON CONFLICT (source_key,region,item_url) DO UPDATE SET
+              title=EXCLUDED.title,release_date=COALESCE(EXCLUDED.release_date,regional_tcg_content.release_date),raw_json=EXCLUDED.raw_json,last_seen_at=EXCLUDED.last_seen_at
+        """), {"game_id":int(game_id),"source_key":TPCI_SOURCE_KEY,"source_url":TPCI_SCHEDULE_URL,"item_url":row["item_url"],"title":row["title"][:1000],"release_date":row["release_date"],"raw_json":json.dumps({"official":True,"regional_basis":"tpci_manages_pokemon_outside_asia","feed_role":"europe_product_release_schedule","raw_cells":row["raw_cells"],"fetched_at":now.isoformat()}, ensure_ascii=False),"now":now})
+    return len(rows)
+
+
 def ingest_official_regional_content(session, *, strict: bool = True) -> dict:
-    game_ids = {
-        str(slug): int(game_id)
-        for slug, game_id in session.execute(text("SELECT slug,id FROM games WHERE slug IN ('pokemon','onepiece','mtg','yugioh')")).all()
-    }
-    missing_games = sorted({source.game for source in SOURCES} - set(game_ids))
+    game_ids = {str(slug):int(game_id) for slug,game_id in session.execute(text("SELECT slug,id FROM games WHERE slug IN ('pokemon','onepiece','mtg','yugioh')")).all()}
+    missing_games = sorted({"pokemon","onepiece","mtg","yugioh"} - set(game_ids))
     if missing_games:
         raise ValueError(f"Missing canonical games for regional content: {missing_games}")
-
+    session.execute(text("DELETE FROM regional_tcg_content WHERE source_key='pokemon_eu'"))
     http = requests.Session()
-    http.headers.update({"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.8,ja;q=0.6,es;q=0.5"})
+    http.headers.update({"User-Agent":USER_AGENT,"Accept-Language":"en-US,en;q=0.8,ja;q=0.6,es;q=0.5"})
     now = datetime.now(timezone.utc)
-    source_reports = []
+    source_reports: list[dict] = []
     total_upserts = 0
-    failed_sources = []
-
+    failed_sources: list[str] = []
     for source in SOURCES:
         try:
             items = scrape_source(source, http=http)
@@ -316,82 +280,28 @@ def ingest_official_regional_content(session, *, strict: bool = True) -> dict:
             release_dated = sum(1 for item in items if item["release_date"] is not None)
             for item in items:
                 for region in source.regions:
-                    session.execute(
-                        text(
-                            """
-                            INSERT INTO regional_tcg_content
-                              (game_id,region,locale,kind,source_key,source_name,source_url,item_url,title,
-                               published_date,release_date,raw_json,first_seen_at,last_seen_at)
-                            VALUES
-                              (:game_id,:region,:locale,:kind,:source_key,:source_name,:source_url,:item_url,:title,
-                               :published_date,:release_date,CAST(:raw_json AS jsonb),:now,:now)
-                            ON CONFLICT (source_key,region,item_url) DO UPDATE SET
-                              kind=EXCLUDED.kind,
-                              title=EXCLUDED.title,
-                              published_date=COALESCE(EXCLUDED.published_date,regional_tcg_content.published_date),
-                              release_date=COALESCE(EXCLUDED.release_date,regional_tcg_content.release_date),
-                              raw_json=EXCLUDED.raw_json,
-                              last_seen_at=EXCLUDED.last_seen_at
-                            """
-                        ),
-                        {
-                            "game_id": game_ids[source.game],
-                            "region": region,
-                            "locale": source.locale,
-                            "kind": item["kind"],
-                            "source_key": source.key,
-                            "source_name": source.name,
-                            "source_url": source.url,
-                            "item_url": item["item_url"],
-                            "title": item["title"],
-                            "published_date": item["published_date"],
-                            "release_date": item["release_date"],
-                            "raw_json": __import__("json").dumps(
-                                {
-                                    "official": True,
-                                    "source_context": item["source_context"],
-                                    "regions": list(source.regions),
-                                    "fetched_at": now.isoformat(),
-                                },
-                                ensure_ascii=False,
-                            ),
-                            "now": now,
-                        },
-                    )
+                    session.execute(text("""
+                        INSERT INTO regional_tcg_content
+                          (game_id,region,locale,kind,source_key,source_name,source_url,item_url,title,published_date,release_date,raw_json,first_seen_at,last_seen_at)
+                        VALUES
+                          (:game_id,:region,:locale,:kind,:source_key,:source_name,:source_url,:item_url,:title,:published_date,:release_date,CAST(:raw_json AS jsonb),:now,:now)
+                        ON CONFLICT (source_key,region,item_url) DO UPDATE SET
+                          kind=EXCLUDED.kind,title=EXCLUDED.title,published_date=COALESCE(EXCLUDED.published_date,regional_tcg_content.published_date),release_date=COALESCE(EXCLUDED.release_date,regional_tcg_content.release_date),raw_json=EXCLUDED.raw_json,last_seen_at=EXCLUDED.last_seen_at
+                    """), {"game_id":game_ids[source.game],"region":region,"locale":source.locale,"kind":item["kind"],"source_key":source.key,"source_name":source.name,"source_url":source.url,"item_url":item["item_url"],"title":item["title"],"published_date":item["published_date"],"release_date":item["release_date"],"raw_json":json.dumps({"official":True,"source_context":item["source_context"],"regions":list(source.regions),"fetched_at":now.isoformat()}, ensure_ascii=False),"now":now})
                     total_upserts += 1
-            source_reports.append(
-                {
-                    "source": source.key,
-                    "game": source.game,
-                    "regions": list(source.regions),
-                    "items": len(items),
-                    "dated": dated,
-                    "release_dated": release_dated,
-                    "ok": True,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
+            source_reports.append({"source":source.key,"game":source.game,"regions":list(source.regions),"items":len(items),"dated":dated,"release_dated":release_dated,"ok":True})
+        except Exception as exc:
             failed_sources.append(source.key)
-            source_reports.append(
-                {
-                    "source": source.key,
-                    "game": source.game,
-                    "regions": list(source.regions),
-                    "items": 0,
-                    "dated": 0,
-                    "release_dated": 0,
-                    "ok": False,
-                    "error": str(exc),
-                }
-            )
-
+            source_reports.append({"source":source.key,"game":source.game,"regions":list(source.regions),"items":0,"dated":0,"release_dated":0,"ok":False,"error":str(exc)})
+    try:
+        eu_rows = _fetch_tpci_eu_schedule(http)
+        count = _upsert_tpci_eu(session, eu_rows, now)
+        total_upserts += count
+        source_reports.append({"source":TPCI_SOURCE_KEY,"game":"pokemon","regions":["eu"],"items":count,"dated":0,"release_dated":sum(1 for row in eu_rows if row["release_date"] is not None),"ok":True,"regional_basis":"official_tpci_product_schedule_for_market_outside_asia"})
+    except Exception as exc:
+        failed_sources.append(TPCI_SOURCE_KEY)
+        source_reports.append({"source":TPCI_SOURCE_KEY,"game":"pokemon","regions":["eu"],"items":0,"dated":0,"release_dated":0,"ok":False,"error":str(exc)})
     if strict and failed_sources:
         raise RuntimeError(f"Official regional sources failed: {failed_sources}; reports={source_reports}")
     session.flush()
-    return {
-        "fetched_at": now.isoformat(),
-        "sources": len(SOURCES),
-        "failed_sources": failed_sources,
-        "upserts": total_upserts,
-        "source_reports": source_reports,
-    }
+    return {"fetched_at":now.isoformat(),"sources":len(CANONICAL_SOURCE_KEYS),"failed_sources":failed_sources,"upserts":total_upserts,"source_reports":source_reports}
