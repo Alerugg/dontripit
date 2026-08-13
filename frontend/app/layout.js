@@ -4,54 +4,20 @@ import './auth-ui.css'
 import './canva-workspace.css'
 import './accessibility.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
+import { SITE_NAME, SITE_URL } from '../lib/site'
 
-const manrope = Manrope({
-  subsets: ['latin'],
-  variable: '--font-body',
-  display: 'swap',
-})
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  variable: '--font-display',
-  display: 'swap',
-})
-
-const siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'Don’tRipIt'
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://dontripit.com'
+const manrope = Manrope({ subsets: ['latin'], variable: '--font-body', display: 'swap' })
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-display', display: 'swap' })
 
 export const metadata = {
-  metadataBase: new URL(siteUrl),
-  title: {
-    default: `${siteName} · El catálogo TCG para coleccionistas`,
-    template: `%s · ${siteName}`,
-  },
+  metadataBase: new URL(SITE_URL),
+  title: { default: `${SITE_NAME} · El catálogo TCG para coleccionistas`, template: `%s · ${SITE_NAME}` },
   description: 'Encuentra la carta, elige la edición física exacta y controla tu colección TCG con fuentes verificables.',
-  applicationName: siteName,
+  applicationName: SITE_NAME,
   category: 'collectibles',
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
-    },
-  },
-  openGraph: {
-    type: 'website',
-    locale: 'es_ES',
-    siteName,
-    title: `${siteName} · El catálogo TCG para coleccionistas`,
-    description: 'Busca cartas, identifica la impresión física exacta y organiza tu colección con referencias verificables.',
-    url: siteUrl,
-  },
-  twitter: {
-    card: 'summary',
-    title: `${siteName} · El catálogo TCG para coleccionistas`,
-    description: 'Busca cartas, identifica la impresión física exacta y organiza tu colección con referencias verificables.',
-  },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 } },
+  openGraph: { type: 'website', locale: 'es_ES', siteName: SITE_NAME, title: `${SITE_NAME} · El catálogo TCG para coleccionistas`, description: 'Busca cartas, identifica la impresión física exacta y organiza tu colección con referencias verificables.', url: SITE_URL },
+  twitter: { card: 'summary', title: `${SITE_NAME} · El catálogo TCG para coleccionistas`, description: 'Busca cartas, identifica la impresión física exacta y organiza tu colección con referencias verificables.' },
 }
 
 export default function RootLayout({ children }) {
