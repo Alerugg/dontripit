@@ -1,0 +1,97 @@
+name: Point 10 Database Recovery Drill
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/point10-database-recovery.yml'
+  schedule:
+    - cron: '31 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: point10-database-recovery
+  cancel-in-progress: false
+
+jobs:
+  logical-backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Resolve production PostgreSQL major and baseline
+        id: db
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo 'DATABASE_URL secret is required'; exit 1; }
+          python -m pip install --quiet psycopg2-binary==2.9.9
+          python - <<'PY'
+          import os
+          import psycopg2
+          conn = psycopg2.connect(os.environ['DATABASE_URL'])
+          conn.autocommit = True
+          with conn.cursor() as cur:
+              cur.execute('SHOW server_version_num')
+              version_num = int(cur.fetchone()[0])
+              major = version_num // 10000
+              cur.execute('SELECT COUNT(*) FROM prints')
+              prints = int(cur.fetchone()[0])
+              cur.execute('SELECT COUNT(*) FROM cards')
+              cards = int(cur.fetchone()[0])
+          conn.close()
+          if prints <= 0 or cards <= 0:
+              raise SystemExit(f'production baseline invalid cards={cards} prints={prints}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f'major={major}\n')
+              fh.write(f'prints={prints}\n')
+              fh.write(f'cards={cards}\n')
+          print(f'production_baseline cards={cards} prints={prints} postgres_major={major}')
+          PY
+      - name: Create encrypted-in-transit logical backup on ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -f /tmp/dontripit.dump' EXIT
+          docker run --rm -e DATABASE_URL "postgres:${{ steps.db.outputs.major }}" \
+            sh -lc 'pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL"' > /tmp/dontripit.dump
+          test -s /tmp/dontripit.dump
+          bytes=$(stat -c%s /tmp/dontripit.dump)
+          test "$bytes" -gt 1024
+          echo "logical_backup_bytes=$bytes"
+      - name: Restore into isolated ephemeral PostgreSQL and verify integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f dri-restore >/dev/null 2>&1 || true; rm -f /tmp/dontripit.dump' EXIT
+          docker run -d --name dri-restore \
+            -e POSTGRES_PASSWORD=restore-only \
+            -e POSTGRES_DB=dontripit_restore \
+            "postgres:${{ steps.db.outputs.major }}" >/dev/null
+          for attempt in $(seq 1 30); do
+            if docker exec dri-restore pg_isready -U postgres -d dontripit_restore >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec dri-restore pg_isready -U postgres -d dontripit_restore >/dev/null
+          docker cp /tmp/dontripit.dump dri-restore:/tmp/dontripit.dump
+          docker exec dri-restore pg_restore \
+            --username=postgres --dbname=dontripit_restore \
+            --no-owner --no-acl --exit-on-error /tmp/dontripit.dump
+
+          restored_cards=$(docker exec dri-restore psql -U postgres -d dontripit_restore -Atc 'SELECT COUNT(*) FROM cards')
+          restored_prints=$(docker exec dri-restore psql -U postgres -d dontripit_restore -Atc 'SELECT COUNT(*) FROM prints')
+          test "$restored_cards" = "${{ steps.db.outputs.cards }}"
+          test "$restored_prints" = "${{ steps.db.outputs.prints }}"
+          docker exec dri-restore psql -U postgres -d dontripit_restore -v ON_ERROR_STOP=1 -Atc \
+            "SELECT to_regclass('public.users'), to_regclass('public.user_sessions'), to_regclass('public.user_collection_items'), to_regclass('public.user_wishlist_items');"
+          echo "restore_certified cards=$restored_cards prints=$restored_prints"
