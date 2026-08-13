@@ -31,7 +31,6 @@ export default function AuthShell({ mode = 'register', next = '/dashboard' }) {
           email: form.get('email'),
           password: form.get('password'),
           terms_accepted: form.get('terms_accepted') === 'on',
-          marketing_consent: form.get('marketing_consent') === 'on',
         }
       : {
           email: form.get('email'),
@@ -105,10 +104,6 @@ export default function AuthShell({ mode = 'register', next = '/dashboard' }) {
                 <label className="dri-checkbox-row">
                   <input type="checkbox" name="terms_accepted" required />
                   <span>Acepto los <Link href="/terms">términos</Link> y la <Link href="/privacy">política de privacidad</Link>.</span>
-                </label>
-                <label className="dri-checkbox-row">
-                  <input type="checkbox" name="marketing_consent" />
-                  <span>Quiero recibir novedades y lanzamientos de Don’tRipIt por email. <em>Opcional.</em></span>
                 </label>
               </div>
             ) : (
