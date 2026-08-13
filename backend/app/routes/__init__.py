@@ -1,0 +1,5 @@
+from app.routes.card_prints import card_prints_bp
+from app.routes.exact_print_output import enforce_exact_print_image_response
+
+
+card_prints_bp.after_app_request(enforce_exact_print_image_response)
