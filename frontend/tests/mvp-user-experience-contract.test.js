@@ -8,12 +8,13 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('auth UI is connected to real session endpoints', () => {
+test('auth UI is connected to real session endpoints without newsletter consent at launch', () => {
   const auth = source('components/auth/AuthShell.js')
   assert.match(auth, /\/api\/auth\/register/)
   assert.match(auth, /\/api\/auth\/login/)
   assert.doesNotMatch(auth, /Vista previa del flujo/)
-  assert.match(auth, /marketing_consent/)
+  assert.match(auth, /terms_accepted/)
+  assert.doesNotMatch(auth, /marketing_consent|Quiero recibir novedades/i)
 })
 
 test('catalog discovery is public while personal collector routes stay account-gated', () => {
