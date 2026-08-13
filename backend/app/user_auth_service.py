@@ -84,9 +84,6 @@ def issue_session(session, *, user: User, remember: bool, user_agent: str | None
 
 
 def issue_password_reset_token(session, *, user: User) -> tuple[str, UserPasswordResetToken]:
-    # Serialize reset issuance per user in PostgreSQL so two simultaneous
-    # requests cannot leave more than one usable token. SQLite (tests) simply
-    # ignores FOR UPDATE, which keeps the helper portable.
     session.execute(select(User.id).where(User.id == user.id).with_for_update()).scalar_one()
     now = utcnow()
     session.execute(delete(UserPasswordResetToken).where(UserPasswordResetToken.user_id == user.id))
@@ -123,6 +120,7 @@ def consume_password_reset_token(session, raw_token: str | None) -> tuple[User, 
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if not expires_at or expires_at <= now:
         session.delete(reset_token)
+        session.commit()
         return None
     return user, reset_token
 
