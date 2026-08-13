@@ -1,8 +1,10 @@
+export const metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+}
+
 export default function RegisterLayout({ children }) {
-  return (
-    <>
-      <style>{`label:has(input[name="marketing_consent"]) { display: none !important; }`}</style>
-      {children}
-    </>
-  )
+  return children
 }
