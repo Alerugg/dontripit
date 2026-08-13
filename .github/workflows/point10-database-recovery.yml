@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trap 'rm -f /tmp/dontripit.dump' EXIT
+          rm -f /tmp/dontripit.dump
           docker run --rm -e DATABASE_URL "postgres:${{ steps.db.outputs.major }}" \
             sh -lc 'pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL"' > /tmp/dontripit.dump
           test -s /tmp/dontripit.dump
@@ -87,7 +87,6 @@ jobs:
           docker exec dri-restore pg_restore \
             --username=postgres --dbname=dontripit_restore \
             --no-owner --no-acl --exit-on-error /tmp/dontripit.dump
-
           restored_cards=$(docker exec dri-restore psql -U postgres -d dontripit_restore -Atc 'SELECT COUNT(*) FROM cards')
           restored_prints=$(docker exec dri-restore psql -U postgres -d dontripit_restore -Atc 'SELECT COUNT(*) FROM prints')
           test "$restored_cards" = "${{ steps.db.outputs.cards }}"
