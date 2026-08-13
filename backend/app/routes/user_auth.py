@@ -66,7 +66,6 @@ def register_user():
         }
         return jsonify({"error": code, "message": messages.get(code, "Datos de registro no válidos.")}), 400
 
-    marketing = body.get("marketing_consent") is True
     now = utcnow()
 
     with db.SessionLocal() as session:
@@ -78,8 +77,8 @@ def register_user():
             name=name,
             email=email,
             password_hash=password_hash(password),
-            marketing_consent=marketing,
-            marketing_consent_at=now if marketing else None,
+            marketing_consent=False,
+            marketing_consent_at=None,
             terms_accepted_at=now,
             is_active=True,
         )
@@ -153,8 +152,6 @@ def forgot_password():
         "message": "La recuperación por email está temporalmente en configuración. Inténtalo de nuevo más tarde.",
     }
 
-    # Configuration availability is global, never account-specific. This keeps
-    # the response honest without revealing whether a submitted email exists.
     if not email_delivery_configured():
         return jsonify(unavailable), 503
 
@@ -170,8 +167,6 @@ def forgot_password():
         raw_token, _ = issue_password_reset_token(session, user=user)
         session.flush()
         if not send_password_reset_email(to_email=user.email, token=raw_token):
-            # Do not expose provider failures only for existing accounts.
-            # Roll back the unusable token and keep the public response generic.
             session.rollback()
             return jsonify(generic)
         session.commit()
@@ -213,6 +208,33 @@ def current_user():
         payload = public_user(user)
         session.commit()
     return jsonify({"user": payload})
+
+
+@user_auth_bp.delete("/api/v2/auth/account")
+def delete_account():
+    body = request.get_json(silent=True) or {}
+    password = str(body.get("password") or "")
+    confirmation = str(body.get("confirmation") or "").strip().upper()
+    if confirmation != "ELIMINAR":
+        return jsonify({"error": "confirmation_required", "message": "Escribe ELIMINAR para confirmar el borrado definitivo."}), 400
+    if not password:
+        return jsonify({"error": "password_required", "message": "Introduce tu contraseña para confirmar."}), 400
+
+    with db.SessionLocal() as session:
+        resolved = _auth_required(session)
+        if not resolved:
+            return jsonify({"error": "authentication_required"}), 401
+        user, _ = resolved
+        if not password_matches(user, password):
+            return jsonify({"error": "invalid_credentials", "message": "La contraseña no es correcta."}), 401
+
+        # All user-owned records (sessions, reset tokens, collection and wishlist)
+        # reference users.id with ON DELETE CASCADE. The transaction ensures the
+        # account is either removed completely or not changed at all.
+        session.delete(user)
+        session.commit()
+
+    return jsonify({"ok": True, "message": "Tu cuenta y tus datos asociados se han eliminado."})
 
 
 @user_auth_bp.post("/api/v2/auth/logout")
