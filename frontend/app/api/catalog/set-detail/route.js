@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
 
 const MAX_PAGE_SIZE = 50
+const PUBLIC_CACHE_HEADERS = { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' }
 
 function boundedInt(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
@@ -107,5 +108,5 @@ export async function GET(request) {
     limit: Number(checklistUpstream.payload?.limit ?? limit),
     offset: Number(checklistUpstream.payload?.offset ?? offset),
     scope: checklistUpstream.payload?.scope || null,
-  })
+  }, { headers: PUBLIC_CACHE_HEADERS })
 }

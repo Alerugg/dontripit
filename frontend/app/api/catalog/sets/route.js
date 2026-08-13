@@ -12,6 +12,7 @@ import {
 } from '../../../../lib/catalog/normalizers/sets'
 
 const MAX_PAGE_SIZE = 100
+const PUBLIC_CACHE_HEADERS = { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' }
 
 function boundedInt(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
@@ -99,5 +100,5 @@ export async function GET(request) {
     total: Number(upstream.payload?.total ?? items.length),
     limit: Number(upstream.payload?.limit ?? limit),
     offset: Number(upstream.payload?.offset ?? offset),
-  })
+  }, { headers: PUBLIC_CACHE_HEADERS })
 }
