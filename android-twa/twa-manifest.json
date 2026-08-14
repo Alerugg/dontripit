@@ -39,7 +39,7 @@
     }
   ],
   "generatorApp": "bubblewrap-cli",
-  "webManifestUrl": "https://dontripit.com/manifest.webmanifest",
+  "webManifestUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/manifest.webmanifest",
   "fallbackType": "customtabs",
   "features": {},
   "alphaDependencies": {
