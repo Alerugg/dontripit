@@ -25,12 +25,16 @@ class SetIdentifier(Base):
 
 
 class CardIdentifier(Base):
-    """Language/source-qualified identity for a canonical or regional Card."""
+    """Language/source-qualified aliases for canonical or regional Cards.
+
+    ``(source, external_id)`` is unique, but several external IDs from one
+    source may intentionally point to the same canonical gameplay Card when the
+    card has physical reprints. This is many-to-one aliasing, not a collision.
+    """
 
     __tablename__ = "card_identifiers"
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_card_identifier_source_external"),
-        UniqueConstraint("card_id", "source", name="uq_card_identifier_card_source"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
