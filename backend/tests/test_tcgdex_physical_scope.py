@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from app.ingest.connectors.tcgdex_pokemon_multilingual_physical import (
     PhysicalMultilingualTcgdexPokemonConnector,
@@ -16,7 +17,17 @@ class FakePhysicalConnector(PhysicalMultilingualTcgdexPokemonConnector):
         self.calls.append(url)
         if url not in self.payloads:
             raise AssertionError(f"Unexpected TCGdex request: {url}")
-        return self.payloads[url]
+        value = self.payloads[url]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+def _not_found(url: str) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = 404
+    response.url = url
+    return requests.HTTPError(f"404 Client Error: Not Found for url: {url}", response=response)
 
 
 def _payloads():
@@ -123,6 +134,83 @@ def test_language_without_tcgp_series_continues_without_requesting_missing_endpo
     assert rows[0]["_language"] == "ja"
     assert f"{base}/series/tcgp" not in connector.calls
     assert connector.calls == [f"{base}/series", f"{base}/sets", f"{base}/sets/neo1"]
+
+
+def test_listed_set_with_404_detail_recovers_cards_from_global_card_list():
+    base = "https://api.tcgdex.net/v2/ja"
+    broken_url = f"{base}/sets/SM1+"
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "sm", "name": "Sun & Moon"}],
+            f"{base}/sets": [
+                {"id": "SM1+", "name": "強化拡張パック サン&ムーン"},
+                {"id": "SM2K", "name": "キミを待つ島々"},
+            ],
+            broken_url: _not_found(broken_url),
+            f"{base}/cards": [
+                {
+                    "id": "SM1+-001",
+                    "localId": "001",
+                    "name": "Japanese recovered card 1",
+                    "image": "https://assets.tcgdex.net/ja/sm/SM1+/001",
+                },
+                {
+                    "id": "SM1+-002",
+                    "localId": "002",
+                    "name": "Japanese recovered card 2",
+                    "image": "https://assets.tcgdex.net/ja/sm/SM1+/002",
+                },
+                {
+                    "id": "SM2K-001",
+                    "localId": "001",
+                    "name": "Other set card",
+                    "image": "https://assets.tcgdex.net/ja/sm/SM2K/001",
+                },
+            ],
+            f"{base}/sets/SM2K": {
+                "id": "SM2K",
+                "name": "キミを待つ島々",
+                "cards": [
+                    {
+                        "id": "SM2K-001",
+                        "localId": "001",
+                        "name": "Other set card",
+                        "image": "https://assets.tcgdex.net/ja/sm/SM2K/001",
+                    }
+                ],
+            },
+        }
+    )
+
+    rows = connector._load_remote(lang="ja")
+
+    assert [row["id"] for row in rows] == ["SM1+-001", "SM1+-002", "SM2K-001"]
+    recovered = rows[:2]
+    assert {row["set"]["id"] for row in recovered} == {"SM1+"}
+    assert {row["set"]["name"] for row in recovered} == {"強化拡張パック サン&ムーン"}
+    assert connector.calls.count(f"{base}/cards") == 1
+
+
+def test_explicit_listed_set_with_404_detail_uses_same_recovery_path():
+    base = "https://api.tcgdex.net/v2/ja"
+    broken_url = f"{base}/sets/SM1+"
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "sm", "name": "Sun & Moon"}],
+            broken_url: _not_found(broken_url),
+            f"{base}/sets": [{"id": "SM1+", "name": "強化拡張パック サン&ムーン"}],
+            f"{base}/cards": [
+                {"id": "SM1+-001", "localId": "001", "name": "Recovered 1"},
+                {"id": "SM1+-002", "localId": "002", "name": "Recovered 2"},
+            ],
+        }
+    )
+
+    rows = connector._load_remote(set_id="SM1+", limit=1, lang="ja")
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "SM1+-001"
+    assert rows[0]["set"]["id"] == "SM1+"
 
 
 def test_registry_uses_physical_only_tcgdex_writer():
