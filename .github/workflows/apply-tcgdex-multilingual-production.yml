@@ -1,0 +1,154 @@
+name: Apply TCGdex Multilingual Production
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/multilingual-production-apply-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgdex-multilingual-production-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      INGEST_LOG_LEVEL: WARNING
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact production commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify production database secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Compile rollout code
+        run: |
+          python -m py_compile \
+            app/scripts/preflight_tcgdex_multilingual_production.py \
+            app/scripts/gate_tcgdex_multilingual_production_release.py \
+            app/scripts/audit_tcgdex_multilingual_backfill_physical.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py
+
+      - name: Strict production baseline preflight read-only
+        run: python -m app.scripts.preflight_tcgdex_multilingual_production
+
+      - name: Snapshot all existing EN print identities read-only
+        run: python -m app.scripts.gate_tcgdex_multilingual_production_release --snapshot-before
+
+      - name: Re-audit live TCGdex physical plan read-only
+        run: python app/scripts/audit_tcgdex_multilingual_backfill_physical.py
+
+      - name: Gate certified write cardinality before migration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(Path('/tmp/tcgdex-multilingual-physical-backfill-audit.json').read_text())
+          prod = audit['production_baseline']
+          es = audit['spanish_overlay_plan']
+          ja = audit['japanese_regional_plan']
+          drift = audit['production_en_source_drift']
+
+          assert audit['database_transaction_read_only'] == 'on', audit
+          assert audit['scope']['database_writes'] == 0, audit
+          assert prod['pokemon_sets'] == 203, prod
+          assert prod['pokemon_cards'] == 21065, prod
+          assert prod['pokemon_prints'] == 33757, prod
+          assert prod['print_language_counts'] == {'en': 33757}, prod
+          assert es['remote_cards'] == 14046, es
+          assert es['exact_canonical_identity_eligible'] == 14046, es
+          assert es['estimated_new_es_prints'] == 14046, es
+          assert es['already_existing_es_prints_matching_plan'] == 0, es
+          assert es['missing_canonical_card'] == 0, es
+          assert es['missing_canonical_set'] == 0, es
+          assert es['unresolved_set_from_card_id'] == 0, es
+          assert ja['remote_cards'] == 8159, ja
+          assert ja['estimated_independent_prints'] == 8159, ja
+          assert drift['remote_only_card_ids'] == 0, drift
+          assert drift['remote_only_set_ids'] == 0, drift
+          print('write cardinality gate: PASS')
+          PY
+
+      - name: Apply additive multilingual migrations 33 and 34
+        run: alembic upgrade 20260814_34
+
+      - name: Verify migration head 34
+        run: |
+          alembic current | tee /tmp/alembic-current-after.txt
+          grep -q '20260814_34' /tmp/alembic-current-after.txt
+
+      - name: Materialize full Spanish physical catalog
+        run: python -m app.ingest.run tcgdex_pokemon --lang es --incremental false
+
+      - name: Materialize full Japanese physical catalog
+        run: python -m app.ingest.run tcgdex_pokemon --lang ja --incremental false
+
+      - name: Strict post-write certification read-only
+        run: |
+          python -m app.scripts.gate_tcgdex_multilingual_production_release \
+            --validate-after \
+            --baseline /tmp/tcgdex-multilingual-production-before.json \
+            --report /tmp/tcgdex-multilingual-production-after.json
+
+      - name: Publish rollout summary
+        if: always()
+        run: |
+          {
+            echo '# TCGdex multilingual production rollout'
+            echo
+            echo "- Commit: $GITHUB_SHA"
+            echo '- Intended writes: migrations 33/34 + ES/JA physical catalog only.'
+            echo '- Existing EN physical identities are SHA-256 locked before/after.'
+            echo
+            for f in \
+              /tmp/tcgdex-multilingual-production-preflight.json \
+              /tmp/tcgdex-multilingual-production-before.json \
+              /tmp/tcgdex-multilingual-production-after.json; do
+              if [ -f "$f" ]; then
+                echo "## $(basename "$f")"
+                echo '```json'
+                cat "$f"
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload rollout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgdex-multilingual-production-${{ github.run_id }}
+          path: |
+            /tmp/tcgdex-multilingual-production-preflight.json
+            /tmp/tcgdex-multilingual-production-before.json
+            /tmp/tcgdex-multilingual-production-after.json
+            /tmp/tcgdex-multilingual-physical-backfill-audit.json
+            /tmp/tcgdex-multilingual-physical-backfill-audit.md
+            /tmp/alembic-current-after.txt
+          retention-days: 180
+          if-no-files-found: warn
