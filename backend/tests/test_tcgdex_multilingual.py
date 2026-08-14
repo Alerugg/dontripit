@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.ingest.base import IngestStats
@@ -264,3 +265,36 @@ def test_uncertified_tcgdex_language_fails_closed(client):
     )
     with pytest.raises(RuntimeError, match="Uncertified TCGdex language semantics"):
         connector.normalize(fr, lang="fr")
+
+
+def test_print_localization_rejects_second_source_for_same_print_language(client):
+    connector = MultilingualTcgdexPokemonConnector()
+    en = _raw_card(
+        language="en",
+        set_id="swsh1",
+        set_name="Sword & Shield",
+        card_id="swsh1-1",
+        card_name="Celebi",
+    )
+
+    with db.SessionLocal() as session:
+        _upsert(connector, session, en)
+        session.commit()
+
+        print_row = session.execute(
+            select(Print).where(Print.language == "en")
+        ).scalar_one()
+        session.add(
+            PrintLocalization(
+                print_id=print_row.id,
+                language="en",
+                source="other-source",
+                external_id="other-id",
+                card_name="Competing truth",
+                set_name="Competing set",
+                details_json={},
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.flush()
+        session.rollback()
