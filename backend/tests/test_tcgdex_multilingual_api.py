@@ -118,7 +118,7 @@ def test_print_list_exposes_localized_display_fields_without_replacing_canonical
 
 def test_card_detail_and_print_resolve_are_additively_localized(client):
     card_id, print_ids = _seed_multilingual_pokemon()
-    headers = _auth_headers("multilingual-resolve-key")
+    headers = _auth_headers("resolve-multilingual-key")
 
     detail_response = client.get(f"/api/v1/cards/{card_id}", headers=headers)
     assert detail_response.status_code == 200
