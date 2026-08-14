@@ -24,6 +24,7 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
     defaults:
       run:
         working-directory: backend
@@ -46,7 +47,7 @@ jobs:
             app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
       - name: Run strict read-only physical backfill plan
-        run: python app/scripts/audit_tcgdex_multilingual_backfill_physical.py
+        run: python -m app.scripts.audit_tcgdex_multilingual_backfill_physical
 
       - name: Publish physical dry-run summary
         if: always()
