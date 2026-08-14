@@ -56,6 +56,16 @@ jobs:
 
       - name: Configure Bubblewrap with runner SDK
         run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT"
+          test -d "$SDK_ROOT"
+
+          if [ ! -d "$SDK_ROOT/bin" ]; then
+            CMDLINE_BIN="$(find "$SDK_ROOT/cmdline-tools" -mindepth 2 -maxdepth 2 -type d -name bin | head -n 1)"
+            test -n "$CMDLINE_BIN"
+            ln -s "$CMDLINE_BIN" "$SDK_ROOT/bin"
+          fi
+
           mkdir -p "$HOME/.bubblewrap"
           node -e "require('fs').writeFileSync(process.env.HOME + '/.bubblewrap/config.json', JSON.stringify({jdkPath: process.env.JAVA_HOME, androidSdkPath: process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT}, null, 2))"
           cat "$HOME/.bubblewrap/config.json"
