@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import requests
+
 from app.ingest.connectors.tcgdex_pokemon_multilingual import (
     MultilingualTcgdexPokemonConnector,
 )
@@ -16,6 +18,11 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
     present, its set IDs are resolved and excluded before any set detail is
     fetched. If ``tcgp`` is not published for that language (currently true for
     JA), there is nothing to exclude and physical ingest can continue normally.
+
+    Some language catalogs can also list a physical set whose detail endpoint is
+    temporarily/unhistorically unavailable (observed live for JA ``SM1+``). In
+    that case the writer recovers the set's CardBrief rows from the language's
+    global ``/cards`` list instead of silently dropping the physical cards.
     """
 
     def _tcg_pocket_set_ids(self, *, lang: str) -> set[str]:
@@ -57,6 +64,55 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
             )
         return set_ids
 
+    @staticmethod
+    def _is_not_found(exc: requests.HTTPError) -> bool:
+        response = getattr(exc, "response", None)
+        return response is not None and response.status_code == 404
+
+    def _fallback_cards_for_set(
+        self,
+        *,
+        base_url: str,
+        remote_set_id: str,
+        set_brief: dict,
+        language: str,
+        global_cards_cache: list[dict] | None,
+    ) -> tuple[dict, list[dict], list[dict]]:
+        cards = global_cards_cache
+        if cards is None:
+            payload = self._request_json(f"{base_url}/cards")
+            if not isinstance(payload, list):
+                raise RuntimeError(
+                    f"Unexpected TCGdex cards payload for {language}: {type(payload).__name__}"
+                )
+            cards = [item for item in payload if isinstance(item, dict)]
+
+        prefix = f"{remote_set_id}-"
+        matching_cards = [
+            item
+            for item in cards
+            if str(item.get("id") or "").strip().startswith(prefix)
+        ]
+        if not matching_cards:
+            raise RuntimeError(
+                "TCGdex set is listed but detail endpoint is unavailable and no cards "
+                f"can be recovered from /cards: lang={language} set={remote_set_id}"
+            )
+
+        recovered_set = {
+            "id": remote_set_id,
+            "abbreviation": set_brief.get("abbreviation"),
+            "name": set_brief.get("name") or remote_set_id,
+            "releaseDate": set_brief.get("releaseDate"),
+        }
+        self.logger.warning(
+            "ingest tcgdex physical fallback reason=set_detail_404 lang=%s set=%s recovered_cards=%s",
+            language,
+            remote_set_id,
+            len(matching_cards),
+        )
+        return recovered_set, matching_cards, cards
+
     def _load_remote(
         self,
         limit: int | None = None,
@@ -75,7 +131,45 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
                     normalized_set_id,
                 )
                 return []
-            return super()._load_remote(limit=limit, set_id=normalized_set_id, lang=language)
+            try:
+                return super()._load_remote(
+                    limit=limit,
+                    set_id=normalized_set_id,
+                    lang=language,
+                )
+            except requests.HTTPError as exc:
+                if not self._is_not_found(exc):
+                    raise
+                base_url = self.base_url_template.format(lang=language)
+                sets = self._request_json(f"{base_url}/sets")
+                if not isinstance(sets, list):
+                    raise RuntimeError(
+                        f"Unexpected TCGdex sets payload for {language}: {type(sets).__name__}"
+                    ) from exc
+                set_brief = next(
+                    (
+                        item
+                        for item in sets
+                        if isinstance(item, dict)
+                        and str(item.get("id") or "").strip() == normalized_set_id
+                    ),
+                    None,
+                )
+                if set_brief is None:
+                    raise
+                recovered_set, cards, _cache = self._fallback_cards_for_set(
+                    base_url=base_url,
+                    remote_set_id=normalized_set_id,
+                    set_brief=set_brief,
+                    language=language,
+                    global_cards_cache=None,
+                )
+                if limit:
+                    cards = cards[:limit]
+                return [
+                    self._build_card_payload(recovered_set, card, lang=language)
+                    for card in cards
+                ]
 
         if limit is not None and limit <= 0:
             return []
@@ -106,6 +200,7 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
         out: list[dict] = []
         seen_card_ids: set[str] = set()
         visited_sets = 0
+        global_cards_cache: list[dict] | None = None
 
         def _log_progress() -> None:
             # Keep the legacy telemetry contract used by operations/tests while
@@ -122,16 +217,27 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
             remote_set_id = str(item.get("id") or "").strip()
             if not remote_set_id:
                 continue
-            set_payload = self._request_json(f"{base_url}/sets/{remote_set_id}")
-            if not isinstance(set_payload, dict):
-                raise RuntimeError(
-                    f"Unexpected TCGdex set payload for {language}/{remote_set_id}: "
-                    f"{type(set_payload).__name__}"
+            try:
+                set_payload = self._request_json(f"{base_url}/sets/{remote_set_id}")
+                if not isinstance(set_payload, dict):
+                    raise RuntimeError(
+                        f"Unexpected TCGdex set payload for {language}/{remote_set_id}: "
+                        f"{type(set_payload).__name__}"
+                    )
+                cards = [card for card in (set_payload.get("cards") or []) if isinstance(card, dict)]
+            except requests.HTTPError as exc:
+                if not self._is_not_found(exc):
+                    raise
+                set_payload, cards, global_cards_cache = self._fallback_cards_for_set(
+                    base_url=base_url,
+                    remote_set_id=remote_set_id,
+                    set_brief=item,
+                    language=language,
+                    global_cards_cache=global_cards_cache,
                 )
+
             visited_sets += 1
-            for card in set_payload.get("cards") or []:
-                if not isinstance(card, dict):
-                    continue
+            for card in cards:
                 card_id = str(card.get("id") or "").strip()
                 if not card_id or card_id in seen_card_ids:
                     continue
