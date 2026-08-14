@@ -1,0 +1,119 @@
+name: Android Signed Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-signed-release
+  cancel-in-progress: false
+
+jobs:
+  signed-release:
+    if: github.ref == 'refs/heads/mobile-pwa'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout mobile release branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Require protected upload-key secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo 'Missing ANDROID_UPLOAD_KEYSTORE_B64' >&2; exit 1; }
+          test -n "$STORE_PASSWORD" || { echo 'Missing ANDROID_UPLOAD_KEYSTORE_PASSWORD' >&2; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo 'Missing ANDROID_UPLOAD_KEY_PASSWORD' >&2; exit 1; }
+          test -n "$KEY_ALIAS" || { echo 'Missing ANDROID_UPLOAD_KEY_ALIAS' >&2; exit 1; }
+
+      - name: Restore upload keystore outside source history
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
+        run: |
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > android-twa/android.keystore
+          chmod 600 android-twa/android.keystore
+          test -s android-twa/android.keystore
+
+      - name: Install and configure Bubblewrap
+        run: |
+          npm install --global @bubblewrap/cli@1.25.0
+          bash android-twa/scripts/configure-bubblewrap-sdk.sh
+
+      - name: Generate Android project
+        working-directory: android-twa
+        run: bubblewrap update --skipVersionUpgrade
+
+      - name: Read and validate upload certificate fingerprint
+        working-directory: android-twa
+        env:
+          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: |
+          UPLOAD_SHA256="$(keytool -list -v -keystore android.keystore -alias "$KEY_ALIAS" -storepass "$STORE_PASSWORD" | sed -n 's/^[[:space:]]*SHA256: //p' | head -n 1)"
+          test -n "$UPLOAD_SHA256"
+          echo "UPLOAD_SHA256=$UPLOAD_SHA256" >> "$GITHUB_ENV"
+          printf 'Upload certificate SHA-256: %s\n' "$UPLOAD_SHA256" | tee upload-certificate-sha256.txt
+          UPLOAD_SHA256="$UPLOAD_SHA256" node scripts/render-assetlinks.mjs assetlinks-upload-only.json
+
+      - name: Build signed APK and Android App Bundle
+        working-directory: android-twa
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: |
+          bubblewrap build --skipPwaValidation \
+            --signingKeyPath ./android.keystore \
+            --signingKeyAlias "$KEY_ALIAS"
+
+      - name: Verify release signatures and package outputs
+        working-directory: android-twa
+        run: |
+          test -s app-release-signed.apk
+          test -s app-release-bundle.aab
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs app-release-signed.apk
+          jarsigner -verify -verbose -certs app-release-bundle.aab | grep -q 'jar verified'
+
+          APP_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('twa-manifest.json','utf8')).appVersion")"
+          VERSION_CODE="$(node -p "JSON.parse(require('fs').readFileSync('twa-manifest.json','utf8')).appVersionCode")"
+          cp app-release-bundle.aab "dontripit-${APP_VERSION}-${VERSION_CODE}.aab"
+          cp app-release-signed.apk "dontripit-${APP_VERSION}-${VERSION_CODE}.apk"
+          sha256sum "dontripit-${APP_VERSION}-${VERSION_CODE}.aab" "dontripit-${APP_VERSION}-${VERSION_CODE}.apk" | tee release-sha256.txt
+
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dontripit-android-signed-release
+          path: |
+            android-twa/dontripit-*.aab
+            android-twa/dontripit-*.apk
+            android-twa/release-sha256.txt
+            android-twa/upload-certificate-sha256.txt
+            android-twa/assetlinks-upload-only.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove upload keystore
+        if: always()
+        run: rm -f android-twa/android.keystore
