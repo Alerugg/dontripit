@@ -1,0 +1,47 @@
+{
+  "preparedAt": "2026-08-14",
+  "app": {
+    "name": "Don’tRipIt",
+    "packageId": "com.dontripit.app",
+    "defaultLanguage": "es-ES",
+    "versionName": "0.1.0",
+    "versionCode": 1,
+    "categoryCandidate": "Tools",
+    "appOrGame": "app",
+    "pricing": "free",
+    "containsAds": false
+  },
+  "storeListing": {
+    "shortDescription": "Busca cartas TCG, identifica la versión exacta y organiza tu colección.",
+    "fullDescriptionSource": "docs/google-play-store-listing.md",
+    "supportEmail": "info@dontripit.com",
+    "website": "https://dontripit.com",
+    "privacyPolicyUrl": "https://dontripit.com/privacy",
+    "accountDeletionUrl": "https://dontripit.com/delete-account"
+  },
+  "release": {
+    "trackFirst": "internal",
+    "releaseName": "0.1.0 (1) · Initial Android TWA",
+    "releaseNotesSource": "android-twa/play/release-notes-es-ES.txt",
+    "signedAabFilename": "dontripit-0.1.0-1-play-upload-signed.aab",
+    "signedAabSha256": "f462851b7356db63c368a30f1f59ae7fc65def55b782f7706b36cc17d93d28f8",
+    "targetSdk": 36,
+    "compileSdk": 36
+  },
+  "signing": {
+    "uploadKeyAlias": "dontripit-upload",
+    "uploadCertificateSha256": "99:A1:DD:B3:25:FB:1E:7C:A7:03:C4:FD:34:AF:C7:60:0B:E5:66:D2:B3:FF:80:B3:D8:3A:A9:06:47:5D:0A:3F",
+    "playAppSigningCertificateSha256": "REQUIRED_AFTER_FIRST_PLAY_UPLOAD_DO_NOT_GUESS"
+  },
+  "appAccess": {
+    "restrictedFunctionality": true,
+    "reviewerCredentials": "ENTER_ONLY_IN_PLAY_CONSOLE_NOT_IN_GIT",
+    "instructionsSource": "docs/google-play-app-content-checklist.md"
+  },
+  "policy": {
+    "dataSafetySource": "docs/google-play-data-safety-draft.md",
+    "appContentSource": "docs/google-play-app-content-checklist.md",
+    "targetAudience": "OWNER_DECISION_REQUIRED",
+    "contentRating": "COMPLETE_TRUTHFULLY_IN_PLAY_CONSOLE_FROM_FINAL_BUILD"
+  }
+}
