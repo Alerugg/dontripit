@@ -724,6 +724,8 @@ def test_tcgdex_remote_load_with_limit_stops_early_and_logs_progress(client, mon
 
     def _fake_request_json(url, params=None):
         calls.append(url)
+        if url.endswith("/series"):
+            return [{"id": "tcgp"}]
         if url.endswith("/series/tcgp"):
             return {"id": "tcgp", "sets": [{"id": "A1"}]}
         if url.endswith("/sets"):
@@ -757,6 +759,7 @@ def test_tcgdex_remote_load_with_limit_stops_early_and_logs_progress(client, mon
 
     assert len(payloads) == 2
     assert calls == [
+        "https://api.tcgdex.net/v2/en/series",
         "https://api.tcgdex.net/v2/en/series/tcgp",
         "https://api.tcgdex.net/v2/en/sets",
         "https://api.tcgdex.net/v2/en/sets/sv1",
@@ -772,6 +775,8 @@ def test_tcgdex_remote_set_filter_does_not_fetch_per_card_endpoint(client, monke
 
     def _fake_request_json(url, params=None):
         calls.append(url)
+        if url.endswith("/series"):
+            return [{"id": "tcgp"}]
         if url.endswith("/series/tcgp"):
             return {"id": "tcgp", "sets": [{"id": "A1"}]}
         if url.endswith("/sets/sv1"):
@@ -793,6 +798,7 @@ def test_tcgdex_remote_set_filter_does_not_fetch_per_card_endpoint(client, monke
 
     assert len(payloads) == 1
     assert calls == [
+        "https://api.tcgdex.net/v2/en/series",
         "https://api.tcgdex.net/v2/en/series/tcgp",
         "https://api.tcgdex.net/v2/en/sets/sv1",
     ]
@@ -802,6 +808,8 @@ def test_tcgdex_remote_load_limit_run_persists_rows(client, monkeypatch):
     connector = get_connector("tcgdex_pokemon")
 
     def _fake_request_json(url, params=None):
+        if url.endswith("/series"):
+            return [{"id": "tcgp"}]
         if url.endswith("/series/tcgp"):
             return {"id": "tcgp", "sets": [{"id": "A1"}]}
         if url.endswith("/sets"):
@@ -879,6 +887,7 @@ def test_tcgdex_remote_set_ingest_fetches_set_only_with_limit(
     requested_urls: list[str] = []
 
     payloads = {
+        "https://api.tcgdex.net/v2/en/series": [{"id": "tcgp"}],
         "https://api.tcgdex.net/v2/en/series/tcgp": {"id": "tcgp", "sets": [{"id": "A1"}]},
         "https://api.tcgdex.net/v2/en/sets/base1": {
             "id": "base1",
@@ -899,6 +908,7 @@ def test_tcgdex_remote_set_ingest_fetches_set_only_with_limit(
 
     assert len(payloads) == 1
     assert requested_urls == [
+        "https://api.tcgdex.net/v2/en/series",
         "https://api.tcgdex.net/v2/en/series/tcgp",
         "https://api.tcgdex.net/v2/en/sets/base1",
     ]
@@ -909,6 +919,7 @@ def test_tcgdex_remote_without_set_preserves_general_list_behavior(client, monke
     requested_urls: list[str] = []
 
     payloads = {
+        "https://api.tcgdex.net/v2/en/series": [{"id": "tcgp"}],
         "https://api.tcgdex.net/v2/en/series/tcgp": {"id": "tcgp", "sets": [{"id": "A1"}]},
         "https://api.tcgdex.net/v2/en/sets": [{"id": "base1"}],
         "https://api.tcgdex.net/v2/en/sets/base1": {
@@ -937,6 +948,7 @@ def test_tcgdex_remote_without_set_preserves_general_list_behavior(client, monke
 
     assert len(out) == 1
     assert requested_urls == [
+        "https://api.tcgdex.net/v2/en/series",
         "https://api.tcgdex.net/v2/en/series/tcgp",
         "https://api.tcgdex.net/v2/en/sets",
         "https://api.tcgdex.net/v2/en/sets/base1",
