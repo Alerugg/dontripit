@@ -1,0 +1,33 @@
+name: Catalog v2 full backend regression baseline
+
+on:
+  push:
+    branches:
+      - catalog-v2-full-regression-baseline
+    paths:
+      - '.github/workflows/test-catalog-v2-full-regression-baseline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  full-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - run: python -m compileall -q app
+      - name: Run exact production-code baseline suite
+        env:
+          PYTHONPATH: .
+          PUBLIC_API_ENABLED: 'false'
+        run: pytest -q
