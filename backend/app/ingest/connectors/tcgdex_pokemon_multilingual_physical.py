@@ -20,9 +20,12 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
     JA), there is nothing to exclude and physical ingest can continue normally.
 
     Some language catalogs can also list a physical set whose detail endpoint is
-    temporarily/unhistorically unavailable (observed live for JA ``SM1+``). In
-    that case the writer recovers the set's CardBrief rows from the language's
-    global ``/cards`` list instead of silently dropping the physical cards.
+    temporarily/unhistorically unavailable (observed live for JA ``SM1+``). If
+    the language-global ``/cards`` catalog still exposes cards for that set, the
+    writer recovers them. If the global catalog proves that the listed set has
+    no cards at all, a full-catalog ingest treats it as stale empty index
+    metadata and skips it with a warning rather than fabricating a physical Set.
+    Explicit set requests remain fail-closed.
     """
 
     def _tcg_pocket_set_ids(self, *, lang: str) -> set[str]:
@@ -77,6 +80,7 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
         set_brief: dict,
         language: str,
         global_cards_cache: list[dict] | None,
+        allow_empty: bool = False,
     ) -> tuple[dict, list[dict], list[dict]]:
         cards = global_cards_cache
         if cards is None:
@@ -94,9 +98,15 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
             if str(item.get("id") or "").strip().startswith(prefix)
         ]
         if not matching_cards:
-            raise RuntimeError(
-                "TCGdex set is listed but detail endpoint is unavailable and no cards "
-                f"can be recovered from /cards: lang={language} set={remote_set_id}"
+            if not allow_empty:
+                raise RuntimeError(
+                    "TCGdex set is listed but detail endpoint is unavailable and no cards "
+                    f"can be recovered from /cards: lang={language} set={remote_set_id}"
+                )
+            self.logger.warning(
+                "ingest tcgdex physical skip reason=stale_empty_set_index lang=%s set=%s",
+                language,
+                remote_set_id,
             )
 
         recovered_set = {
@@ -105,12 +115,13 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
             "name": set_brief.get("name") or remote_set_id,
             "releaseDate": set_brief.get("releaseDate"),
         }
-        self.logger.warning(
-            "ingest tcgdex physical fallback reason=set_detail_404 lang=%s set=%s recovered_cards=%s",
-            language,
-            remote_set_id,
-            len(matching_cards),
-        )
+        if matching_cards:
+            self.logger.warning(
+                "ingest tcgdex physical fallback reason=set_detail_404 lang=%s set=%s recovered_cards=%s",
+                language,
+                remote_set_id,
+                len(matching_cards),
+            )
         return recovered_set, matching_cards, cards
 
     def _load_remote(
@@ -163,6 +174,7 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
                     set_brief=set_brief,
                     language=language,
                     global_cards_cache=None,
+                    allow_empty=False,
                 )
                 if limit:
                     cards = cards[:limit]
@@ -234,6 +246,7 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
                     set_brief=item,
                     language=language,
                     global_cards_cache=global_cards_cache,
+                    allow_empty=True,
                 )
 
             visited_sets += 1
