@@ -3,6 +3,7 @@ import Link from 'next/link'
 import TopNav from '../layout/TopNav'
 import SiteFooter from '../layout/SiteFooter'
 import HomeSearch from './HomeSearch'
+import InstallAppPrompt from '../pwa/InstallAppPrompt'
 import { GAME_CATALOG } from '../../lib/catalog/games'
 
 const GAME_LOGOS = {
@@ -56,6 +57,7 @@ export default function PublicHome() {
           <div className="canva-hero-actions">
             <Link href="/register" className="dri-btn dri-btn-primary canva-primary-cta">Crear mi colección</Link>
             <Link href="/search" className="canva-secondary-link">Búsqueda avanzada →</Link>
+            <InstallAppPrompt compact />
           </div>
 
           <ul className="canva-proof" aria-label="Características del catálogo">
