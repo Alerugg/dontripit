@@ -16,7 +16,7 @@ export default function PrivacyPage() {
         <p className="dri-kicker">Privacidad</p>
         <h1>Tu cuenta es para gestionar tu colección.</h1>
         <div className="panel" style={{ marginTop: 24, padding: 28 }}>
-          <p><strong>Última actualización:</strong> 10 de agosto de 2026.</p>
+          <p><strong>Última actualización:</strong> 14 de agosto de 2026.</p>
           <p>Esta información describe el tratamiento de datos realizado a través del servicio Don’tRipIt en dontripit.com. Para cualquier consulta de privacidad o para ejercer derechos puedes contactar en <a href="mailto:info@dontripit.com">info@dontripit.com</a>.</p>
 
           <h2>Datos que tratamos</h2>
@@ -31,8 +31,10 @@ export default function PrivacyPage() {
           <h2>Proveedores</h2>
           <p>Para operar el servicio utilizamos proveedores de infraestructura y entrega de correo, actualmente incluyendo Vercel para la aplicación y Resend para los mensajes de recuperación. Solo se comparte la información necesaria para prestar esas funciones. Cuando un proveedor trate datos desde fuera del Espacio Económico Europeo, se utilizarán las garantías aplicables que correspondan al servicio contratado.</p>
 
-          <h2>Conservación</h2>
-          <p>Los datos de cuenta y biblioteca se conservan mientras mantengas la cuenta o sean necesarios para prestar el servicio. Las sesiones y credenciales temporales tienen una vigencia limitada. Cuando solicites la eliminación de la cuenta se eliminarán o anonimizarán los datos que ya no deban conservarse por una obligación legal o por la necesidad de atender responsabilidades.</p>
+          <h2>Conservación y eliminación de cuenta</h2>
+          <p>Los datos de cuenta y biblioteca se conservan mientras mantengas la cuenta o sean necesarios para prestar el servicio. Las sesiones y credenciales temporales tienen una vigencia limitada.</p>
+          <p>Puedes eliminar definitivamente tu cuenta desde la sección Cuenta de Don’tRipIt. El borrado elimina la cuenta y sus datos asociados, incluyendo sesiones, tokens de recuperación, colección y wishlist. Si no puedes iniciar sesión, también puedes iniciar una solicitud externa desde nuestra página pública de <Link href="/delete-account">eliminación de cuenta</Link>.</p>
+          <p>Si una obligación legal exigiera conservar información concreta durante un plazo determinado, se conservaría únicamente esa información durante el plazo aplicable y se limitaría su tratamiento a esa finalidad.</p>
 
           <h2>Tus derechos</h2>
           <p>Puedes solicitar acceso, rectificación, supresión, oposición, limitación o portabilidad cuando proceda, y retirar un consentimiento sin afectar al tratamiento previo. Puedes escribir a <a href="mailto:info@dontripit.com">info@dontripit.com</a>. Si consideras que el tratamiento no es adecuado, también puedes presentar una reclamación ante la autoridad de protección de datos competente.</p>
@@ -44,7 +46,7 @@ export default function PrivacyPage() {
           <p>Si una nueva función cambia de forma relevante las finalidades, categorías de datos o destinatarios, actualizaremos esta información antes de aplicar ese cambio cuando sea necesario.</p>
 
           <p style={{ marginTop: 24 }}>
-            <Link href="/cookies">Cookies</Link> · <Link href="/terms">Términos de uso</Link>
+            <Link href="/cookies">Cookies</Link> · <Link href="/terms">Términos de uso</Link> · <Link href="/delete-account">Eliminar cuenta</Link>
           </p>
         </div>
       </section>
