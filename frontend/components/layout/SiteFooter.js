@@ -37,6 +37,7 @@ export default function SiteFooter() {
           <Link href="/privacy">Privacidad</Link>
           <Link href="/cookies">Cookies</Link>
           <Link href="/terms">Términos de uso</Link>
+          <Link href="/delete-account">Eliminar cuenta</Link>
           <a href="mailto:info@dontripit.com">Contacto</a>
         </div>
       </div>
