@@ -1,0 +1,132 @@
+name: Patch legacy TCGdex mocks
+
+on:
+  push:
+    branches:
+      - multilingual-v1
+    paths:
+      - ".github/workflows/patch-tcgdex-legacy-mocks.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: multilingual-v1
+
+      - name: Update legacy remote mocks for tcgp guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("backend/tests/test_ingest_engine.py")
+          text = path.read_text(encoding="utf-8")
+
+          def patch_test(name, replacements):
+              global text
+              marker = f"def {name}"
+              start = text.index(marker)
+              end = text.find("\ndef test_", start + len(marker))
+              if end == -1:
+                  end = len(text)
+              block = text[start:end]
+              for old, new in replacements:
+                  if old not in block:
+                      raise SystemExit(f"missing expected snippet in {name}: {old!r}")
+                  block = block.replace(old, new, 1)
+              text = text[:start] + block + text[end:]
+
+          pocket_direct = (
+              '        if url.endswith("/series/tcgp"):\n'
+              '            return {"id": "tcgp", "sets": [{"id": "A1"}]}\n'
+          )
+
+          patch_test(
+              "test_tcgdex_remote_load_with_limit_stops_early_and_logs_progress",
+              [
+                  (
+                      "        calls.append(url)\n        if url.endswith(\"/sets\"):\n",
+                      "        calls.append(url)\n" + pocket_direct + "        if url.endswith(\"/sets\"):\n",
+                  ),
+                  (
+                      '    assert calls == [\n        "https://api.tcgdex.net/v2/en/sets",\n',
+                      '    assert calls == [\n        "https://api.tcgdex.net/v2/en/series/tcgp",\n        "https://api.tcgdex.net/v2/en/sets",\n',
+                  ),
+              ],
+          )
+
+          patch_test(
+              "test_tcgdex_remote_set_filter_does_not_fetch_per_card_endpoint",
+              [
+                  (
+                      "        calls.append(url)\n        if url.endswith(\"/sets/sv1\"):\n",
+                      "        calls.append(url)\n" + pocket_direct + "        if url.endswith(\"/sets/sv1\"):\n",
+                  ),
+                  (
+                      '    assert calls == ["https://api.tcgdex.net/v2/en/sets/sv1"]\n',
+                      '    assert calls == [\n        "https://api.tcgdex.net/v2/en/series/tcgp",\n        "https://api.tcgdex.net/v2/en/sets/sv1",\n    ]\n',
+                  ),
+              ],
+          )
+
+          patch_test(
+              "test_tcgdex_remote_load_limit_run_persists_rows",
+              [
+                  (
+                      "    def _fake_request_json(url, params=None):\n        if url.endswith(\"/sets\"):\n",
+                      "    def _fake_request_json(url, params=None):\n" + pocket_direct + "        if url.endswith(\"/sets\"):\n",
+                  ),
+              ],
+          )
+
+          series_entry = (
+              '        "https://api.tcgdex.net/v2/en/series/tcgp": '
+              '{"id": "tcgp", "sets": [{"id": "A1"}]},\n'
+          )
+
+          patch_test(
+              "test_tcgdex_remote_set_ingest_fetches_set_only_with_limit",
+              [
+                  (
+                      "    payloads = {\n        \"https://api.tcgdex.net/v2/en/sets/base1\": {\n",
+                      "    payloads = {\n" + series_entry + "        \"https://api.tcgdex.net/v2/en/sets/base1\": {\n",
+                  ),
+                  (
+                      '    assert requested_urls == ["https://api.tcgdex.net/v2/en/sets/base1"]\n',
+                      '    assert requested_urls == [\n        "https://api.tcgdex.net/v2/en/series/tcgp",\n        "https://api.tcgdex.net/v2/en/sets/base1",\n    ]\n',
+                  ),
+              ],
+          )
+
+          patch_test(
+              "test_tcgdex_remote_without_set_preserves_general_list_behavior",
+              [
+                  (
+                      "    payloads = {\n        \"https://api.tcgdex.net/v2/en/sets\": [{\"id\": \"base1\"}],\n",
+                      "    payloads = {\n" + series_entry + "        \"https://api.tcgdex.net/v2/en/sets\": [{\"id\": \"base1\"}],\n",
+                  ),
+                  (
+                      '    assert requested_urls == [\n        "https://api.tcgdex.net/v2/en/sets",\n',
+                      '    assert requested_urls == [\n        "https://api.tcgdex.net/v2/en/series/tcgp",\n        "https://api.tcgdex.net/v2/en/sets",\n',
+                  ),
+              ],
+          )
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit patched mocks
+        run: |
+          if git diff --quiet -- backend/tests/test_ingest_engine.py; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/tests/test_ingest_engine.py
+          git commit -m "test(multilingual): account for tcgp physical-scope guard"
+          git push origin HEAD:multilingual-v1
