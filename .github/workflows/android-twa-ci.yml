@@ -51,17 +51,18 @@ jobs:
           console.log(`TWA source OK: ${m.packageId} ${m.appVersion} (${m.appVersionCode}) -> https://${m.host}${m.startUrl}`)
           NODE
 
-      - name: Install Bubblewrap 1.25.0 and matching Jimp decoder
-        run: npm install --global @bubblewrap/cli@1.25.0 jimp@0.22.12
+      - name: Install Bubblewrap 1.25.0
+        run: npm install --global @bubblewrap/cli@1.25.0
 
-      - name: Decode every configured icon with Jimp
-        env:
-          NODE_PATH: ${{ github.workspace }}/.unused
+      - name: Decode every configured icon with Bubblewrap Jimp
         run: |
-          export NODE_PATH="$(npm root -g)"
+          JIMP_PACKAGE="$(find "$(npm root -g)/@bubblewrap/cli/node_modules" -path '*/jimp/package.json' -print -quit)"
+          test -n "$JIMP_PACKAGE"
+          export JIMP_DIR="$(dirname "$JIMP_PACKAGE")"
+          echo "Using Bubblewrap Jimp from $JIMP_DIR"
           node <<'NODE'
           const fs = require('fs')
-          const Jimp = require('jimp')
+          const Jimp = require(process.env.JIMP_DIR)
           const manifest = JSON.parse(fs.readFileSync('android-twa/twa-manifest.json', 'utf8'))
           const candidates = [
             ['launcher', manifest.iconUrl],
@@ -79,13 +80,8 @@ jobs:
               const contentType = response.headers.get('content-type') || ''
               const bytes = Buffer.from(await response.arrayBuffer())
               console.log(`${label}: ${contentType} ${bytes.length} bytes ${url}`)
-              try {
-                const image = await Jimp.read(bytes)
-                console.log(`${label}: decoded ${image.bitmap.width}x${image.bitmap.height}`)
-              } catch (error) {
-                console.error(`${label}: JIMP DECODE FAILED`)
-                throw error
-              }
+              const image = await Jimp.read(bytes)
+              console.log(`${label}: decoded ${image.bitmap.width}x${image.bitmap.height}`)
             }
           })().catch((error) => {
             console.error(error)
