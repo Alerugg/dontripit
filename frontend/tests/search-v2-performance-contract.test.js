@@ -17,3 +17,14 @@ test('federated all-results view does not block on the heavy normal-match search
   assert.match(route, /callInternalApi\('\/api\/v2\/search'/)
   assert.match(route, /Promise\.resolve\(skipped\(\{ items: \[\], total: null \}\)\)/)
 })
+
+test('autocomplete never sends one-character searches upstream', () => {
+  const client = source('lib/searchV2/client.js')
+  const route = source('app/api/search-v2/suggest/route.js')
+
+  assert.match(client, /MIN_SUGGEST_QUERY_LENGTH = 2/)
+  assert.match(client, /cleanQuery\.length < MIN_SUGGEST_QUERY_LENGTH\) return \[\]/)
+  assert.match(route, /MIN_SUGGEST_QUERY_LENGTH = 2/)
+  assert.match(route, /q\.length < MIN_SUGGEST_QUERY_LENGTH/)
+  assert.match(route, /return NextResponse\.json\(\{ items: \[\] \}\)/)
+})
