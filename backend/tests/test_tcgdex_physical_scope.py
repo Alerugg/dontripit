@@ -22,6 +22,11 @@ class FakePhysicalConnector(PhysicalMultilingualTcgdexPokemonConnector):
 def _payloads():
     base = "https://api.tcgdex.net/v2/en"
     return {
+        f"{base}/series": [
+            {"id": "base", "name": "Base"},
+            {"id": "tcgp", "name": "Pokémon TCG Pocket"},
+            {"id": "swsh", "name": "Sword & Shield"},
+        ],
         f"{base}/series/tcgp": {
             "id": "tcgp",
             "name": "Pokémon TCG Pocket",
@@ -71,15 +76,53 @@ def test_explicit_tcgp_set_is_rejected_without_fetching_set_detail():
     rows = connector._load_remote(set_id="A1", lang="en")
 
     assert rows == []
-    assert connector.calls == ["https://api.tcgdex.net/v2/en/series/tcgp"]
+    assert connector.calls == [
+        "https://api.tcgdex.net/v2/en/series",
+        "https://api.tcgdex.net/v2/en/series/tcgp",
+    ]
 
 
-def test_tcgp_exclusion_guard_fails_closed_when_series_has_no_sets():
+def test_tcgp_exclusion_guard_fails_closed_when_published_series_has_no_sets():
     base = "https://api.tcgdex.net/v2/en"
-    connector = FakePhysicalConnector({f"{base}/series/tcgp": {"id": "tcgp", "sets": []}})
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "tcgp", "name": "Pokémon TCG Pocket"}],
+            f"{base}/series/tcgp": {"id": "tcgp", "sets": []},
+        }
+    )
 
     with pytest.raises(RuntimeError, match="TCG Pocket exclusion guard failed"):
         connector._load_remote(lang="en")
+
+
+def test_language_without_tcgp_series_continues_without_requesting_missing_endpoint():
+    base = "https://api.tcgdex.net/v2/ja"
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "neo", "name": "Neo"}],
+            f"{base}/sets": [{"id": "neo1", "name": "Gold, Silver, to a New World..."}],
+            f"{base}/sets/neo1": {
+                "id": "neo1",
+                "name": "Gold, Silver, to a New World...",
+                "releaseDate": "2000-02-04",
+                "cards": [
+                    {
+                        "id": "neo1-1",
+                        "localId": "1",
+                        "name": "Japanese card",
+                        "image": "https://assets.tcgdex.net/ja/neo/neo1/1",
+                    }
+                ],
+            },
+        }
+    )
+
+    rows = connector._load_remote(lang="ja")
+
+    assert len(rows) == 1
+    assert rows[0]["language"] == "ja"
+    assert f"{base}/series/tcgp" not in connector.calls
+    assert connector.calls == [f"{base}/series", f"{base}/sets", f"{base}/sets/neo1"]
 
 
 def test_registry_uses_physical_only_tcgdex_writer():
