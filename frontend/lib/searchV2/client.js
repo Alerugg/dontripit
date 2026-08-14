@@ -1,5 +1,7 @@
 import { toApiGameSlug } from '../catalog/games'
 
+const MIN_SUGGEST_QUERY_LENGTH = 2
+
 function toQuery(params = {}) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -46,7 +48,10 @@ export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 
 }
 
 export async function suggestV2({ q, game, limit = 8 } = {}) {
-  const response = await fetch(`/api/search-v2/suggest${toQuery({ q, game: toApiGameSlug(game || ''), limit })}`, {
+  const cleanQuery = String(q || '').trim()
+  if (cleanQuery.length < MIN_SUGGEST_QUERY_LENGTH) return []
+
+  const response = await fetch(`/api/search-v2/suggest${toQuery({ q: cleanQuery, game: toApiGameSlug(game || ''), limit })}`, {
     method: 'GET',
     cache: 'no-store',
   })

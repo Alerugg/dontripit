@@ -1,11 +1,18 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
 
+const MIN_SUGGEST_QUERY_LENGTH = 2
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
+  const q = String(searchParams.get('q') || '').trim()
+  if (q.length < MIN_SUGGEST_QUERY_LENGTH) {
+    return NextResponse.json({ items: [] })
+  }
+
   const upstream = await callInternalApi('/api/v2/search/suggest', {
     params: {
-      q: searchParams.get('q') || '',
+      q,
       game: searchParams.get('game') || '',
       limit: searchParams.get('limit') || 8,
     },

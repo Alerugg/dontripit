@@ -115,12 +115,16 @@ export async function GET(request) {
 
   const needsSingles = kind === 'singles' || kind === 'all'
   const needsSealed = kind === 'sealed' || (kind === 'all' && page === 1)
-  const needsMatches = kind === 'matches' || (kind === 'all' && page === 1)
+  // The normal-match search is the same expensive ranking used by autocomplete.
+  // In the all-results view it was only rendered as a secondary section after
+  // singles/sets/sealed, yet Promise.all made it block the entire first screen.
+  // Load it only when the user explicitly opens the Coincidencias tab.
+  const needsMatches = kind === 'matches'
   const setsOffset = kind === 'sets' ? offset : 0
   const setsLimit = kind === 'sets' ? limit : 12
 
   // Sets are inexpensive and keep their tab count stable while the user pages
-  // singles/sealed. Heavy singles/sealed readers are only called when visible.
+  // singles/sealed. Heavy readers are only called when their data is visible.
   const setsPromise = callInternalApi('/api/v1/sets', {
     params: { game, q, limit: setsLimit, offset: setsOffset, meta: 1 },
     timeoutMs: 12000,
