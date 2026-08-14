@@ -14,100 +14,93 @@ from app.multilingual_models import PrintLocalization
 
 
 LANGUAGES = ("en", "es", "ja")
-PREFERRED_COMMON_SETS = ("swsh1", "sv01", "base1")
 
 
-def _ids(payload) -> list[str]:
+def _card_brief_map(payload) -> dict[str, dict]:
     if not isinstance(payload, list):
-        return []
-    return [str(row.get("id") or "").strip() for row in payload if isinstance(row, dict) and row.get("id")]
-
-
-def _card_map(set_payload: dict) -> dict[str, dict]:
-    cards = set_payload.get("cards") or []
+        return {}
     return {
         str(row.get("id") or "").strip(): row
-        for row in cards
+        for row in payload
         if isinstance(row, dict) and row.get("id")
     }
 
 
-def choose_common_set(connector: MultilingualTcgdexPokemonConnector, limit: int) -> tuple[str, list[str]]:
-    sets_by_language: dict[str, set[str]] = {}
+def choose_common_cards(
+    connector: MultilingualTcgdexPokemonConnector,
+    limit: int,
+) -> tuple[list[str], dict[str, dict[str, dict]]]:
+    """Choose card IDs exposed directly in all target language catalogs.
+
+    TCGdex documents card IDs as language-stable. Set membership/completion can
+    vary by locale, so the live gate intentionally intersects the `/cards`
+    catalogs instead of inferring language availability from `/sets/<id>`.
+    """
+    maps: dict[str, dict[str, dict]] = {}
     for language in LANGUAGES:
-        payload = connector._request_json(connector.base_url_template.format(lang=language) + "/sets")
-        sets_by_language[language] = set(_ids(payload))
+        payload = connector._request_json(
+            connector.base_url_template.format(lang=language) + "/cards"
+        )
+        maps[language] = _card_brief_map(payload)
 
-    common = set.intersection(*(sets_by_language[language] for language in LANGUAGES))
-    if not common:
-        raise RuntimeError("TCGdex live validation found no set IDs shared by EN/ES/JA")
+    shared_ids = set.intersection(*(set(maps[language]) for language in LANGUAGES))
+    if len(shared_ids) < limit:
+        raise RuntimeError(
+            "TCGdex live validation found too few card IDs shared by EN/ES/JA: "
+            f"shared={len(shared_ids)} required={limit} "
+            f"catalog_sizes={{lang: len(maps[lang]) for lang in LANGUAGES}}"
+        )
 
-    ordered = [set_id for set_id in PREFERRED_COMMON_SETS if set_id in common]
-    ordered.extend(sorted(common - set(ordered), reverse=True)[:20])
+    english_order = [card_id for card_id in maps["en"] if card_id in shared_ids]
+    localized_ja = [
+        card_id
+        for card_id in english_order
+        if maps["en"][card_id].get("name")
+        and maps["ja"][card_id].get("name")
+        and maps["en"][card_id].get("name") != maps["ja"][card_id].get("name")
+    ]
+    selected = localized_ja[:limit]
+    if len(selected) < limit:
+        selected.extend(card_id for card_id in english_order if card_id not in selected)
+        selected = selected[:limit]
+    return selected, maps
 
-    for set_id in ordered:
-        details = {
-            language: connector._request_json(
-                connector.base_url_template.format(lang=language) + f"/sets/{set_id}"
-            )
-            for language in LANGUAGES
-        }
-        card_maps = {language: _card_map(details[language]) for language in LANGUAGES}
-        shared_ids = set.intersection(*(set(card_maps[language]) for language in LANGUAGES))
-        if len(shared_ids) < limit:
-            continue
 
-        # Preserve English physical order, but prioritize examples whose Japanese
-        # display name actually demonstrates localization.
-        english_order = [card_id for card_id in card_maps["en"] if card_id in shared_ids]
-        different_ja = [
-            card_id
-            for card_id in english_order
-            if card_maps["en"][card_id].get("name")
-            and card_maps["ja"][card_id].get("name")
-            and card_maps["en"][card_id].get("name") != card_maps["ja"][card_id].get("name")
-        ]
-        selected = different_ja[:limit]
-        if len(selected) < limit:
-            selected.extend(card_id for card_id in english_order if card_id not in selected)
-            selected = selected[:limit]
-        if len(selected) >= limit:
-            return set_id, selected
-
-    raise RuntimeError(
-        "TCGdex live validation could not find enough shared card IDs inside a common "
-        f"EN/ES/JA set (required={limit})"
-    )
+def fetch_direct_localizations(
+    connector: MultilingualTcgdexPokemonConnector,
+    selected_ids: list[str],
+) -> dict[str, dict[str, dict]]:
+    details: dict[str, dict[str, dict]] = {language: {} for language in LANGUAGES}
+    for language in LANGUAGES:
+        base_url = connector.base_url_template.format(lang=language)
+        for external_id in selected_ids:
+            payload = connector._request_json(f"{base_url}/cards/{external_id}")
+            actual_id = str(payload.get("id") or "").strip()
+            if actual_id != external_id:
+                raise AssertionError(
+                    f"TCGdex {language} direct card ID drift: requested={external_id} actual={actual_id}"
+                )
+            details[language][external_id] = payload
+    return details
 
 
 def ingest_live_sample(
     connector: MultilingualTcgdexPokemonConnector,
-    set_id: str,
     selected_ids: list[str],
-) -> dict[str, list[str]]:
-    source_ids_by_language: dict[str, list[str]] = {}
-    selected = set(selected_ids)
+    details: dict[str, dict[str, dict]],
+) -> dict[str, dict[str, str]]:
+    source_sets: dict[str, dict[str, str]] = {language: {} for language in LANGUAGES}
 
     with db.SessionLocal() as session:
         for language in LANGUAGES:
-            # Load the real set through the connector, then write only the chosen
-            # shared IDs so the sandbox remains intentionally tiny.
-            rows = connector.load(None, fixture=False, limit=None, set=set_id, lang=language)
-            by_external_id = {
-                str(raw_payload.get("id") or "").strip(): (raw_payload, checksum)
-                for _path, raw_payload, checksum in rows
-                if str(raw_payload.get("id") or "").strip() in selected
-            }
-            missing = [external_id for external_id in selected_ids if external_id not in by_external_id]
-            if missing:
-                raise AssertionError(
-                    f"TCGdex {language} set {set_id} lost selected shared IDs: {missing}"
-                )
-
-            source_ids_by_language[language] = []
             for external_id in selected_ids:
-                raw_payload, _checksum = by_external_id[external_id]
-                source_ids_by_language[language].append(external_id)
+                raw_payload = details[language][external_id]
+                set_id = str((raw_payload.get("set") or {}).get("id") or "").strip()
+                if not set_id:
+                    raise AssertionError(
+                        f"TCGdex {language} direct card {external_id} has no set.id"
+                    )
+                source_sets[language][external_id] = set_id
                 normalized = connector.normalize(raw_payload, lang=language)
                 connector.upsert(
                     session,
@@ -118,12 +111,13 @@ def ingest_live_sample(
                 )
             session.commit()
 
-    if not (source_ids_by_language["en"] == source_ids_by_language["es"] == source_ids_by_language["ja"]):
-        raise AssertionError(f"Live connector returned different selected IDs by language: {source_ids_by_language}")
-    return source_ids_by_language
+    return source_sets
 
 
-def certify_sample(card_ids: list[str]) -> dict:
+def certify_sample(
+    card_ids: list[str],
+    source_sets: dict[str, dict[str, str]],
+) -> dict:
     results = []
     japanese_name_differs = False
 
@@ -138,7 +132,9 @@ def certify_sample(card_ids: list[str]) -> dict:
             by_language = {row.language: row for row in prints}
             if set(by_language) != set(LANGUAGES):
                 raise AssertionError(
-                    f"Expected exactly EN/ES/JA physical prints for {external_id}; got {sorted(by_language)}"
+                    f"Expected exactly EN/ES/JA physical prints for {external_id}; "
+                    f"got={sorted(by_language)} source_sets="
+                    f"{{lang: source_sets[lang][external_id] for lang in LANGUAGES}}"
                 )
             if by_language["en"].tcgdex_id != external_id:
                 raise AssertionError(f"English legacy tcgdex_id missing for {external_id}")
@@ -186,6 +182,10 @@ def certify_sample(card_ids: list[str]) -> dict:
                 {
                     "tcgdex_id": external_id,
                     "canonical_name": card.name,
+                    "source_set_ids": {
+                        language: source_sets[language][external_id]
+                        for language in LANGUAGES
+                    },
                     "print_ids": {language: by_language[language].id for language in LANGUAGES},
                     "localized_names": localized_names,
                     "localized_sets": localized_sets,
@@ -199,7 +199,9 @@ def certify_sample(card_ids: list[str]) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate live TCGdex EN/ES/JA ingestion on an isolated database")
+    parser = argparse.ArgumentParser(
+        description="Validate live TCGdex EN/ES/JA ingestion on an isolated database"
+    )
     parser.add_argument("--limit", type=int, default=2)
     args = parser.parse_args()
     if args.limit < 1 or args.limit > 5:
@@ -207,25 +209,31 @@ def main() -> None:
 
     database_url = os.getenv("DATABASE_URL", "").strip()
     if not database_url:
-        raise SystemExit("DATABASE_URL is required; this validator must run on an explicit isolated database")
+        raise SystemExit(
+            "DATABASE_URL is required; this validator must run on an explicit isolated database"
+        )
     if "localhost" not in database_url and "127.0.0.1" not in database_url:
         raise SystemExit("Refusing live multilingual validation against a non-local database")
 
     db.init_engine(database_url)
     connector = MultilingualTcgdexPokemonConnector()
-    set_id, expected_ids = choose_common_set(connector, args.limit)
-    source_ids = ingest_live_sample(connector, set_id, expected_ids)
-    if source_ids["en"] != expected_ids:
-        raise AssertionError(
-            f"Live connector sample changed after discovery: expected={expected_ids} actual={source_ids['en']}"
-        )
-    certification = certify_sample(expected_ids)
+    expected_ids, catalog_maps = choose_common_cards(connector, args.limit)
+    details = fetch_direct_localizations(connector, expected_ids)
+    source_sets = ingest_live_sample(connector, expected_ids, details)
+    certification = certify_sample(expected_ids, source_sets)
     print(
         json.dumps(
             {
                 "status": "success",
-                "set_id": set_id,
                 "languages": list(LANGUAGES),
+                "catalog_sizes": {
+                    language: len(catalog_maps[language]) for language in LANGUAGES
+                },
+                "shared_card_ids": len(
+                    set.intersection(
+                        *(set(catalog_maps[language]) for language in LANGUAGES)
+                    )
+                ),
                 **certification,
             },
             ensure_ascii=False,
