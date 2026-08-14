@@ -13,6 +13,46 @@ body {
   min-height: 100dvh;
 }
 
+.pwa-install-action {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid rgba(182, 156, 255, .26);
+  border-radius: 12px;
+  color: #dcd3ff;
+  background: rgba(139, 92, 246, .08);
+  font: inherit;
+  font-size: .72rem;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.pwa-install-action:hover {
+  color: #fff;
+  border-color: rgba(182, 156, 255, .48);
+  background: rgba(139, 92, 246, .14);
+}
+
+.pwa-install-action:focus-visible {
+  outline: 2px solid #b69cff;
+  outline-offset: 3px;
+}
+
+.pwa-install-action > span {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.pwa-install-action.is-compact {
+  min-height: 38px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  font-size: .68rem;
+}
+
 @media (display-mode: standalone) {
   html,
   body {
@@ -31,11 +71,21 @@ body {
     padding-right: max(var(--dri-safe-right), 0px);
   }
 
+  .pwa-install-action {
+    display: none;
+  }
+
   body::after {
     content: '';
     display: block;
     height: var(--dri-safe-bottom);
     pointer-events: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .pwa-install-action {
+    width: 100%;
   }
 }
 
@@ -46,5 +96,13 @@ body {
   select,
   textarea {
     font-size: max(16px, 1em);
+  }
+}
+
+@media (hover: none) {
+  .pwa-install-action:hover {
+    color: #dcd3ff;
+    border-color: rgba(182, 156, 255, .26);
+    background: rgba(139, 92, 246, .08);
   }
 }
