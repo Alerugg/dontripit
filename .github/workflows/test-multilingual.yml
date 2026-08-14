@@ -8,6 +8,7 @@ on:
       - "backend/app/multilingual_models.py"
       - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
       - "backend/app/ingest/registry.py"
+      - "backend/alembic/env.py"
       - "backend/alembic/versions/20260814_33_add_print_localizations.py"
       - "backend/tests/test_tcgdex_multilingual.py"
       - ".github/workflows/test-multilingual.yml"
@@ -46,7 +47,17 @@ jobs:
             app/multilingual_models.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/registry.py \
+            alembic/env.py \
             alembic/versions/20260814_33_add_print_localizations.py
+
+      - name: Run migration 33 smoke test
+        env:
+          DATABASE_URL: sqlite+pysqlite:///./multilingual-migration-smoke.db
+          PYTHONPATH: .
+        run: |
+          rm -f multilingual-migration-smoke.db
+          alembic upgrade head
+          alembic current
 
       - name: Run focused multilingual tests
         env:
