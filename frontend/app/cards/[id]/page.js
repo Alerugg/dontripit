@@ -40,11 +40,13 @@ export default function CardDetailPage({ params }) {
     }
   }, [id])
 
+  const backHref = card?.game ? getGameExplorerHref(card.game) : '/#games'
+
   return (
     <main>
       <TopNav />
       <section className="detail-shell">
-        <Link href={getGameExplorerHref(card?.game || 'pokemon')} className="back-link">← Volver al explorer</Link>
+        <Link href={backHref} className="back-link">← Volver al catálogo</Link>
         {loading && <StatePanel title="Cargando carta" description="Preparando carta, sets y variantes." />}
         {!loading && error && <StatePanel title="No pudimos cargar la carta" description={error} error />}
         {!loading && !error && card && <CardDetailLayout card={card} />}
