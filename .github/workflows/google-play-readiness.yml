@@ -1,0 +1,54 @@
+name: Google Play Readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mobile-pwa]
+    paths:
+      - 'android-twa/**'
+      - 'docs/google-play-*.md'
+      - 'docs/android-upload-certificate.md'
+      - 'frontend/app/delete-account/**'
+      - 'frontend/app/privacy/**'
+      - 'frontend/app/api/auth/me/**'
+      - 'frontend/components/dashboard/**'
+      - 'backend/app/routes/user_auth.py'
+      - '.github/workflows/android-release.yml'
+      - '.github/workflows/android-twa-ci.yml'
+      - '.github/workflows/google-play-readiness.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: google-play-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout mobile release branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - name: Validate Play deployment package
+        run: node android-twa/scripts/play-preflight.mjs
+
+      - name: Record readiness summary
+        run: |
+          {
+            echo '## Don’tRipIt Google Play readiness'
+            echo ''
+            echo '- Technical preflight: **PASS**'
+            echo '- Package: `com.dontripit.app`'
+            echo '- Release: `0.1.0 (1)`'
+            echo '- Target SDK: `36`'
+            echo '- Production branch modified by this workflow: **No**'
+            echo '- External Play/account decisions remain intentionally outside CI.'
+          } >> "$GITHUB_STEP_SUMMARY"
