@@ -17,7 +17,7 @@ concurrency:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 120
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -62,9 +62,6 @@ jobs:
           from pathlib import Path
           from app.scripts import gate_tcgdex_multilingual_production_release as gate
 
-          # Production is already at additive schema 34 but contains no ES/JA
-          # data. Preflight above proves the new tables are empty. Reuse the
-          # certified EN identity snapshot logic for this safe schema-only state.
           gate.BEFORE_REV = '20260814_34'
           gate.snapshot_before(Path('/tmp/tcgdex-multilingual-production-before.json'))
           PY
