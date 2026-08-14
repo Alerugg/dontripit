@@ -6,6 +6,7 @@ import './accessibility.css'
 import './pwa.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 import PwaBootstrap from '../components/pwa/PwaBootstrap'
+import StandaloneNav from '../components/pwa/StandaloneNav'
 import { SITE_NAME, SITE_URL } from '../lib/site'
 
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-body', display: 'swap' })
@@ -50,6 +51,7 @@ export default function RootLayout({ children }) {
         <PwaBootstrap />
         <a className="dri-skip-link" href="#main-content">Saltar al contenido principal</a>
         <div id="main-content" tabIndex={-1}>{children}</div>
+        <StandaloneNav />
       </body>
     </html>
   )
