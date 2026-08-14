@@ -64,6 +64,24 @@ test('install prompt only renders after browser installability signal', () => {
   assert.match(css, /display-mode: standalone/)
 })
 
+test('standalone mobile navigation is app-only and leaves auth flows unobstructed', () => {
+  const layout = source('app/layout.js')
+  const nav = source('components/pwa/StandaloneNav.js')
+  const css = source('app/pwa.css')
+  assert.match(layout, /<StandaloneNav \/>/)
+  for (const href of ["href: '/'", "href: '/search'", "href: '/collection'", "href: '/dashboard'"]) {
+    assert.match(nav, new RegExp(href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  for (const route of ['/login', '/register', '/forgot-password', '/reset-password']) {
+    assert.match(nav, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.match(nav, /aria-current=/)
+  assert.match(css, /\.pwa-bottom-nav\s*{\s*display:\s*none/)
+  assert.match(css, /@media \(display-mode: standalone\) and \(max-width: 760px\)/)
+  assert.match(css, /padding-bottom: calc\(var\(--dri-pwa-nav-height\) \+ var\(--dri-safe-bottom\)\)/)
+  assert.match(css, /min-height: 54px/)
+})
+
 test('standalone CSS respects mobile safe areas and touch input sizing', () => {
   const css = source('app/pwa.css')
   assert.match(css, /safe-area-inset-top/)
