@@ -5,6 +5,7 @@ on:
     branches:
       - multilingual-v1
     paths:
+      - "backend/app/scripts/diagnose_tcgdex_language_overlap.py"
       - "backend/app/scripts/validate_tcgdex_multilingual_live.py"
       - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
       - "backend/app/multilingual_models.py"
@@ -52,6 +53,11 @@ jobs:
 
       - name: Install backend dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Diagnose live TCGdex language identity overlap
+        env:
+          PYTHONPATH: .
+        run: python -m app.scripts.diagnose_tcgdex_language_overlap
 
       - name: Create isolated schema
         env:
