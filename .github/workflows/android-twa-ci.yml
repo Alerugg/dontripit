@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: android-twa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-twa:
     runs-on: ubuntu-24.04
@@ -50,6 +54,15 @@ jobs:
           if (!m.maskableIconUrl?.includes('dontripit-512-maskable.png')) throw new Error('Maskable 512px launcher icon required')
           console.log(`TWA source OK: ${m.packageId} ${m.appVersion} (${m.appVersionCode}) -> https://${m.host}${m.startUrl}`)
           NODE
+
+      - name: Validate Digital Asset Links renderer
+        run: |
+          PLAY_APP_SIGNING_SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+          UPLOAD_SHA256=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB \
+          REQUIRE_PLAY_FINGERPRINT=1 \
+          node android-twa/scripts/render-assetlinks.mjs /tmp/assetlinks.json
+          node -e "const d=require('/tmp/assetlinks.json'); if(d[0].target.package_name!=='com.dontripit.app'||d[0].target.sha256_cert_fingerprints.length!==2) process.exit(1)"
+          ! grep -q '__PLAY_APP_SIGNING_SHA256__\|__LOCAL_OR_UPLOAD_SHA256__' /tmp/assetlinks.json
 
       - name: Install Bubblewrap 1.25.0
         run: npm install --global @bubblewrap/cli@1.25.0
@@ -90,21 +103,7 @@ jobs:
           NODE
 
       - name: Configure Bubblewrap with runner SDK
-        run: |
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$SDK_ROOT"
-          test -d "$SDK_ROOT"
-
-          if [ ! -d "$SDK_ROOT/bin" ]; then
-            CMDLINE_BIN="$(find "$SDK_ROOT/cmdline-tools" -mindepth 2 -maxdepth 2 -type d -name bin | head -n 1)"
-            test -n "$CMDLINE_BIN"
-            ln -s "$CMDLINE_BIN" "$SDK_ROOT/bin"
-          fi
-
-          mkdir -p "$HOME/.bubblewrap"
-          node -e "require('fs').writeFileSync(process.env.HOME + '/.bubblewrap/config.json', JSON.stringify({jdkPath: process.env.JAVA_HOME, androidSdkPath: process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT}, null, 2))"
-          cat "$HOME/.bubblewrap/config.json"
-          bubblewrap doctor
+        run: bash android-twa/scripts/configure-bubblewrap-sdk.sh
 
       - name: Generate Android project
         working-directory: android-twa
@@ -113,7 +112,6 @@ jobs:
       - name: Verify generated Android identity
         working-directory: android-twa
         run: |
-          grep -R "com.dontripit.app" app build.gradle settings.gradle || true
           grep -q "com.dontripit.app" app/build.gradle
           grep -q "dontripit.com" app/build.gradle
 
@@ -121,7 +119,45 @@ jobs:
         working-directory: android-twa
         run: bubblewrap build --skipPwaValidation --skipSigning
 
-      - name: Inventory Android outputs
+      - name: Verify unsigned release outputs
+        working-directory: android-twa
+        run: |
+          test -s app/build/outputs/bundle/release/app-release.aab
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          if jarsigner -verify app/build/outputs/bundle/release/app-release.aab 2>&1 | grep -q 'jar verified'; then
+            echo 'Unsigned gate produced a signed AAB unexpectedly' >&2
+            exit 1
+          fi
+          sha256sum app/build/outputs/bundle/release/app-release.aab app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Certify Bubblewrap signing with ephemeral smoke key
+        working-directory: android-twa
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: dri-smoke-pass
+          BUBBLEWRAP_KEY_PASSWORD: dri-smoke-pass
+        run: |
+          keytool -genkeypair -noprompt \
+            -keystore /tmp/dri-smoke.jks \
+            -storepass dri-smoke-pass \
+            -keypass dri-smoke-pass \
+            -alias dri-smoke \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 30 \
+            -dname "CN=DonRipIt CI Smoke, OU=CI, O=DonRipIt, L=Madrid, ST=Madrid, C=ES"
+
+          bubblewrap build --skipPwaValidation \
+            --signingKeyPath /tmp/dri-smoke.jks \
+            --signingKeyAlias dri-smoke
+
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs app-release-signed.apk
+          jarsigner -verify -verbose -certs app-release-bundle.aab | grep -q 'jar verified'
+
+          rm -f /tmp/dri-smoke.jks app-release-signed.apk app-release-bundle.aab
+
+      - name: Inventory unsigned Android outputs
         run: |
           find android-twa -type f \( -name '*.aab' -o -name '*.apk' \) -print -exec ls -lh {} \;
           test -n "$(find android-twa -type f -name '*.aab' -print -quit)"
@@ -131,7 +167,7 @@ jobs:
         with:
           name: dontripit-android-twa-unsigned
           path: |
-            android-twa/**/*.aab
-            android-twa/**/*.apk
+            android-twa/app/build/outputs/bundle/release/app-release.aab
+            android-twa/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
           retention-days: 7
