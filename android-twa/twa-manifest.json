@@ -1,0 +1,54 @@
+{
+  "packageId": "com.dontripit.app",
+  "host": "dontripit.com",
+  "name": "Don’tRipIt",
+  "launcherName": "Don’tRipIt",
+  "display": "standalone",
+  "themeColor": "#121018",
+  "themeColorDark": "#121018",
+  "navigationColor": "#0d0c11",
+  "navigationColorDark": "#0d0c11",
+  "navigationDividerColor": "#0d0c11",
+  "navigationDividerColorDark": "#0d0c11",
+  "backgroundColor": "#0d0c11",
+  "enableNotifications": false,
+  "startUrl": "/?source=android",
+  "iconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-512.png",
+  "maskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-512-maskable.png",
+  "splashScreenFadeOutDuration": 250,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "dontripit-upload"
+  },
+  "appVersionCode": 1,
+  "appVersion": "0.1.0",
+  "shortcuts": [
+    {
+      "name": "Explorar cartas",
+      "shortName": "Explorar",
+      "url": "/search",
+      "icon": ""
+    },
+    {
+      "name": "Mi colección",
+      "shortName": "Colección",
+      "url": "/collection",
+      "icon": ""
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://dontripit.com/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "minSdkVersion": 23,
+  "orientation": "any",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}
