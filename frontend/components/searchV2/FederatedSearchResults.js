@@ -19,30 +19,45 @@ function money(value, currency = 'EUR') {
   }
 }
 
+function safeCount(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) return Math.max(0, numeric)
+  }
+  return 0
+}
+
 function SetResults({ items = [], gameSlug, total = null }) {
-  if (!items.length) return null
-  const displayTotal = total === null || total === undefined ? items.length : Number(total)
+  const displayTotal = safeCount(total, items.length)
   return (
     <section className="fsr-section">
       <div className="fsr-section-head">
         <div>
-          <p className="eyebrow">Colección</p>
+          <p className="eyebrow">Colecciones</p>
           <h2>Sets que coinciden</h2>
         </div>
         <span>{displayTotal}</span>
       </div>
-      <div className="fsr-set-grid">
-        {items.map((item) => (
-          <Link key={item.id || item.code} href={getSetHref(gameSlug, item.code)} className="fsr-set-card panel-soft">
-            <span className="fsr-set-code">{String(item.code || '').toUpperCase()}</span>
-            <div>
-              <h3>{item.name || item.code}</h3>
-              <p>{Number(item.card_count || 0)} cartas · abrir checklist completo</p>
-            </div>
-            <strong>Ver colección →</strong>
-          </Link>
-        ))}
-      </div>
+      {!items.length ? (
+        <div className="dri-soft-empty">
+          <strong>No encontramos colecciones para esta búsqueda.</strong>
+          <p>Prueba con el código del set o con una parte de su nombre.</p>
+        </div>
+      ) : (
+        <div className="fsr-set-grid">
+          {items.map((item) => (
+            <Link key={item.id || item.code} href={getSetHref(gameSlug, item.code)} className="fsr-set-card panel-soft">
+              <span className="fsr-set-code">{String(item.code || '').toUpperCase()}</span>
+              <div>
+                <h3>{item.name || item.code}</h3>
+                <p>{Number(item.card_count || 0)} cartas · abrir checklist completo</p>
+              </div>
+              <strong>Ver colección →</strong>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -50,7 +65,7 @@ function SetResults({ items = [], gameSlug, total = null }) {
 function SealedResults({ payload = {}, gameSlug, category, onCategoryChange }) {
   const items = payload.items || []
   const categories = payload.categories || []
-  const total = Number(payload.total || 0)
+  const total = safeCount(payload.total, items.length)
 
   return (
     <section className="fsr-section">
@@ -76,8 +91,8 @@ function SealedResults({ payload = {}, gameSlug, category, onCategoryChange }) {
 
       {!items.length ? (
         <div className="dri-soft-empty">
-          <strong>No hay sellado exacto en esta página.</strong>
-          <p>Solo enseñamos productos que podemos relacionar con seguridad con esta búsqueda.</p>
+          <strong>No encontramos productos sellados relacionados.</strong>
+          <p>Solo mostramos sellado que podemos relacionar con seguridad con esta búsqueda.</p>
         </div>
       ) : (
         <div className="fsr-sealed-grid">
@@ -135,12 +150,6 @@ function Pagination({ page, total, pageSize, onPageChange }) {
   )
 }
 
-function tabCount(value) {
-  if (value === null || value === undefined) return '—'
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : '—'
-}
-
 export default function FederatedSearchResults({
   payload,
   gameSlug,
@@ -156,22 +165,24 @@ export default function FederatedSearchResults({
   if (!payload) return null
   const counts = payload.counts || {}
   const sets = payload.sets || []
-  const setsPage = payload.sets_page || { total: counts.sets || sets.length }
   const singles = payload.singles || { items: [], total: 0 }
   const sealed = payload.sealed || { items: [], total: 0, categories: [] }
   const matches = payload.matches || []
+  const setsPage = payload.sets_page || { total: safeCount(counts.sets, sets.length) }
   const isFirstPage = page === 1
 
-  const allCount = [counts.singles, counts.sets, counts.sealed]
-    .filter((value) => value !== null && value !== undefined)
-    .reduce((sum, value) => sum + Number(value || 0), 0)
+  const singlesCount = safeCount(counts.singles, singles.total, singles.items?.length)
+  const setsCount = safeCount(counts.sets, setsPage.total, sets.length)
+  const sealedCount = safeCount(counts.sealed, sealed.total, sealed.items?.length)
+  const matchesCount = safeCount(counts.matches, matches.length)
+  const allCount = singlesCount + setsCount + sealedCount
 
   const tabs = [
     ['all', 'Todo', allCount],
-    ['singles', 'Singles', counts.singles],
-    ['sets', 'Colección', counts.sets],
-    ['sealed', 'Sellado', counts.sealed],
-    ['matches', 'Coincidencias', counts.matches],
+    ['singles', 'Cartas', singlesCount],
+    ['sets', 'Colecciones', setsCount],
+    ['sealed', 'Sellado', sealedCount],
+    ['matches', 'Coincidencias', matchesCount],
   ]
 
   const showSets = activeType === 'sets' || (activeType === 'all' && isFirstPage)
@@ -202,10 +213,12 @@ export default function FederatedSearchResults({
           <button
             key={value}
             type="button"
+            role="tab"
+            aria-selected={activeType === value}
             className={`fsr-tab ${activeType === value ? 'is-active' : ''}`}
             onClick={() => onTypeChange(value)}
           >
-            {label} <span>{tabCount(count)}</span>
+            {label} <span>{count}</span>
           </button>
         ))}
       </div>
@@ -235,6 +248,13 @@ export default function FederatedSearchResults({
         <section className="fsr-section fsr-related">
           <SearchV2Results items={matches} mode="normal" gameSlug={gameSlug} query={query} total={matches.length} />
         </section>
+      ) : null}
+
+      {activeType === 'matches' && !matches.length ? (
+        <div className="dri-soft-empty fsr-tab-empty">
+          <strong>No hay coincidencias adicionales.</strong>
+          <p>Las cartas, colecciones y productos exactos siguen disponibles en sus pestañas.</p>
+        </div>
       ) : null}
 
       <Pagination page={page} total={paginationTotal} pageSize={pageSize} onPageChange={onPageChange} />
