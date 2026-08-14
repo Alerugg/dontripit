@@ -38,50 +38,43 @@ jobs:
           elif url.startswith('postgres://'):
               url = 'postgresql://' + url[len('postgres://'):]
 
-          started = time.perf_counter()
           conn = psycopg2.connect(url, connect_timeout=20, application_name='dontripit_runtime_diag_readonly')
-          connect_ms = round((time.perf_counter() - started) * 1000, 1)
           conn.set_session(readonly=True, autocommit=False)
           with conn.cursor() as cur:
-              t0 = time.perf_counter()
-              cur.execute('SELECT 1')
-              cur.fetchone()
-              select1_ms = round((time.perf_counter() - t0) * 1000, 1)
               cur.execute("""
-                SELECT
-                  pid,
-                  application_name,
-                  state,
-                  wait_event_type,
-                  wait_event,
-                  EXTRACT(EPOCH FROM (clock_timestamp() - xact_start))::bigint AS xact_age_seconds,
-                  EXTRACT(EPOCH FROM (clock_timestamp() - query_start))::bigint AS query_age_seconds,
-                  left(regexp_replace(query, '\\s+', ' ', 'g'), 220) AS query
+                SELECT pid, state, wait_event_type, wait_event,
+                       EXTRACT(EPOCH FROM (clock_timestamp() - xact_start))::bigint,
+                       left(regexp_replace(query, '\\s+', ' ', 'g'), 220)
                 FROM pg_stat_activity
-                WHERE datname = current_database()
-                  AND pid <> pg_backend_pid()
-                  AND xact_start IS NOT NULL
+                WHERE datname=current_database() AND pid<>pg_backend_pid() AND xact_start IS NOT NULL
                 ORDER BY xact_start ASC
               """)
               sessions = [
-                  {
-                      'pid': row[0], 'application_name': row[1], 'state': row[2],
-                      'wait_event_type': row[3], 'wait_event': row[4],
-                      'xact_age_seconds': row[5], 'query_age_seconds': row[6], 'query': row[7],
-                  }
-                  for row in cur.fetchall()
+                  {'pid': r[0], 'state': r[1], 'wait_event_type': r[2], 'wait_event': r[3], 'xact_age_seconds': r[4], 'query': r[5]}
+                  for r in cur.fetchall()
               ]
+              cur.execute('SELECT max(id)::bigint FROM prints')
+              visible_max_print_id = int(cur.fetchone()[0] or 0)
+              cur.execute("SELECT pg_get_serial_sequence('prints','id')")
+              sequence_name = cur.fetchone()[0]
+              cur.execute(f'SELECT last_value::bigint FROM {sequence_name}')
+              sequence_last_value = int(cur.fetchone()[0])
               cur.execute("SELECT current_setting('neon.pageserver_connstring', true)")
               pageserver = cur.fetchone()[0]
           conn.rollback()
           conn.close()
+
+          consumed_uncommitted_estimate = max(0, sequence_last_value - visible_max_print_id)
           print(json.dumps({
               'database_writes': 0,
               'transaction_read_only': True,
-              'connect_ms_from_runner': connect_ms,
-              'select_1_ms_from_runner': select1_ms,
-              'pageserver_host_hint': pageserver,
               'active_transactions': sessions,
+              'visible_max_print_id': visible_max_print_id,
+              'prints_sequence_last_value': sequence_last_value,
+              'sequence_ids_ahead_of_visible_max': consumed_uncommitted_estimate,
+              'certified_es_target_prints': 14046,
+              'approx_es_sequence_progress_pct': round(consumed_uncommitted_estimate / 14046 * 100, 1),
+              'pageserver_host_hint': pageserver,
               'vercel_api_region_observed_separately': 'iad1',
           }, indent=2, sort_keys=True))
           PY
