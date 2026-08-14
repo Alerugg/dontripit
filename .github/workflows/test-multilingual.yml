@@ -53,7 +53,7 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test_tcgdex_multilingual.py
 
-      - name: Run ingest regression tests
+      - name: Run legacy TCGdex ingest regressions
         env:
           PYTHONPATH: .
-        run: pytest -q tests/test_ingest.py
+        run: pytest -q tests/test_ingest_engine.py -k tcgdex
