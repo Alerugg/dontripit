@@ -42,6 +42,11 @@ export default function DashboardPage() {
   const [collection, setCollection] = useState({ items: [], count: 0, known_value_eur: 0, valuation_coverage_count: 0 })
   const [wishlist, setWishlist] = useState({ items: [], count: 0 })
   const [loading, setLoading] = useState(true)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -75,12 +80,48 @@ export default function DashboardPage() {
   const selectedGameConfig = activeGames.find((game) => game.slug === selectedGame) || activeGames[0]
   const coverage = collection.count > 0 ? Math.round((Number(collection.valuation_coverage_count || 0) / Number(collection.count)) * 100) : 0
   const valueLabel = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(collection.known_value_eur || 0)
+  const canDeleteAccount = deletePassword.length > 0 && deleteConfirmation.trim().toUpperCase() === 'ELIMINAR' && !deleteBusy
 
   function submitSearch(event) {
     event.preventDefault()
     const q = searchQuery.trim()
     const destination = `/games/${selectedGame}${q ? `?q=${encodeURIComponent(q)}` : ''}#buscar`
     router.push(destination)
+  }
+
+  async function deleteAccount(event) {
+    event.preventDefault()
+    if (!canDeleteAccount) return
+    setDeleteBusy(true)
+    setDeleteError('')
+    try {
+      const response = await fetch('/api/auth/me', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: deletePassword,
+          confirmation: deleteConfirmation.trim().toUpperCase(),
+        }),
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setDeleteError(payload?.message || 'No pudimos eliminar la cuenta. Revisa la contraseña e inténtalo de nuevo.')
+        return
+      }
+      window.location.assign('/?account=deleted')
+    } catch {
+      setDeleteError('No pudimos conectar con el servicio de cuenta. Inténtalo de nuevo.')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
+  function closeDeletePanel() {
+    if (deleteBusy) return
+    setDeleteOpen(false)
+    setDeletePassword('')
+    setDeleteConfirmation('')
+    setDeleteError('')
   }
 
   return (
@@ -173,6 +214,54 @@ export default function DashboardPage() {
             </div>
           </section>
         ) : null}
+
+        <section className="ux-account-section" aria-labelledby="account-settings-title">
+          <div>
+            <span className="v4-overline"><i /> Cuenta</span>
+            <h2 id="account-settings-title">Privacidad y control de tu cuenta</h2>
+            <p>Puedes eliminar definitivamente tu cuenta y los datos asociados desde aquí.</p>
+          </div>
+          {!deleteOpen ? (
+            <button type="button" className="dri-btn dri-btn-ghost ux-danger-trigger" onClick={() => setDeleteOpen(true)}>
+              Eliminar mi cuenta
+            </button>
+          ) : (
+            <form className="ux-delete-account" onSubmit={deleteAccount}>
+              <div className="ux-delete-warning" role="note">
+                <strong>Esta acción es definitiva.</strong>
+                <p>Se eliminarán tu cuenta, sesiones, colección y wishlist. No podremos recuperar estos datos después.</p>
+              </div>
+              <label>
+                <span>Contraseña actual</span>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(event) => setDeletePassword(event.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+              <label>
+                <span>Escribe ELIMINAR para confirmar</span>
+                <input
+                  type="text"
+                  value={deleteConfirmation}
+                  onChange={(event) => setDeleteConfirmation(event.target.value)}
+                  autoComplete="off"
+                  spellCheck="false"
+                  required
+                />
+              </label>
+              {deleteError ? <p className="ux-delete-error" role="alert">{deleteError}</p> : null}
+              <div className="ux-delete-actions">
+                <button type="button" className="dri-btn dri-btn-ghost" onClick={closeDeletePanel} disabled={deleteBusy}>Cancelar</button>
+                <button type="submit" className="dri-btn ux-danger-button" disabled={!canDeleteAccount}>
+                  {deleteBusy ? 'Eliminando…' : 'Eliminar cuenta definitivamente'}
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
       </section>
     </main>
   )
