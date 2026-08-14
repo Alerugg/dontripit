@@ -78,15 +78,22 @@ test('account deletion is available in the member UI with deliberate confirmatio
   assert.match(css, /@media \(max-width: 680px\)/)
 })
 
-test('card and exact-print routes expose dynamic canonical metadata', () => {
+test('card and exact-print routes expose dynamic canonical metadata without duplicate brand suffixes', () => {
   for (const file of ['app/cards/[id]/layout.js', 'app/prints/[id]/layout.js']) {
     const layout = source(file)
     assert.match(layout, /generateMetadata/)
     assert.match(layout, /callInternalApi/)
     assert.match(layout, /alternates:\s*{ canonical }/)
     assert.match(layout, /Don’tRipIt/)
+    assert.doesNotMatch(layout, /const title = .*Don’tRipIt/)
   }
   assert.match(source('app/prints/[id]/layout.js'), /collector_number/)
+})
+
+test('card loading state never points users at a guessed game', () => {
+  const page = source('app/cards/[id]/page.js')
+  assert.match(page, /const backHref = card\?\.game \? getGameExplorerHref\(card\.game\) : '\/#games'/)
+  assert.doesNotMatch(page, /card\?\.game \|\| 'pokemon'/)
 })
 
 test('federated result tabs use explicit zero counts, readable active state and mobile scrolling', () => {
