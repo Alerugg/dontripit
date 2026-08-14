@@ -8,20 +8,43 @@ from app.ingest.connectors.tcgdex_pokemon_multilingual import (
 class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnector):
     """Multilingual Pokémon connector restricted to the physical TCG catalog.
 
-    TCGdex exposes Pokémon TCG Pocket in the same language-level cards/sets
-    endpoints. TCG Pocket is a digital game and must never be materialized as a
-    physical Don’tRipIt Print. TCGdex documents every Pocket set under the
-    ``tcgp`` series, so this writer resolves that series first and fails closed
-    if the exclusion set cannot be established.
+    TCGdex exposes Pokémon TCG Pocket in language-level cards/sets endpoints for
+    languages where the ``tcgp`` series is published. Pocket is a digital game
+    and must never be materialized as a physical Don’tRipIt Print.
+
+    The guard first discovers the language's available series. If ``tcgp`` is
+    present, its set IDs are resolved and excluded before any set detail is
+    fetched. If ``tcgp`` is not published for that language (currently true for
+    JA), there is nothing to exclude and physical ingest can continue normally.
     """
 
     def _tcg_pocket_set_ids(self, *, lang: str) -> set[str]:
         language = self._assert_certified_language(lang)
         base_url = self.base_url_template.format(lang=language)
+
+        series = self._request_json(f"{base_url}/series")
+        if not isinstance(series, list):
+            raise RuntimeError(
+                f"TCG Pocket exclusion guard failed for {language}: "
+                f"unexpected series list payload {type(series).__name__}"
+            )
+
+        available_series_ids = {
+            str(item.get("id") or "").strip()
+            for item in series
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
+        if "tcgp" not in available_series_ids:
+            self.logger.info(
+                "ingest tcgdex physical scope lang=%s tcgp_series_published=false",
+                language,
+            )
+            return set()
+
         payload = self._request_json(f"{base_url}/series/tcgp")
         if not isinstance(payload, dict):
             raise RuntimeError(
-                f"TCG Pocket exclusion guard failed for {language}: unexpected series payload"
+                f"TCG Pocket exclusion guard failed for {language}: unexpected tcgp payload"
             )
         set_ids = {
             str(item.get("id") or "").strip()
