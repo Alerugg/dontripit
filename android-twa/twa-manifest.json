@@ -27,13 +27,15 @@
       "name": "Explorar cartas",
       "shortName": "Explorar",
       "url": "/search",
-      "icon": ""
+      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192.png",
+      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192-maskable.png"
     },
     {
       "name": "Mi colección",
       "shortName": "Colección",
       "url": "/collection",
-      "icon": ""
+      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192.png",
+      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192-maskable.png"
     }
   ],
   "generatorApp": "bubblewrap-cli",
