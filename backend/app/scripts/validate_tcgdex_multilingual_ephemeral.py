@@ -48,6 +48,15 @@ def _request_json(session: requests.Session, url: str) -> Any:
 
 
 def _physical_remote(language: str) -> dict[str, Any]:
+    """Build the physical remote truth from card-bearing set identities.
+
+    TCGdex can retain stale entries in ``/sets`` whose detail endpoint is 404
+    and which have zero cards in the language-global ``/cards`` catalog. Such a
+    row is index metadata, not a physical product we can safely materialize.
+    Expected Set coverage therefore comes from physical sets actually
+    represented by at least one physical CardBrief. The full listed-set set is
+    retained in the report so stale/empty remote metadata remains auditable.
+    """
     base = TCGDEX_BASE.format(language=language)
     with requests.Session() as http:
         http.headers.update(
@@ -85,10 +94,11 @@ def _physical_remote(language: str) -> dict[str, Any]:
         for item in sets
         if isinstance(item, dict) and str(item.get("id") or "").strip()
     }
-    physical_set_ids = set_ids - pocket_set_ids
+    listed_physical_set_ids = set_ids - pocket_set_ids
     sorted_set_ids = sorted(set_ids, key=len, reverse=True)
 
     physical_card_ids: set[str] = set()
+    represented_physical_set_ids: set[str] = set()
     unresolved: list[str] = []
     for item in cards:
         if not isinstance(item, dict):
@@ -105,6 +115,7 @@ def _physical_remote(language: str) -> dict[str, Any]:
             continue
         if matched_set_id not in pocket_set_ids:
             physical_card_ids.add(card_id)
+            represented_physical_set_ids.add(matched_set_id)
 
     if unresolved:
         raise RuntimeError(
@@ -112,8 +123,11 @@ def _physical_remote(language: str) -> dict[str, Any]:
             f"count={len(unresolved)} samples={unresolved[:10]}"
         )
 
+    stale_or_empty_set_ids = listed_physical_set_ids - represented_physical_set_ids
     return {
-        "set_ids": physical_set_ids,
+        "set_ids": represented_physical_set_ids,
+        "listed_physical_set_ids": listed_physical_set_ids,
+        "stale_or_empty_set_ids": stale_or_empty_set_ids,
         "card_ids": physical_card_ids,
         "pocket_set_ids": pocket_set_ids,
         "tcgp_published": "tcgp" in series_ids,
@@ -218,9 +232,12 @@ def validate(*, snapshot_path: Path | None = None, compare_path: Path | None = N
                         f"missing={missing} extra={extra}"
                     )
                 if actual_card_ids != expected_cards:
+                    missing = sorted(expected_cards - actual_card_ids)[:25]
+                    extra = sorted(actual_card_ids - expected_cards)[:25]
                     raise RuntimeError(
                         f"{language} card identifier coverage mismatch: "
-                        f"expected={len(expected_cards)} actual={len(actual_card_ids)}"
+                        f"expected={len(expected_cards)} actual={len(actual_card_ids)} "
+                        f"missing={missing} extra={extra}"
                     )
                 if actual_set_ids != expected_sets:
                     missing = sorted(expected_sets - actual_set_ids)[:25]
@@ -255,6 +272,94 @@ def validate(*, snapshot_path: Path | None = None, compare_path: Path | None = N
                 if global_print_ids:
                     raise RuntimeError(
                         f"Safety violation: {global_print_ids} non-English prints own global tcgdex_id ({language})"
+                    )
+
+                duplicate_print_identifiers = _scalar(
+                    cur,
+                    """
+                    SELECT count(*)
+                    FROM (
+                      SELECT external_id
+                      FROM print_identifiers
+                      WHERE source = %s
+                      GROUP BY external_id
+                      HAVING count(*) > 1
+                    ) dup
+                    """,
+                    (source,),
+                )
+                duplicate_card_identifiers = _scalar(
+                    cur,
+                    """
+                    SELECT count(*)
+                    FROM (
+                      SELECT external_id
+                      FROM card_identifiers
+                      WHERE source = %s
+                      GROUP BY external_id
+                      HAVING count(*) > 1
+                    ) dup
+                    """,
+                    (source,),
+                )
+                duplicate_set_identifiers = _scalar(
+                    cur,
+                    """
+                    SELECT count(*)
+                    FROM (
+                      SELECT external_id
+                      FROM set_identifiers
+                      WHERE source = %s
+                      GROUP BY external_id
+                      HAVING count(*) > 1
+                    ) dup
+                    """,
+                    (source,),
+                )
+                duplicate_print_languages = _scalar(
+                    cur,
+                    """
+                    SELECT count(*)
+                    FROM (
+                      SELECT card_id, set_id, variant, lower(language)
+                      FROM prints
+                      WHERE lower(language) = %s
+                      GROUP BY card_id, set_id, variant, lower(language)
+                      HAVING count(*) > 1
+                    ) dup
+                    """,
+                    (language,),
+                )
+                duplicate_localizations = _scalar(
+                    cur,
+                    """
+                    SELECT count(*)
+                    FROM (
+                      SELECT print_id, language
+                      FROM print_localizations
+                      WHERE language = %s
+                      GROUP BY print_id, language
+                      HAVING count(*) > 1
+                    ) dup
+                    """,
+                    (language,),
+                )
+                if any(
+                    (
+                        duplicate_print_identifiers,
+                        duplicate_card_identifiers,
+                        duplicate_set_identifiers,
+                        duplicate_print_languages,
+                        duplicate_localizations,
+                    )
+                ):
+                    raise RuntimeError(
+                        f"{language} duplicate identity/localization rows detected: "
+                        f"print_ids={duplicate_print_identifiers} "
+                        f"card_ids={duplicate_card_identifiers} "
+                        f"set_ids={duplicate_set_identifiers} "
+                        f"prints={duplicate_print_languages} "
+                        f"localizations={duplicate_localizations}"
                     )
 
                 if language == "es":
@@ -297,7 +402,9 @@ def validate(*, snapshot_path: Path | None = None, compare_path: Path | None = N
                     )
 
                 language_reports[language] = {
-                    "expected_physical_sets": len(expected_sets),
+                    "listed_physical_sets": len(remote[language]["listed_physical_set_ids"]),
+                    "expected_card_bearing_sets": len(expected_sets),
+                    "stale_or_empty_listed_sets": sorted(remote[language]["stale_or_empty_set_ids"]),
                     "expected_physical_cards": len(expected_cards),
                     "set_identifiers": len(actual_set_ids),
                     "card_identifiers": len(actual_card_ids),
@@ -305,6 +412,11 @@ def validate(*, snapshot_path: Path | None = None, compare_path: Path | None = N
                     "prints": print_count,
                     "localizations": localization_count,
                     "global_tcgdex_print_ids": global_print_ids,
+                    "duplicate_print_identifiers": duplicate_print_identifiers,
+                    "duplicate_card_identifiers": duplicate_card_identifiers,
+                    "duplicate_set_identifiers": duplicate_set_identifiers,
+                    "duplicate_print_languages": duplicate_print_languages,
+                    "duplicate_localizations": duplicate_localizations,
                     "tcgp_published": remote[language]["tcgp_published"],
                     "tcgp_sets_excluded": len(remote[language]["pocket_set_ids"]),
                 }
