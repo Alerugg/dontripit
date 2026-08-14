@@ -295,12 +295,16 @@ def validate_after(baseline_path: Path, report_path: Path) -> dict[str, Any]:
             es_bad = _count(
                 cur,
                 "SELECT count(*) FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id "
-                "WHERE lower(p.language)='es' AND (c.tcgdex_id IS NULL OR s.tcgdex_id IS NULL)",
+                "WHERE c.game_id=%s AND lower(p.language)='es' "
+                "AND (c.tcgdex_id IS NULL OR s.tcgdex_id IS NULL)",
+                (game_id,),
             )
             ja_bad = _count(
                 cur,
                 "SELECT count(*) FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id "
-                "WHERE lower(p.language)='ja' AND (c.tcgdex_id IS NOT NULL OR s.tcgdex_id IS NOT NULL)",
+                "WHERE c.game_id=%s AND lower(p.language)='ja' "
+                "AND (c.tcgdex_id IS NOT NULL OR s.tcgdex_id IS NOT NULL)",
+                (game_id,),
             )
             if es_bad or ja_bad:
                 raise RuntimeError(f'Physical identity semantics failed: es_bad={es_bad} ja_bad={ja_bad}')
