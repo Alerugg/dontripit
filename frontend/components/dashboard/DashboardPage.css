@@ -137,6 +137,53 @@
 .ux-recent-card strong { display: block; overflow: hidden; margin-top: 8px; color: #fff; font-size: .69rem; text-overflow: ellipsis; white-space: nowrap; }
 .ux-recent-card small { display: block; margin-top: 2px; overflow: hidden; color: var(--dri-faint, #6f6978); font-size: .58rem; text-overflow: ellipsis; white-space: nowrap; }
 
+.ux-account-section {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: start;
+  gap: 28px;
+  margin-top: 82px;
+  padding-top: 28px;
+  border-top: 1px solid rgba(255,255,255,.075);
+}
+.ux-account-section h2 { margin: 8px 0 6px; font-family: var(--font-display); font-size: clamp(1.45rem, 2.5vw, 2rem); letter-spacing: -.04em; }
+.ux-account-section > div > p { max-width: 620px; margin: 0; color: var(--dri-muted, #918b9c); font-size: .74rem; line-height: 1.55; }
+.ux-danger-trigger { color: #f5b7bc; border-color: rgba(248,113,113,.18); }
+.ux-danger-trigger:hover { color: #ffd5d8; border-color: rgba(248,113,113,.34); background: rgba(248,113,113,.055); }
+
+.ux-delete-account {
+  grid-column: 1 / -1;
+  width: min(100%, 660px);
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid rgba(248,113,113,.18);
+  border-radius: 15px;
+  background: rgba(248,113,113,.035);
+}
+.ux-delete-warning { padding-bottom: 2px; }
+.ux-delete-warning strong { color: #ffc9cc; font-size: .82rem; }
+.ux-delete-warning p { margin: 5px 0 0; color: var(--dri-muted, #918b9c); font-size: .7rem; line-height: 1.5; }
+.ux-delete-account label { display: grid; gap: 6px; }
+.ux-delete-account label > span { color: var(--dri-text-soft, #c8c4d0); font-size: .66rem; font-weight: 750; }
+.ux-delete-account input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 11px;
+  outline: 0;
+  color: #fff;
+  background: #0b0a0f;
+  font: inherit;
+}
+.ux-delete-account input:focus-visible { border-color: rgba(248,113,113,.58); box-shadow: 0 0 0 3px rgba(248,113,113,.12); }
+.ux-delete-error { margin: 0; padding: 10px 12px; border-radius: 10px; color: #fecaca; background: rgba(248,113,113,.08); font-size: .7rem; line-height: 1.45; }
+.ux-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.ux-danger-button { border-color: rgba(248,113,113,.45); background: #c94751; color: #fff; }
+.ux-danger-button:hover:not(:disabled) { background: #db5963; }
+.ux-danger-button:disabled { opacity: .38; cursor: not-allowed; }
+
 @media (hover: none) {
   .ux-game-card:hover:not(.is-soon),
   .ux-recent-card:hover { transform: none; }
@@ -162,6 +209,11 @@
   .ux-section-head { align-items: flex-start; flex-direction: column; }
   .ux-game-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .ux-recent-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .ux-account-section { grid-template-columns: 1fr; gap: 16px; margin-top: 62px; }
+  .ux-danger-trigger { width: 100%; }
+  .ux-delete-account { padding: 16px; }
+  .ux-delete-actions { display: grid; grid-template-columns: 1fr; }
+  .ux-delete-actions .dri-btn { width: 100%; }
 }
 
 @media (max-width: 440px) {
