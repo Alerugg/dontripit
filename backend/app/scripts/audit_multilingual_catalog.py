@@ -17,12 +17,11 @@ OUTPUT_MD = Path("/tmp/multilingual-catalog-audit.md")
 CANONICAL_LANGUAGE_SQL = """
 CASE
   WHEN lower(trim(coalesce(p.language, ''))) IN ('en', 'eng', 'english')
-       OR lower(trim(coalesce(p.language, ''))) LIKE 'en[_-]%' THEN 'en'
+       OR lower(trim(coalesce(p.language, ''))) ~ '^en[_-]' THEN 'en'
   WHEN lower(trim(coalesce(p.language, ''))) IN ('es', 'spa', 'spanish', 'español')
-       OR lower(trim(coalesce(p.language, ''))) LIKE 'es[_-]%' THEN 'es'
+       OR lower(trim(coalesce(p.language, ''))) ~ '^es[_-]' THEN 'es'
   WHEN lower(trim(coalesce(p.language, ''))) IN ('ja', 'jp', 'jpn', 'japanese', '日本語')
-       OR lower(trim(coalesce(p.language, ''))) LIKE 'ja[_-]%'
-       OR lower(trim(coalesce(p.language, ''))) LIKE 'jp[_-]%' THEN 'ja'
+       OR lower(trim(coalesce(p.language, ''))) ~ '^(ja|jp)[_-]' THEN 'ja'
   WHEN nullif(trim(coalesce(p.language, '')), '') IS NULL THEN 'unknown'
   ELSE lower(trim(p.language))
 END
@@ -30,7 +29,10 @@ END
 
 
 def _fetch_all(cur, sql: str, params=None) -> list[dict]:
-    cur.execute(sql, params or ())
+    if params is None:
+        cur.execute(sql)
+    else:
+        cur.execute(sql, params)
     return [dict(row) for row in cur.fetchall()]
 
 
