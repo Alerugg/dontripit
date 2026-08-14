@@ -5,6 +5,7 @@ from app.auth.service import hash_api_key
 from app.ingest.base import IngestStats
 from app.ingest.connectors.tcgdex_pokemon_multilingual import MultilingualTcgdexPokemonConnector
 from app.models import ApiKey, ApiPlan, Card, Print
+from app.multilingual_models import CardIdentifier
 
 
 def _auth_headers(key: str = "multilingual-api-key") -> dict[str, str]:
@@ -34,19 +35,27 @@ def _auth_headers(key: str = "multilingual-api-key") -> dict[str, str]:
     return {"X-API-Key": key}
 
 
-def _raw_card(*, language: str, set_name: str, card_name: str) -> dict:
+def _raw_card(
+    *,
+    language: str,
+    set_id: str,
+    set_name: str,
+    card_id: str,
+    card_name: str,
+    local_id: str,
+) -> dict:
     return {
         "_language": language,
         "set": {
-            "id": "sv-api",
-            "abbreviation": "SVAPI",
+            "id": set_id,
+            "abbreviation": set_id,
             "name": set_name,
             "releaseDate": "2026-08-14",
         },
-        "id": "sv-api-001",
-        "localId": "001",
+        "id": card_id,
+        "localId": local_id,
         "name": card_name,
-        "image": f"https://assets.tcgdex.net/{language}/sv/sv-api/001",
+        "image": f"https://assets.tcgdex.net/{language}/{set_id}/{local_id}",
         "hp": 120,
         "stage": "Basic",
         "types": ["Fire"],
@@ -56,11 +65,33 @@ def _raw_card(*, language: str, set_name: str, card_name: str) -> dict:
     }
 
 
-def _seed_multilingual_pokemon() -> tuple[int, dict[str, int]]:
+def _seed_multilingual_pokemon() -> dict[str, int]:
     connector = MultilingualTcgdexPokemonConnector()
     records = [
-        _raw_card(language="en", set_name="Scarlet & Violet API", card_name="Charizard"),
-        _raw_card(language="ja", set_name="スカーレット＆バイオレット API", card_name="リザードン"),
+        _raw_card(
+            language="en",
+            set_id="neo4",
+            set_name="Neo Destiny",
+            card_id="neo4-100",
+            card_name="Lucky Stadium",
+            local_id="100",
+        ),
+        _raw_card(
+            language="es",
+            set_id="neo4",
+            set_name="Neo Destiny ES",
+            card_id="neo4-100",
+            card_name="Estadio Afortunado",
+            local_id="100",
+        ),
+        _raw_card(
+            language="ja",
+            set_id="neo4",
+            set_name="闇、そして光へ...",
+            card_id="neo4-100",
+            card_name="ビルからのメール",
+            local_id="100",
+        ),
     ]
     with db.SessionLocal() as session:
         for raw in records:
@@ -75,72 +106,108 @@ def _seed_multilingual_pokemon() -> tuple[int, dict[str, int]]:
             )
         session.commit()
 
-        card = session.execute(
-            select(Card).where(Card.tcgdex_id == "sv-api-001")
+        english_card = session.execute(
+            select(Card).where(Card.tcgdex_id == "neo4-100")
         ).scalar_one()
-        prints = session.execute(
-            select(Print).where(Print.card_id == card.id)
+        japanese_identifier = session.execute(
+            select(CardIdentifier).where(
+                CardIdentifier.source == "tcgdex:ja",
+                CardIdentifier.external_id == "neo4-100",
+            )
+        ).scalar_one()
+        japanese_card = session.get(Card, japanese_identifier.card_id)
+        assert japanese_card is not None
+
+        english_prints = session.execute(
+            select(Print).where(Print.card_id == english_card.id)
         ).scalars().all()
-        return card.id, {row.language: row.id for row in prints}
+        japanese_print = session.execute(
+            select(Print).where(Print.card_id == japanese_card.id)
+        ).scalar_one()
+        by_language = {row.language: row.id for row in english_prints}
+        return {
+            "en_card_id": english_card.id,
+            "ja_card_id": japanese_card.id,
+            "en_print_id": by_language["en"],
+            "es_print_id": by_language["es"],
+            "ja_print_id": japanese_print.id,
+        }
 
 
-def test_print_list_exposes_localized_display_fields_without_replacing_canonical_names(client):
-    card_id, print_ids = _seed_multilingual_pokemon()
+def test_print_list_exposes_overlay_and_regional_display_fields(client):
+    seeded = _seed_multilingual_pokemon()
 
     response = client.get(
-        f"/api/v1/prints?game=pokemon&card_id={card_id}",
+        "/api/v1/prints?game=pokemon",
         headers=_auth_headers(),
     )
     assert response.status_code == 200
     items = response.get_json()
     assert isinstance(items, list)
-    by_language = {item["language"]: item for item in items}
+    by_id = {int(item["id"]): item for item in items}
 
-    en = by_language["en"]
-    ja = by_language["ja"]
-    assert int(en["id"]) == print_ids["en"]
-    assert int(ja["id"]) == print_ids["ja"]
+    en = by_id[seeded["en_print_id"]]
+    es = by_id[seeded["es_print_id"]]
+    ja = by_id[seeded["ja_print_id"]]
 
-    assert en["card_name"] == "Charizard"
-    assert en["set_name"] == "Scarlet & Violet API"
-    assert en["localized_card_name"] == "Charizard"
-    assert en["localized_set_name"] == "Scarlet & Violet API"
-    assert en["display_name"] == "Charizard"
+    assert en["card_name"] == "Lucky Stadium"
+    assert en["set_name"] == "Neo Destiny"
+    assert en["localized_card_name"] == "Lucky Stadium"
+    assert en["display_name"] == "Lucky Stadium"
 
-    # Canonical identity remains English/current while display fields are localized.
-    assert ja["card_name"] == "Charizard"
-    assert ja["set_name"] == "Scarlet & Violet API"
-    assert ja["localized_card_name"] == "リザードン"
-    assert ja["localized_set_name"] == "スカーレット＆バイオレット API"
-    assert ja["display_name"] == "リザードン"
-    assert ja["display_set_name"] == "スカーレット＆バイオレット API"
+    # ES is an overlay on the English logical card/set identity.
+    assert es["card_name"] == "Lucky Stadium"
+    assert es["set_name"] == "Neo Destiny"
+    assert es["localized_card_name"] == "Estadio Afortunado"
+    assert es["localized_set_name"] == "Neo Destiny ES"
+    assert es["display_name"] == "Estadio Afortunado"
+
+    # JA is a separate physical catalog, so its canonical row is Japanese too.
+    assert ja["card_name"] == "ビルからのメール"
+    assert ja["set_name"] == "闇、そして光へ..."
+    assert ja["localized_card_name"] == "ビルからのメール"
+    assert ja["localized_set_name"] == "闇、そして光へ..."
+    assert ja["display_name"] == "ビルからのメール"
 
 
-def test_card_detail_and_print_resolve_are_additively_localized(client):
-    card_id, print_ids = _seed_multilingual_pokemon()
+def test_card_detail_and_print_resolve_preserve_japanese_regional_identity(client):
+    seeded = _seed_multilingual_pokemon()
     headers = _auth_headers("resolve-multilingual-key")
 
-    detail_response = client.get(f"/api/v1/cards/{card_id}", headers=headers)
-    assert detail_response.status_code == 200
-    detail = detail_response.get_json()
-    # Logical Card identity is intentionally canonical and remains unchanged.
-    assert detail["name"] == "Charizard"
-    ja_detail = next(item for item in detail["prints"] if item["language"] == "ja")
-    assert ja_detail["set_name"] == "Scarlet & Violet API"
-    assert ja_detail["localized_card_name"] == "リザードン"
-    assert ja_detail["display_name"] == "リザードン"
+    en_detail_response = client.get(
+        f"/api/v1/cards/{seeded['en_card_id']}", headers=headers
+    )
+    assert en_detail_response.status_code == 200
+    en_detail = en_detail_response.get_json()
+    assert en_detail["name"] == "Lucky Stadium"
+    es_detail = next(
+        item for item in en_detail["prints"] if item["language"] == "es"
+    )
+    assert es_detail["card_name"] == "Lucky Stadium"
+    assert es_detail["localized_card_name"] == "Estadio Afortunado"
+    assert es_detail["display_name"] == "Estadio Afortunado"
+
+    ja_detail_response = client.get(
+        f"/api/v1/cards/{seeded['ja_card_id']}", headers=headers
+    )
+    assert ja_detail_response.status_code == 200
+    ja_detail = ja_detail_response.get_json()
+    assert ja_detail["name"] == "ビルからのメール"
+    ja_print = ja_detail["prints"][0]
+    assert ja_print["language"] == "ja"
+    assert ja_print["card_name"] == "ビルからのメール"
+    assert ja_print["display_name"] == "ビルからのメール"
 
     resolve_response = client.post(
         "/api/v1/prints/resolve",
-        json={"print_id": str(print_ids["ja"])},
+        json={"print_id": str(seeded["ja_print_id"])},
         headers=headers,
     )
     assert resolve_response.status_code == 200
     resolved = resolve_response.get_json()["prints"][0]
     assert resolved["found"] is True
     catalog = resolved["catalog"]
-    assert catalog["card_name"] == "Charizard"
-    assert catalog["set_name"] == "Scarlet & Violet API"
-    assert catalog["localized_card_name"] == "リザードン"
-    assert catalog["localized_set_name"] == "スカーレット＆バイオレット API"
-    assert catalog["display_name"] == "リザードン"
+    assert catalog["card_name"] == "ビルからのメール"
+    assert catalog["set_name"] == "闇、そして光へ..."
+    assert catalog["localized_card_name"] == "ビルからのメール"
+    assert catalog["display_name"] == "ビルからのメール"
