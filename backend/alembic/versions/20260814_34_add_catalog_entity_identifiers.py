@@ -63,10 +63,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        # A canonical gameplay Card may have multiple source IDs when the same
+        # card is reprinted. The source/external pair is the authoritative
+        # identity; many such aliases may intentionally point at one Card.
         sa.UniqueConstraint(
             "source", "external_id", name="uq_card_identifier_source_external"
         ),
-        sa.UniqueConstraint("card_id", "source", name="uq_card_identifier_card_source"),
     )
     op.create_index("ix_card_identifiers_card_id", "card_identifiers", ["card_id"])
     op.create_index("ix_card_identifiers_source", "card_identifiers", ["source"])
