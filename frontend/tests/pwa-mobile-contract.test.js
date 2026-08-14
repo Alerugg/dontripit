@@ -28,6 +28,7 @@ test('service worker never caches private account or API traffic', () => {
   }
   assert.match(sw, /request\.mode === 'navigate'/)
   assert.match(sw, /offline\.html/)
+  assert.match(sw, /APP_SHELL_PATHS/)
   assert.doesNotMatch(sw, /caches\.put\(request/)
 })
 
@@ -50,7 +51,7 @@ test('root layout wires manifest, standalone metadata and service worker bootstr
   assert.match(bootstrap, /window\.isSecureContext/)
 })
 
-test('install prompt only renders after browser installability signal', () => {
+test('install UX supports browser prompt on Android and explicit Safari guidance on iPhone', () => {
   const install = source('components/pwa/InstallAppPrompt.js')
   const home = source('components/home/PublicHome.js')
   const css = source('app/pwa.css')
@@ -58,9 +59,14 @@ test('install prompt only renders after browser installability signal', () => {
   assert.match(install, /event\.preventDefault\(\)/)
   assert.match(install, /installEvent\.prompt\(\)/)
   assert.match(install, /appinstalled/)
-  assert.match(install, /if \(installed \|\| !installEvent\) return null/)
+  assert.match(install, /if \(installed\) return null/)
+  assert.match(install, /isAppleMobileWeb/)
+  assert.match(install, /iPhone\|iPad\|iPod/)
+  assert.match(install, /Añadir a pantalla de inicio/)
+  assert.match(install, /Abrir como app web/)
   assert.match(home, /<InstallAppPrompt compact \/>/)
   assert.match(css, /\.pwa-install-action/)
+  assert.match(css, /\.pwa-ios-install/)
   assert.match(css, /display-mode: standalone/)
 })
 
