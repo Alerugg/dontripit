@@ -1,14 +1,13 @@
-name: TCGdex Multilingual Ephemeral Certification
+name: TCGdex Multilingual Bulk Ephemeral Certification
 
 on:
   push:
     branches:
-      - multilingual-v1
+      - multilingual-bulk-rollout
     paths:
+      - "backend/app/scripts/bulk_tcgdex_multilingual_backfill.py"
       - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
       - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py"
-      - "backend/app/ingest/registry.py"
-      - "backend/app/multilingual_models.py"
       - "backend/app/scripts/seed_multilingual_ephemeral_catalog.py"
       - "backend/app/scripts/validate_tcgdex_multilingual_ephemeral.py"
       - "backend/alembic/versions/20260814_33_add_print_localizations.py"
@@ -20,13 +19,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: tcgdex-multilingual-ephemeral-${{ github.ref }}
+  group: tcgdex-multilingual-bulk-ephemeral-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   certify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
@@ -44,8 +43,9 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
     steps:
-      - name: Checkout multilingual sandbox
+      - name: Checkout bulk sandbox
         uses: actions/checkout@v4
 
       - name: Set up Python 3.12
@@ -58,9 +58,10 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Compile certification code
+      - name: Compile bulk certification code
         run: |
           python -m py_compile \
+            app/scripts/bulk_tcgdex_multilingual_backfill.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
             app/scripts/seed_multilingual_ephemeral_catalog.py \
@@ -79,73 +80,62 @@ jobs:
           EPHEMERAL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
         run: python app/scripts/seed_multilingual_ephemeral_catalog.py
 
-      - name: Assert writer has no production credential in environment
+      - name: Assert bulk writer has no production credential
         env:
-          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
         run: |
           test -z "${PRODUCTION_DATABASE_URL:-}"
           test -z "${PRODUCTION_DATABASE_URL_UNPOOLED:-}"
           python - <<'PY'
           import os
-          value = os.environ["DATABASE_URL"]
-          assert "localhost:5432/multilingual_ephemeral" in value, value
-          print("writer target guard: ephemeral only")
+          value = os.environ['DATABASE_URL']
+          assert 'localhost:5432/multilingual_ephemeral' in value, value
+          print('bulk writer target guard: ephemeral only')
           PY
 
-      - name: Run full Spanish physical writer against ephemeral DB
+      - name: Run transactional bulk ES JA writer against ephemeral DB
         env:
-          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
           PYTHONPATH: .
           INGEST_LOG_LEVEL: WARNING
-        run: python -m app.ingest.run tcgdex_pokemon --lang es --incremental false
-
-      - name: Run full Japanese physical writer against ephemeral DB
-        env:
-          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
-          PYTHONPATH: .
-          INGEST_LOG_LEVEL: WARNING
-        run: python -m app.ingest.run tcgdex_pokemon --lang ja --incremental false
+        run: python -m app.scripts.bulk_tcgdex_multilingual_backfill
 
       - name: Validate exact live ES JA coverage and canonical immutability
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
           PYTHONPATH: .
-        run: python app/scripts/validate_tcgdex_multilingual_ephemeral.py --snapshot /tmp/multilingual-first-pass.json
+        run: python app/scripts/validate_tcgdex_multilingual_ephemeral.py --snapshot /tmp/multilingual-bulk-pass.json
 
-      - name: Rerun Spanish incrementally for idempotency
-        env:
-          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
-          PYTHONPATH: .
-          INGEST_LOG_LEVEL: WARNING
-        run: python -m app.ingest.run tcgdex_pokemon --lang es --incremental true
-
-      - name: Rerun Japanese incrementally for idempotency
-        env:
-          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
-          PYTHONPATH: .
-          INGEST_LOG_LEVEL: WARNING
-        run: python -m app.ingest.run tcgdex_pokemon --lang ja --incremental true
-
-      - name: Certify idempotent catalog state
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
-          PYTHONPATH: .
-        run: python app/scripts/validate_tcgdex_multilingual_ephemeral.py --compare /tmp/multilingual-first-pass.json
+      - name: Gate certified bulk output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/tcgdex-multilingual-bulk-report.json').read_text())
+          assert report['status'] == 'pass', report
+          assert report['mode'] == 'single-transaction-bulk-es-ja', report
+          assert report['es_written']['prints'] == 14046, report
+          assert report['ja_written']['prints'] == 8159, report
+          assert report['final']['totals'] == {'sets': 273, 'cards': 29224, 'prints': 22205}, report
+          assert report['final']['language_counts'] == {'es': 14046, 'ja': 8159}, report
+          assert report['database_transaction_seconds'] < 180, report
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
 
       - name: Publish certification summary
         if: always()
         run: |
           {
-            echo "# TCGdex multilingual ephemeral certification"
+            echo "# TCGdex multilingual bulk ephemeral certification"
             echo
-            echo "- Production access: read-only canonical seed only (games, sets, cards)."
+            echo "- Production access: read-only canonical seed only."
             echo "- Writer target: ephemeral PostgreSQL only."
-            echo "- Languages executed: ES + JA."
-            echo "- Pocket scope: excluded by physical writer guard when tcgp is published."
+            echo "- ES + JA: one database transaction."
+            echo "- Pocket/stale-empty scope: physical writer policy."
             echo
-            if [ -f /tmp/pokemon-multilingual-ephemeral-validation.json ]; then
+            if [ -f /tmp/tcgdex-multilingual-bulk-report.json ]; then
               echo '```json'
-              cat /tmp/pokemon-multilingual-ephemeral-validation.json
+              cat /tmp/tcgdex-multilingual-bulk-report.json
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -154,10 +144,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tcgdex-multilingual-ephemeral-${{ github.run_id }}
+          name: tcgdex-multilingual-bulk-ephemeral-${{ github.run_id }}
           path: |
             /tmp/pokemon-multilingual-ephemeral-baseline.json
-            /tmp/multilingual-first-pass.json
+            /tmp/tcgdex-multilingual-bulk-report.json
+            /tmp/multilingual-bulk-pass.json
             /tmp/pokemon-multilingual-ephemeral-validation.json
           if-no-files-found: warn
           retention-days: 90
