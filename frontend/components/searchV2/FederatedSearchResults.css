@@ -38,25 +38,46 @@
 }
 
 .fsr-tab {
+  min-height: 44px;
   border: 1px solid var(--line, rgba(255, 255, 255, .14));
   border-radius: 999px;
-  background: transparent;
-  color: inherit;
-  padding: 10px 14px;
+  background: rgba(255, 255, 255, .018);
+  color: var(--text, #f7f5fb);
+  padding: 10px 15px;
   cursor: pointer;
   font: inherit;
-  font-weight: 700;
+  font-weight: 760;
+  white-space: nowrap;
+  transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease;
+}
+
+.fsr-tab:hover:not(.is-active) {
+  border-color: rgba(255, 255, 255, .25);
+  background: rgba(255, 255, 255, .045);
 }
 
 .fsr-tab span {
   margin-left: 5px;
+  color: inherit;
   opacity: .62;
+  font-variant-numeric: tabular-nums;
 }
 
 .fsr-tab.is-active {
-  background: var(--text, #111);
-  color: var(--bg, #fff);
-  border-color: transparent;
+  background: #f4f1ff;
+  color: #17131f;
+  border-color: #f4f1ff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+}
+
+.fsr-tab.is-active span {
+  color: #655e70;
+  opacity: 1;
+}
+
+.fsr-tab:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--game-accent, #8b7cff) 60%, white);
+  outline-offset: 3px;
 }
 
 .fsr-section {
@@ -79,6 +100,7 @@
 .fsr-section-head > span {
   font-weight: 800;
   opacity: .64;
+  font-variant-numeric: tabular-nums;
 }
 
 .fsr-set-grid {
@@ -224,7 +246,32 @@
   border-top: 1px solid var(--line, rgba(255, 255, 255, .1));
 }
 
+.fsr-tab-empty {
+  margin-top: -4px;
+}
+
 @media (max-width: 720px) {
+  .fsr-tabs {
+    flex-wrap: nowrap;
+    width: calc(100% + 24px);
+    margin-right: -12px;
+    margin-left: -12px;
+    padding: 2px 12px 8px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .fsr-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .fsr-tab {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
   .fsr-intent,
   .fsr-set-card,
   .fsr-sealed-card {
@@ -251,6 +298,24 @@
   }
 
   .fsr-pagination {
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .fsr-pagination > span {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    text-align: center;
+  }
+
+  .fsr-pagination .dri-btn {
+    width: 100%;
+  }
+}
+
+@media (hover: none) {
+  .fsr-tab:hover:not(.is-active) {
+    transform: none;
   }
 }
