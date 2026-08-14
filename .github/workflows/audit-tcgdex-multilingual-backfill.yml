@@ -1,4 +1,4 @@
-name: Audit TCGdex Multilingual Backfill
+name: Audit TCGdex Multilingual Physical Backfill
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - multilingual-v1
     paths:
       - "backend/app/scripts/audit_tcgdex_multilingual_backfill.py"
+      - "backend/app/scripts/audit_tcgdex_multilingual_backfill_physical.py"
       - ".github/workflows/audit-tcgdex-multilingual-backfill.yml"
   workflow_dispatch:
 
@@ -38,26 +39,29 @@ jobs:
       - name: Install audit dependencies only
         run: pip install psycopg2-binary==2.9.9 requests==2.32.3
 
-      - name: Compile dry-run auditor
-        run: python -m py_compile app/scripts/audit_tcgdex_multilingual_backfill.py
+      - name: Compile physical dry-run auditor
+        run: |
+          python -m py_compile \
+            app/scripts/audit_tcgdex_multilingual_backfill.py \
+            app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
-      - name: Run strict read-only backfill plan
-        run: python app/scripts/audit_tcgdex_multilingual_backfill.py
+      - name: Run strict read-only physical backfill plan
+        run: python app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
-      - name: Publish dry-run summary
+      - name: Publish physical dry-run summary
         if: always()
         run: |
-          if [ -f /tmp/tcgdex-multilingual-backfill-audit.md ]; then
-            cat /tmp/tcgdex-multilingual-backfill-audit.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f /tmp/tcgdex-multilingual-physical-backfill-audit.md ]; then
+            cat /tmp/tcgdex-multilingual-physical-backfill-audit.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload dry-run evidence
+      - name: Upload physical dry-run evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tcgdex-multilingual-backfill-audit-${{ github.run_id }}
+          name: tcgdex-multilingual-physical-backfill-audit-${{ github.run_id }}
           path: |
-            /tmp/tcgdex-multilingual-backfill-audit.json
-            /tmp/tcgdex-multilingual-backfill-audit.md
+            /tmp/tcgdex-multilingual-physical-backfill-audit.json
+            /tmp/tcgdex-multilingual-physical-backfill-audit.md
           if-no-files-found: warn
           retention-days: 90
