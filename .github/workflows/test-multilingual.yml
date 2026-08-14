@@ -1,0 +1,59 @@
+name: Multilingual catalog gates
+
+on:
+  push:
+    branches:
+      - multilingual-v1
+    paths:
+      - "backend/app/multilingual_models.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
+      - "backend/app/ingest/registry.py"
+      - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - "backend/tests/test_tcgdex_multilingual.py"
+      - ".github/workflows/test-multilingual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multilingual-catalog-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile multilingual modules
+        run: |
+          python -m py_compile \
+            app/multilingual_models.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/registry.py \
+            alembic/versions/20260814_33_add_print_localizations.py
+
+      - name: Run focused multilingual tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_tcgdex_multilingual.py
+
+      - name: Run ingest regression tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_ingest.py
