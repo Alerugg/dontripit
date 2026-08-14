@@ -33,6 +33,9 @@ const requiredFiles = [
   'android-twa/play/console-values.json',
   'android-twa/play/release-notes-es-ES.txt',
   'android-twa/play/store-assets-checklist.md',
+  'android-twa/play/reviewer-access-template.md',
+  'android-twa/fastlane/Appfile',
+  'android-twa/fastlane/Fastfile',
   'android-twa/fastlane/metadata/android/es-ES/title.txt',
   'android-twa/fastlane/metadata/android/es-ES/short_description.txt',
   'android-twa/fastlane/metadata/android/es-ES/full_description.txt',
@@ -79,6 +82,14 @@ for (const secret of [
 }
 assert(releaseWorkflow.includes('targetSdkVersion'), 'Signed release workflow must verify target SDK')
 assert(releaseWorkflow.includes('app-release-bundle.aab'), 'Signed release workflow must produce an AAB')
+
+const fastlaneAppfile = read('android-twa/fastlane/Appfile')
+const fastlane = read('android-twa/fastlane/Fastfile')
+assert(fastlaneAppfile.includes('com.dontripit.app'), 'Fastlane Appfile package identity mismatch')
+assert(fastlane.includes("track: 'internal'"), 'Fastlane must target Internal Testing by default')
+assert(fastlane.includes('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON'), 'Fastlane must receive Play credentials only at runtime')
+assert(fastlane.includes('PLAY_AAB_PATH'), 'Fastlane must receive the approved AAB path at runtime')
+assert(!fastlane.includes('private_key'), 'Fastlane configuration must not embed private credential material')
 
 const deletionPage = read('frontend/app/delete-account/page.js')
 const dashboard = read('frontend/components/dashboard/DashboardPage.js')
@@ -137,6 +148,10 @@ const docs = [
   read('docs/google-play-app-content-checklist.md'),
 ]
 assert(docs.every((text) => text.includes('com.dontripit.app')), 'Every Play submission draft must identify the package')
+
+const reviewerTemplate = read('android-twa/play/reviewer-access-template.md')
+assert(reviewerTemplate.includes('[PLAY_CONSOLE_PROTECTED_FIELD]'), 'Reviewer template must not contain live credentials')
+assert(!/@[^\s`]+\.[a-z]{2,}/i.test(reviewerTemplate.replace('dontripit.com', '')), 'Reviewer template appears to contain an email; keep credentials out of Git')
 
 const externalBlockers = []
 if (consoleValues.signing.playAppSigningCertificateSha256.includes('REQUIRED_')) {
