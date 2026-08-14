@@ -10,7 +10,7 @@ const ITEMS = [
   { href: '/dashboard', label: 'Cuenta', icon: '○' },
 ]
 
-const HIDDEN_PREFIXES = ['/login', '/register', '/forgot-password', '/reset-password']
+const HIDDEN_PREFIXES = ['/login', '/register', '/forgot-password', '/reset-password', '/delete-account']
 
 export default function StandaloneNav() {
   const pathname = usePathname() || '/'
