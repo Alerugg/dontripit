@@ -17,6 +17,7 @@ on:
       - "backend/tests/test_tcgdex_multilingual.py"
       - "backend/tests/test_tcgdex_multilingual_api.py"
       - "backend/tests/test_tcgdex_physical_scope.py"
+      - "backend/tests/test_ingest_engine.py"
       - "backend/tests/test_exact_print_output.py"
       - ".github/workflows/test-multilingual.yml"
   workflow_dispatch:
