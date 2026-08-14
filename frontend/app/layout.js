@@ -19,8 +19,11 @@ export const metadata = {
   category: 'collectibles',
   manifest: '/manifest.webmanifest',
   icons: {
-    icon: [{ url: '/icons/dontripit-app.svg', type: 'image/svg+xml' }],
-    apple: [{ url: '/icons/dontripit-app.svg', type: 'image/svg+xml' }],
+    icon: [
+      { url: '/icons/dontripit-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/dontripit-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/icons/dontripit-192.png', sizes: '192x192', type: 'image/png' }],
   },
   appleWebApp: {
     capable: true,
