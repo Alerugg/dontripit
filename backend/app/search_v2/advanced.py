@@ -177,14 +177,10 @@ def advanced_onepiece_search(
         lo, hi = _range(value)
         if lo is not None:
             params[f"{key}_min"] = lo
-            where.append(
-                f"NULLIF(psp.attributes_json ->> '{key}', '')::integer >= :{key}_min"
-            )
+            where.append(f"NULLIF(psp.attributes_json ->> '{key}', '')::integer >= :{key}_min")
         if hi is not None:
             params[f"{key}_max"] = hi
-            where.append(
-                f"NULLIF(psp.attributes_json ->> '{key}', '')::integer <= :{key}_max"
-            )
+            where.append(f"NULLIF(psp.attributes_json ->> '{key}', '')::integer <= :{key}_max")
 
     for input_key, json_key in (
         ("promo", "is_promo"),
@@ -194,9 +190,7 @@ def advanced_onepiece_search(
         value = filters.pop(input_key, None)
         if value is not None:
             params[input_key] = _bool(value)
-            where.append(
-                f"COALESCE((psp.attributes_json ->> '{json_key}')::boolean, false) = :{input_key}"
-            )
+            where.append(f"COALESCE((psp.attributes_json ->> '{json_key}')::boolean, false) = :{input_key}")
 
     if filters:
         raise ValueError(f"Unsupported advanced filters: {sorted(filters)}")
@@ -205,20 +199,30 @@ def advanced_onepiece_search(
     if has_price:
         where.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(where)
-    base_from = f"""
+    core_from = """
       FROM print_search_profiles psp
       JOIN prints p ON p.id = psp.print_id
       JOIN cards c ON c.id = psp.card_id
       JOIN sets s ON s.id = p.set_id
       JOIN games g ON g.id = psp.game_id
+    """
+    base_from = f"""
+      {core_from}
       {market_join}
     """
     order_sql = print_order_sql(
         sort,
         default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, CASE WHEN psp.exact_variant='default' THEN 0 ELSE 1 END, psp.exact_variant ASC, psp.print_id ASC",
     )
+
+    # The count only needs Cardmarket when price eligibility is itself a filter.
+    # Previously every ordinary search paid the full per-print LATERAL market
+    # lookup twice: once for COUNT(*) and again for the displayed result page.
+    # Keeping the result join preserves exact price/link output while making the
+    # common unpriced count operate only on the search profile + identity tables.
+    count_from = base_from if has_price else core_from
     total = int(
-        session.execute(text(f"SELECT COUNT(*) {base_from} WHERE {where_sql}"), params).scalar_one() or 0
+        session.execute(text(f"SELECT COUNT(*) {count_from} WHERE {where_sql}"), params).scalar_one() or 0
     )
 
     sql = text(
