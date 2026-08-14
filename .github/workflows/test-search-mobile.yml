@@ -1,0 +1,29 @@
+name: Search mobile layout gates
+
+on:
+  push:
+    branches:
+      - iphone-search-layout-v2
+    paths:
+      - 'frontend/components/searchV2/SearchV2Results.js'
+      - 'frontend/components/searchV2/SearchV2Polish.css'
+      - 'frontend/tests/search-v2-mobile-contract.test.js'
+      - '.github/workflows/test-search-mobile.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run iPhone search layout contract
+        run: node --test tests/search-v2-mobile-contract.test.js
