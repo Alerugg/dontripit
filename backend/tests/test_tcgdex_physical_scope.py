@@ -191,6 +191,47 @@ def test_listed_set_with_404_detail_recovers_cards_from_global_card_list():
     assert connector.calls.count(f"{base}/cards") == 1
 
 
+def test_full_load_skips_listed_404_set_proven_empty_by_global_cards():
+    base = "https://api.tcgdex.net/v2/ja"
+    ghost_url = f"{base}/sets/SM1+"
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "sm", "name": "Sun & Moon"}],
+            f"{base}/sets": [
+                {"id": "SM1+", "name": "強化拡張パック サン&ムーン"},
+                {"id": "SM2K", "name": "キミを待つ島々"},
+            ],
+            ghost_url: _not_found(ghost_url),
+            f"{base}/cards": [
+                {
+                    "id": "SM2K-001",
+                    "localId": "001",
+                    "name": "Other set card",
+                    "image": "https://assets.tcgdex.net/ja/sm/SM2K/001",
+                }
+            ],
+            f"{base}/sets/SM2K": {
+                "id": "SM2K",
+                "name": "キミを待つ島々",
+                "cards": [
+                    {
+                        "id": "SM2K-001",
+                        "localId": "001",
+                        "name": "Other set card",
+                        "image": "https://assets.tcgdex.net/ja/sm/SM2K/001",
+                    }
+                ],
+            },
+        }
+    )
+
+    rows = connector._load_remote(lang="ja")
+
+    assert [row["id"] for row in rows] == ["SM2K-001"]
+    assert all(row["set"]["id"] != "SM1+" for row in rows)
+    assert connector.calls.count(f"{base}/cards") == 1
+
+
 def test_explicit_listed_set_with_404_detail_uses_same_recovery_path():
     base = "https://api.tcgdex.net/v2/ja"
     broken_url = f"{base}/sets/SM1+"
@@ -211,6 +252,22 @@ def test_explicit_listed_set_with_404_detail_uses_same_recovery_path():
     assert len(rows) == 1
     assert rows[0]["id"] == "SM1+-001"
     assert rows[0]["set"]["id"] == "SM1+"
+
+
+def test_explicit_listed_404_set_with_no_global_cards_stays_fail_closed():
+    base = "https://api.tcgdex.net/v2/ja"
+    ghost_url = f"{base}/sets/SM1+"
+    connector = FakePhysicalConnector(
+        {
+            f"{base}/series": [{"id": "sm", "name": "Sun & Moon"}],
+            ghost_url: _not_found(ghost_url),
+            f"{base}/sets": [{"id": "SM1+", "name": "強化拡張パック サン&ムーン"}],
+            f"{base}/cards": [],
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="no cards can be recovered"):
+        connector._load_remote(set_id="SM1+", lang="ja")
 
 
 def test_registry_uses_physical_only_tcgdex_writer():
