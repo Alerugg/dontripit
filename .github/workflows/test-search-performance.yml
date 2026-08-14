@@ -3,7 +3,7 @@ name: Search performance gates
 on:
   push:
     branches:
-      - search-performance-v2
+      - search-performance-v3
     paths:
       - 'frontend/app/api/search-v2/**'
       - 'frontend/lib/searchV2/**'
