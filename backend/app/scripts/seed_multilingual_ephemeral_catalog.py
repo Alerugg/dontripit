@@ -82,10 +82,15 @@ def _reset_sequence(cur, table: str) -> None:
 
 
 def main() -> int:
-    production_url = os.getenv("PRODUCTION_DATABASE_URL")
+    production_url = os.getenv("PRODUCTION_DATABASE_URL_UNPOOLED") or os.getenv(
+        "PRODUCTION_DATABASE_URL"
+    )
     target_url = os.getenv("EPHEMERAL_DATABASE_URL")
     if not production_url or not target_url:
-        raise RuntimeError("PRODUCTION_DATABASE_URL and EPHEMERAL_DATABASE_URL are required")
+        raise RuntimeError(
+            "PRODUCTION_DATABASE_URL_UNPOOLED/PRODUCTION_DATABASE_URL and "
+            "EPHEMERAL_DATABASE_URL are required"
+        )
     if production_url == target_url:
         raise RuntimeError("Safety guard: production and ephemeral database URLs must differ")
 
