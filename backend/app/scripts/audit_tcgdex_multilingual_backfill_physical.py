@@ -112,6 +112,77 @@ def _physical_remote_catalog(language: str) -> tuple[dict[str, Any], dict[str, A
     return filtered, evidence
 
 
+def _production_en_drift(db: dict[str, Any], remote_en: dict[str, Any]) -> dict[str, Any]:
+    production_cards = {
+        str(row.get("tcgdex_id") or "").strip(): row
+        for row in db["cards"]
+        if str(row.get("tcgdex_id") or "").strip()
+    }
+    production_sets = {
+        str(row.get("tcgdex_id") or "").strip(): row
+        for row in db["sets"]
+        if str(row.get("tcgdex_id") or "").strip()
+    }
+    remote_cards = remote_en["cards"]
+    remote_sets = remote_en["sets"]
+
+    production_card_ids = set(production_cards)
+    production_set_ids = set(production_sets)
+    remote_card_ids = set(remote_cards)
+    remote_set_ids = set(remote_sets)
+
+    production_only_cards = sorted(production_card_ids - remote_card_ids)
+    remote_only_cards = sorted(remote_card_ids - production_card_ids)
+    production_only_sets = sorted(production_set_ids - remote_set_ids)
+    remote_only_sets = sorted(remote_set_ids - production_set_ids)
+
+    return {
+        "production_global_card_ids": len(production_card_ids),
+        "current_remote_physical_card_ids": len(remote_card_ids),
+        "shared_card_ids": len(production_card_ids & remote_card_ids),
+        "production_only_card_ids": len(production_only_cards),
+        "remote_only_card_ids": len(remote_only_cards),
+        "production_only_card_samples": [
+            {
+                "external_id": external_id,
+                "production_card_id": int(production_cards[external_id]["id"]),
+                "production_name": production_cards[external_id].get("name"),
+            }
+            for external_id in production_only_cards[:100]
+        ],
+        "remote_only_card_samples": [
+            {
+                "external_id": external_id,
+                "remote_name": remote_cards[external_id].get("name"),
+                "remote_set_id": remote_cards[external_id].get("set_id"),
+                "remote_local_id": remote_cards[external_id].get("local_id"),
+            }
+            for external_id in remote_only_cards[:100]
+        ],
+        "production_global_set_ids": len(production_set_ids),
+        "current_remote_physical_set_ids": len(remote_set_ids),
+        "shared_set_ids": len(production_set_ids & remote_set_ids),
+        "production_only_set_ids": len(production_only_sets),
+        "remote_only_set_ids": len(remote_only_sets),
+        "production_only_set_samples": [
+            {
+                "external_id": external_id,
+                "production_set_id": int(production_sets[external_id]["id"]),
+                "production_code": production_sets[external_id].get("code"),
+                "production_name": production_sets[external_id].get("name"),
+            }
+            for external_id in production_only_sets[:100]
+        ],
+        "remote_only_set_samples": [
+            {
+                "external_id": external_id,
+                "remote_name": remote_sets[external_id].get("name"),
+            }
+            for external_id in remote_only_sets[:100]
+        ],
+    }
+
+
 def run() -> dict[str, Any]:
     db = _database_snapshot()
     remote: dict[str, dict[str, Any]] = {}
@@ -122,6 +193,7 @@ def run() -> dict[str, Any]:
         exclusions[language] = evidence
 
     plan = _plan(remote, db)
+    en_drift = _production_en_drift(db, remote["en"])
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "strict-read-only-physical-backfill-plan",
@@ -137,6 +209,7 @@ def run() -> dict[str, Any]:
             "personal_data_tables_queried": False,
         },
         "tcg_pocket_exclusions": exclusions,
+        "production_en_source_drift": en_drift,
         **plan,
     }
 
@@ -163,6 +236,24 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"{row['physical_sets_after_filter']} | {row['remote_cards_before_filter']} | "
             f"{row['excluded_tcgp_cards']} | {row['physical_cards_after_filter']} |"
         )
+
+    drift = report["production_en_source_drift"]
+    lines.extend(
+        [
+            "",
+            "## Production EN vs current physical TCGdex drift",
+            "",
+            f"- Production global TCGdex card IDs: **{drift['production_global_card_ids']}**",
+            f"- Current remote physical EN card IDs: **{drift['current_remote_physical_card_ids']}**",
+            f"- Shared card IDs: **{drift['shared_card_ids']}**",
+            f"- Production-only card IDs: **{drift['production_only_card_ids']}**",
+            f"- Remote-only card IDs: **{drift['remote_only_card_ids']}**",
+            f"- Production global TCGdex set IDs: **{drift['production_global_set_ids']}**",
+            f"- Current remote physical EN set IDs: **{drift['current_remote_physical_set_ids']}**",
+            f"- Production-only set IDs: **{drift['production_only_set_ids']}**",
+            f"- Remote-only set IDs: **{drift['remote_only_set_ids']}**",
+        ]
+    )
 
     base = render_base_markdown(report)
     base_lines = base.splitlines()
