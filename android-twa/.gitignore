@@ -1,0 +1,24 @@
+# Bubblewrap-generated Android project
+app/
+gradle/
+gradlew
+gradlew.bat
+build.gradle
+settings.gradle
+gradle.properties
+local.properties
+
+# Android/Gradle outputs
+.gradle/
+build/
+*.apk
+*.aab
+
+# Signing material - never commit
+android.keystore
+*.jks
+*.keystore
+
+# Local IDE files
+.idea/
+*.iml
