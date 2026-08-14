@@ -120,7 +120,7 @@ def test_language_without_tcgp_series_continues_without_requesting_missing_endpo
     rows = connector._load_remote(lang="ja")
 
     assert len(rows) == 1
-    assert rows[0]["language"] == "ja"
+    assert rows[0]["_language"] == "ja"
     assert f"{base}/series/tcgp" not in connector.calls
     assert connector.calls == [f"{base}/series", f"{base}/sets", f"{base}/sets/neo1"]
 
