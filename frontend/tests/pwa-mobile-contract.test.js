@@ -50,6 +50,20 @@ test('root layout wires manifest, standalone metadata and service worker bootstr
   assert.match(bootstrap, /window\.isSecureContext/)
 })
 
+test('install prompt only renders after browser installability signal', () => {
+  const install = source('components/pwa/InstallAppPrompt.js')
+  const home = source('components/home/PublicHome.js')
+  const css = source('app/pwa.css')
+  assert.match(install, /beforeinstallprompt/)
+  assert.match(install, /event\.preventDefault\(\)/)
+  assert.match(install, /installEvent\.prompt\(\)/)
+  assert.match(install, /appinstalled/)
+  assert.match(install, /if \(installed \|\| !installEvent\) return null/)
+  assert.match(home, /<InstallAppPrompt compact \/>/)
+  assert.match(css, /\.pwa-install-action/)
+  assert.match(css, /display-mode: standalone/)
+})
+
 test('standalone CSS respects mobile safe areas and touch input sizing', () => {
   const css = source('app/pwa.css')
   assert.match(css, /safe-area-inset-top/)
