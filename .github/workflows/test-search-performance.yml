@@ -1,0 +1,29 @@
+name: Search performance gates
+
+on:
+  push:
+    branches:
+      - search-performance-v2
+    paths:
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/lib/searchV2/**'
+      - 'frontend/tests/search-v2-performance-contract.test.js'
+      - '.github/workflows/test-search-performance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run Search V2 performance contract
+        run: node --test tests/search-v2-performance-contract.test.js
