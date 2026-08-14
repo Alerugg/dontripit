@@ -1,0 +1,40 @@
+{
+  "id": "/",
+  "name": "Don’tRipIt",
+  "short_name": "Don’tRipIt",
+  "description": "Catálogo TCG y gestor de colección para identificar cartas e impresiones físicas exactas.",
+  "lang": "es",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0d0c11",
+  "theme_color": "#121018",
+  "categories": ["shopping", "utilities", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icons/dontripit-app.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Explorar cartas",
+      "short_name": "Explorar",
+      "url": "/#games"
+    },
+    {
+      "name": "Mi colección",
+      "short_name": "Colección",
+      "url": "/collection"
+    },
+    {
+      "name": "Mi cuenta",
+      "short_name": "Cuenta",
+      "url": "/dashboard"
+    }
+  ]
+}
