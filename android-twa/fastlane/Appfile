@@ -1,0 +1,4 @@
+package_name("com.dontripit.app")
+
+# Google Play credentials are intentionally supplied at runtime through
+# GOOGLE_PLAY_SERVICE_ACCOUNT_JSON. Never store the service-account JSON here.
