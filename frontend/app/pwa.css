@@ -14,7 +14,8 @@ body {
   min-height: 100dvh;
 }
 
-.pwa-install-action {
+.pwa-install-action,
+.pwa-ios-install > summary {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -31,13 +32,15 @@ body {
   cursor: pointer;
 }
 
-.pwa-install-action:hover {
+.pwa-install-action:hover,
+.pwa-ios-install > summary:hover {
   color: #fff;
   border-color: rgba(182, 156, 255, .48);
   background: rgba(139, 92, 246, .14);
 }
 
-.pwa-install-action:focus-visible {
+.pwa-install-action:focus-visible,
+.pwa-ios-install > summary:focus-visible {
   outline: 2px solid #b69cff;
   outline-offset: 3px;
 }
@@ -47,11 +50,59 @@ body {
   line-height: 1;
 }
 
-.pwa-install-action.is-compact {
+.pwa-install-action.is-compact,
+.pwa-ios-install.is-compact > summary {
   min-height: 38px;
   padding-inline: 12px;
   border-radius: 10px;
   font-size: .68rem;
+}
+
+.pwa-ios-install {
+  position: relative;
+}
+
+.pwa-ios-install > summary {
+  list-style: none;
+  user-select: none;
+}
+
+.pwa-ios-install > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pwa-ios-install-card {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 9px);
+  left: 0;
+  width: min(310px, calc(100vw - 28px));
+  padding: 15px 16px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 14px;
+  color: #f4f0ff;
+  background: #15121b;
+  box-shadow: 0 20px 52px rgba(0, 0, 0, .42);
+}
+
+.pwa-ios-install-card strong {
+  display: block;
+  margin-bottom: 9px;
+  font-size: .78rem;
+}
+
+.pwa-ios-install-card ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 20px;
+  color: #aaa3b4;
+  font-size: .71rem;
+  line-height: 1.45;
+}
+
+.pwa-ios-install-card b {
+  color: #e7e0ff;
 }
 
 .pwa-bottom-nav {
@@ -76,7 +127,8 @@ body {
     padding-right: max(var(--dri-safe-right), 0px);
   }
 
-  .pwa-install-action {
+  .pwa-install-action,
+  .pwa-ios-install {
     display: none;
   }
 
@@ -153,8 +205,15 @@ body {
 }
 
 @media (max-width: 680px) {
-  .pwa-install-action {
+  .pwa-install-action,
+  .pwa-ios-install,
+  .pwa-ios-install > summary {
     width: 100%;
+  }
+
+  .pwa-ios-install-card {
+    left: 50%;
+    transform: translateX(-50%);
   }
 }
 
@@ -169,7 +228,8 @@ body {
 }
 
 @media (hover: none) {
-  .pwa-install-action:hover {
+  .pwa-install-action:hover,
+  .pwa-ios-install > summary:hover {
     color: #dcd3ff;
     border-color: rgba(182, 156, 255, .26);
     background: rgba(139, 92, 246, .08);
