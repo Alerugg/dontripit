@@ -50,11 +50,13 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        # One physical print has exactly one authoritative localization per
+        # language. ``source`` records provenance; it must not create a second
+        # competing display truth for the same print/language pair.
         sa.UniqueConstraint(
             "print_id",
             "language",
-            "source",
-            name="uq_print_localizations_print_language_source",
+            name="uq_print_localizations_print_language",
         ),
     )
     op.create_index(
