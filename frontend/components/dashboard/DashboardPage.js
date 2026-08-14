@@ -215,11 +215,12 @@ export default function DashboardPage() {
           </section>
         ) : null}
 
-        <section className="ux-account-section" aria-labelledby="account-settings-title">
+        <section id="account-settings" className="ux-account-section" aria-labelledby="account-settings-title">
           <div>
             <span className="v4-overline"><i /> Cuenta</span>
             <h2 id="account-settings-title">Privacidad y control de tu cuenta</h2>
             <p>Puedes eliminar definitivamente tu cuenta y los datos asociados desde aquí.</p>
+            <p><Link href="/delete-account">Ver también la vía pública de eliminación y recuperación de acceso →</Link></p>
           </div>
           {!deleteOpen ? (
             <button type="button" className="dri-btn dri-btn-ghost ux-danger-trigger" onClick={() => setDeleteOpen(true)}>
