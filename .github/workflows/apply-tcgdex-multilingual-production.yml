@@ -12,12 +12,12 @@ permissions:
 
 concurrency:
   group: tcgdex-multilingual-production-apply
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -50,6 +50,7 @@ jobs:
             app/scripts/preflight_tcgdex_multilingual_production.py \
             app/scripts/gate_tcgdex_multilingual_production_release.py \
             app/scripts/audit_tcgdex_multilingual_backfill_physical.py \
+            app/scripts/bulk_tcgdex_multilingual_backfill.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py
 
@@ -61,7 +62,6 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from app.scripts import gate_tcgdex_multilingual_production_release as gate
-
           gate.BEFORE_REV = '20260814_34'
           gate.snapshot_before(Path('/tmp/tcgdex-multilingual-production-before.json'))
           PY
@@ -74,46 +74,31 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-
           audit = json.loads(Path('/tmp/tcgdex-multilingual-physical-backfill-audit.json').read_text())
           prod = audit['production_baseline']
           es = audit['spanish_overlay_plan']
           ja = audit['japanese_regional_plan']
           drift = audit['production_en_source_drift']
-
           assert audit['database_transaction_read_only'] == 'on', audit
           assert audit['scope']['database_writes'] == 0, audit
-          assert prod['pokemon_sets'] == 203, prod
-          assert prod['pokemon_cards'] == 21065, prod
-          assert prod['pokemon_prints'] == 33757, prod
+          assert prod['pokemon_sets'] == 203 and prod['pokemon_cards'] == 21065 and prod['pokemon_prints'] == 33757, prod
           assert prod['print_language_counts'] == {'en': 33757}, prod
-          assert es['remote_cards'] == 14046, es
-          assert es['exact_canonical_identity_eligible'] == 14046, es
-          assert es['estimated_new_es_prints'] == 14046, es
-          assert es['already_existing_es_prints_matching_plan'] == 0, es
-          assert es['missing_canonical_card'] == 0, es
-          assert es['missing_canonical_set'] == 0, es
-          assert es['unresolved_set_from_card_id'] == 0, es
-          assert ja['remote_cards'] == 8159, ja
-          assert ja['estimated_independent_prints'] == 8159, ja
-          assert drift['remote_only_card_ids'] == 0, drift
-          assert drift['remote_only_set_ids'] == 0, drift
-          print('write cardinality gate: PASS')
+          assert es['remote_cards'] == 14046 and es['exact_canonical_identity_eligible'] == 14046, es
+          assert es['estimated_new_es_prints'] == 14046 and es['already_existing_es_prints_matching_plan'] == 0, es
+          assert es['missing_canonical_card'] == 0 and es['missing_canonical_set'] == 0 and es['unresolved_set_from_card_id'] == 0, es
+          assert ja['remote_cards'] == 8159 and ja['estimated_independent_prints'] == 8159, ja
+          assert drift['remote_only_card_ids'] == 0 and drift['remote_only_set_ids'] == 0, drift
+          print('bulk write cardinality gate: PASS')
           PY
 
       - name: Confirm additive multilingual schema 34
-        run: alembic upgrade 20260814_34
-
-      - name: Verify migration head 34
         run: |
+          alembic upgrade 20260814_34
           alembic current | tee /tmp/alembic-current-after.txt
           grep -q '20260814_34' /tmp/alembic-current-after.txt
 
-      - name: Materialize full Spanish physical catalog
-        run: python -m app.ingest.run tcgdex_pokemon --lang es --incremental false
-
-      - name: Materialize full Japanese physical catalog
-        run: python -m app.ingest.run tcgdex_pokemon --lang ja --incremental false
+      - name: Materialize ES and JA in one bulk transaction
+        run: python -m app.scripts.bulk_tcgdex_multilingual_backfill
 
       - name: Strict post-write certification read-only
         run: |
@@ -122,20 +107,37 @@ jobs:
             --baseline /tmp/tcgdex-multilingual-production-before.json \
             --report /tmp/tcgdex-multilingual-production-after.json
 
+      - name: Gate bulk performance and final certification
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          bulk = json.loads(Path('/tmp/tcgdex-multilingual-bulk-report.json').read_text())
+          after = json.loads(Path('/tmp/tcgdex-multilingual-production-after.json').read_text())
+          assert bulk['status'] == 'pass', bulk
+          assert bulk['es_written']['prints'] == 14046, bulk
+          assert bulk['ja_written']['prints'] == 8159, bulk
+          assert bulk['database_transaction_seconds'] < 300, bulk
+          assert after['status'] == 'pass', after
+          assert after['existing_en_print_identities_unchanged'] is True, after
+          print('production bulk rollout certification: PASS')
+          PY
+
       - name: Publish rollout summary
         if: always()
         run: |
           {
-            echo '# TCGdex multilingual production rollout'
+            echo '# TCGdex multilingual production bulk rollout'
             echo
             echo "- Commit: $GITHUB_SHA"
-            echo '- Schema 34 must already be safe/empty or be brought to 34 idempotently.'
-            echo '- Intended data writes: ES/JA physical catalog only.'
-            echo '- Existing EN physical identities are SHA-256 locked before/after.'
+            echo '- Preflight/audit: read-only and fail-closed.'
+            echo '- Data write: ES + JA in one bulk transaction.'
+            echo '- Existing EN physical identities: SHA-256 locked before/after.'
             echo
             for f in \
               /tmp/tcgdex-multilingual-production-preflight.json \
               /tmp/tcgdex-multilingual-production-before.json \
+              /tmp/tcgdex-multilingual-bulk-report.json \
               /tmp/tcgdex-multilingual-production-after.json; do
               if [ -f "$f" ]; then
                 echo "## $(basename "$f")"
@@ -154,6 +156,7 @@ jobs:
           path: |
             /tmp/tcgdex-multilingual-production-preflight.json
             /tmp/tcgdex-multilingual-production-before.json
+            /tmp/tcgdex-multilingual-bulk-report.json
             /tmp/tcgdex-multilingual-production-after.json
             /tmp/tcgdex-multilingual-physical-backfill-audit.json
             /tmp/tcgdex-multilingual-physical-backfill-audit.md
