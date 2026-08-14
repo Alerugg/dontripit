@@ -1,0 +1,94 @@
+name: Mobile Lighthouse
+
+on:
+  push:
+    branches:
+      - mobile-pwa
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/mobile-lighthouse.yml'
+  workflow_dispatch:
+
+jobs:
+  mobile-lighthouse:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      INTERNAL_API_KEY: ci-placeholder-key
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Start local production server
+        run: |
+          npm run start -- -p 3000 > /tmp/dontripit-mobile-next.log 2>&1 &
+          echo $! > /tmp/dontripit-mobile-next.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/dontripit-mobile-next.log
+          exit 1
+
+      - name: Confirm Chrome runtime
+        run: google-chrome --version
+
+      - name: Audit mobile home
+        run: |
+          npx --yes lighthouse@13.3.0 http://127.0.0.1:3000/ \
+            --quiet \
+            --chrome-path="$(command -v google-chrome)" \
+            --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage" \
+            --only-categories=performance,accessibility,best-practices,seo \
+            --form-factor=mobile \
+            --screenEmulation.mobile=true \
+            --screenEmulation.width=390 \
+            --screenEmulation.height=844 \
+            --screenEmulation.deviceScaleFactor=3 \
+            --output=json \
+            --output-path=/tmp/lighthouse-mobile.json
+
+      - name: Enforce quality thresholds
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+          const report = JSON.parse(fs.readFileSync('/tmp/lighthouse-mobile.json', 'utf8'))
+          const thresholds = {
+            performance: 0.80,
+            accessibility: 0.90,
+            'best-practices': 0.90,
+            seo: 0.90,
+          }
+          let failed = false
+          for (const [key, threshold] of Object.entries(thresholds)) {
+            const score = Number(report.categories[key]?.score ?? 0)
+            console.log(`${key}: ${Math.round(score * 100)} / required ${Math.round(threshold * 100)}`)
+            if (score < threshold) failed = true
+          }
+          if (failed) process.exit(1)
+          NODE
+
+      - name: Stop local server
+        if: always()
+        run: |
+          if [ -f /tmp/dontripit-mobile-next.pid ]; then
+            kill "$(cat /tmp/dontripit-mobile-next.pid)" || true
+          fi
