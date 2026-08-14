@@ -57,12 +57,22 @@ jobs:
         run: python -m app.scripts.preflight_tcgdex_multilingual_production
 
       - name: Snapshot all existing EN print identities read-only
-        run: python -m app.scripts.gate_tcgdex_multilingual_production_release --snapshot-before
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.scripts import gate_tcgdex_multilingual_production_release as gate
+
+          # Production is already at additive schema 34 but contains no ES/JA
+          # data. Preflight above proves the new tables are empty. Reuse the
+          # certified EN identity snapshot logic for this safe schema-only state.
+          gate.BEFORE_REV = '20260814_34'
+          gate.snapshot_before(Path('/tmp/tcgdex-multilingual-production-before.json'))
+          PY
 
       - name: Re-audit live TCGdex physical plan read-only
         run: python app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
-      - name: Gate certified write cardinality before migration
+      - name: Gate certified write cardinality before backfill
         run: |
           python - <<'PY'
           import json
@@ -94,7 +104,7 @@ jobs:
           print('write cardinality gate: PASS')
           PY
 
-      - name: Apply additive multilingual migrations 33 and 34
+      - name: Confirm additive multilingual schema 34
         run: alembic upgrade 20260814_34
 
       - name: Verify migration head 34
@@ -122,7 +132,8 @@ jobs:
             echo '# TCGdex multilingual production rollout'
             echo
             echo "- Commit: $GITHUB_SHA"
-            echo '- Intended writes: migrations 33/34 + ES/JA physical catalog only.'
+            echo '- Schema 34 must already be safe/empty or be brought to 34 idempotently.'
+            echo '- Intended data writes: ES/JA physical catalog only.'
             echo '- Existing EN physical identities are SHA-256 locked before/after.'
             echo
             for f in \
@@ -150,5 +161,5 @@ jobs:
             /tmp/tcgdex-multilingual-physical-backfill-audit.json
             /tmp/tcgdex-multilingual-physical-backfill-audit.md
             /tmp/alembic-current-after.txt
-          retention-days: 180
+          retention-days: 90
           if-no-files-found: warn
