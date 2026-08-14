@@ -11,8 +11,10 @@ on:
       - "backend/alembic/env.py"
       - "backend/alembic/versions/20260814_33_add_print_localizations.py"
       - "backend/app/routes/catalog.py"
+      - "backend/app/routes/exact_print_output.py"
       - "backend/tests/test_tcgdex_multilingual.py"
       - "backend/tests/test_tcgdex_multilingual_api.py"
+      - "backend/tests/test_exact_print_output.py"
       - ".github/workflows/test-multilingual.yml"
   workflow_dispatch:
 
@@ -63,6 +65,7 @@ jobs:
             app/multilingual_models.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/registry.py \
+            app/routes/exact_print_output.py \
             alembic/env.py \
             alembic/versions/20260814_33_add_print_localizations.py
 
@@ -80,11 +83,10 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test_tcgdex_multilingual.py
 
-      - name: Run multilingual API tests
-        if: ${{ hashFiles('backend/tests/test_tcgdex_multilingual_api.py') != '' }}
+      - name: Run multilingual API and exact-output tests
         env:
           PYTHONPATH: .
-        run: pytest -q tests/test_tcgdex_multilingual_api.py
+        run: pytest -q tests/test_tcgdex_multilingual_api.py tests/test_exact_print_output.py
 
       - name: Run legacy TCGdex ingest regressions
         env:
