@@ -10,6 +10,7 @@ on:
       - "backend/app/ingest/registry.py"
       - "backend/alembic/env.py"
       - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - "backend/alembic/versions/20260814_34_add_catalog_entity_identifiers.py"
       - "backend/app/routes/catalog.py"
       - "backend/app/routes/exact_print_output.py"
       - "backend/tests/test_tcgdex_multilingual.py"
@@ -67,16 +68,17 @@ jobs:
             app/ingest/registry.py \
             app/routes/exact_print_output.py \
             alembic/env.py \
-            alembic/versions/20260814_33_add_print_localizations.py
+            alembic/versions/20260814_33_add_print_localizations.py \
+            alembic/versions/20260814_34_add_catalog_entity_identifiers.py
 
-      - name: Run migration 33 PostgreSQL smoke test
+      - name: Run migration 34 PostgreSQL smoke test
         env:
           DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_test
           PYTHONPATH: .
         run: |
           alembic upgrade head
           alembic current | tee /tmp/alembic-current.txt
-          grep -q "20260814_33" /tmp/alembic-current.txt
+          grep -q "20260814_34" /tmp/alembic-current.txt
 
       - name: Run focused multilingual tests
         env:
