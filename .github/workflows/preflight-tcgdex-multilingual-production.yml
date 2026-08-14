@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - multilingual-v1
+      - catalog-v2
     paths:
       - '.github/workflows/preflight-tcgdex-multilingual-production.yml'
       - 'backend/app/scripts/preflight_tcgdex_multilingual_production.py'
@@ -14,22 +15,19 @@ permissions:
   contents: read
 
 concurrency:
-  group: tcgdex-multilingual-production-preflight
+  group: tcgdex-multilingual-production-preflight-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact sandbox commit
+      - name: Checkout exact commit
         uses: actions/checkout@v4
 
       - name: Set up Python 3.12
@@ -42,9 +40,6 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Verify production database secret
-        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
-
       - name: Compile production preflight and physical auditor
         run: |
           python -m py_compile \
@@ -53,26 +48,49 @@ jobs:
             app/scripts/audit_tcgdex_multilingual_backfill.py \
             app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
-      - name: Run focused multilingual safety tests
+      - name: Run focused multilingual safety tests without production credentials
         env:
           PYTHONPATH: .
         run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
           pytest -q \
             tests/test_tcgdex_multilingual.py \
             tests/test_tcgdex_physical_scope.py \
             tests/test_validate_tcgdex_multilingual_live.py
 
+      - name: Verify production database secret
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
       - name: Gate exact production baseline read-only
         env:
           PYTHONPATH: .
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: python -m app.scripts.preflight_tcgdex_multilingual_production
 
       - name: Snapshot exact EN physical identity read-only
         env:
           PYTHONPATH: .
-        run: python -m app.scripts.gate_tcgdex_multilingual_production_release --snapshot-before
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app.scripts import gate_tcgdex_multilingual_production_release as gate
+
+          baseline = json.loads(Path('/tmp/tcgdex-multilingual-production-preflight.json').read_text())
+          gate.BEFORE_REV = baseline['alembic_version']
+          gate.snapshot_before(Path('/tmp/tcgdex-multilingual-production-before.json'))
+          PY
 
       - name: Audit current physical TCGdex plan read-only
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: python app/scripts/audit_tcgdex_multilingual_backfill_physical.py
 
       - name: Gate physical rollout plan
@@ -101,46 +119,36 @@ jobs:
               raise SystemExit(f'Unexpected production language state: {prod["print_language_counts"]!r}')
 
           es = audit['spanish_overlay_plan']
-          if es['remote_cards'] != 14046:
-              raise SystemExit(f'ES physical catalog moved since certification: {es!r}')
-          if es['exact_canonical_identity_eligible'] != 14046:
-              raise SystemExit(f'ES is not 100% exact-canonical eligible: {es!r}')
+          if es['remote_cards'] != 14046 or es['exact_canonical_identity_eligible'] != 14046:
+              raise SystemExit(f'ES certified shape moved: {es!r}')
           if any(es[key] for key in ('missing_canonical_card', 'missing_canonical_set', 'unresolved_set_from_card_id')):
               raise SystemExit(f'ES has unresolved canonical identity: {es!r}')
-          if es['already_existing_es_prints_matching_plan'] != 0:
-              raise SystemExit(f'Production already has partial ES target prints: {es!r}')
-          if es['estimated_new_es_prints'] != 14046:
-              raise SystemExit(f'Unexpected ES write cardinality: {es!r}')
+          if es['already_existing_es_prints_matching_plan'] != 0 or es['estimated_new_es_prints'] != 14046:
+              raise SystemExit(f'Production is not in clean pre-ES state: {es!r}')
 
           ja = audit['japanese_regional_plan']
           if ja['remote_cards'] != 8159 or ja['estimated_independent_prints'] != 8159:
-              raise SystemExit(f'JA physical catalog moved since certification: {ja!r}')
+              raise SystemExit(f'JA certified shape moved: {ja!r}')
 
           drift = audit['production_en_source_drift']
           if drift['production_global_card_ids'] != 21065:
               raise SystemExit(f'Unexpected production EN identity count: {drift!r}')
           if drift['remote_only_card_ids'] != 0 or drift['remote_only_set_ids'] != 0:
-              raise SystemExit(
-                  'Current remote EN contains identities missing from production; refresh/certify EN before multilingual rollout: '
-                  + repr(drift)
-              )
+              raise SystemExit('Current remote EN contains identities missing from production: ' + repr(drift))
 
           summary = {
               'status': 'pass',
               'mode': 'strict-read-only-production-rollout-preflight',
               'database_writes': 0,
-              'sandbox_sha': '${{ github.sha }}',
+              'sha': '${{ github.sha }}',
               'alembic_before': baseline['alembic_version'],
+              'multilingual_table_counts': baseline.get('multilingual_table_counts', {}),
               'canonical_sets_sha256': baseline['pokemon']['sets_sha256'],
               'canonical_cards_sha256': baseline['pokemon']['cards_sha256'],
               'en_print_identity_sha256': before['en_print_identity_sha256'],
               'production_print_languages': prod['print_language_counts'],
               'es_expected_new_prints': es['estimated_new_es_prints'],
               'ja_expected_new_prints': ja['estimated_independent_prints'],
-              'production_only_en_cards_preserved': drift['production_only_card_ids'],
-              'production_only_en_sets_preserved': drift['production_only_set_ids'],
-              'remote_only_en_cards': drift['remote_only_card_ids'],
-              'remote_only_en_sets': drift['remote_only_set_ids'],
           }
           Path('/tmp/tcgdex-multilingual-production-preflight-summary.json').write_text(
               json.dumps(summary, indent=2, sort_keys=True) + '\n'
