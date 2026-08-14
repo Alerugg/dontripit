@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from app.scripts.audit_tcgdex_multilingual_backfill import (
+from audit_tcgdex_multilingual_backfill import (
     LANGUAGES,
     TCGDEX_BASE,
     _database_snapshot,
