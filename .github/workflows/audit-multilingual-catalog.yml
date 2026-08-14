@@ -22,7 +22,6 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
-      PYTHONPATH: .
     defaults:
       run:
         working-directory: backend
@@ -42,7 +41,7 @@ jobs:
         run: python -m py_compile app/scripts/audit_multilingual_catalog.py
 
       - name: Run strict read-only production audit
-        run: python -m app.scripts.audit_multilingual_catalog
+        run: python app/scripts/audit_multilingual_catalog.py
 
       - name: Publish audit summary
         if: always()
