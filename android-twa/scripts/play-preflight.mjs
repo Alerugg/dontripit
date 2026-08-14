@@ -42,6 +42,7 @@ const requiredFiles = [
   'frontend/app/delete-account/page.js',
   'frontend/components/dashboard/DashboardPage.js',
   'frontend/app/api/auth/me/route.js',
+  'frontend/lib/site.js',
   'backend/app/routes/user_auth.py',
   'docs/android-upload-certificate.md',
   'docs/google-play-data-safety-draft.md',
@@ -64,8 +65,8 @@ assert(Number(twa.minSdkVersion) === 23, `Unexpected minSdkVersion: ${twa.minSdk
 assert(twa.signingKey?.alias === 'dontripit-upload', `Unexpected upload-key alias: ${twa.signingKey?.alias}`)
 
 const ci = read('.github/workflows/android-twa-ci.yml')
-assert(/compileSdkVersion\[\[:space:\]\]\+36/.test(ci), 'Android CI must enforce compileSdkVersion 36')
-assert(/targetSdkVersion\[\[:space:\]\]\+36/.test(ci), 'Android CI must enforce targetSdkVersion 36')
+assert(ci.includes("compileSdkVersion[[:space:]]+36"), 'Android CI must enforce compileSdkVersion 36')
+assert(ci.includes("targetSdkVersion[[:space:]]+36"), 'Android CI must enforce targetSdkVersion 36')
 
 const releaseWorkflow = read('.github/workflows/android-release.yml')
 for (const secret of [
@@ -84,8 +85,10 @@ const dashboard = read('frontend/components/dashboard/DashboardPage.js')
 const bff = read('frontend/app/api/auth/me/route.js')
 const backendAuth = read('backend/app/routes/user_auth.py')
 const privacy = read('frontend/app/privacy/page.js')
+const siteConfig = read('frontend/lib/site.js')
 assert(deletionPage.includes('/dashboard'), 'External deletion page must link to the in-app account controls')
-assert(deletionPage.includes('info@dontripit.com'), 'External deletion page must expose support/deletion contact path')
+assert(deletionPage.includes('PRIVACY_EMAIL'), 'External deletion page must use the centralized privacy contact')
+assert(siteConfig.includes("'info@dontripit.com'"), 'Centralized privacy contact must retain the prepared support address')
 assert(dashboard.includes('Eliminar mi cuenta'), 'Dashboard must expose account deletion')
 assert(dashboard.includes("toUpperCase() === 'ELIMINAR'"), 'Dashboard must gate destructive confirmation with ELIMINAR')
 assert(bff.includes("method: 'DELETE'"), 'Frontend BFF must forward DELETE account requests')
