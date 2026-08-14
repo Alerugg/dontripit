@@ -61,7 +61,6 @@ def run() -> dict:
         connect_timeout=20,
         application_name="dontripit_multilingual_readonly_audit",
     )
-    # Hard safety boundary: every transaction opened by this connection is read-only.
     conn.set_session(readonly=True, autocommit=False)
 
     try:
@@ -94,56 +93,58 @@ def run() -> dict:
                 f"""
                 WITH image_stats AS (
                   SELECT
-                    print_id,
+                    pi.print_id,
                     COUNT(*) AS image_rows,
-                    BOOL_OR(COALESCE(is_primary, false)) AS has_primary_image
-                  FROM print_images
-                  GROUP BY print_id
-                ),
-                externally_priced_products AS (
-                  SELECT DISTINCT external_product_id
-                  FROM external_market_price_snapshots
+                    BOOL_OR(COALESCE(pi.is_primary, false)) AS has_primary_image
+                  FROM print_images pi
+                  GROUP BY pi.print_id
                 ),
                 accepted_cardmarket_links AS (
                   SELECT
                     l.print_id,
                     COUNT(DISTINCT e.id) AS mapped_products,
-                    BOOL_OR(epp.external_product_id IS NOT NULL) AS has_external_market_price
+                    BOOL_OR(EXISTS (
+                      SELECT 1
+                      FROM external_market_price_snapshots em
+                      WHERE em.external_product_id = e.id
+                    )) AS has_external_market_price
                   FROM external_catalog_print_links l
                   JOIN external_catalog_products e
                     ON e.id = l.external_product_id
                    AND lower(e.source) = 'cardmarket'
                    AND e.product_group = 'single'
-                  LEFT JOIN externally_priced_products epp
-                    ON epp.external_product_id = e.id
                   WHERE lower(COALESCE(l.link_status, '')) IN ('accepted', 'mapped', 'exact')
                   GROUP BY l.print_id
                 ),
-                projected_cardmarket_prices AS (
-                  SELECT DISTINCT ps.entity_id AS print_id
-                  FROM price_snapshots ps
-                  JOIN price_sources src ON src.id = ps.source_id
-                  WHERE lower(src.name) = 'cardmarket'
-                    AND ps.entity_type = 'print'
-                    AND ps.currency = 'EUR'
+                cardmarket_source AS (
+                  SELECT id
+                  FROM price_sources
+                  WHERE lower(name) = 'cardmarket'
                 ),
                 base AS (
                   SELECT
                     g.slug AS game,
                     p.id AS print_id,
-                    COALESCE(NULLIF(trim(p.language), ''), 'unknown') AS raw_language,
                     {CANONICAL_LANGUAGE_SQL} AS canonical_language,
                     COALESCE(img.image_rows, 0) AS image_rows,
                     COALESCE(img.has_primary_image, false) AS has_primary_image,
                     COALESCE(cm.mapped_products, 0) AS mapped_products,
                     COALESCE(cm.has_external_market_price, false) AS has_external_market_price,
-                    (proj.print_id IS NOT NULL) AS has_projected_cardmarket_price
+                    EXISTS (
+                      SELECT 1
+                      FROM price_snapshots ps
+                      JOIN cardmarket_source src ON src.id = ps.source_id
+                      WHERE ps.entity_type = 'print'
+                        AND ps.entity_id = p.id
+                        AND ps.currency = 'EUR'
+                    ) AS has_projected_cardmarket_price
                   FROM prints p
                   JOIN cards c ON c.id = p.card_id
                   JOIN games g ON g.id = c.game_id
                   LEFT JOIN image_stats img ON img.print_id = p.id
                   LEFT JOIN accepted_cardmarket_links cm ON cm.print_id = p.id
-                  LEFT JOIN projected_cardmarket_prices proj ON proj.print_id = p.id
+                  WHERE g.slug = ANY(%s)
+                    AND ({CANONICAL_LANGUAGE_SQL}) = ANY(%s)
                 )
                 SELECT
                   game,
@@ -161,6 +162,7 @@ def run() -> dict:
                 GROUP BY game, canonical_language
                 ORDER BY game, canonical_language
                 """,
+                (list(ACTIVE_GAMES), list(TARGET_LANGUAGES)),
             )
 
             image_sources = _fetch_all(
@@ -176,9 +178,12 @@ def run() -> dict:
                 JOIN prints p ON p.id = pi.print_id
                 JOIN cards c ON c.id = p.card_id
                 JOIN games g ON g.id = c.game_id
+                WHERE g.slug = ANY(%s)
+                  AND ({CANONICAL_LANGUAGE_SQL}) = ANY(%s)
                 GROUP BY g.slug, {CANONICAL_LANGUAGE_SQL}, COALESCE(NULLIF(trim(pi.source), ''), 'unknown')
                 ORDER BY g.slug, language, image_rows DESC, image_source
                 """,
+                (list(ACTIVE_GAMES), list(TARGET_LANGUAGES)),
             )
 
             pokemon_tcgdex = _fetch_all(
@@ -206,8 +211,7 @@ def run() -> dict:
                 JOIN cards c ON c.id = p.card_id
                 JOIN games g ON g.id = c.game_id
                 JOIN sets s ON s.id = p.set_id
-                LEFT JOIN print_images pi ON pi.print_id = p.id
-                WHERE pi.print_id IS NULL
+                WHERE NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id = p.id)
                   AND g.slug = ANY(%s)
                   AND ({CANONICAL_LANGUAGE_SQL}) = ANY(%s)
                 ORDER BY g.slug, language, s.code, p.collector_number, p.id
@@ -219,23 +223,22 @@ def run() -> dict:
             samples_unmapped = _fetch_all(
                 cur,
                 f"""
-                WITH accepted AS (
-                  SELECT DISTINCT l.print_id
-                  FROM external_catalog_print_links l
-                  JOIN external_catalog_products e
-                    ON e.id = l.external_product_id
-                   AND lower(e.source) = 'cardmarket'
-                   AND e.product_group = 'single'
-                  WHERE lower(COALESCE(l.link_status, '')) IN ('accepted', 'mapped', 'exact')
-                )
                 SELECT g.slug AS game, {CANONICAL_LANGUAGE_SQL} AS language,
                        p.id AS print_id, s.code AS set_code, p.collector_number, c.name
                 FROM prints p
                 JOIN cards c ON c.id = p.card_id
                 JOIN games g ON g.id = c.game_id
                 JOIN sets s ON s.id = p.set_id
-                LEFT JOIN accepted a ON a.print_id = p.id
-                WHERE a.print_id IS NULL
+                WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM external_catalog_print_links l
+                  JOIN external_catalog_products e
+                    ON e.id = l.external_product_id
+                   AND lower(e.source) = 'cardmarket'
+                   AND e.product_group = 'single'
+                  WHERE l.print_id = p.id
+                    AND lower(COALESCE(l.link_status, '')) IN ('accepted', 'mapped', 'exact')
+                )
                   AND g.slug = ANY(%s)
                   AND ({CANONICAL_LANGUAGE_SQL}) = ANY(%s)
                 ORDER BY g.slug, language, s.code, p.collector_number, p.id
@@ -287,11 +290,7 @@ def render_markdown(report: dict) -> str:
         "| Game | Lang | Prints | Images | Primary | Cardmarket | External price | Projected price | Ambiguous |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    rows = [
-        row for row in report["coverage"]
-        if row["game"] in ACTIVE_GAMES and row["language"] in TARGET_LANGUAGES
-    ]
-    for row in rows:
+    for row in report["coverage"]:
         prints = int(row["prints"] or 0)
         lines.append(
             "| {game} | {lang} | {prints} | {img} ({img_pct}) | {primary} | {mapped} ({map_pct}) | "
