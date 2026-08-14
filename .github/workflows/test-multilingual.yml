@@ -94,7 +94,7 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test_tcgdex_multilingual_api.py tests/test_exact_print_output.py
 
-      - name: Run legacy TCGdex ingest regressions
+      - name: Run legacy TCGdex physical-scope regressions
         env:
           PYTHONPATH: .
         run: pytest -q tests/test_ingest_engine.py -k tcgdex
