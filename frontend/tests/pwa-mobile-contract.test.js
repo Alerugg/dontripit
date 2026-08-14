@@ -13,7 +13,12 @@ test('PWA manifest exposes standalone Don’tRipIt identity', () => {
   assert.equal(manifest.display, 'standalone')
   assert.equal(manifest.scope, '/')
   assert.match(manifest.start_url, /^\//)
-  assert.ok(manifest.icons.some((icon) => icon.src === '/icons/dontripit-app.svg'))
+  assert.ok(manifest.icons.some((icon) => icon.src === '/icons/dontripit-192.png' && icon.sizes === '192x192'))
+  assert.ok(manifest.icons.some((icon) => icon.src === '/icons/dontripit-512.png' && icon.sizes === '512x512'))
+  assert.ok(manifest.icons.some((icon) => icon.src === '/icons/dontripit-512-maskable.png' && icon.purpose === 'maskable'))
+  for (const icon of manifest.icons) {
+    assert.ok(fs.existsSync(path.join(ROOT, 'public', icon.src.replace(/^\//, ''))), `missing icon ${icon.src}`)
+  }
 })
 
 test('service worker never caches private account or API traffic', () => {
@@ -38,6 +43,7 @@ test('root layout wires manifest, standalone metadata and service worker bootstr
   const bootstrap = source('components/pwa/PwaBootstrap.js')
   assert.match(layout, /manifest: '\/manifest\.webmanifest'/)
   assert.match(layout, /appleWebApp/)
+  assert.match(layout, /dontripit-192\.png/)
   assert.match(layout, /viewportFit: 'cover'/)
   assert.match(layout, /<PwaBootstrap \/>/)
   assert.match(bootstrap, /navigator\.serviceWorker\.register\('\/sw\.js'/)
