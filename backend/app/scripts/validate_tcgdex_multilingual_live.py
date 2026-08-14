@@ -23,13 +23,13 @@ def _ids(payload) -> list[str]:
     return [str(row.get("id") or "").strip() for row in payload if isinstance(row, dict) and row.get("id")]
 
 
-def _card_ids(set_payload: dict, limit: int) -> list[str]:
+def _card_map(set_payload: dict) -> dict[str, dict]:
     cards = set_payload.get("cards") or []
-    return [
-        str(row.get("id") or "").strip()
-        for row in cards[:limit]
+    return {
+        str(row.get("id") or "").strip(): row
+        for row in cards
         if isinstance(row, dict) and row.get("id")
-    ]
+    }
 
 
 def choose_common_set(connector: MultilingualTcgdexPokemonConnector, limit: int) -> tuple[str, list[str]]:
@@ -52,26 +52,61 @@ def choose_common_set(connector: MultilingualTcgdexPokemonConnector, limit: int)
             )
             for language in LANGUAGES
         }
-        first_ids = {language: _card_ids(details[language], limit) for language in LANGUAGES}
-        if len(first_ids["en"]) < limit:
+        card_maps = {language: _card_map(details[language]) for language in LANGUAGES}
+        shared_ids = set.intersection(*(set(card_maps[language]) for language in LANGUAGES))
+        if len(shared_ids) < limit:
             continue
-        if first_ids["en"] == first_ids["es"] == first_ids["ja"]:
-            return set_id, first_ids["en"]
+
+        # Preserve English physical order, but prioritize examples whose Japanese
+        # display name actually demonstrates localization.
+        english_order = [card_id for card_id in card_maps["en"] if card_id in shared_ids]
+        different_ja = [
+            card_id
+            for card_id in english_order
+            if card_maps["en"][card_id].get("name")
+            and card_maps["ja"][card_id].get("name")
+            and card_maps["en"][card_id].get("name") != card_maps["ja"][card_id].get("name")
+        ]
+        selected = different_ja[:limit]
+        if len(selected) < limit:
+            selected.extend(card_id for card_id in english_order if card_id not in selected)
+            selected = selected[:limit]
+        if len(selected) >= limit:
+            return set_id, selected
 
     raise RuntimeError(
-        "TCGdex live validation could not find a common EN/ES/JA set whose first "
-        f"{limit} card IDs align"
+        "TCGdex live validation could not find enough shared card IDs inside a common "
+        f"EN/ES/JA set (required={limit})"
     )
 
 
-def ingest_live_sample(connector: MultilingualTcgdexPokemonConnector, set_id: str, limit: int) -> dict:
+def ingest_live_sample(
+    connector: MultilingualTcgdexPokemonConnector,
+    set_id: str,
+    selected_ids: list[str],
+) -> dict[str, list[str]]:
     source_ids_by_language: dict[str, list[str]] = {}
+    selected = set(selected_ids)
+
     with db.SessionLocal() as session:
         for language in LANGUAGES:
-            rows = connector.load(None, fixture=False, limit=limit, set=set_id, lang=language)
+            # Load the real set through the connector, then write only the chosen
+            # shared IDs so the sandbox remains intentionally tiny.
+            rows = connector.load(None, fixture=False, limit=None, set=set_id, lang=language)
+            by_external_id = {
+                str(raw_payload.get("id") or "").strip(): (raw_payload, checksum)
+                for _path, raw_payload, checksum in rows
+                if str(raw_payload.get("id") or "").strip() in selected
+            }
+            missing = [external_id for external_id in selected_ids if external_id not in by_external_id]
+            if missing:
+                raise AssertionError(
+                    f"TCGdex {language} set {set_id} lost selected shared IDs: {missing}"
+                )
+
             source_ids_by_language[language] = []
-            for _path, raw_payload, _checksum in rows:
-                external_id = str(raw_payload.get("id") or "").strip()
+            for external_id in selected_ids:
+                raw_payload, _checksum = by_external_id[external_id]
                 source_ids_by_language[language].append(external_id)
                 normalized = connector.normalize(raw_payload, lang=language)
                 connector.upsert(
@@ -84,7 +119,7 @@ def ingest_live_sample(connector: MultilingualTcgdexPokemonConnector, set_id: st
             session.commit()
 
     if not (source_ids_by_language["en"] == source_ids_by_language["es"] == source_ids_by_language["ja"]):
-        raise AssertionError(f"Live connector returned different IDs by language: {source_ids_by_language}")
+        raise AssertionError(f"Live connector returned different selected IDs by language: {source_ids_by_language}")
     return source_ids_by_language
 
 
@@ -179,7 +214,7 @@ def main() -> None:
     db.init_engine(database_url)
     connector = MultilingualTcgdexPokemonConnector()
     set_id, expected_ids = choose_common_set(connector, args.limit)
-    source_ids = ingest_live_sample(connector, set_id, args.limit)
+    source_ids = ingest_live_sample(connector, set_id, expected_ids)
     if source_ids["en"] != expected_ids:
         raise AssertionError(
             f"Live connector sample changed after discovery: expected={expected_ids} actual={source_ids['en']}"
