@@ -1,6 +1,11 @@
 name: Audit Multilingual Catalog EN ES JA
 
 on:
+  push:
+    branches: [multilingual-v1]
+    paths:
+      - 'backend/app/scripts/audit_multilingual_catalog.py'
+      - '.github/workflows/audit-multilingual-catalog.yml'
   workflow_dispatch:
 
 permissions:
