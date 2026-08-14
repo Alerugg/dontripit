@@ -51,6 +51,9 @@ class PrintLocalization(Base):
     identity (for example TCGdex EN/ES). Regional catalogs that use a different
     physical identity space (currently TCGdex JA) may own independent Card/Set
     rows while still using this table for language-aware display/content data.
+
+    There is exactly one authoritative localization row per physical print and
+    language. ``source`` is provenance, not an additional identity dimension.
     """
 
     __tablename__ = "print_localizations"
@@ -58,8 +61,7 @@ class PrintLocalization(Base):
         UniqueConstraint(
             "print_id",
             "language",
-            "source",
-            name="uq_print_localizations_print_language_source",
+            name="uq_print_localizations_print_language",
         ),
         Index("ix_print_localizations_language_card_name", "language", "card_name"),
     )
