@@ -1,0 +1,1 @@
+Primera versión de Don’tRipIt para Android. Busca cartas y sets, identifica la impresión física exacta y gestiona tu colección y wishlist desde la misma cuenta. Las referencias de mercado se muestran solo cuando existe una correspondencia verificable para esa versión.
