@@ -109,11 +109,14 @@ jobs:
         working-directory: android-twa
         run: bubblewrap update --skipVersionUpgrade
 
-      - name: Verify generated Android identity
+      - name: Verify generated Android identity and Play SDK target
         working-directory: android-twa
         run: |
-          grep -q "com.dontripit.app" app/build.gradle
-          grep -q "dontripit.com" app/build.gradle
+          grep -q 'applicationId "com.dontripit.app"' app/build.gradle
+          grep -q 'hostName: '\''dontripit.com'\''' app/build.gradle
+          grep -Eq 'compileSdkVersion[[:space:]]+36' app/build.gradle
+          grep -Eq 'targetSdkVersion[[:space:]]+36' app/build.gradle
+          echo 'Android package, host, compileSdk 36 and targetSdk 36 verified.'
 
       - name: Build unsigned APK and Android App Bundle
         working-directory: android-twa
