@@ -22,7 +22,7 @@ OUTPUT_JSON = Path("/tmp/tcgdex-multilingual-physical-backfill-audit.json")
 OUTPUT_MD = Path("/tmp/tcgdex-multilingual-physical-backfill-audit.md")
 
 
-def _fetch_tcgp_set_ids(language: str) -> set[str]:
+def _fetch_tcgp_set_ids(language: str) -> tuple[set[str], bool]:
     with requests.Session() as http:
         http.headers.update(
             {
@@ -31,11 +31,25 @@ def _fetch_tcgp_set_ids(language: str) -> set[str]:
             }
         )
         base = TCGDEX_BASE.format(language=language)
+        series = _request_json(http, f"{base}/series")
+        if not isinstance(series, list):
+            raise RuntimeError(
+                f"TCG Pocket exclusion guard failed for {language}: "
+                f"unexpected series list payload {type(series).__name__}"
+            )
+        available_series_ids = {
+            str(item.get("id") or "").strip()
+            for item in series
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
+        if "tcgp" not in available_series_ids:
+            return set(), False
+
         payload = _request_json(http, f"{base}/series/tcgp")
 
     if not isinstance(payload, dict):
         raise RuntimeError(
-            f"TCG Pocket exclusion guard failed for {language}: unexpected series payload"
+            f"TCG Pocket exclusion guard failed for {language}: unexpected tcgp payload"
         )
     set_ids = {
         str(item.get("id") or "").strip()
@@ -46,12 +60,12 @@ def _fetch_tcgp_set_ids(language: str) -> set[str]:
         raise RuntimeError(
             f"TCG Pocket exclusion guard failed for {language}: tcgp contains no sets"
         )
-    return set_ids
+    return set_ids, True
 
 
 def _physical_remote_catalog(language: str) -> tuple[dict[str, Any], dict[str, Any]]:
     catalog = _fetch_remote_catalog(language)
-    pocket_set_ids = _fetch_tcgp_set_ids(language)
+    pocket_set_ids, tcgp_published = _fetch_tcgp_set_ids(language)
 
     original_sets = catalog["sets"]
     original_cards = catalog["cards"]
@@ -86,6 +100,7 @@ def _physical_remote_catalog(language: str) -> tuple[dict[str, Any], dict[str, A
     }
     evidence = {
         "language": language,
+        "tcgp_series_published": tcgp_published,
         "tcgp_set_ids": sorted(pocket_set_ids),
         "remote_sets_before_filter": len(original_sets),
         "remote_cards_before_filter": len(original_cards),
@@ -117,7 +132,7 @@ def run() -> dict[str, Any]:
             "catalog": "physical-tcg-only",
             "languages": list(LANGUAGES),
             "remote_source": "TCGdex REST v2",
-            "excluded_series": ["tcgp"],
+            "excluded_series": ["tcgp when published by the language endpoint"],
             "database_writes": 0,
             "personal_data_tables_queried": False,
         },
@@ -134,15 +149,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Physical-scope guard",
         "",
-        "TCGdex series `tcgp` is excluded before any backfill candidate is counted.",
+        "For each language, the auditor first discovers available TCGdex series. "
+        "When `tcgp` is published, all of its sets are excluded before any backfill candidate is counted.",
         "",
-        "| Lang | Remote sets | Pocket sets excluded | Physical sets | Remote cards | Pocket cards excluded | Physical cards |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Lang | tcgp published | Remote sets | Pocket sets excluded | Physical sets | Remote cards | Pocket cards excluded | Physical cards |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for language in LANGUAGES:
         row = report["tcg_pocket_exclusions"][language]
         lines.append(
-            f"| {language} | {row['remote_sets_before_filter']} | {row['excluded_tcgp_sets']} | "
+            f"| {language} | {str(row['tcgp_series_published']).lower()} | "
+            f"{row['remote_sets_before_filter']} | {row['excluded_tcgp_sets']} | "
             f"{row['physical_sets_after_filter']} | {row['remote_cards_before_filter']} | "
             f"{row['excluded_tcgp_cards']} | {row['physical_cards_after_filter']} |"
         )
