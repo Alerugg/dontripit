@@ -106,6 +106,18 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
         out: list[dict] = []
         seen_card_ids: set[str] = set()
         visited_sets = 0
+
+        def _log_progress() -> None:
+            # Keep the legacy telemetry contract used by operations/tests while
+            # adding the physical-scope guard around the remote catalog.
+            self.logger.info(
+                "ingest tcgdex load_progress phase=remote sets_visited=%s cards_accumulated=%s limit=%s set_filter=%s",
+                visited_sets,
+                len(out),
+                limit,
+                set_id,
+            )
+
         for item in physical_sets:
             remote_set_id = str(item.get("id") or "").strip()
             if not remote_set_id:
@@ -125,7 +137,10 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
                     continue
                 seen_card_ids.add(card_id)
                 out.append(self._build_card_payload(set_payload, card, lang=language))
+                if len(out) == 1 or len(out) % 25 == 0:
+                    _log_progress()
                 if limit and len(out) >= limit:
+                    _log_progress()
                     self.logger.info(
                         "ingest tcgdex physical load_done lang=%s sets_visited=%s cards=%s limit=%s",
                         language,
@@ -135,6 +150,7 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
                     )
                     return out
 
+        _log_progress()
         self.logger.info(
             "ingest tcgdex physical load_done lang=%s sets_visited=%s cards=%s limit=%s",
             language,
