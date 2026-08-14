@@ -16,14 +16,15 @@ export async function generateMetadata({ params }) {
     print?.foil || print?.is_foil ? 'Foil' : null,
   ].filter(Boolean).join(' · ')
   const canonical = `${SITE_URL}/prints/${encodeURIComponent(id)}`
-  const title = `${name}${identity ? ` · ${identity}` : ''} · Don’tRipIt`
+  const title = `${name}${identity ? ` · ${identity}` : ''}`
+  const socialTitle = `${title} · Don’tRipIt`
   const description = `Identifica la versión física exacta de ${name}${identity ? ` (${identity})` : ''} en ${gameLabel}, con su Print ID y referencia Cardmarket cuando existe correspondencia exacta.`
 
   return {
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical },
+    openGraph: { title: socialTitle, description, url: canonical },
   }
 }
 
