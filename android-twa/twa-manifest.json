@@ -13,8 +13,8 @@
   "backgroundColor": "#0d0c11",
   "enableNotifications": false,
   "startUrl": "/?source=android",
-  "iconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-512.png",
-  "maskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-512-maskable.png",
+  "iconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-512.png",
+  "maskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-512-maskable.png",
   "splashScreenFadeOutDuration": 250,
   "signingKey": {
     "path": "./android.keystore",
@@ -27,15 +27,15 @@
       "name": "Explorar cartas",
       "shortName": "Explorar",
       "url": "/search",
-      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192.png",
-      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192-maskable.png"
+      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-192.png",
+      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-192-maskable.png"
     },
     {
       "name": "Mi colección",
       "shortName": "Colección",
       "url": "/collection",
-      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192.png",
-      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/mobile-pwa/frontend/public/icons/dontripit-192-maskable.png"
+      "chosenIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-192.png",
+      "chosenMaskableIconUrl": "https://raw.githubusercontent.com/Alerugg/dontripit/be94bf6a87da44c846f51df33588b642e455b4b7/frontend/public/icons/dontripit-192-maskable.png"
     }
   ],
   "generatorApp": "bubblewrap-cli",
