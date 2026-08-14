@@ -29,7 +29,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -51,8 +51,47 @@ jobs:
           console.log(`TWA source OK: ${m.packageId} ${m.appVersion} (${m.appVersionCode}) -> https://${m.host}${m.startUrl}`)
           NODE
 
-      - name: Install Bubblewrap 1.25.0
-        run: npm install --global @bubblewrap/cli@1.25.0
+      - name: Install Bubblewrap 1.25.0 and matching Jimp decoder
+        run: npm install --global @bubblewrap/cli@1.25.0 jimp@0.22.12
+
+      - name: Decode every configured icon with Jimp
+        env:
+          NODE_PATH: ${{ github.workspace }}/.unused
+        run: |
+          export NODE_PATH="$(npm root -g)"
+          node <<'NODE'
+          const fs = require('fs')
+          const Jimp = require('jimp')
+          const manifest = JSON.parse(fs.readFileSync('android-twa/twa-manifest.json', 'utf8'))
+          const candidates = [
+            ['launcher', manifest.iconUrl],
+            ['maskable', manifest.maskableIconUrl],
+            ...((manifest.shortcuts || []).flatMap((s, index) => [
+              [`shortcut-${index + 1}`, s.chosenIconUrl],
+              [`shortcut-${index + 1}-maskable`, s.chosenMaskableIconUrl],
+            ])),
+          ].filter(([, url]) => Boolean(url))
+
+          ;(async () => {
+            for (const [label, url] of candidates) {
+              const response = await fetch(url)
+              if (!response.ok) throw new Error(`${label}: HTTP ${response.status} ${url}`)
+              const contentType = response.headers.get('content-type') || ''
+              const bytes = Buffer.from(await response.arrayBuffer())
+              console.log(`${label}: ${contentType} ${bytes.length} bytes ${url}`)
+              try {
+                const image = await Jimp.read(bytes)
+                console.log(`${label}: decoded ${image.bitmap.width}x${image.bitmap.height}`)
+              } catch (error) {
+                console.error(`${label}: JIMP DECODE FAILED`)
+                throw error
+              }
+            }
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
+          NODE
 
       - name: Configure Bubblewrap with runner SDK
         run: |
