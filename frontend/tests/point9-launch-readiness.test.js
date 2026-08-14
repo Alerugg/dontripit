@@ -65,6 +65,46 @@ test('point 10 account deletion is authenticated, explicit and cascades user-own
   assert.ok((models.match(/ondelete="CASCADE"/g) || []).length >= 4)
 })
 
+test('account deletion is available in the member UI with deliberate confirmation', () => {
+  const dashboard = source('components/dashboard/DashboardPage.js')
+  const css = source('components/dashboard/DashboardPage.css')
+  assert.match(dashboard, /Eliminar mi cuenta/)
+  assert.match(dashboard, /confirmation:\s*deleteConfirmation/)
+  assert.match(dashboard, /toUpperCase\(\) === 'ELIMINAR'/)
+  assert.match(dashboard, /autoComplete="current-password"/)
+  assert.match(dashboard, /method:\s*'DELETE'/)
+  assert.match(dashboard, /disabled={!canDeleteAccount}/)
+  assert.match(css, /\.ux-delete-account/)
+  assert.match(css, /@media \(max-width: 680px\)/)
+})
+
+test('card and exact-print routes expose dynamic canonical metadata', () => {
+  for (const file of ['app/cards/[id]/layout.js', 'app/prints/[id]/layout.js']) {
+    const layout = source(file)
+    assert.match(layout, /generateMetadata/)
+    assert.match(layout, /callInternalApi/)
+    assert.match(layout, /alternates:\s*{ canonical }/)
+    assert.match(layout, /Don’tRipIt/)
+  }
+  assert.match(source('app/prints/[id]/layout.js'), /collector_number/)
+})
+
+test('federated result tabs use explicit zero counts, readable active state and mobile scrolling', () => {
+  const results = source('components/searchV2/FederatedSearchResults.js')
+  const css = source('components/searchV2/FederatedSearchResults.css')
+  assert.match(results, /\['singles', 'Cartas', singlesCount\]/)
+  assert.match(results, /\['sets', 'Colecciones', setsCount\]/)
+  assert.match(results, /const sealedCount = safeCount/)
+  assert.match(results, /const matchesCount = safeCount/)
+  assert.doesNotMatch(results, /\['singles', 'Singles'/)
+  assert.doesNotMatch(results, /return '—'/)
+  assert.match(css, /\.fsr-tab\.is-active/)
+  assert.match(css, /color: #17131f/)
+  assert.match(css, /\.fsr-tab:focus-visible/)
+  assert.match(css, /overflow-x: auto/)
+  assert.match(css, /white-space: nowrap/)
+})
+
 test('collector-first home stays truthful and does not import mock prices', () => {
   const home = source('components/home/PublicHome.js')
   assert.match(home, /la versión correcta/)
