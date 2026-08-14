@@ -1,6 +1,13 @@
-const CACHE_VERSION = 'dontripit-pwa-v1'
+const CACHE_VERSION = 'dontripit-pwa-v2'
 const OFFLINE_URL = '/offline.html'
-const APP_SHELL = [OFFLINE_URL, '/manifest.webmanifest', '/icons/dontripit-app.svg']
+const APP_SHELL = [
+  OFFLINE_URL,
+  '/manifest.webmanifest',
+  '/icons/dontripit-app.svg',
+  '/icons/dontripit-192.png',
+  '/icons/dontripit-512.png',
+]
+const APP_SHELL_PATHS = new Set(APP_SHELL)
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,6 +46,20 @@ self.addEventListener('fetch', (event) => {
     url.pathname.startsWith('/forgot-password') ||
     url.pathname.startsWith('/reset-password')
   ) {
+    return
+  }
+
+  // Only the tiny, non-user-specific PWA shell is cache-first.
+  if (APP_SHELL_PATHS.has(url.pathname)) {
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        const cached = await cache.match(url.pathname)
+        if (cached) return cached
+        const response = await fetch(request)
+        if (response.ok) cache.put(url.pathname, response.clone())
+        return response
+      }),
+    )
     return
   }
 
