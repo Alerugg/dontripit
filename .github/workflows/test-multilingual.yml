@@ -10,7 +10,9 @@ on:
       - "backend/app/ingest/registry.py"
       - "backend/alembic/env.py"
       - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - "backend/app/routes/catalog.py"
       - "backend/tests/test_tcgdex_multilingual.py"
+      - "backend/tests/test_tcgdex_multilingual_api.py"
       - ".github/workflows/test-multilingual.yml"
   workflow_dispatch:
 
@@ -24,6 +26,20 @@ concurrency:
 jobs:
   focused-tests:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: multilingual_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d multilingual_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
@@ -50,19 +66,25 @@ jobs:
             alembic/env.py \
             alembic/versions/20260814_33_add_print_localizations.py
 
-      - name: Run migration 33 smoke test
+      - name: Run migration 33 PostgreSQL smoke test
         env:
-          DATABASE_URL: sqlite+pysqlite:///./multilingual-migration-smoke.db
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_test
           PYTHONPATH: .
         run: |
-          rm -f multilingual-migration-smoke.db
           alembic upgrade head
-          alembic current
+          alembic current | tee /tmp/alembic-current.txt
+          grep -q "20260814_33" /tmp/alembic-current.txt
 
       - name: Run focused multilingual tests
         env:
           PYTHONPATH: .
         run: pytest -q tests/test_tcgdex_multilingual.py
+
+      - name: Run multilingual API tests
+        if: ${{ hashFiles('backend/tests/test_tcgdex_multilingual_api.py') != '' }}
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_tcgdex_multilingual_api.py
 
       - name: Run legacy TCGdex ingest regressions
         env:
