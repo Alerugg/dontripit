@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import requests
+from sqlalchemy import select
 
 from app.ingest.connectors.tcgdex_pokemon_multilingual import (
     MultilingualTcgdexPokemonConnector,
 )
+from app.multilingual_models import CardIdentifier
 
 
 class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnector):
@@ -27,6 +29,41 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
     metadata and skips it with a warning rather than fabricating a physical Set.
     Explicit set requests remain fail-closed.
     """
+
+    def _upsert_card_identifier(
+        self,
+        session,
+        *,
+        card_row,
+        language: str,
+        external_id: str,
+        stats,
+    ) -> None:
+        """Store physical source aliases as many-to-one Card identifiers.
+
+        A single canonical gameplay Card may be represented by several TCGdex
+        IDs when the same card is physically reprinted. The collision boundary
+        remains strict on ``(source, external_id)``: one external identity can
+        never point at two different Cards.
+        """
+        source = self._source_namespace(language)
+        by_external = session.execute(
+            select(CardIdentifier).where(
+                CardIdentifier.source == source,
+                CardIdentifier.external_id == external_id,
+            )
+        ).scalar_one_or_none()
+        if by_external is not None:
+            if by_external.card_id != card_row.id:
+                raise RuntimeError(
+                    "TCGdex card identifier collision: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_card_id={by_external.card_id} target_card_id={card_row.id}"
+                )
+            return
+
+        session.add(CardIdentifier(card_id=card_row.id, source=source, external_id=external_id))
+        stats.records_inserted += 1
 
     def _tcg_pocket_set_ids(self, *, lang: str) -> set[str]:
         language = self._assert_certified_language(lang)
