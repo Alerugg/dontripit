@@ -1,0 +1,21 @@
+Don’tRipIt te ayuda a encontrar una carta, distinguir su versión física exacta y organizar tu colección sin mezclar impresiones diferentes.
+
+Busca por nombre, número o set y navega por el catálogo hasta la edición que realmente tienes o estás buscando. Cada impresión conserva su propia identidad: set, número de coleccionista, idioma, rareza, acabado y variante cuando corresponde.
+
+Tu colección, por versión exacta
+
+Guarda las cartas que tienes y sus cantidades en tu colección. Añade a la wishlist las versiones que quieres encontrar y vuelve a ellas desde una sola cuenta.
+
+Referencias de mercado trazables
+
+Cuando existe una correspondencia segura para una impresión concreta, Don’tRipIt muestra una referencia de mercado y su fecha. Si no existe un precio suficientemente fiable para esa versión exacta, no inventamos ni extrapolamos el valor desde otra impresión.
+
+Catálogo TCG organizado
+
+Explora cartas y sets de varios juegos de cartas coleccionables desde una interfaz pensada para coleccionistas. El catálogo mantiene separadas las diferentes versiones físicas para evitar confundir cartas que comparten nombre o ilustración pero no son la misma impresión.
+
+Privacidad y control
+
+Puedes usar el catálogo público sin crear una cuenta. Si decides registrarte, puedes gestionar tu colección y wishlist y eliminar definitivamente tu cuenta y los datos asociados cuando quieras.
+
+Don’tRipIt no es un marketplace ni procesa compras de cartas dentro de la app. Los nombres, marcas y juegos mencionados pertenecen a sus respectivos propietarios. Don’tRipIt es una herramienta independiente de catalogación y colección.
