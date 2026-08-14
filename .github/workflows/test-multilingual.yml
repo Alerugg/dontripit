@@ -18,6 +18,7 @@ on:
       - "backend/tests/test_tcgdex_multilingual.py"
       - "backend/tests/test_tcgdex_multilingual_api.py"
       - "backend/tests/test_tcgdex_physical_scope.py"
+      - "backend/tests/test_tcgdex_reprint_alias.py"
       - "backend/tests/test_validate_tcgdex_multilingual_live.py"
       - "backend/tests/test_ingest_engine.py"
       - "backend/tests/test_exact_print_output.py"
@@ -90,7 +91,12 @@ jobs:
       - name: Run focused multilingual tests
         env:
           PYTHONPATH: .
-        run: pytest -q tests/test_tcgdex_multilingual.py tests/test_tcgdex_physical_scope.py tests/test_validate_tcgdex_multilingual_live.py
+        run: |
+          pytest -q \
+            tests/test_tcgdex_multilingual.py \
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_reprint_alias.py \
+            tests/test_validate_tcgdex_multilingual_live.py
 
       - name: Run multilingual API and exact-output tests
         env:
