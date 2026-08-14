@@ -142,17 +142,16 @@ function PrintResult({ item, gameSlug }) {
       </Link>
 
       {market ? (
-        <div style={{ gridColumn: '2', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.45rem', marginTop: '-.2rem' }}>
-          <strong style={{ fontSize: '.88rem' }}>{priceLabel || 'Sin Price Guide actual'}</strong>
-          <span style={{ fontSize: '.7rem', opacity: .6 }}>Cardmarket</span>
-          {marketReference?.id_product ? <span style={{ fontSize: '.7rem', opacity: .65 }}>idProduct {marketReference.id_product}</span> : null}
+        <div className="sv2-market-row">
+          <strong className="sv2-market-price">{priceLabel || 'Sin Price Guide actual'}</strong>
+          <span className="sv2-market-source">Cardmarket</span>
+          {marketReference?.id_product ? <span className="sv2-market-id">idProduct {marketReference.id_product}</span> : null}
           {marketReference?.url ? (
             <a
               href={marketReference.url}
               target="_blank"
               rel="noopener noreferrer sponsored"
-              className="sv2-result-action"
-              style={{ marginLeft: 'auto' }}
+              className="sv2-result-action sv2-market-link"
             >
               Cardmarket exacto ↗
             </a>
