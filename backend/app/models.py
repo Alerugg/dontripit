@@ -35,7 +35,7 @@ class Game(Base):
 class Set(Base):
     __tablename__ = "sets"
     __table_args__ = (
-        UniqueConstraint("game_id", "code", name="uq_sets_game_code"),
+        UniqueConstraint("game_id", "code", "region", name="uq_sets_game_code_region"),
         UniqueConstraint("game_id", "tcgdex_id", name="uq_sets_game_tcgdex"),
         UniqueConstraint("game_id", "yugioh_id", name="uq_sets_game_yugioh"),
         UniqueConstraint("game_id", "riftbound_id", name="uq_sets_game_riftbound"),
@@ -44,6 +44,7 @@ class Set(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(50), nullable=False)
+    region: Mapped[str] = mapped_column(String(16), nullable=False, default="global", server_default="global")
     tcgdex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yugioh_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     riftbound_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
