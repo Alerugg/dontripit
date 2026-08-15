@@ -7,6 +7,9 @@ from typing import Any
 
 from app.scripts import certify_mtg_multilingual_ephemeral_v1 as certification
 
+# This runner is intentionally separate so the certification clone can support
+# both serial-id tables and canonical attribute tables keyed directly by FK.
+
 
 def _copy_filtered(src, dst, table: str, where_sql: str = "TRUE", params: tuple = ()) -> dict[str, Any]:
     """COPY one filtered table while supporting child tables keyed by FK, not id.
