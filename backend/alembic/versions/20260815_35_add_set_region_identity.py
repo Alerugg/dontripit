@@ -17,7 +17,10 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-OLD_UNIQUE = "uq_sets_game_code"
+# The original 20260302_02 migration created this constraint under the
+# ``game_id``-spelled name. The ORM later drifted to ``uq_sets_game_code``;
+# migrations must target the physical database contract, not the stale label.
+OLD_UNIQUE = "uq_sets_game_id_code"
 NEW_UNIQUE = "uq_sets_game_code_region"
 NEW_INDEX = "ix_sets_game_code_region"
 
