@@ -1,0 +1,114 @@
+name: Audit Yu-Gi-Oh multilingual DB compatibility v2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_multilingual_db_compatibility_v2.py
+      - .github/workflows/audit-yugioh-multilingual-db-compatibility-v2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-db-compatibility-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PYTHONPATH: .
+
+jobs:
+  compatibility-audit-v2:
+    name: Read-only regional writer compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygojson-v2/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygojson-v2/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygojson-v2/aggregate.zip" -d "$RUNNER_TEMP/ygojson-v2/extracted"
+
+      - name: Audit regional writer compatibility in explicit read-only transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_multilingual_db_compatibility_v2 \
+            --input-dir "$RUNNER_TEMP/ygojson-v2/extracted" \
+            --report ../artifacts/yugioh-multilingual-db-compatibility-v2.json
+
+      - name: Print compact evidence
+        if: always()
+        working-directory: .
+        shell: bash
+        run: |
+          if [ -f artifacts/yugioh-multilingual-db-compatibility-v2.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('artifacts/yugioh-multilingual-db-compatibility-v2.json').read_text())
+          compact={
+            'production_writes': r['production_writes'],
+            'database_transaction_read_only': r['database_transaction_read_only'],
+            'database_schema': r['database_schema'],
+            'database_inventory': r['database_inventory'],
+            'source_freshness': r['source_freshness'],
+            'es': r['targets']['es'],
+            'ja': r['targets']['ja'],
+            'gates': r['gates'],
+            'structural_pass': r['structural_pass'],
+            'production_rollout_ready': r['production_rollout_ready'],
+          }
+          print(json.dumps(compact, indent=2, ensure_ascii=False))
+          PY
+          fi
+
+      - name: Enforce structural gate only
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-multilingual-db-compatibility-v2.json').read_text())
+          if not r['structural_pass']:
+              raise SystemExit('YGO multilingual structural compatibility gate failed')
+          print('structural_pass=true; freshness remains an independent rollout gate')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-db-compatibility-v2
+          path: artifacts/yugioh-multilingual-db-compatibility-v2.json
+          if-no-files-found: warn
+          retention-days: 30
