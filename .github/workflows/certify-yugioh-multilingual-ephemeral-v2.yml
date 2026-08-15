@@ -1,3 +1,4 @@
+# Triggered after workflow registration; certification logic unchanged.
 name: Certify Yu-Gi-Oh Multilingual Ephemeral V2
 
 on:
