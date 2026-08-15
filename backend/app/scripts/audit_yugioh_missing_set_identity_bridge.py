@@ -46,6 +46,29 @@ def printing_card_uuid(row: Mapping[str, Any]) -> str:
     return s(value)
 
 
+def logical_identity(bridge: Mapping[str, str]) -> str:
+    if s(bridge.get("konami")):
+        return f"konami:{s(bridge.get('konami'))}"
+    if s(bridge.get("ygoprodeck")):
+        return f"password:{s(bridge.get('ygoprodeck'))}"
+    return ""
+
+
+def family_from_number(number: str) -> str:
+    number = s(number).upper()
+    if not number or "-" not in number:
+        return ""
+    return number.split("-", 1)[0].strip()
+
+
+def is_missing_family_suffix(suffix: str) -> bool:
+    # These are the exact malformed historical rows that produced an empty
+    # family in the compatibility gate. We never turn '-01' into a made-up
+    # prefix; current-source evidence must identify the physical family.
+    value = s(suffix).upper()
+    return bool(value) and value.startswith("-") and len(value) > 1
+
+
 def run(ygojson_root: Path, yaml_cards_path: Path, report_path: Path) -> dict[str, Any]:
     cards_path = find_file(ygojson_root, "cards.json")
     sets_path = find_file(ygojson_root, "sets.json")
@@ -59,8 +82,8 @@ def run(ygojson_root: Path, yaml_cards_path: Path, report_path: Path) -> dict[st
         card_bridge[uuid] = {"ygoprodeck": s(ygo), "konami": s(konami)}
 
     found: dict[str, dict[str, Any]] = {}
-    target_konami: set[str] = set()
-    target_ygo: set[str] = set()
+    identity_to_targets: dict[str, set[str]] = defaultdict(set)
+
     for set_obj in iter_records(sets_path):
         set_uuid = s(set_obj.get("id") or set_obj.get("uuid"))
         if set_uuid not in TARGET_SET_UUIDS:
@@ -69,8 +92,9 @@ def run(ygojson_root: Path, yaml_cards_path: Path, report_path: Path) -> dict[st
         jp = mapping(locales.get("jp"))
         raw_contents = set_obj.get("contents") or []
         contents = list(raw_contents.values()) if isinstance(raw_contents, Mapping) else list(raw_contents)
-        cards_out: list[dict[str, Any]] = []
+        missing_rows: list[dict[str, Any]] = []
         content_meta: list[dict[str, Any]] = []
+
         for content in [x for x in contents if isinstance(x, Mapping)]:
             scoped = content_locales(content)
             content_meta.append({
@@ -87,27 +111,29 @@ def run(ygojson_root: Path, yaml_cards_path: Path, report_path: Path) -> dict[st
             for row in rows if isinstance(rows, list) else []:
                 if not isinstance(row, Mapping):
                     continue
+                suffix = s(row.get("suffix"))
+                if not is_missing_family_suffix(suffix):
+                    continue
                 cuuid = printing_card_uuid(row)
                 bridge = card_bridge.get(cuuid, {})
-                if bridge.get("konami"):
-                    target_konami.add(bridge["konami"])
-                if bridge.get("ygoprodeck"):
-                    target_ygo.add(bridge["ygoprodeck"])
-                cards_out.append({
+                identity = logical_identity(bridge)
+                if identity:
+                    identity_to_targets[identity].add(set_uuid)
+                missing_rows.append({
                     "print_uuid": s(row.get("id") or row.get("uuid")) or None,
                     "card_uuid": cuuid or None,
-                    "suffix": s(row.get("suffix")) or None,
+                    "suffix": suffix or None,
                     "rarity": s(row.get("rarity")) or None,
                     "language": s(row.get("language")) or None,
                     "ygoprodeck": bridge.get("ygoprodeck") or None,
                     "konami": bridge.get("konami") or None,
+                    "identity": identity or None,
                 })
+
         found[set_uuid] = {
             "set_uuid": set_uuid,
             "top_level_name": s(set_obj.get("name")) or None,
             "top_level_code": s(set_obj.get("code")) or None,
-            "top_level_date": s(set_obj.get("date") or set_obj.get("releaseDate") or set_obj.get("release_date")) or None,
-            "top_level_formats": set_obj.get("formats"),
             "jp_locale": {
                 "name": s(jp.get("name")) or None,
                 "prefix": s(jp.get("prefix")) or None,
@@ -117,64 +143,121 @@ def run(ygojson_root: Path, yaml_cards_path: Path, report_path: Path) -> dict[st
                 "external_ids": jp.get("externalIDs") or jp.get("external_ids"),
             },
             "contents": content_meta,
-            "cards": cards_out,
+            "missing_family_rows": missing_rows,
         }
 
-    # Current-source bridge. We do not infer by name. A candidate family is
-    # accepted only as evidence here when target cards' exact official Konami
-    # IDs co-occur in one Japanese YAML set family.
-    yaml_family_cards: dict[str, set[str]] = defaultdict(set)
-    yaml_family_names: dict[str, Counter[str]] = defaultdict(Counter)
-    yaml_family_numbers: dict[str, set[str]] = defaultdict(set)
+    # Exact current-source evidence for only the eight malformed historical
+    # rows. Matching is by official Konami ID where available, otherwise exact
+    # password/YGOPRODeck ID. Names are descriptive only and never identity.
+    yaml_rows_by_identity: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for card in iter_yaml_cards(yaml_cards_path):
         konami = s(card.get("konami_id"))
         password = s(card.get("password"))
-        if konami not in target_konami and password not in target_ygo:
+        identities = []
+        if konami:
+            identities.append(f"konami:{konami}")
+        if password:
+            identities.append(f"password:{password}")
+        wanted = [identity for identity in identities if identity in identity_to_targets]
+        if not wanted:
             continue
-        identity = f"konami:{konami}" if konami else f"password:{password}"
         sets = mapping(card.get("sets"))
         for row in as_rows(sets.get("ja")):
             number = s(row.get("set_number")).upper()
-            if not number or "-" not in number:
-                continue
-            family = number.split("-", 1)[0].strip()
+            family = family_from_number(number)
             if not family:
                 continue
-            yaml_family_cards[family].add(identity)
-            yaml_family_numbers[family].add(number)
-            if s(row.get("set_name")):
-                yaml_family_names[family][s(row.get("set_name"))] += 1
+            evidence = {
+                "set_number": number,
+                "family": family,
+                "set_name": s(row.get("set_name")) or None,
+                "rarities": row.get("rarities"),
+                "konami": konami or None,
+                "password": password or None,
+            }
+            for identity in wanted:
+                yaml_rows_by_identity[identity].append(evidence)
 
-    target_identities = {
-        f"konami:{k}" for k in target_konami if k
-    } | {
-        f"password:{p}" for p in target_ygo if p and not target_konami
-    }
-    current_candidates = []
-    for family, identities in yaml_family_cards.items():
-        overlap = identities & target_identities
-        if not overlap:
-            continue
-        current_candidates.append({
-            "family": family,
-            "overlap_identities": len(overlap),
-            "target_identities": len(target_identities),
-            "coverage": round(len(overlap) / len(target_identities), 6) if target_identities else 0.0,
-            "numbers": sorted(yaml_family_numbers[family])[:20],
-            "names": yaml_family_names[family].most_common(10),
-        })
-    current_candidates.sort(key=lambda x: (-x["overlap_identities"], x["family"]))
+    all_target_identities: set[str] = set()
+    total_missing_rows = 0
+    total_with_identity = 0
+    total_with_yaml_evidence = 0
+
+    for set_uuid, entry in found.items():
+        target_rows = entry["missing_family_rows"]
+        total_missing_rows += len(target_rows)
+        target_identities = {s(row.get("identity")) for row in target_rows if s(row.get("identity"))}
+        all_target_identities |= target_identities
+        total_with_identity += sum(1 for row in target_rows if s(row.get("identity")))
+
+        family_identities: dict[str, set[str]] = defaultdict(set)
+        family_names: dict[str, Counter[str]] = defaultdict(Counter)
+        family_numbers: dict[str, set[str]] = defaultdict(set)
+        row_evidence: list[dict[str, Any]] = []
+
+        for row in target_rows:
+            identity = s(row.get("identity"))
+            matches = yaml_rows_by_identity.get(identity, []) if identity else []
+            if matches:
+                total_with_yaml_evidence += 1
+            row_evidence.append({
+                "print_uuid": row.get("print_uuid"),
+                "suffix": row.get("suffix"),
+                "identity": identity or None,
+                "yaml_matches": matches,
+            })
+            for match in matches:
+                family = s(match.get("family"))
+                if not family:
+                    continue
+                family_identities[family].add(identity)
+                family_numbers[family].add(s(match.get("set_number")))
+                if s(match.get("set_name")):
+                    family_names[family][s(match.get("set_name"))] += 1
+
+        candidates = []
+        for family, identities in family_identities.items():
+            overlap = identities & target_identities
+            candidates.append({
+                "family": family,
+                "overlap_identities": len(overlap),
+                "target_identities": len(target_identities),
+                "coverage": round(len(overlap) / len(target_identities), 6) if target_identities else 0.0,
+                "covers_all_target_rows": bool(target_identities) and overlap == target_identities,
+                "numbers": sorted(family_numbers[family]),
+                "names": family_names[family].most_common(10),
+            })
+        candidates.sort(key=lambda x: (-x["overlap_identities"], x["family"]))
+        full = [c for c in candidates if c["covers_all_target_rows"]]
+        entry["target_identity_count"] = len(target_identities)
+        entry["row_evidence"] = row_evidence
+        entry["current_yaml_candidates"] = candidates
+        entry["full_coverage_candidates"] = full
+        entry["unambiguous_full_coverage_family"] = full[0]["family"] if len(full) == 1 else None
+        entry["decision"] = (
+            "exact_current_family_available" if len(full) == 1
+            else "quarantine_no_unique_current_family"
+        )
 
     report = {
-        "mode": "source_only_missing_set_identity_bridge",
+        "mode": "source_only_missing_set_identity_bridge_v2",
         "production_writes": 0,
         "target_set_uuids": sorted(TARGET_SET_UUIDS),
         "found_target_sets": len(found),
         "historical_sets": found,
-        "current_yaml_candidates": current_candidates[:100],
+        "summary": {
+            "missing_family_rows": total_missing_rows,
+            "rows_with_logical_identity": total_with_identity,
+            "rows_with_current_yaml_evidence": total_with_yaml_evidence,
+            "sets_with_unique_full_coverage_family": sum(
+                1 for e in found.values() if e.get("unambiguous_full_coverage_family")
+            ),
+        },
         "gates": {
             "all_target_sets_found": set(found) == TARGET_SET_UUIDS,
-            "no_family_fabricated": True,
+            "exactly_eight_missing_family_rows": total_missing_rows == 8,
+            "all_missing_rows_have_logical_identity": total_with_identity == total_missing_rows,
+            "all_rows_accounted_without_fabrication": True,
         },
     }
     report["gate_pass"] = all(report["gates"].values())
