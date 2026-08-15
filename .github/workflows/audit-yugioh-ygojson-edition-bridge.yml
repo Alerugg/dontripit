@@ -20,6 +20,7 @@ env:
   YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
   PYTHONPATH: .
 
+# Source-only diagnostic. It never receives database credentials.
 jobs:
   edition-bridge:
     name: Source-only printing UUID to edition bridge
