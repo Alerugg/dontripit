@@ -1,0 +1,90 @@
+name: Audit Yu-Gi-Oh YGOJSON printing edition bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_ygojson_edition_bridge.py
+      - .github/workflows/audit-yugioh-ygojson-edition-bridge.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-ygojson-edition-bridge-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  PYTHONPATH: .
+
+jobs:
+  edition-bridge:
+    name: Source-only printing UUID to edition bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygo-edition/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-edition/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygo-edition/aggregate.zip" -d "$RUNNER_TEMP/ygo-edition/extracted"
+
+      - name: Trace exact printing UUID edition paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_ygojson_edition_bridge \
+            --input-dir "$RUNNER_TEMP/ygo-edition/extracted" \
+            --report ../artifacts/yugioh-ygojson-edition-bridge.json
+
+      - name: Enforce diagnostic accounting gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-ygojson-edition-bridge.json').read_text())
+          if not r['gate_pass']:
+              raise SystemExit('YGOJSON edition bridge audit failed')
+          print(json.dumps({
+              'gate_pass': r['gate_pass'],
+              'es': {k:v for k,v in r['targets']['es'].items() if k != 'samples'},
+              'ja': {k:v for k,v in r['targets']['ja'].items() if k != 'samples'},
+          }, indent=2))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-ygojson-edition-bridge
+          path: artifacts/yugioh-ygojson-edition-bridge.json
+          if-no-files-found: warn
+          retention-days: 30
