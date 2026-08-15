@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import psycopg2
@@ -12,6 +15,61 @@ LANGUAGES_SQL = "('es','ja')"
 
 def _log(message: str) -> None:
     print(f"[mtg-multilingual-lean-seed] {message}", flush=True)
+
+
+def _copy_filtered(src, dst, table: str, where_sql: str = "TRUE", params: tuple = ()) -> dict[str, Any]:
+    """Schema-safe COPY for tables keyed either by id or directly by FK."""
+    if not certification._table_exists(src, table) or not certification._table_exists(dst, table):
+        return {"table": table, "rows": 0, "skipped": True}
+    source_columns = certification._columns(src, table)
+    target_columns = set(certification._columns(dst, table))
+    columns = [column for column in source_columns if column in target_columns]
+    if not columns:
+        raise RuntimeError(f"No common columns for {table}")
+    quoted = ",".join(f'"{column}"' for column in columns)
+    where = src.mogrify(where_sql, params).decode("utf-8") if params else where_sql
+    src.execute(f'SELECT COUNT(*) FROM "{table}" WHERE {where}')
+    count = int(src.fetchone()[0])
+    order_column = "id" if "id" in columns else columns[0]
+    fd, tmp_name = tempfile.mkstemp(prefix=f"dontripit-{table}-", suffix=".csv")
+    os.close(fd)
+    path = Path(tmp_name)
+    started = time.monotonic()
+    try:
+        with path.open("w", encoding="utf-8", newline="") as out:
+            src.copy_expert(
+                f'COPY (SELECT {quoted} FROM "{table}" WHERE {where} ORDER BY "{order_column}") TO STDOUT WITH (FORMAT CSV)',
+                out,
+            )
+        digest = certification._sha256(path)
+        if count:
+            with path.open("r", encoding="utf-8", newline="") as inp:
+                dst.copy_expert(f'COPY "{table}" ({quoted}) FROM STDIN WITH (FORMAT CSV)', inp)
+        _log(f"copy table={table} rows={count} elapsed={time.monotonic() - started:.1f}s")
+        return {
+            "table": table,
+            "rows": count,
+            "sha256": digest,
+            "columns": columns,
+            "order_column": order_column,
+        }
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _reset_sequence(cur, table: str) -> None:
+    columns = certification._columns(cur, table)
+    if "id" not in columns:
+        return
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    row = cur.fetchone()
+    sequence = row[0] if row else None
+    if not sequence:
+        return
+    cur.execute(f'SELECT COALESCE(MAX(id),0) FROM "{table}"')
+    maximum = int(cur.fetchone()[0] or 0)
+    if maximum:
+        cur.execute("SELECT setval(%s,%s,true)", (sequence, maximum))
 
 
 def _install_guards(cur) -> dict[str, Any]:
@@ -149,13 +207,13 @@ def seed_ephemeral_lean(production_url: str, target_url: str) -> dict[str, Any]:
                 raise RuntimeError("Ephemeral target already has catalog data")
 
             _log("copy canonical game/sets/cards")
-            copied.append(certification._copy_filtered(src, dst, "games", "id=%s", (game_id,)))
-            copied.append(certification._copy_filtered(src, dst, "sets", "game_id=%s", (game_id,)))
-            copied.append(certification._copy_filtered(src, dst, "cards", "game_id=%s", (game_id,)))
+            copied.append(_copy_filtered(src, dst, "games", "id=%s", (game_id,)))
+            copied.append(_copy_filtered(src, dst, "sets", "game_id=%s", (game_id,)))
+            copied.append(_copy_filtered(src, dst, "cards", "game_id=%s", (game_id,)))
 
             _log("copy all existing MTG Print identities")
             copied.append(
-                certification._copy_filtered(
+                _copy_filtered(
                     src,
                     dst,
                     "prints",
@@ -170,7 +228,7 @@ def seed_ephemeral_lean(production_url: str, target_url: str) -> dict[str, Any]:
                 f"WHERE c.game_id=%s AND lower(coalesce(p.language,'')) IN {LANGUAGES_SQL})"
             )
             for table in ("print_attributes", "print_images", "print_localizations"):
-                copied.append(certification._copy_filtered(src, dst, table, target_prints, (game_id,)))
+                copied.append(_copy_filtered(src, dst, table, target_prints, (game_id,)))
 
             for table in (
                 "games",
@@ -182,7 +240,7 @@ def seed_ephemeral_lean(production_url: str, target_url: str) -> dict[str, Any]:
                 "print_localizations",
             ):
                 if certification._table_exists(dst, table):
-                    certification._reset_sequence(dst, table)
+                    _reset_sequence(dst, table)
 
             baseline = certification._state(dst, game_id)
             baseline["sets_digest"] = certification._digest_query(
