@@ -7,6 +7,8 @@ on:
     paths:
       - 'backend/app/scripts/certify_mtg_multilingual_ephemeral_v1.py'
       - 'backend/app/scripts/certify_mtg_multilingual_ephemeral_v1_runner.py'
+      - 'backend/app/scripts/seed_mtg_multilingual_ephemeral_lean_v1.py'
+      - 'backend/app/scripts/validate_mtg_multilingual_source_fidelity_v1.py'
       - 'backend/app/scripts/audit_mtg_multilingual_v1.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot.py'
       - 'backend/app/mtg_identity_v2.py'
@@ -69,6 +71,8 @@ jobs:
           python -m py_compile \
             app/scripts/certify_mtg_multilingual_ephemeral_v1.py \
             app/scripts/certify_mtg_multilingual_ephemeral_v1_runner.py \
+            app/scripts/seed_mtg_multilingual_ephemeral_lean_v1.py \
+            app/scripts/validate_mtg_multilingual_source_fidelity_v1.py \
             app/scripts/audit_mtg_multilingual_v1.py \
             app/scripts/build_mtg_v2_snapshot.py \
             app/mtg_identity_v2.py
@@ -86,9 +90,6 @@ jobs:
           conn.autocommit = True
           try:
               with conn.cursor() as cur:
-                  # The database is disposable and local. Keep production-like
-                  # constraints/indexes, but stop 512 MB WAL checkpoint storms
-                  # from dominating a functional/idempotence certification.
                   settings = {
                       'max_wal_size': '4GB',
                       'checkpoint_timeout': '30min',
@@ -119,7 +120,7 @@ jobs:
           print('safety gate: ephemeral target is local PostgreSQL; production is source-only')
           PY
 
-      - name: Run full two-pass ephemeral certification
+      - name: Run guarded two-pass exact-source certification
         run: |
           python -m app.scripts.certify_mtg_multilingual_ephemeral_v1_runner \
             --output /tmp/mtg-multilingual-ephemeral-certification.json \
@@ -131,29 +132,62 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+
           report = json.loads(Path('/tmp/mtg-multilingual-ephemeral-certification.json').read_text())
           assert report['status'] == 'pass', report
           assert report['mode'] == 'ephemeral-only-certification', report
           assert report['production_writes'] == 0, report
+          assert report['baseline']['lean_clone'] is True, report
+          assert report['baseline']['production_transaction_read_only'] is True, report
+          assert report['baseline']['economics_copied'] is False, report
+          assert report['baseline']['economics_write_guard'] is True, report
           assert report['snapshot']['sealed_source'] == 'single-scryfall-all_cards-capture', report
           assert report['snapshot']['sealed_scope'] == 'paper-es-ja', report
+          assert report['snapshot']['counts']['paper_es_prints'] == 89405, report
+          assert report['snapshot']['counts']['paper_ja_prints'] == 104735, report
           assert report['pass2_zero_writes'] is True, report
-          assert report['validation']['final_language_counts'] == {'es': 89405, 'ja': 104735}, report
-          assert report['validation']['natural_duplicates'] == 0, report
-          assert report['validation']['missing_localizations'] == 0, report
-          assert report['validation']['missing_scryfall_image_relations'] == 0, report
-          assert report['validation']['missing_scryfall_ids'] == 0, report
-          assert report['validation']['duplicate_scryfall_finish_identities'] == 0, report
-          assert report['validation']['auxiliary_scryfall_print_identifiers'] == 0, report
-          assert report['validation']['scryfall_identity_contract'] == 'prints.scryfall_id+prints.variant', report
-          assert report['validation']['english_prints_unchanged'] is True, report
-          assert report['validation']['prices_unchanged'] is True, report
+
+          validation = report['validation']
+          assert validation['final_language_counts'] == {'es': 89405, 'ja': 104735}, report
+          assert validation['natural_duplicates'] == 0, report
+          assert validation['missing_localizations'] == 0, report
+          assert validation['missing_scryfall_image_relations'] == 0, report
+          assert validation['missing_scryfall_ids'] == 0, report
+          assert validation['duplicate_scryfall_finish_identities'] == 0, report
+          assert validation['auxiliary_scryfall_print_identifiers'] == 0, report
+          assert validation['scryfall_identity_contract'] == 'prints.scryfall_id+prints.variant', report
+          assert validation['english_prints_unchanged'] is True, report
+          assert validation['prices_unchanged'] is True, report
+          assert validation['economics_guarded_against_dml'] is True, report
+
+          fidelity = validation['source_fidelity']
+          assert fidelity['status'] == 'pass', report
+          assert fidelity['counts'].get('checked_es', 0) == 89405, report
+          assert fidelity['counts'].get('exact_es', 0) == 89405, report
+          assert fidelity['counts'].get('mismatch_es', 0) == 0, report
+          assert fidelity['counts'].get('checked_ja', 0) == 104735, report
+          assert fidelity['counts'].get('exact_ja', 0) == 104735, report
+          assert fidelity['counts'].get('mismatch_ja', 0) == 0, report
+
+          lean = validation['lean_invariants']
+          assert lean['status'] == 'pass', report
+          assert lean['sets_digest_unchanged'] is True, report
+          assert lean['cards_digest_unchanged'] is True, report
+          assert lean['preexisting_prints_digest_unchanged'] is True, report
+          assert lean['economics_write_guard'] is True, report
+          assert all(value == 0 for value in lean['economics_rows'].values()), report
+
           print(json.dumps({
             'status': report['status'],
+            'baseline': {
+              'lean_clone': report['baseline']['lean_clone'],
+              'elapsed_seconds': report['baseline']['elapsed_seconds'],
+              'guards': report['baseline']['guards'],
+            },
             'snapshot': report['snapshot'],
             'pass1': report['pass1'],
             'pass2': report['pass2'],
-            'validation': report['validation'],
+            'validation': validation,
           }, indent=2, sort_keys=True))
           PY
 
