@@ -1,0 +1,133 @@
+name: Audit Yu-Gi-Oh Current Localization Gaps V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_current_localization_gaps_v1.py
+      - .github/workflows/audit-yugioh-current-localization-gaps-v1.yml
+
+permissions:
+  contents: read
+
+env:
+  PRODUCTION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  PRODUCTION_DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  EPHEMERAL_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ygo_gap_audit
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ygo_gap_audit
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  YAML_YUGI_CARDS_URL: https://dawnbrandbots.github.io/yaml-yugi/cards.json
+  YAML_YUGI_REPO_API: https://api.github.com/repos/DawnbrandBots/yaml-yugi
+  PYTHONPATH: .
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dontripit_ygo_gap_audit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dontripit_ygo_gap_audit"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout isolated Yu-Gi-Oh branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Compile gap audit
+        run: python -m py_compile app/scripts/audit_yugioh_current_localization_gaps_v1.py
+
+      - name: Prove production is source-only and ephemeral is local
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          prod=os.getenv('PRODUCTION_DATABASE_URL_UNPOOLED') or os.getenv('PRODUCTION_DATABASE_URL')
+          eph=os.environ['EPHEMERAL_DATABASE_URL']
+          assert prod and prod != eph
+          assert urlparse(eph).hostname in {'127.0.0.1','localhost'}
+          print('safety gate: production != target; target is local PostgreSQL')
+          PY
+
+      - name: Build exact production schema revision 34
+        run: alembic upgrade 20260814_34
+
+      - name: Clone only Yu-Gi-Oh catalog from production in READ ONLY mode
+        run: python -m app.scripts.seed_yugioh_production_shape_v1
+
+      - name: Apply regional and card-scoped migrations locally
+        run: alembic upgrade head
+
+      - name: Download current source snapshots
+        working-directory: .
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygojson/extracted" "$RUNNER_TEMP/yaml-yugi" artifacts
+          curl --fail --location --retry 4 --retry-all-errors --output "$RUNNER_TEMP/ygojson/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygojson/aggregate.zip" -d "$RUNNER_TEMP/ygojson/extracted"
+          curl --fail --location --retry 4 --retry-all-errors --output "$RUNNER_TEMP/yaml-yugi/cards.json" "$YAML_YUGI_CARDS_URL"
+          python - <<'PY'
+          import hashlib,json,os,urllib.request
+          from pathlib import Path
+          cards=Path(os.environ['RUNNER_TEMP'])/'yaml-yugi'/'cards.json'
+          headers={'Accept':'application/vnd.github+json','Authorization':f"Bearer {os.environ['GH_TOKEN']}",'User-Agent':'dontripit-ygo-gap-audit-v1'}
+          def get(url):
+              req=urllib.request.Request(url,headers=headers)
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  return json.load(response)
+          repo=get(os.environ['YAML_YUGI_REPO_API'])
+          commits=get(os.environ['YAML_YUGI_REPO_API']+'/commits?sha=master&per_page=1')
+          meta={'source':'yaml-yugi','cards_url':os.environ['YAML_YUGI_CARDS_URL'],'sha256':hashlib.sha256(cards.read_bytes()).hexdigest(),'head':commits[0]['sha'] if commits else None,'head_date':commits[0]['commit']['committer']['date'] if commits else None,'pushed_at':repo.get('pushed_at')}
+          out=Path(os.environ['RUNNER_TEMP'])/'yaml-yugi'/'source-meta.json'
+          out.write_text(json.dumps(meta,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Audit exact missing localized fields
+        run: |
+          python -m app.scripts.audit_yugioh_current_localization_gaps_v1 \
+            --ygojson-dir "$RUNNER_TEMP/ygojson/extracted" \
+            --yaml-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            --yaml-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
+            --output ../artifacts/yugioh-current-localization-gaps-v1.json
+
+      - name: Upload gap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-current-localization-gaps-v1-${{ github.run_id }}
+          path: artifacts/yugioh-current-localization-gaps-v1.json
+          retention-days: 90
+          if-no-files-found: warn
