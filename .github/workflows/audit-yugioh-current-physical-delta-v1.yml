@@ -1,3 +1,4 @@
+# Registered workflow; this follow-up commit triggers the source-only audit.
 name: Audit Yu-Gi-Oh Current Physical Delta V1
 
 on:
