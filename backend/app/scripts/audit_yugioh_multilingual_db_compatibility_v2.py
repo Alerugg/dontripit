@@ -15,7 +15,6 @@ from app.scripts.audit_yugioh_multilingual_db_compatibility import (
     TARGETS,
     build_source,
     find_file,
-    iter_records,
     s,
     sl,
 )
@@ -199,6 +198,17 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
         """), {"g": game_id}))
         tx.rollback()
 
+    # Source-derived exact alias bridge: if several YGOProDeck IDs share one
+    # official Konami identity, reuse it only when all DB-backed source aliases
+    # converge on exactly one canonical Card row. No names are consulted.
+    konami_to_db_cards: dict[str, set[int]] = defaultdict(set)
+    for card in cards.values():
+        konami_id = s(card.get("konami"))
+        ygo_id = canonical_ygo_id(card.get("ygoprodeck"))
+        db_card_id = db_cards.get(ygo_id) if ygo_id else None
+        if konami_id and db_card_id is not None:
+            konami_to_db_cards[konami_id].add(db_card_id)
+
     db_physical: dict[tuple[int, str, str], set[int]] = defaultdict(set)
     for _pid, set_id, card_id, collector, language, _rarity, _foil, _variant, _yid in db_print_rows:
         db_physical[(int(set_id), s(collector).upper(), sl(language))].add(int(card_id))
@@ -223,6 +233,8 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
         missing_cards: list[dict[str, Any]] = []
         collision_samples: list[dict[str, Any]] = []
         uuid_samples: list[str] = []
+        missing_set_identity_samples: list[dict[str, Any]] = []
+        ambiguous_konami_samples: list[dict[str, Any]] = []
         create_families: set[str] = set()
         existing_families: set[str] = set()
         matched_cards: set[int] = set()
@@ -232,11 +244,30 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
             card = cards.get(s(row.get("card_uuid"))) or {}
             raw_ygo = s(card.get("ygoprodeck"))
             canonical_ygo = canonical_ygo_id(raw_ygo)
+            konami_id = s(card.get("konami"))
             if raw_ygo in CARD_ALIAS_TO_CANONICAL:
                 alias_source_rows += 1
+
             db_card_id = db_cards.get(canonical_ygo) if canonical_ygo else None
+            bridge_mode = "ygoprodeck_exact" if db_card_id is not None else None
             if raw_ygo in CARD_ALIAS_TO_CANONICAL and db_card_id is not None:
                 alias_resolved_rows += 1
+
+            if db_card_id is None and konami_id:
+                candidates = konami_to_db_cards.get(konami_id, set())
+                if len(candidates) == 1:
+                    db_card_id = next(iter(candidates))
+                    bridge_mode = "konami_exact_alias"
+                    counters["konami_alias_bridge_rows"] += 1
+                elif len(candidates) > 1:
+                    counters["konami_alias_ambiguous_rows"] += 1
+                    if len(ambiguous_konami_samples) < 40:
+                        ambiguous_konami_samples.append({
+                            "print_uuid": row["print_uuid"],
+                            "collector": row["collector"],
+                            "konami_id": konami_id,
+                            "candidate_db_card_ids": sorted(candidates),
+                        })
 
             family = s(row.get("family")).upper()
             set_id = db_sets.get((family, region)) if family else None
@@ -246,6 +277,14 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
                     counters["set_create_rows"] += 1
                 else:
                     counters["set_identity_missing_rows"] += 1
+                    if len(missing_set_identity_samples) < 40:
+                        missing_set_identity_samples.append({
+                            "print_uuid": row["print_uuid"],
+                            "collector": row["collector"],
+                            "set_uuid": row["set_uuid"],
+                            "rarity": row["rarity"],
+                            "card_uuid": row["card_uuid"],
+                        })
             else:
                 existing_families.add(family)
                 counters["set_existing_rows"] += 1
@@ -260,10 +299,12 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
                         "collector": row["collector"],
                         "raw_ygo_id": raw_ygo or None,
                         "canonical_ygo_id": canonical_ygo or None,
-                        "konami_id": s(card.get("konami")) or None,
+                        "konami_id": konami_id or None,
+                        "konami_db_candidates": sorted(konami_to_db_cards.get(konami_id, set())) if konami_id else [],
                     })
             else:
                 counters["card_exact_match"] += 1
+                counters[f"card_bridge_{bridge_mode}"] += 1
                 matched_cards.add(db_card_id)
 
             if reason is None and row["print_uuid"] in existing_ygo_ids:
@@ -310,7 +351,10 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
             "quarantine": quarantine_details[target],
             "certifiable_unique_print_ids": total,
             "card_exact_match_rows": counters["card_exact_match"],
+            "card_bridge_ygoprodeck_exact_rows": counters["card_bridge_ygoprodeck_exact"],
+            "card_bridge_konami_exact_alias_rows": counters["card_bridge_konami_exact_alias"],
             "card_not_in_db_rows": counters["card_not_in_db"],
+            "konami_alias_ambiguous_rows": counters["konami_alias_ambiguous_rows"],
             "unique_db_cards_matched": len(matched_cards),
             "known_alias_source_rows": alias_source_rows,
             "known_alias_resolved_rows": alias_resolved_rows,
@@ -327,6 +371,8 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
             "accounted_rows": accounted,
             "samples": {
                 "missing_cards": missing_cards,
+                "ambiguous_konami_aliases": ambiguous_konami_samples,
+                "missing_set_identity": missing_set_identity_samples,
                 "physical_tuple_conflicts": collision_samples,
                 "uuid_collisions": uuid_samples,
             },
@@ -340,6 +386,9 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
         "no_uuid_reuse": all(t["uuid_already_used_rows"] == 0 for t in targets.values()),
         "no_existing_region_physical_conflicts": all(
             t["physical_tuple_conflict_rows"] == 0 for t in targets.values()
+        ),
+        "no_ambiguous_konami_aliases": all(
+            t["konami_alias_ambiguous_rows"] == 0 for t in targets.values()
         ),
         "all_sets_projectable": all(t["set_identity_missing_rows"] == 0 for t in targets.values()),
         "known_aliases_resolve": all(
@@ -365,7 +414,7 @@ def run(root: Path, report_path: Path) -> dict[str, Any]:
             "prints_with_yugioh_id": len(existing_ygo_ids),
         },
         "identity_policy": {
-            "card": "exact YGOJSON YGOPRODeck id -> canonical alias -> Card.yugoprodeck_id; no names/fuzzy match",
+            "card": "exact YGOJSON YGOPRODeck id -> certified canonical alias -> Card.yugoprodeck_id; if absent, exact official Konami ID may bridge only when source-backed aliases converge on one DB Card; no names/fuzzy match",
             "set": "ES projects to region=global; JA projects to region=jp; missing regional set is a deterministic create, not a fallback to another region",
             "print": "YGOJSON UUID is the historical physical identity; missing/placeholder collectors remain quarantined",
             "prices": "not read, inherited or written by this audit",
