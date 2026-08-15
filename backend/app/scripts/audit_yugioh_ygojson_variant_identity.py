@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from app.scripts.audit_yugioh_multilingual_db_compatibility import (
     TARGETS,
+    cid,
     collector_code,
     collector_quality,
     content_locales,
@@ -18,7 +19,6 @@ from app.scripts.audit_yugioh_multilingual_db_compatibility import (
     iter_printings,
     iter_records,
     mapping,
-    printing_card_uuid if False else cid,
     s,
     sl,
 )
