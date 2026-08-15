@@ -1,0 +1,198 @@
+name: Certify Yu-Gi-Oh Multilingual Ephemeral V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/seed_yugioh_multilingual_ephemeral_lean_v1.py
+      - backend/app/scripts/seed_yugioh_production_shape_v1.py
+      - backend/app/scripts/prepare_yugioh_multilingual_ephemeral_v1.py
+      - backend/app/scripts/certify_yugioh_multilingual_ephemeral_v1.py
+      - backend/app/scripts/audit_yugioh_multilingual_db_compatibility_v2.py
+      - backend/app/scripts/audit_yugioh_multilingual_db_compatibility_v3.py
+      - backend/app/scripts/audit_yugioh_ygojson_canonical_print_projection.py
+      - backend/alembic/versions/20260815_35_add_set_region_identity.py
+      - backend/alembic/versions/20260815_36_scope_print_identity_by_card.py
+      - .github/workflows/certify-yugioh-multilingual-ephemeral-v1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certify-yugioh-multilingual-ephemeral-v1
+  cancel-in-progress: true
+
+env:
+  PRODUCTION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  PRODUCTION_DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  EPHEMERAL_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ygo_ephemeral
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ygo_ephemeral
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  PYTHONPATH: .
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dontripit_ygo_ephemeral
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dontripit_ygo_ephemeral"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout isolated Yu-Gi-Oh branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Compile certification code
+        run: |
+          python -m py_compile \
+            app/scripts/seed_yugioh_multilingual_ephemeral_lean_v1.py \
+            app/scripts/seed_yugioh_production_shape_v1.py \
+            app/scripts/prepare_yugioh_multilingual_ephemeral_v1.py \
+            app/scripts/certify_yugioh_multilingual_ephemeral_v1.py \
+            app/scripts/audit_yugioh_multilingual_db_compatibility_v2.py \
+            app/scripts/audit_yugioh_multilingual_db_compatibility_v3.py \
+            app/scripts/audit_yugioh_ygojson_canonical_print_projection.py
+
+      - name: Prove production is source-only and ephemeral is local
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          prod=os.getenv('PRODUCTION_DATABASE_URL_UNPOOLED') or os.getenv('PRODUCTION_DATABASE_URL')
+          eph=os.environ['EPHEMERAL_DATABASE_URL']
+          assert prod and prod != eph
+          assert urlparse(eph).hostname in {'127.0.0.1','localhost'}
+          print('safety gate: production != target; target is local PostgreSQL')
+          PY
+
+      - name: Build exact production schema revision 34
+        run: alembic upgrade 20260814_34
+
+      - name: Clone only Yu-Gi-Oh catalog from production in READ ONLY mode
+        run: python -m app.scripts.seed_yugioh_production_shape_v1
+
+      - name: Apply regional and card-scoped migrations on production-shaped data
+        run: alembic upgrade head
+
+      - name: Certify migrations and install hard write guards
+        run: python -m app.scripts.prepare_yugioh_multilingual_ephemeral_v1
+
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygojson/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygojson/aggregate.zip" "$YGOJSON_URL"
+          sha256sum "$RUNNER_TEMP/ygojson/aggregate.zip" | tee artifacts/yugioh-ygojson-v1-sha256.txt
+          unzip -q "$RUNNER_TEMP/ygojson/aggregate.zip" -d "$RUNNER_TEMP/ygojson/extracted"
+
+      - name: Run guarded two-pass multilingual writer certification
+        run: |
+          python -m app.scripts.certify_yugioh_multilingual_ephemeral_v1 \
+            --input-dir "$RUNNER_TEMP/ygojson/extracted" \
+            --output ../artifacts/yugioh-multilingual-ephemeral-v1.json
+
+      - name: Enforce exact certification contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-multilingual-ephemeral-v1.json').read_text())
+          assert r['status']=='pass', r
+          assert r['mode']=='ephemeral-only-yugioh-multilingual-certification-v1', r
+          assert r['production_writes']==0, r
+          assert r['baseline']['production_transaction_read_only'] is True, r
+          assert r['baseline']['source_revision']=='20260814_34', r
+          assert r['baseline']['target_revision_before_migration']=='20260814_34', r
+          assert r['baseline']['target_revision_after_migration']=='20260815_36', r
+          assert r['baseline']['migration_35_region_applied'] is True, r
+          assert r['baseline']['migration_36_card_scoped_print_identity_applied'] is True, r
+          assert r['baseline']['preexisting_regions_global'] is True, r
+          assert all(r['baseline']['migration_semantic_invariants'].values()), r
+          assert r['baseline']['economics_copied'] is False, r
+          assert r['rollout_freshness_pass'] is False, r
+          assert r['production_rollout_ready'] is False, r
+
+          p=r['plan_summary']
+          assert all(p['structural_gates'].values()), r
+          assert p['targets']['es']['canonical_prints']==37233, r
+          assert p['targets']['es']['materializable_prints']==37007, r
+          assert p['targets']['es']['retained_missing_card']==226, r
+          assert p['targets']['ja']['canonical_prints']==36327, r
+          assert p['targets']['ja']['materializable_prints']==35591, r
+          assert p['targets']['ja']['retained_missing_card']==736, r
+          assert p['source_memberships']==74368, r
+          assert p['missing_localized_card_names']==0, r
+
+          v=r['validation']
+          assert v['status']=='pass', r
+          assert all(v['gates'].values()), r
+          assert v['target_counts']['es']['materialized_found']==37007, r
+          assert v['target_counts']['ja']['materialized_found']==35591, r
+          assert v['natural_duplicates']==0, r
+          assert v['foreign_id_violations']==0, r
+          assert v['missing_source_image_relations']==0, r
+          assert v['missing_memberships']==0, r
+          assert v['provenance_mismatches']==0, r
+          assert all(value==0 for value in v['metadata_price_key_violations'].values()), r
+          assert v['lean_invariants']['status']=='pass', r
+          assert v['lean_invariants']['economics_untouched'] is True, r
+          assert r['pass2_zero_writes'] is True, r
+          assert r['pass2']['total_writes']==0, r
+          print(json.dumps({
+            'status': r['status'],
+            'source_freshness': r['source_freshness'],
+            'plan_summary': p,
+            'pass1': r['pass1'],
+            'validation': v,
+            'pass2': r['pass2'],
+            'production_rollout_ready': r['production_rollout_ready'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-ephemeral-v1-${{ github.run_id }}
+          path: |
+            artifacts/yugioh-multilingual-ephemeral-v1.json
+            artifacts/yugioh-ygojson-v1-sha256.txt
+            /tmp/yugioh-production-shape-pre-migration.json
+            /tmp/yugioh-multilingual-ephemeral-baseline.json
+          retention-days: 90
+          if-no-files-found: warn
