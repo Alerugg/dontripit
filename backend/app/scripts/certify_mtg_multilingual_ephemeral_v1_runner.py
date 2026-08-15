@@ -55,8 +55,24 @@ def _copy_filtered(src, dst, table: str, where_sql: str = "TRUE", params: tuple 
         path.unlink(missing_ok=True)
 
 
+def _reset_sequence(cur, table: str) -> None:
+    """Reset a serial id sequence only when the cloned table actually owns id."""
+    if "id" not in certification._columns(cur, table):
+        return
+    cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table,))
+    row = cur.fetchone()
+    sequence = row[0] if row else None
+    if not sequence:
+        return
+    cur.execute(f'SELECT COALESCE(MAX(id), 0) FROM "{table}"')
+    maximum = int(cur.fetchone()[0] or 0)
+    if maximum:
+        cur.execute("SELECT setval(%s, %s, true)", (sequence, maximum))
+
+
 def main() -> int:
     certification._copy_filtered = _copy_filtered
+    certification._reset_sequence = _reset_sequence
     return certification.main()
 
 
