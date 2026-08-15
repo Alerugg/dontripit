@@ -1,0 +1,49 @@
+{
+  "schema": "dontripit-mtg-multilingual-certified-manifest-v1",
+  "certification_run_id": 31891077971,
+  "certification_commit": "296adb812f2d328297c7d9932b9ce265461651a6",
+  "artifact_id": 9248627165,
+  "artifact_sha256": "d6882ce37655a31354b9dcaf4acb4c7c243df6c21d200edfbd8ed430fdee51ac",
+  "scryfall_bulk_type": "all_cards",
+  "scryfall_bulk_updated_at": "2026-08-15T09:17:42.782+00:00",
+  "normalized_snapshot_sha256": "744e09b735e63b697008cd5e4b52062857661a212be2cdf188f72fda9a67f8f7",
+  "sealed_scope": "paper-es-ja",
+  "stored_source_objects": 115342,
+  "source_counts": {
+    "all_objects": 540482,
+    "paper_objects": 531125,
+    "paper_es_objects": 53325,
+    "paper_es_prints": 89405,
+    "paper_ja_objects": 62017,
+    "paper_ja_prints": 104735
+  },
+  "production_baseline": {
+    "mtg_sets": 986,
+    "mtg_cards": 37624,
+    "mtg_prints": 161144,
+    "mtg_en_prints": 158246,
+    "mtg_es_prints": 1207,
+    "mtg_ja_prints": 875,
+    "mtg_es_ja_localizations": 0
+  },
+  "certified_delta": {
+    "new_es_prints": 88198,
+    "new_ja_prints": 103860,
+    "new_prints_total": 192058,
+    "new_print_attributes": 192058,
+    "new_print_images": 194121,
+    "new_print_localizations": 194140
+  },
+  "certified_final": {
+    "es_prints": 89405,
+    "ja_prints": 104735,
+    "exact_keys": 194140,
+    "scryfall_image_relations": 196204,
+    "natural_duplicates": 0,
+    "source_fidelity_mismatches": 0,
+    "pass2_writes": 0
+  },
+  "identity_contract": "prints.scryfall_id+prints.variant",
+  "auxiliary_scryfall_print_identifiers": 0,
+  "production_writes_during_certification": 0
+}
