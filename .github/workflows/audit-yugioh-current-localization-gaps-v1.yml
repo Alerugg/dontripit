@@ -1,4 +1,4 @@
-name: Audit Yu-Gi-Oh Current Localization Gaps V1
+name: Audit Yu-Gi-Oh Current Localization Gaps V2
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - multilingual-ygo-v1
     paths:
       - backend/app/scripts/audit_yugioh_current_localization_gaps_v1.py
+      - backend/app/scripts/audit_yugioh_current_localization_gaps_v2.py
       - .github/workflows/audit-yugioh-current-localization-gaps-v1.yml
 
 permissions:
@@ -65,7 +66,10 @@ jobs:
           pip install --disable-pip-version-check 'ijson==3.4.0.post0'
 
       - name: Compile gap audit
-        run: python -m py_compile app/scripts/audit_yugioh_current_localization_gaps_v1.py
+        run: |
+          python -m py_compile \
+            app/scripts/audit_yugioh_current_localization_gaps_v1.py \
+            app/scripts/audit_yugioh_current_localization_gaps_v2.py
 
       - name: Prove production is source-only and ephemeral is local
         run: |
@@ -103,7 +107,7 @@ jobs:
           import hashlib,json,os,urllib.request
           from pathlib import Path
           cards=Path(os.environ['RUNNER_TEMP'])/'yaml-yugi'/'cards.json'
-          headers={'Accept':'application/vnd.github+json','Authorization':f"Bearer {os.environ['GH_TOKEN']}",'User-Agent':'dontripit-ygo-gap-audit-v1'}
+          headers={'Accept':'application/vnd.github+json','Authorization':f"Bearer {os.environ['GH_TOKEN']}",'User-Agent':'dontripit-ygo-gap-audit-v2'}
           def get(url):
               req=urllib.request.Request(url,headers=headers)
               with urllib.request.urlopen(req,timeout=30) as response:
@@ -115,19 +119,19 @@ jobs:
           out.write_text(json.dumps(meta,indent=2,sort_keys=True)+'\n')
           PY
 
-      - name: Audit exact missing localized fields
+      - name: Certify localized gaps are prerelease-only
         run: |
-          python -m app.scripts.audit_yugioh_current_localization_gaps_v1 \
+          python -m app.scripts.audit_yugioh_current_localization_gaps_v2 \
             --ygojson-dir "$RUNNER_TEMP/ygojson/extracted" \
             --yaml-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
             --yaml-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
-            --output ../artifacts/yugioh-current-localization-gaps-v1.json
+            --output ../artifacts/yugioh-current-localization-gaps-v2.json
 
       - name: Upload gap evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: yugioh-current-localization-gaps-v1-${{ github.run_id }}
-          path: artifacts/yugioh-current-localization-gaps-v1.json
+          name: yugioh-current-localization-gaps-v2-${{ github.run_id }}
+          path: artifacts/yugioh-current-localization-gaps-v2.json
           retention-days: 90
           if-no-files-found: warn
