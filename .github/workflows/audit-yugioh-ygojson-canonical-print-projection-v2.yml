@@ -1,0 +1,98 @@
+name: Audit Yu-Gi-Oh YGOJSON canonical print projection v2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_ygojson_canonical_print_projection_v2.py
+      - .github/workflows/audit-yugioh-ygojson-canonical-print-projection-v2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-ygojson-canonical-print-projection-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  PYTHONPATH: .
+
+jobs:
+  canonical-print-projection-v2:
+    name: Source-only card-scoped canonical Print projection
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygo-canonical-projection-v2/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-canonical-projection-v2/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygo-canonical-projection-v2/aggregate.zip" \
+            -d "$RUNNER_TEMP/ygo-canonical-projection-v2/extracted"
+
+      - name: Project exact historical rows to card-scoped canonical Prints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_ygojson_canonical_print_projection_v2 \
+            --input-dir "$RUNNER_TEMP/ygo-canonical-projection-v2/extracted" \
+            --report ../artifacts/yugioh-ygojson-canonical-print-projection-v2.json
+
+      - name: Enforce card-scoped projection gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-ygojson-canonical-print-projection-v2.json').read_text())
+          if not r['gate_pass']:
+              raise SystemExit('YGOJSON card-scoped canonical Print projection gate failed')
+          print(json.dumps({
+              'gate_pass': r['gate_pass'],
+              'schema_requirement': r['schema_requirement'],
+              'es': {
+                  'canonical_prints': r['targets']['es']['canonical_prints_after_card_collector_rarity_collapse'],
+                  'visible_collector_reuse_groups': r['targets']['es']['visible_collector_slot_reuse_groups'],
+              },
+              'ja': {
+                  'canonical_prints': r['targets']['ja']['canonical_prints_after_card_collector_rarity_collapse'],
+                  'visible_collector_reuse_groups': r['targets']['ja']['visible_collector_slot_reuse_groups'],
+              },
+          }, indent=2))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-ygojson-canonical-print-projection-v2
+          path: artifacts/yugioh-ygojson-canonical-print-projection-v2.json
+          if-no-files-found: warn
+          retention-days: 30
