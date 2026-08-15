@@ -1,0 +1,62 @@
+name: Audit MTG Multilingual Storage V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/audit_mtg_multilingual_storage_v1.py'
+      - '.github/workflows/audit-mtg-multilingual-storage-v1.yml'
+      - '.github/mtg-multilingual-storage-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-multilingual-storage-v1
+  cancel-in-progress: true
+
+jobs:
+  storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile storage audit
+        run: python -m py_compile app/scripts/audit_mtg_multilingual_storage_v1.py
+      - name: Forecast MTG multilingual storage read-only
+        run: python -m app.scripts.audit_mtg_multilingual_storage_v1 --output /tmp/mtg-multilingual-storage.json
+      - name: Enforce read-only evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/mtg-multilingual-storage.json').read_text())
+          assert r['status'] == 'pass', r
+          assert r['database_writes'] == 0, r
+          assert r['certified_additive_delta']['total'] == 192058, r
+          assert r['capacity']['projected_database_bytes'] > r['capacity']['current_database_bytes'], r
+          print(json.dumps(r, indent=2, sort_keys=True))
+          PY
+      - name: Upload storage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-multilingual-storage-${{ github.run_id }}
+          path: /tmp/mtg-multilingual-storage.json
+          retention-days: 90
+          if-no-files-found: warn
