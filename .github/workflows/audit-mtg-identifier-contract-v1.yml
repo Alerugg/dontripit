@@ -1,0 +1,43 @@
+name: Audit MTG Identifier Contract V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/audit_mtg_identifier_contract_v1.py'
+      - '.github/workflows/audit-mtg-identifier-contract-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile audit
+        run: python -m py_compile app/scripts/audit_mtg_identifier_contract_v1.py
+      - name: Audit production identifier contract read-only
+        run: python -m app.scripts.audit_mtg_identifier_contract_v1 | tee /tmp/mtg-identifier-contract.json
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-identifier-contract-${{ github.run_id }}
+          path: /tmp/mtg-identifier-contract.json
+          retention-days: 90
