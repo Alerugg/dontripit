@@ -1,0 +1,85 @@
+name: Preflight MTG Multilingual Production V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/preflight_mtg_multilingual_production_v1.py'
+      - '.github/workflows/preflight-mtg-multilingual-production-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-multilingual-production-preflight-v1
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact preflight commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile strict read-only preflight
+        run: python -m py_compile app/scripts/preflight_mtg_multilingual_production_v1.py
+
+      - name: Run strict production preflight read-only
+        run: |
+          python -m app.scripts.preflight_mtg_multilingual_production_v1 \
+            --output /tmp/mtg-multilingual-production-preflight.json
+
+      - name: Enforce frozen production baseline
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('/tmp/mtg-multilingual-production-preflight.json').read_text())
+          assert report['status'] == 'pass', report
+          assert report['mode'] == 'strict-read-only-production-preflight', report
+          assert report['database_writes'] == 0, report
+          assert report['transaction_read_only'] is True, report
+          assert report['alembic_revision'] == '20260814_34', report
+          assert report['baseline']['sets'] == 986, report
+          assert report['baseline']['cards'] == 37624, report
+          assert report['baseline']['prints'] == 161144, report
+          assert report['baseline']['languages']['en'] == 158246, report
+          assert report['baseline']['languages']['es'] == 1207, report
+          assert report['baseline']['languages']['ja'] == 875, report
+          assert report['baseline']['target_localizations'] == 0, report
+          assert report['baseline']['missing_target_scryfall_ids'] == 0, report
+          assert report['baseline']['duplicate_target_scryfall_finish_identities'] == 0, report
+          assert report['baseline']['auxiliary_scryfall_print_identifiers'] == 0, report
+          print('production preflight: PASS')
+          PY
+
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-multilingual-production-preflight-${{ github.run_id }}
+          path: /tmp/mtg-multilingual-production-preflight.json
+          retention-days: 90
+          if-no-files-found: warn
