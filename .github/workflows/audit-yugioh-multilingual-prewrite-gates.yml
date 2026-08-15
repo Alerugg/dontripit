@@ -1,0 +1,120 @@
+name: Audit Yu-Gi-Oh multilingual prewrite gates
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_multilingual_regional_sets.py
+      - backend/app/scripts/audit_yugioh_ygojson_ja_quarantine.py
+      - .github/workflows/audit-yugioh-multilingual-prewrite-gates.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-prewrite-gates-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  YAML_YUGI_CARDS_URL: https://dawnbrandbots.github.io/yaml-yugi/cards.json
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PYTHONPATH: .
+
+jobs:
+  prewrite-gates:
+    name: Regional set semantics and JA quarantine decomposition
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download immutable history and current source
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygo-prewrite/ygojson" "$RUNNER_TEMP/ygo-prewrite/yaml" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-prewrite/ygojson.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygo-prewrite/ygojson.zip" -d "$RUNNER_TEMP/ygo-prewrite/ygojson"
+          git ls-remote https://github.com/DawnbrandBots/yaml-yugi.git refs/heads/master | awk '{print $1}' \
+            > "$RUNNER_TEMP/ygo-prewrite/yaml/master-head.txt"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-prewrite/yaml/cards.json" "$YAML_YUGI_CARDS_URL"
+          curl --silent --show-error --location --head "$YAML_YUGI_CARDS_URL" \
+            | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^last-modified:/{sub(/^[^:]*:[ ]*/, ""); print; exit}' \
+            > "$RUNNER_TEMP/ygo-prewrite/yaml/last-modified.txt" || true
+          test -s "$RUNNER_TEMP/ygo-prewrite/yaml/cards.json"
+          echo "yaml_head=$(cat "$RUNNER_TEMP/ygo-prewrite/yaml/master-head.txt")"
+          echo "yaml_last_modified=$(cat "$RUNNER_TEMP/ygo-prewrite/yaml/last-modified.txt" 2>/dev/null || true)"
+
+      - name: Audit regional set-family semantics against Neon read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_multilingual_regional_sets \
+            --cards "$RUNNER_TEMP/ygo-prewrite/yaml/cards.json" \
+            --source-head "$(cat "$RUNNER_TEMP/ygo-prewrite/yaml/master-head.txt")" \
+            --source-last-modified "$(cat "$RUNNER_TEMP/ygo-prewrite/yaml/last-modified.txt" 2>/dev/null || true)" \
+            --report ../artifacts/yugioh-multilingual-regional-sets.json
+
+      - name: Decompose historical YGOJSON JA quarantine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_ygojson_ja_quarantine \
+            --input-dir "$RUNNER_TEMP/ygo-prewrite/ygojson" \
+            --report ../artifacts/yugioh-ygojson-ja-quarantine.json
+
+      - name: Print compact gates
+        if: always()
+        working-directory: .
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for p in [Path('artifacts/yugioh-multilingual-regional-sets.json'), Path('artifacts/yugioh-ygojson-ja-quarantine.json')]:
+              if not p.exists():
+                  print(f'MISSING {p}')
+                  continue
+              r=json.loads(p.read_text())
+              print('\n###', p.name)
+              if 'targets' in r:
+                  print(json.dumps({'targets': r['targets'], 'gates': r.get('gates'), 'gate_pass': r.get('gate_pass')}, indent=2, ensure_ascii=False))
+              else:
+                  print(json.dumps({k:r.get(k) for k in ['source_memberships','unique_print_uuids','categories_unique_print_uuids','quarantine_union_unique_print_uuids','certifiable_unique_print_uuids','gates','gate_pass']}, indent=2, ensure_ascii=False))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-prewrite-gates
+          path: |
+            artifacts/yugioh-multilingual-regional-sets.json
+            artifacts/yugioh-ygojson-ja-quarantine.json
+          if-no-files-found: warn
+          retention-days: 30
