@@ -1,0 +1,131 @@
+name: Certify MTG Multilingual Ephemeral V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/certify_mtg_multilingual_ephemeral_v1.py'
+      - 'backend/app/scripts/audit_mtg_multilingual_v1.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - '.github/workflows/certify-mtg-multilingual-ephemeral-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-multilingual-ephemeral-v1
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dontripit_ephemeral
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dontripit_ephemeral"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PRODUCTION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PRODUCTION_DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      EPHEMERAL_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ephemeral
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dontripit_ephemeral
+      PYTHONPATH: .
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact certification commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile certification code
+        run: |
+          python -m py_compile \
+            app/scripts/certify_mtg_multilingual_ephemeral_v1.py \
+            app/scripts/audit_mtg_multilingual_v1.py \
+            app/scripts/build_mtg_v2_snapshot.py \
+            app/mtg_identity_v2.py
+
+      - name: Migrate clean ephemeral PostgreSQL to current head
+        run: alembic upgrade head
+
+      - name: Prove ephemeral target is local and production URL differs
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          prod = os.getenv('PRODUCTION_DATABASE_URL_UNPOOLED') or os.getenv('PRODUCTION_DATABASE_URL')
+          eph = os.environ['EPHEMERAL_DATABASE_URL']
+          assert prod and prod != eph
+          parsed = urlparse(eph)
+          assert parsed.hostname in {'127.0.0.1', 'localhost'}, parsed.hostname
+          print('safety gate: ephemeral target is local PostgreSQL; production is source-only')
+          PY
+
+      - name: Run full two-pass ephemeral certification
+        run: |
+          python -m app.scripts.certify_mtg_multilingual_ephemeral_v1 \
+            --output /tmp/mtg-multilingual-ephemeral-certification.json \
+            --snapshot /tmp/scryfall-all-cards-sealed.jsonl \
+            --snapshot-meta /tmp/scryfall-all-cards-sealed-meta.json
+
+      - name: Enforce certification gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/mtg-multilingual-ephemeral-certification.json').read_text())
+          assert report['status'] == 'pass', report
+          assert report['mode'] == 'ephemeral-only-certification', report
+          assert report['production_writes'] == 0, report
+          assert report['pass2_zero_writes'] is True, report
+          assert report['validation']['final_language_counts'] == {'es': 89405, 'ja': 104735}, report
+          assert report['validation']['natural_duplicates'] == 0, report
+          assert report['validation']['missing_localizations'] == 0, report
+          assert report['validation']['missing_scryfall_image_relations'] == 0, report
+          assert report['validation']['english_prints_unchanged'] is True, report
+          assert report['validation']['prices_unchanged'] is True, report
+          print(json.dumps({
+            'status': report['status'],
+            'snapshot': report['snapshot'],
+            'pass1': report['pass1'],
+            'pass2': report['pass2'],
+            'validation': report['validation'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-multilingual-ephemeral-certification-${{ github.run_id }}
+          path: |
+            /tmp/mtg-multilingual-ephemeral-certification.json
+            /tmp/scryfall-all-cards-sealed-meta.json
+          retention-days: 90
+          if-no-files-found: warn
