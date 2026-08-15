@@ -1,0 +1,111 @@
+name: Probe YGOJSON Shadow Refresh V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - .github/workflows/probe-ygojson-shadow-refresh-v1.yml
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPO: iconmaster5326/YGOJSON
+  UPSTREAM_REF: fc001ff87ce55bf264659ef59185f9dbe294acfe
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+          cache: pip
+          cache-dependency-path: ygojson-src/pyproject.toml
+
+      - name: Install pinned upstream generator
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e .
+          ygojson --help >/dev/null
+
+      - name: Apply minimal null-attribute compatibility patch
+        working-directory: ygojson-src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/ygojson/importers/ygoprodeck.py')
+          old='Attribute(in_json["attribute"].lower()) if "attribute" in in_json else None'
+          new='Attribute(in_json["attribute"].lower()) if in_json.get("attribute") else None'
+          text=p.read_text()
+          assert text.count(old)==1, 'Pinned upstream line changed; refuse blind patch'
+          p.write_text(text.replace(old,new))
+          print('patched exact upstream null-attribute crash')
+          PY
+          git diff --check
+          git diff -- src/ygojson/importers/ygoprodeck.py | tee ../ygojson-shadow-null-attribute.patch
+
+      - name: Reproduce upstream pre-Yugipedia stage with patch
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          mkdir -p temp
+          ygojson --production --download \
+            --yugipedia-gen-partitions 8 \
+            --yugipedia-gen-partitions-prefix temp/part \
+            --no-yamlyugi --no-manual \
+            --individuals '' --no-individuals \
+            2>&1 | tee ../ygojson-shadow-pre-yugipedia.log
+
+      - name: Certify that upstream failure point was crossed
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          log=Path('ygojson-shadow-pre-yugipedia.log').read_text(errors='replace')
+          assert "AttributeError: 'NoneType' object has no attribute 'lower'" not in log
+          parts=sorted(Path('ygojson-src/temp').glob('part*'))
+          assert len(parts) >= 8, [str(p) for p in parts]
+          report={
+            'status':'pass',
+            'upstream_repo':'iconmaster5326/YGOJSON',
+            'upstream_ref':'fc001ff87ce55bf264659ef59185f9dbe294acfe',
+            'patch':'attribute null guard only',
+            'previous_upstream_failure_run':31856438921,
+            'previous_failure':'YGOPRODeck attribute=null caused .lower() AttributeError',
+            'generated_partition_files':[str(p) for p in parts],
+            'log_sha256':hashlib.sha256(Path('ygojson-shadow-pre-yugipedia.log').read_bytes()).hexdigest(),
+            'production_writes':0,
+          }
+          Path('ygojson-shadow-refresh-probe-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Upload shadow refresh probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygojson-shadow-refresh-probe-v1-${{ github.run_id }}
+          path: |
+            ygojson-shadow-refresh-probe-v1.json
+            ygojson-shadow-null-attribute.patch
+            ygojson-shadow-pre-yugipedia.log
+            ygojson-src/temp/part*
+          retention-days: 30
+          if-no-files-found: warn
