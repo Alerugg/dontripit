@@ -1,0 +1,85 @@
+name: Audit Yu-Gi-Oh YGOJSON set object physical identity
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_ygojson_set_object_identity.py
+      - .github/workflows/audit-yugioh-ygojson-set-object-identity.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-ygojson-set-object-identity-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  PYTHONPATH: .
+
+jobs:
+  set-object-identity:
+    name: Source-only physical set identity certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygo-set-identity/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-set-identity/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygo-set-identity/aggregate.zip" -d "$RUNNER_TEMP/ygo-set-identity/extracted"
+      - name: Certify source set UUID physical identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_ygojson_set_object_identity \
+            --input-dir "$RUNNER_TEMP/ygo-set-identity/extracted" \
+            --report ../artifacts/yugioh-ygojson-set-object-identity.json
+      - name: Enforce identity gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-ygojson-set-object-identity.json').read_text())
+          if not r['gate_pass']:
+              raise SystemExit('YGOJSON source set object identity gate failed')
+          print(json.dumps({
+              'gate_pass': r['gate_pass'],
+              'gates': r['gates'],
+              'es': {k:v for k,v in r['targets']['es'].items() if not k.endswith('_samples')},
+              'ja': {k:v for k,v in r['targets']['ja'].items() if not k.endswith('_samples')},
+          }, indent=2))
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-ygojson-set-object-identity
+          path: artifacts/yugioh-ygojson-set-object-identity.json
+          if-no-files-found: warn
+          retention-days: 30
