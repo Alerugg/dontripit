@@ -1,0 +1,78 @@
+name: Audit MTG Multilingual V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/audit_mtg_multilingual_v1.py'
+      - '.github/workflows/audit-mtg-multilingual-v1.yml'
+      - '.github/mtg-multilingual-audit-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-multilingual-v1-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact audit commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile audit
+        run: python -m py_compile app/scripts/audit_mtg_multilingual_v1.py
+
+      - name: Run strict read-only ES JA audit
+        run: python -m app.scripts.audit_mtg_multilingual_v1 --output /tmp/mtg-multilingual-audit.json
+
+      - name: Enforce no-write contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/mtg-multilingual-audit.json').read_text())
+          assert report['mode'] == 'strict-read-only-audit', report
+          assert report['database_writes'] == 0, report
+          assert report['remote']['es']['stats']['source_objects'] > 0, report
+          assert report['remote']['ja']['stats']['source_objects'] > 0, report
+          print(json.dumps({
+              'status': report['status'],
+              'source': report['source'],
+              'database': report['database'],
+              'identity_blockers': report['identity_blockers'],
+              'safe_to_design_ephemeral_backfill': report['safe_to_design_ephemeral_backfill'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-multilingual-audit-${{ github.run_id }}
+          path: /tmp/mtg-multilingual-audit.json
+          retention-days: 90
+          if-no-files-found: warn
