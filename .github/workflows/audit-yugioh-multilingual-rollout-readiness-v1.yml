@@ -14,6 +14,11 @@ on:
         description: Successful localization gaps V2 audit run ID
         required: true
         default: '31911720911'
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - .github/triggers/run-yugioh-readiness-v1
 
 permissions:
   contents: read
@@ -41,11 +46,20 @@ jobs:
       - name: Download exact certification artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          FRESH_RUN: ${{ inputs.fresh_cert_run_id }}
-          OVERLAY_RUN: ${{ inputs.overlay_run_id }}
-          GAPS_RUN: ${{ inputs.gaps_run_id }}
+          FRESH_RUN_INPUT: ${{ inputs.fresh_cert_run_id }}
+          OVERLAY_RUN: ${{ inputs.overlay_run_id || '31910377210' }}
+          GAPS_RUN: ${{ inputs.gaps_run_id || '31911720911' }}
         run: |
           set -euo pipefail
+          FRESH_RUN="$FRESH_RUN_INPUT"
+          if [ -z "$FRESH_RUN" ]; then
+            FRESH_RUN="$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow 'Certify Yu-Gi-Oh Multilingual Fresh Ephemeral V3' \
+              --branch multilingual-ygo-v1 --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId')"
+          fi
+          test -n "$FRESH_RUN"
+          echo "FRESH_RUN=$FRESH_RUN" >> "$GITHUB_ENV"
           mkdir -p evidence/fresh evidence/overlay evidence/gaps artifacts
           for run in "$FRESH_RUN" "$OVERLAY_RUN" "$GAPS_RUN"; do
             state="$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.status+":"+.conclusion')"
