@@ -1,0 +1,94 @@
+name: Audit Yu-Gi-Oh Multilingual Rollout Readiness V1
+
+on:
+  workflow_dispatch:
+    inputs:
+      fresh_cert_run_id:
+        description: Successful fresh multilingual V3 certification run ID
+        required: true
+      overlay_run_id:
+        description: Successful current physical overlay V2 certification run ID
+        required: true
+        default: '31910377210'
+      gaps_run_id:
+        description: Successful localization gaps V2 audit run ID
+        required: true
+        default: '31911720911'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout isolated Yu-Gi-Oh branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile readiness gate
+        working-directory: backend
+        run: python -m py_compile app/scripts/audit_yugioh_multilingual_rollout_readiness_v1.py
+
+      - name: Download exact certification artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FRESH_RUN: ${{ inputs.fresh_cert_run_id }}
+          OVERLAY_RUN: ${{ inputs.overlay_run_id }}
+          GAPS_RUN: ${{ inputs.gaps_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/fresh evidence/overlay evidence/gaps artifacts
+          for run in "$FRESH_RUN" "$OVERLAY_RUN" "$GAPS_RUN"; do
+            state="$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.status+":"+.conclusion')"
+            test "$state" = 'completed:success'
+          done
+          gh run download "$FRESH_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-multilingual-fresh-ephemeral-v3-${FRESH_RUN}" --dir evidence/fresh
+          gh run download "$OVERLAY_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-current-physical-delta-ephemeral-v2-${OVERLAY_RUN}" --dir evidence/overlay
+          gh run download "$GAPS_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-current-localization-gaps-v2-${GAPS_RUN}" --dir evidence/gaps
+          test -s evidence/fresh/yugioh-multilingual-fresh-ephemeral-v3.json
+          test -s evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json
+          test -s evidence/gaps/yugioh-current-localization-gaps-v2.json
+
+      - name: Run controlled rollout readiness gate
+        working-directory: backend
+        run: |
+          python -m app.scripts.audit_yugioh_multilingual_rollout_readiness_v1 \
+            --fresh-historical ../evidence/fresh/yugioh-multilingual-fresh-ephemeral-v3.json \
+            --current-overlay ../evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json \
+            --localization-gaps ../evidence/gaps/yugioh-current-localization-gaps-v2.json \
+            --output ../artifacts/yugioh-multilingual-rollout-readiness-v1.json
+
+      - name: Enforce no automatic production authorization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('artifacts/yugioh-multilingual-rollout-readiness-v1.json').read_text())
+          assert r['status']=='pass', r
+          assert r['controlled_rollout_candidate_ready'] is True, r
+          assert r['automatic_production_write_authorized'] is False, r
+          assert r['production_writes']==0, r
+          assert all(r['gates'].values()), r
+          print(json.dumps(r,indent=2,sort_keys=True))
+          PY
+
+      - name: Upload readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-rollout-readiness-v1-${{ github.run_id }}
+          path: artifacts/yugioh-multilingual-rollout-readiness-v1.json
+          retention-days: 90
+          if-no-files-found: warn
