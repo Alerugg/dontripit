@@ -1,0 +1,90 @@
+name: Audit Yu-Gi-Oh missing set identity bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_missing_set_identity_bridge.py
+      - .github/workflows/audit-yugioh-missing-set-identity-bridge.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-missing-set-identity-bridge-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  YAML_YUGI_CARDS_URL: https://dawnbrandbots.github.io/yaml-yugi/cards.json
+  PYTHONPATH: .
+
+jobs:
+  source-bridge:
+    name: Historical metadata + current YAML bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download source snapshots
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygo-set-bridge/ygojson" "$RUNNER_TEMP/ygo-set-bridge/yaml" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-set-bridge/ygojson.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygo-set-bridge/ygojson.zip" -d "$RUNNER_TEMP/ygo-set-bridge/ygojson"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygo-set-bridge/yaml/cards.json" "$YAML_YUGI_CARDS_URL"
+
+      - name: Trace exact set identity evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_missing_set_identity_bridge \
+            --ygojson-dir "$RUNNER_TEMP/ygo-set-bridge/ygojson" \
+            --yaml-cards "$RUNNER_TEMP/ygo-set-bridge/yaml/cards.json" \
+            --report ../artifacts/yugioh-missing-set-identity-bridge.json
+
+      - name: Enforce source-only diagnostic gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-missing-set-identity-bridge.json').read_text())
+          if not r['gate_pass']:
+              raise SystemExit('missing-set source bridge diagnostic failed')
+          print('gate_pass=true')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-missing-set-identity-bridge
+          path: artifacts/yugioh-missing-set-identity-bridge.json
+          if-no-files-found: warn
+          retention-days: 30
