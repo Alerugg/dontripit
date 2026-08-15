@@ -11,22 +11,33 @@ from typing import Any
 import psycopg2
 
 from app.scripts import certify_mtg_multilingual_ephemeral_v1 as certification
+from app.scripts.seed_mtg_multilingual_ephemeral_lean_v1 import (
+    seed_ephemeral_lean,
+    validate_lean_invariants,
+)
+from app.scripts.validate_mtg_multilingual_source_fidelity_v1 import validate_source_fidelity
 
 # This runner is intentionally separate so the certification clone can support
 # both serial-id tables and canonical attribute tables keyed directly by FK.
-# Production contract audit 31883824617 also proved MTG deliberately has zero
+# Production contract audit 31883824617 proved MTG deliberately has zero
 # auxiliary `print_identifiers` for Scryfall: exact identity lives on
 # prints.scryfall_id + prints.variant (migration 20260808_25).
 #
-# The certification source is a single sealed Scryfall all_cards capture. We
-# persist only the ES/JA paper objects from that capture because those are the
-# only objects this gate is allowed to write. Source-wide counters are still
-# measured while streaming all_cards, so filtering cannot hide source drift.
+# The certification source is one sealed Scryfall all_cards capture. We persist
+# only physical ES/JA objects because those are the only source objects this
+# gate is allowed to materialize. Source-wide counters are still measured while
+# streaming all_cards, so filtering cannot hide upstream drift.
+#
+# The ephemeral clone is deliberately lean: all canonical MTG Sets/Cards and
+# every pre-existing MTG Print identity are cloned, while only existing ES/JA
+# print children required for idempotence/source fidelity are copied. DML guard
+# triggers make any attempt to mutate canonical/economic tables or pre-existing
+# Print rows fail closed. This is stricter and substantially faster than copying
+# price history that the writer is forbidden to touch.
 
 _ORIGINAL_TABLE_EXISTS = certification._table_exists
 _ORIGINAL_VALIDATE_FINAL = certification.validate_final
 _ORIGINAL_APPLY_PASS = certification.apply_pass
-_ORIGINAL_SEED_EPHEMERAL = certification.seed_ephemeral
 
 # 1k batches generated hundreds of indexed round-trips on pass 2. 5k keeps the
 # exact same write/validation semantics while making the certification bounded.
@@ -103,9 +114,9 @@ def _reset_sequence(cur, table: str) -> None:
 
 def _seed_ephemeral(source_url: str, target_url: str) -> dict[str, Any]:
     started = time.monotonic()
-    _log("stage=seed_ephemeral start")
-    result = _ORIGINAL_SEED_EPHEMERAL(source_url, target_url)
-    _log(f"stage=seed_ephemeral done elapsed={time.monotonic() - started:.1f}s")
+    _log("stage=seed_ephemeral_lean start")
+    result = seed_ephemeral_lean(source_url, target_url)
+    _log(f"stage=seed_ephemeral_lean done elapsed={time.monotonic() - started:.1f}s")
     return result
 
 
@@ -170,7 +181,11 @@ def _validate_final(target_url: str, snapshot: Path, baseline: dict[str, Any]) -
     started = time.monotonic()
     _log("stage=validate_final start")
     result = _ORIGINAL_VALIDATE_FINAL(target_url, snapshot, baseline)
-    conn = psycopg2.connect(target_url, connect_timeout=30, application_name="dontripit_mtg_multilingual_identity_gate")
+    conn = psycopg2.connect(
+        target_url,
+        connect_timeout=30,
+        application_name="dontripit_mtg_multilingual_identity_gate",
+    )
     conn.set_session(readonly=True, autocommit=False)
     try:
         with conn.cursor() as cur:
@@ -197,6 +212,8 @@ def _validate_final(target_url: str, snapshot: Path, baseline: dict[str, Any]) -
                 (game_id,),
             )
             duplicate_scryfall_finish = int(cur.fetchone()[0])
+            # _table_exists is intentionally false for print_identifiers in the
+            # writer, but the physical table still exists in the migrated clone.
             cur.execute(
                 """
                 SELECT count(*) FROM print_identifiers pi
@@ -215,19 +232,30 @@ def _validate_final(target_url: str, snapshot: Path, baseline: dict[str, Any]) -
                     "MTG certification unexpectedly populated legacy print_identifiers: "
                     f"{auxiliary_scryfall_identifiers}"
                 )
-            result.update(
-                {
-                    "missing_scryfall_ids": 0,
-                    "duplicate_scryfall_finish_identities": 0,
-                    "auxiliary_scryfall_print_identifiers": 0,
-                    "scryfall_identity_contract": "prints.scryfall_id+prints.variant",
-                }
-            )
             conn.rollback()
-            _log(f"stage=validate_final done elapsed={time.monotonic() - started:.1f}s")
-            return result
     finally:
         conn.close()
+
+    _log("stage=validate_source_fidelity start")
+    source_fidelity = validate_source_fidelity(target_url, snapshot)
+    _log("stage=validate_source_fidelity done")
+    _log("stage=validate_lean_invariants start")
+    lean_invariants = validate_lean_invariants(target_url, baseline)
+    _log("stage=validate_lean_invariants done")
+
+    result.update(
+        {
+            "missing_scryfall_ids": 0,
+            "duplicate_scryfall_finish_identities": 0,
+            "auxiliary_scryfall_print_identifiers": 0,
+            "scryfall_identity_contract": "prints.scryfall_id+prints.variant",
+            "source_fidelity": source_fidelity,
+            "lean_invariants": lean_invariants,
+            "economics_guarded_against_dml": True,
+        }
+    )
+    _log(f"stage=validate_final done elapsed={time.monotonic() - started:.1f}s")
+    return result
 
 
 def main() -> int:
