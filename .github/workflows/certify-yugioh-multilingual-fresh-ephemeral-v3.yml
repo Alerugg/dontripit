@@ -7,6 +7,11 @@ on:
         description: Successful Shadow YGOJSON Full Refresh V1 run ID
         required: true
         default: '31911427988'
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - .github/triggers/run-yugioh-fresh-v3
 
 permissions:
   contents: read
@@ -104,7 +109,7 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
-          FULL_REFRESH_RUN_ID: ${{ inputs.full_refresh_run_id }}
+          FULL_REFRESH_RUN_ID: ${{ inputs.full_refresh_run_id || '31911427988' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/fresh-artifact" "$RUNNER_TEMP/ygojson-fresh/extracted" artifacts
