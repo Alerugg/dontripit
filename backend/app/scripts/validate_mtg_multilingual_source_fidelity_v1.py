@@ -197,6 +197,57 @@ def _validate_batch(cur, game_id: int, batch: list[dict[str, Any]], counts: Coun
             counts[f"exact_{lang}"] += 1
 
 
+def validate_source_fidelity_cursor(cur, snapshot: Path) -> dict[str, Any]:
+    """Validate exact source fidelity using the caller's transaction/cursor.
+
+    This variant is required by the production writer so uncommitted inserts can
+    be certified before COMMIT. It performs reads only and never commits,
+    rolls back, or changes transaction boundaries.
+    """
+    game_id = _find_game(cur)
+    counts = Counter()
+    samples: list[dict[str, Any]] = []
+    batch: list[dict[str, Any]] = []
+    for raw in _iter_snapshot(snapshot):
+        if not _is_paper(raw):
+            continue
+        lang = clean(raw.get("lang")).lower()
+        if lang not in LANGUAGES:
+            continue
+        for finish in finish_values(raw):
+            batch.append(_expected_item(raw, finish))
+            if len(batch) >= BATCH_SIZE:
+                _validate_batch(cur, game_id, batch, counts, samples)
+                batch.clear()
+    if batch:
+        _validate_batch(cur, game_id, batch, counts, samples)
+
+    total_mismatches = sum(int(counts.get(f"mismatch_{lang}", 0)) for lang in LANGUAGES)
+    report = {
+        "status": "pass" if total_mismatches == 0 else "fail",
+        "counts": dict(counts),
+        "mismatch_samples": samples,
+        "exact_fields": [
+            "prints.scryfall_id",
+            "prints.variant",
+            "prints.language",
+            "print_attributes.expected_scryfall_fields",
+            "print_localizations.source",
+            "print_localizations.external_id",
+            "print_localizations.card_name",
+            "print_localizations.details.printed_type_line",
+            "print_localizations.details.printed_text",
+            "print_localizations.details.scryfall_lang",
+            "print_images.scryfall_url_source_primary_set",
+        ],
+    }
+    if total_mismatches:
+        raise AssertionError(
+            f"MTG multilingual source fidelity mismatches={total_mismatches}: {samples[:5]}"
+        )
+    return report
+
+
 def validate_source_fidelity(target_url: str, snapshot: Path) -> dict[str, Any]:
     conn = psycopg2.connect(
         target_url,
@@ -204,49 +255,9 @@ def validate_source_fidelity(target_url: str, snapshot: Path) -> dict[str, Any]:
         application_name="dontripit_mtg_multilingual_source_fidelity",
     )
     conn.set_session(readonly=True, autocommit=False)
-    counts = Counter()
-    samples: list[dict[str, Any]] = []
     try:
         with conn.cursor() as cur:
-            game_id = _find_game(cur)
-            batch: list[dict[str, Any]] = []
-            for raw in _iter_snapshot(snapshot):
-                if not _is_paper(raw):
-                    continue
-                lang = clean(raw.get("lang")).lower()
-                if lang not in LANGUAGES:
-                    continue
-                for finish in finish_values(raw):
-                    batch.append(_expected_item(raw, finish))
-                    if len(batch) >= BATCH_SIZE:
-                        _validate_batch(cur, game_id, batch, counts, samples)
-                        batch.clear()
-            if batch:
-                _validate_batch(cur, game_id, batch, counts, samples)
-
-            total_mismatches = sum(int(counts.get(f"mismatch_{lang}", 0)) for lang in LANGUAGES)
-            report = {
-                "status": "pass" if total_mismatches == 0 else "fail",
-                "counts": dict(counts),
-                "mismatch_samples": samples,
-                "exact_fields": [
-                    "prints.scryfall_id",
-                    "prints.variant",
-                    "prints.language",
-                    "print_attributes.expected_scryfall_fields",
-                    "print_localizations.source",
-                    "print_localizations.external_id",
-                    "print_localizations.card_name",
-                    "print_localizations.details.printed_type_line",
-                    "print_localizations.details.printed_text",
-                    "print_localizations.details.scryfall_lang",
-                    "print_images.scryfall_url_source_primary_set",
-                ],
-            }
-            if total_mismatches:
-                raise AssertionError(
-                    f"MTG multilingual source fidelity mismatches={total_mismatches}: {samples[:5]}"
-                )
+            report = validate_source_fidelity_cursor(cur, snapshot)
             conn.rollback()
             return report
     finally:
