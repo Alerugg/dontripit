@@ -76,6 +76,36 @@ jobs:
       - name: Migrate clean ephemeral PostgreSQL to current head
         run: alembic upgrade head
 
+      - name: Tune disposable PostgreSQL for certification bulk IO
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg2
+
+          conn = psycopg2.connect(os.environ['EPHEMERAL_DATABASE_URL'])
+          conn.autocommit = True
+          try:
+              with conn.cursor() as cur:
+                  # The database is disposable and local. Keep production-like
+                  # constraints/indexes, but stop 512 MB WAL checkpoint storms
+                  # from dominating a functional/idempotence certification.
+                  settings = {
+                      'max_wal_size': '4GB',
+                      'checkpoint_timeout': '30min',
+                      'checkpoint_completion_target': '0.9',
+                      'wal_compression': 'on',
+                      'synchronous_commit': 'off',
+                  }
+                  for name, value in settings.items():
+                      cur.execute(f"ALTER SYSTEM SET {name} = %s", (value,))
+                  cur.execute('SELECT pg_reload_conf()')
+                  for name in settings:
+                      cur.execute(f'SHOW {name}')
+                      print(f'{name}={cur.fetchone()[0]}')
+          finally:
+              conn.close()
+          PY
+
       - name: Prove ephemeral target is local and production URL differs
         run: |
           python - <<'PY'
@@ -105,11 +135,17 @@ jobs:
           assert report['status'] == 'pass', report
           assert report['mode'] == 'ephemeral-only-certification', report
           assert report['production_writes'] == 0, report
+          assert report['snapshot']['sealed_source'] == 'single-scryfall-all_cards-capture', report
+          assert report['snapshot']['sealed_scope'] == 'paper-es-ja', report
           assert report['pass2_zero_writes'] is True, report
           assert report['validation']['final_language_counts'] == {'es': 89405, 'ja': 104735}, report
           assert report['validation']['natural_duplicates'] == 0, report
           assert report['validation']['missing_localizations'] == 0, report
           assert report['validation']['missing_scryfall_image_relations'] == 0, report
+          assert report['validation']['missing_scryfall_ids'] == 0, report
+          assert report['validation']['duplicate_scryfall_finish_identities'] == 0, report
+          assert report['validation']['auxiliary_scryfall_print_identifiers'] == 0, report
+          assert report['validation']['scryfall_identity_contract'] == 'prints.scryfall_id+prints.variant', report
           assert report['validation']['english_prints_unchanged'] is True, report
           assert report['validation']['prices_unchanged'] is True, report
           print(json.dumps({
