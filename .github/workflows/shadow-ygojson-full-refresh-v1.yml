@@ -1,0 +1,185 @@
+name: Shadow YGOJSON Full Refresh V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - .github/workflows/shadow-ygojson-full-refresh-v1.yml
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPO: iconmaster5326/YGOJSON
+  UPSTREAM_REF: fc001ff87ce55bf264659ef59185f9dbe294acfe
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        working-directory: ygojson-src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/ygojson/importers/ygoprodeck.py')
+          text=p.read_text()
+          replacements=[
+            (
+              'Attribute(in_json["attribute"].lower()) if "attribute" in in_json else None',
+              'Attribute(in_json["attribute"].lower()) if in_json.get("attribute") else None',
+              'attribute null guard',
+            ),
+            (
+              'card.type = Race(in_json["race"].lower().replace("-", "").replace(" ", ""))',
+              'card.type = Race(in_json["race"].lower().replace("-", "").replace(" ", "")) if in_json.get("race") else None',
+              'race empty guard',
+            ),
+          ]
+          for old,new,label in replacements:
+            assert text.count(old)==1, f'Pinned upstream line changed for {label}; refuse blind patch'
+            text=text.replace(old,new)
+            print(f'patched {label}')
+          p.write_text(text)
+          PY
+          git diff --check
+          git diff -- src/ygojson/importers/ygoprodeck.py | tee ../ygojson-shadow-full-compat.patch
+
+      - name: Generate current Yugipedia partitions
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          mkdir -p temp ../shadow-logs
+          ygojson --production --download \
+            --yugipedia-gen-partitions 8 \
+            --yugipedia-gen-partitions-prefix temp/part \
+            --no-yamlyugi --no-manual \
+            --individuals '' --no-individuals \
+            2>&1 | tee ../shadow-logs/00-pre-yugipedia.log
+          test "$(find temp -maxdepth 1 -name 'part*.json' | wc -l)" -eq 8
+
+      - name: Import all eight Yugipedia partitions sequentially
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6 7 8; do
+            echo "=== YUGIPEDIA PARTITION ${i} ==="
+            ygojson --production \
+              --no-ygoprodeck --no-yamlyugi \
+              --yugipedia-use-partition "temp/part${i}.json" \
+              --no-manual --individuals '' --no-individuals \
+              2>&1 | tee "../shadow-logs/${i}-yugipedia.log"
+          done
+
+      - name: Run official post-Yugipedia materialization
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          ygojson --production --no-ygoprodeck --no-yamlyugi --no-yugipedia \
+            2>&1 | tee ../shadow-logs/09-post-yugipedia.log
+
+      - name: Run upstream schema and data validation
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          python test/validate_data.py 2>&1 | tee ../shadow-logs/10-validate-data.log
+
+      - name: Certify fresh aggregate and source timestamps
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root=Path('ygojson-src')
+          aggregate=root/'data'/'aggregate'
+          required=['cards.json','sets.json','series.json','distributions.json','sealedProducts.json','meta.json']
+          for name in required:
+              p=aggregate/name
+              assert p.is_file() and p.stat().st_size>0, name
+
+          meta=json.loads((aggregate/'meta.json').read_text())
+          hashes={}
+          sizes={}
+          for name in required:
+              p=aggregate/name
+              hashes[name]=hashlib.sha256(p.read_bytes()).hexdigest()
+              sizes[name]=p.stat().st_size
+
+          def count_json(name):
+              value=json.loads((aggregate/name).read_text())
+              return len(value) if hasattr(value,'__len__') else None
+
+          report={
+            'status':'pass',
+            'generated_at_utc':datetime.now(timezone.utc).isoformat(),
+            'upstream_repo':'iconmaster5326/YGOJSON',
+            'upstream_ref':'fc001ff87ce55bf264659ef59185f9dbe294acfe',
+            'patches':['attribute null guard','race empty guard'],
+            'partitions_imported':8,
+            'upstream_validation_passed':True,
+            'aggregate_counts':{
+              'cards':count_json('cards.json'),
+              'sets':count_json('sets.json'),
+              'series':count_json('series.json'),
+              'distributions':count_json('distributions.json'),
+              'sealedProducts':count_json('sealedProducts.json'),
+            },
+            'aggregate_sha256':hashes,
+            'aggregate_sizes':sizes,
+            'meta':meta,
+            'production_writes':0,
+          }
+          assert report['aggregate_counts']['cards'] > 14000
+          assert report['aggregate_counts']['sets'] > 3000
+          Path('ygojson-shadow-full-refresh-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          Path('ygojson-shadow-aggregate-sha256.txt').write_text(''.join(f"{hashes[n]}  {n}\n" for n in sorted(hashes)))
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Package fresh aggregate
+        run: |
+          python - <<'PY'
+          import shutil
+          shutil.make_archive('ygojson-shadow-fresh-aggregate-v1','zip','ygojson-src/data/aggregate')
+          PY
+
+      - name: Upload full shadow refresh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygojson-shadow-full-refresh-v1-${{ github.run_id }}
+          path: |
+            ygojson-shadow-full-refresh-v1.json
+            ygojson-shadow-aggregate-sha256.txt
+            ygojson-shadow-full-compat.patch
+            ygojson-shadow-fresh-aggregate-v1.zip
+            shadow-logs/*.log
+          retention-days: 30
+          if-no-files-found: warn
