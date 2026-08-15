@@ -1,3 +1,4 @@
+# Registered workflow; follow-up commit triggers the card-scoped delta audit.
 name: Audit Yu-Gi-Oh Current Physical Delta V2
 
 on:
