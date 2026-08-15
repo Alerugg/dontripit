@@ -64,12 +64,13 @@ def run(
     report['fresh_source_certified'] = fresh_source_certified
     # Rollout remains a separate multi-artifact decision. This certificate never writes production.
     report['production_rollout_ready'] = False
-    report['identity_contract']['physical_source'] = (
+    identity_contract = report.setdefault('identity_contract', {})
+    identity_contract['physical_source'] = (
         'fresh shadow-regenerated YGOJSON aggregate from pinned upstream with minimal compatibility patches; '
         'official upstream validation passed'
     )
-    report['identity_contract']['freshness_policy'] = 'YGOJSON snapshot cutoff <= 7 days; no stale-release fallback for rollout'
-    report['identity_contract']['production_write_policy'] = 'forbidden in certification; final rollout requires separate readiness gate'
+    identity_contract['freshness_policy'] = 'YGOJSON snapshot cutoff <= 7 days; no stale-release fallback for rollout'
+    identity_contract['production_write_policy'] = 'forbidden in certification; final rollout requires separate readiness gate'
     report['status'] = 'pass' if fresh_source_certified else 'fail'
 
     output.parent.mkdir(parents=True, exist_ok=True)
