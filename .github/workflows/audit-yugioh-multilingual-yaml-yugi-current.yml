@@ -1,0 +1,85 @@
+name: Audit Yu-Gi-Oh multilingual YAML Yugi current
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_multilingual_yaml_yugi_current.py
+      - .github/workflows/audit-yugioh-multilingual-yaml-yugi-current.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-yaml-yugi-current-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YAML_YUGI_CARDS_URL: https://dawnbrandbots.github.io/yaml-yugi/cards.json
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PYTHONPATH: .
+
+jobs:
+  current-source-audit:
+    name: Current YAML Yugi ES JA read-only audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Resolve current upstream head and download declared aggregate API
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/yaml-yugi" artifacts
+          git ls-remote https://github.com/DawnbrandBots/yaml-yugi.git refs/heads/master | awk '{print $1}' > "$RUNNER_TEMP/yaml-yugi/master-head.txt"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/yaml-yugi/cards.json" "$YAML_YUGI_CARDS_URL"
+          curl --silent --show-error --location --head "$YAML_YUGI_CARDS_URL" \
+            | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^last-modified:/{sub(/^[^:]*:[ ]*/, ""); print; exit}' \
+            > "$RUNNER_TEMP/yaml-yugi/last-modified.txt" || true
+          test -s "$RUNNER_TEMP/yaml-yugi/cards.json"
+          echo "upstream_head=$(cat "$RUNNER_TEMP/yaml-yugi/master-head.txt")"
+          echo "last_modified=$(cat "$RUNNER_TEMP/yaml-yugi/last-modified.txt" 2>/dev/null || true)"
+          du -h "$RUNNER_TEMP/yaml-yugi/cards.json"
+
+      - name: Audit current multilingual physical identities against Neon read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_multilingual_yaml_yugi_current \
+            --cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            --source-head "$(cat "$RUNNER_TEMP/yaml-yugi/master-head.txt")" \
+            --source-last-modified "$(cat "$RUNNER_TEMP/yaml-yugi/last-modified.txt" 2>/dev/null || true)" \
+            --report ../artifacts/yugioh-multilingual-yaml-yugi-current.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-yaml-yugi-current
+          path: artifacts/yugioh-multilingual-yaml-yugi-current.json
+          if-no-files-found: warn
+          retention-days: 30
