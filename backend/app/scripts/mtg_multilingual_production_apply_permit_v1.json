@@ -1,0 +1,16 @@
+{
+  "schema": "dontripit-mtg-multilingual-production-apply-permit-v1",
+  "confirm": "APPLY_CERTIFIED_SCRYFALL_31891077971",
+  "general_certification_run_id": 31891077971,
+  "atomic_writer_certification_run_id": 31891701191,
+  "production_preflight_run_id": 31891632882,
+  "expected_catalog_v2_sha": "32b577d8473e8ce6080745a6cec0bb999d46c890",
+  "snapshot_sha256": "744e09b735e63b697008cd5e4b52062857661a212be2cdf188f72fda9a67f8f7",
+  "scryfall_bulk_updated_at": "2026-08-15T09:17:42.782+00:00",
+  "expected_final": {
+    "es": 89405,
+    "ja": 104735,
+    "total_mtg_prints": 353202
+  },
+  "one_time": true
+}
