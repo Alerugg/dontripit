@@ -83,12 +83,21 @@ class Print(Base):
     __tablename__ = "prints"
     __table_args__ = (
         UniqueConstraint(
+            "card_id",
             "set_id",
             "collector_number",
             "language",
             "is_foil",
             "variant",
             name="uq_prints_set_number_language_is_foil_variant",
+        ),
+        Index(
+            "ix_prints_set_number_language_foil_variant",
+            "set_id",
+            "collector_number",
+            "language",
+            "is_foil",
+            "variant",
         ),
         Index(
             "uq_prints_scryfall_variant",
