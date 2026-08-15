@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+# Source-only gate: this module never opens the production database.
 import argparse
 import json
 from collections import Counter, defaultdict
