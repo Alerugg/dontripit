@@ -43,23 +43,35 @@ jobs:
           python -m pip install -e .
           ygojson --help >/dev/null
 
-      - name: Apply minimal null-attribute compatibility patch
+      - name: Apply minimal YGOPRODeck compatibility patches
         working-directory: ygojson-src
         run: |
           python - <<'PY'
           from pathlib import Path
           p=Path('src/ygojson/importers/ygoprodeck.py')
-          old='Attribute(in_json["attribute"].lower()) if "attribute" in in_json else None'
-          new='Attribute(in_json["attribute"].lower()) if in_json.get("attribute") else None'
           text=p.read_text()
-          assert text.count(old)==1, 'Pinned upstream line changed; refuse blind patch'
-          p.write_text(text.replace(old,new))
-          print('patched exact upstream null-attribute crash')
+          replacements=[
+            (
+              'Attribute(in_json["attribute"].lower()) if "attribute" in in_json else None',
+              'Attribute(in_json["attribute"].lower()) if in_json.get("attribute") else None',
+              'attribute null guard',
+            ),
+            (
+              'card.type = Race(in_json["race"].lower().replace("-", "").replace(" ", ""))',
+              'card.type = Race(in_json["race"].lower().replace("-", "").replace(" ", "")) if in_json.get("race") else None',
+              'race empty guard',
+            ),
+          ]
+          for old,new,label in replacements:
+            assert text.count(old)==1, f'Pinned upstream line changed for {label}; refuse blind patch'
+            text=text.replace(old,new)
+            print(f'patched {label}')
+          p.write_text(text)
           PY
           git diff --check
-          git diff -- src/ygojson/importers/ygoprodeck.py | tee ../ygojson-shadow-null-attribute.patch
+          git diff -- src/ygojson/importers/ygoprodeck.py | tee ../ygojson-shadow-compat.patch
 
-      - name: Reproduce upstream pre-Yugipedia stage with patch
+      - name: Reproduce upstream pre-Yugipedia stage with patches
         working-directory: ygojson-src
         run: |
           set -euo pipefail
@@ -71,22 +83,26 @@ jobs:
             --individuals '' --no-individuals \
             2>&1 | tee ../ygojson-shadow-pre-yugipedia.log
 
-      - name: Certify that upstream failure point was crossed
+      - name: Certify that upstream failure points were crossed
         run: |
           python - <<'PY'
           import hashlib,json
           from pathlib import Path
           log=Path('ygojson-shadow-pre-yugipedia.log').read_text(errors='replace')
           assert "AttributeError: 'NoneType' object has no attribute 'lower'" not in log
+          assert "ValueError: '' is not a valid Race" not in log
           parts=sorted(Path('ygojson-src/temp').glob('part*'))
           assert len(parts) >= 8, [str(p) for p in parts]
           report={
             'status':'pass',
             'upstream_repo':'iconmaster5326/YGOJSON',
             'upstream_ref':'fc001ff87ce55bf264659ef59185f9dbe294acfe',
-            'patch':'attribute null guard only',
+            'patches':['attribute null guard','race empty guard'],
             'previous_upstream_failure_run':31856438921,
-            'previous_failure':'YGOPRODeck attribute=null caused .lower() AttributeError',
+            'crossed_failures':[
+              'YGOPRODeck attribute=null caused .lower() AttributeError',
+              'YGOPRODeck race="" caused invalid Race enum ValueError',
+            ],
             'generated_partition_files':[str(p) for p in parts],
             'log_sha256':hashlib.sha256(Path('ygojson-shadow-pre-yugipedia.log').read_bytes()).hexdigest(),
             'production_writes':0,
@@ -102,7 +118,7 @@ jobs:
           name: ygojson-shadow-refresh-probe-v1-${{ github.run_id }}
           path: |
             ygojson-shadow-refresh-probe-v1.json
-            ygojson-shadow-null-attribute.patch
+            ygojson-shadow-compat.patch
             ygojson-shadow-pre-yugipedia.log
             ygojson-src/temp/part*
           retention-days: 30
