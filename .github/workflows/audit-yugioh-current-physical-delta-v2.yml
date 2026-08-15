@@ -1,4 +1,4 @@
-# Registered workflow; follow-up commit triggers the card-scoped delta audit.
+# Registered workflow; follow-up commits trigger the card-scoped delta audit.
 name: Audit Yu-Gi-Oh Current Physical Delta V2
 
 on:
@@ -110,8 +110,8 @@ jobs:
           assert r['database_transaction_read_only'] is True, r
           assert r['structural_pass'] is True, r
           assert all(r['gates'].values()), r
-          assert r['targets']['es']['historical_canonical_keys']==37233, r
-          assert r['targets']['ja']['historical_canonical_keys']==36327, r
+          assert r['targets']['es']['historical_canonical_prints']==37233, r
+          assert r['targets']['ja']['historical_canonical_prints']==36327, r
           assert r['targets']['es']['ambiguous_card_resolution_keys']==0, r
           assert r['targets']['ja']['ambiguous_card_resolution_keys']==0, r
           assert r['production_rollout_ready'] is False, r
