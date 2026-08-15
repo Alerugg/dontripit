@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
+import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +17,24 @@ from app.scripts import certify_mtg_multilingual_ephemeral_v1 as certification
 # Production contract audit 31883824617 also proved MTG deliberately has zero
 # auxiliary `print_identifiers` for Scryfall: exact identity lives on
 # prints.scryfall_id + prints.variant (migration 20260808_25).
+#
+# The certification source is a single sealed Scryfall all_cards capture. We
+# persist only the ES/JA paper objects from that capture because those are the
+# only objects this gate is allowed to write. Source-wide counters are still
+# measured while streaming all_cards, so filtering cannot hide source drift.
 
 _ORIGINAL_TABLE_EXISTS = certification._table_exists
 _ORIGINAL_VALIDATE_FINAL = certification.validate_final
+_ORIGINAL_APPLY_PASS = certification.apply_pass
+_ORIGINAL_SEED_EPHEMERAL = certification.seed_ephemeral
+
+# 1k batches generated hundreds of indexed round-trips on pass 2. 5k keeps the
+# exact same write/validation semantics while making the certification bounded.
+CERTIFICATION_BATCH_SIZE = 5000
+
+
+def _log(message: str) -> None:
+    print(f"[mtg-multilingual-cert] {message}", flush=True)
 
 
 def _table_exists(cur, table: str) -> bool:
@@ -45,6 +63,7 @@ def _copy_filtered(src, dst, table: str, where_sql: str = "TRUE", params: tuple 
     fd, tmp_name = tempfile.mkstemp(prefix=f"dontripit-{table}-", suffix=".csv")
     os.close(fd)
     path = Path(tmp_name)
+    started = time.monotonic()
     try:
         with path.open("w", encoding="utf-8", newline="") as out:
             src.copy_expert(
@@ -55,6 +74,7 @@ def _copy_filtered(src, dst, table: str, where_sql: str = "TRUE", params: tuple 
         if count:
             with path.open("r", encoding="utf-8", newline="") as inp:
                 dst.copy_expert(f'COPY "{table}" ({quoted}) FROM STDIN WITH (FORMAT CSV)', inp)
+        _log(f"seed table={table} rows={count} elapsed={time.monotonic() - started:.1f}s")
         return {
             "table": table,
             "rows": count,
@@ -81,7 +101,74 @@ def _reset_sequence(cur, table: str) -> None:
         cur.execute("SELECT setval(%s, %s, true)", (sequence, maximum))
 
 
+def _seed_ephemeral(source_url: str, target_url: str) -> dict[str, Any]:
+    started = time.monotonic()
+    _log("stage=seed_ephemeral start")
+    result = _ORIGINAL_SEED_EPHEMERAL(source_url, target_url)
+    _log(f"stage=seed_ephemeral done elapsed={time.monotonic() - started:.1f}s")
+    return result
+
+
+def _capture_snapshot(path: Path, meta_path: Path) -> dict[str, Any]:
+    started = time.monotonic()
+    _log("stage=capture_snapshot start source=single-scryfall-all_cards scope=paper-es-ja")
+    connector = certification.ScryfallMtgV2Connector()
+    metadata = certification._all_cards_metadata(connector)
+    url = connector._bulk_download_url(metadata)
+    if not url:
+        raise RuntimeError("Scryfall all_cards download URL missing")
+
+    counts = Counter()
+    stored_objects = 0
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for card in certification._iter_all_cards(connector, url):
+            counts["all_objects"] += 1
+            if not certification._is_paper(card):
+                continue
+            counts["paper_objects"] += 1
+            lang = certification.clean(card.get("lang")).lower()
+            if lang not in certification.LANGUAGES:
+                continue
+            counts[f"paper_{lang}_objects"] += 1
+            counts[f"paper_{lang}_prints"] += len(certification.finish_values(card))
+            handle.write(json.dumps(card, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+            stored_objects += 1
+
+    report = {
+        "bulk_type": certification.clean(metadata.get("type")) or "all_cards",
+        "bulk_updated_at": metadata.get("updated_at"),
+        "snapshot_sha256": certification._sha256(path),
+        "normalized_jsonl": True,
+        "sealed_source": "single-scryfall-all_cards-capture",
+        "sealed_scope": "paper-es-ja",
+        "stored_objects": stored_objects,
+        "counts": dict(counts),
+    }
+    meta_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    _log(
+        "stage=capture_snapshot done "
+        f"stored_objects={stored_objects} es_prints={counts['paper_es_prints']} "
+        f"ja_prints={counts['paper_ja_prints']} elapsed={time.monotonic() - started:.1f}s"
+    )
+    return report
+
+
+def _apply_pass(target_url: str, snapshot: Path, source_version: str | None) -> dict[str, Any]:
+    started = time.monotonic()
+    _log(f"stage=apply_pass start batch_size={certification.BATCH_SIZE}")
+    result = _ORIGINAL_APPLY_PASS(target_url, snapshot, source_version)
+    _log(
+        "stage=apply_pass done "
+        f"created_es={result.get('prints_created_es', 0)} "
+        f"created_ja={result.get('prints_created_ja', 0)} "
+        f"elapsed={time.monotonic() - started:.1f}s"
+    )
+    return result
+
+
 def _validate_final(target_url: str, snapshot: Path, baseline: dict[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    _log("stage=validate_final start")
     result = _ORIGINAL_VALIDATE_FINAL(target_url, snapshot, baseline)
     conn = psycopg2.connect(target_url, connect_timeout=30, application_name="dontripit_mtg_multilingual_identity_gate")
     conn.set_session(readonly=True, autocommit=False)
@@ -137,16 +224,22 @@ def _validate_final(target_url: str, snapshot: Path, baseline: dict[str, Any]) -
                 }
             )
             conn.rollback()
+            _log(f"stage=validate_final done elapsed={time.monotonic() - started:.1f}s")
             return result
     finally:
         conn.close()
 
 
 def main() -> int:
+    certification.BATCH_SIZE = CERTIFICATION_BATCH_SIZE
     certification._table_exists = _table_exists
     certification._copy_filtered = _copy_filtered
     certification._reset_sequence = _reset_sequence
+    certification.seed_ephemeral = _seed_ephemeral
+    certification.capture_snapshot = _capture_snapshot
+    certification.apply_pass = _apply_pass
     certification.validate_final = _validate_final
+    _log(f"runner start certification_batch_size={CERTIFICATION_BATCH_SIZE}")
     return certification.main()
 
 
