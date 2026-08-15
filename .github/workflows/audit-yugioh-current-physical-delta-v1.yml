@@ -1,0 +1,134 @@
+name: Audit Yu-Gi-Oh Current Physical Delta V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_multilingual_cross_source_reconciliation.py
+      - .github/workflows/audit-yugioh-current-physical-delta-v1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-current-physical-delta-v1
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  YAML_YUGI_CARDS_URL: https://dawnbrandbots.github.io/yaml-yugi/cards.json
+  YAML_YUGI_REPO_API: https://api.github.com/repos/DawnbrandBots/yaml-yugi
+  PYTHONPATH: .
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Download and seal sources
+        working-directory: .
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygojson/extracted" "$RUNNER_TEMP/yaml-yugi" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygojson/aggregate.zip" "$YGOJSON_URL"
+          sha256sum "$RUNNER_TEMP/ygojson/aggregate.zip" | tee artifacts/yugioh-ygojson-v1-sha256.txt
+          unzip -q "$RUNNER_TEMP/ygojson/aggregate.zip" -d "$RUNNER_TEMP/ygojson/extracted"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/yaml-yugi/cards.json" "$YAML_YUGI_CARDS_URL"
+          sha256sum "$RUNNER_TEMP/yaml-yugi/cards.json" | tee artifacts/yugioh-yaml-yugi-cards-sha256.txt
+          python - <<'PY'
+          import hashlib,json,os,urllib.request
+          from pathlib import Path
+          cards=Path(os.environ['RUNNER_TEMP'])/'yaml-yugi'/'cards.json'
+          headers={'Accept':'application/vnd.github+json','Authorization':f"Bearer {os.environ['GH_TOKEN']}",'User-Agent':'dontripit-ygo-delta-audit'}
+          def get(url):
+              req=urllib.request.Request(url,headers=headers)
+              with urllib.request.urlopen(req,timeout=30) as r: return json.load(r)
+          repo=get(os.environ['YAML_YUGI_REPO_API'])
+          commits=get(os.environ['YAML_YUGI_REPO_API']+'/commits?sha=master&per_page=1')
+          meta={
+              'source':'yaml-yugi',
+              'sha256':hashlib.sha256(cards.read_bytes()).hexdigest(),
+              'head':commits[0]['sha'] if commits else None,
+              'head_date':commits[0]['commit']['committer']['date'] if commits else None,
+              'pushed_at':repo.get('pushed_at'),
+          }
+          out=Path(os.environ['RUNNER_TEMP'])/'yaml-yugi'/'source-meta.json'
+          out.write_text(json.dumps(meta,indent=2,sort_keys=True)+'\n')
+          Path('artifacts/yugioh-yaml-yugi-source-meta.json').write_text(json.dumps(meta,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(meta,indent=2,sort_keys=True))
+          PY
+
+      - name: Run cross-source physical delta audit in READ ONLY mode
+        run: |
+          META="$RUNNER_TEMP/yaml-yugi/source-meta.json"
+          HEAD=$(python -c "import json; print(json.load(open('$META'))['head'])")
+          PUSHED=$(python -c "import json; print(json.load(open('$META'))['pushed_at'])")
+          python -m app.scripts.audit_yugioh_multilingual_cross_source_reconciliation \
+            --ygojson-dir "$RUNNER_TEMP/ygojson/extracted" \
+            --yaml-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            --yaml-head "$HEAD" \
+            --yaml-last-modified "$PUSHED" \
+            --report ../artifacts/yugioh-current-physical-delta-v1.json
+
+      - name: Enforce safety and reconciliation gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-current-physical-delta-v1.json').read_text())
+          assert r['production_writes']==0, r
+          assert r['database_transaction_read_only'] is True, r
+          assert r['gates']['read_only_enforced'] is True, r
+          assert r['targets']['es']['fine_identity_overlap_keys']>0, r
+          assert r['targets']['ja']['fine_identity_overlap_keys']>0, r
+          print(json.dumps({
+              'structural_pass':r['structural_pass'],
+              'rollout_ready':r['rollout_ready'],
+              'es':r['targets']['es'],
+              'ja':r['targets']['ja'],
+              'blockers':r['rollout_blockers'],
+          },indent=2,sort_keys=True))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-current-physical-delta-v1-${{ github.run_id }}
+          path: |
+            artifacts/yugioh-current-physical-delta-v1.json
+            artifacts/yugioh-ygojson-v1-sha256.txt
+            artifacts/yugioh-yaml-yugi-cards-sha256.txt
+            artifacts/yugioh-yaml-yugi-source-meta.json
+          retention-days: 90
+          if-no-files-found: warn
