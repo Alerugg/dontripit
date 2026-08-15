@@ -1,0 +1,709 @@
+name: Shadow YGOJSON Full Refresh V1
+
+on:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - .github/triggers/run-ygojson-full-refresh-multijob-v2
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  UPSTREAM_REPO: iconmaster5326/YGOJSON
+  UPSTREAM_REF: fc001ff87ce55bf264659ef59185f9dbe294acfe
+
+jobs:
+  pre-yugipedia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Generate current Yugipedia partitions
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          mkdir -p temp
+          date -u '+pre start %FT%TZ'
+          ygojson --production --download \
+            --yugipedia-gen-partitions 8 \
+            --yugipedia-gen-partitions-prefix temp/part \
+            --no-yamlyugi --no-manual \
+            --individuals '' --no-individuals
+          test "$(find temp -maxdepth 1 -name 'part*.json' | wc -l)" -eq 8
+          date -u '+pre end %FT%TZ'
+
+      - name: Save stage 0 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-0
+
+  yugipedia-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: pre-yugipedia
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 0 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-0
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 1
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 1 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part1.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 1 end %FT%TZ'
+
+      - name: Save stage 1 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-1
+
+  yugipedia-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-1
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 1 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-1
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 2
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 2 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part2.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 2 end %FT%TZ'
+
+      - name: Save stage 2 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-2
+
+  yugipedia-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-2
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 2 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-2
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 3
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 3 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part3.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 3 end %FT%TZ'
+
+      - name: Save stage 3 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-3
+
+  yugipedia-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-3
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 3 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-3
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 4
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 4 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part4.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 4 end %FT%TZ'
+
+      - name: Save stage 4 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-4
+
+  yugipedia-5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-4
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 4 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-4
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 5
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 5 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part5.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 5 end %FT%TZ'
+
+      - name: Save stage 5 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-5
+
+  yugipedia-6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-5
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 5 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-5
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 6
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 6 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part6.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 6 end %FT%TZ'
+
+      - name: Save stage 6 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-6
+
+  yugipedia-7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-6
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 6 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-6
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 7
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 7 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part7.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 7 end %FT%TZ'
+
+      - name: Save stage 7 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-7
+
+  yugipedia-8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    needs: yugipedia-7
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 7 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-7
+          fail-on-cache-miss: true
+
+      - name: Import Yugipedia partition 8
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          date -u '+partition 8 start %FT%TZ'
+          ygojson --production \
+            --no-ygoprodeck --no-yamlyugi \
+            --yugipedia-use-partition "temp/part8.json" \
+            --no-manual --individuals '' --no-individuals
+          date -u '+partition 8 end %FT%TZ'
+
+      - name: Save stage 8 state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-8
+
+  post-yugipedia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: yugipedia-8
+    steps:
+      - name: Checkout Dontripit evidence branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Checkout pinned YGOJSON upstream
+        uses: actions/checkout@v4
+        with:
+          repository: iconmaster5326/YGOJSON
+          ref: fc001ff87ce55bf264659ef59185f9dbe294acfe
+          path: ygojson-src
+          persist-credentials: false
+
+      - name: Set up upstream Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install pinned upstream generator and validators
+        working-directory: ygojson-src
+        run: |
+          python -m pip install --upgrade 'pip<25.1'
+          python -m pip install -e '.[dev,test]'
+          ygojson --help >/dev/null
+
+      - name: Apply minimal YGOPRODeck compatibility patches
+        run: |
+          python .github/scripts/patch-ygojson-pinned-v1.py
+          git -C ygojson-src diff --check
+          git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py
+      - name: Restore stage 8 state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ygojson-src/temp
+            ygojson-src/data
+          key: ygojson-full-v2-${{ github.run_id }}-stage-8
+          fail-on-cache-miss: true
+
+      - name: Run official post-Yugipedia materialization
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          ygojson --production --no-ygoprodeck --no-yamlyugi --no-yugipedia
+
+      - name: Run upstream schema and data validation
+        working-directory: ygojson-src
+        run: |
+          set -euo pipefail
+          python test/validate_data.py
+
+      - name: Certify fresh aggregate and source timestamps
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root=Path('ygojson-src')
+          aggregate=root/'data'/'aggregate'
+          required=['cards.json','sets.json','series.json','distributions.json','sealedProducts.json','meta.json']
+          for name in required:
+              p=aggregate/name
+              assert p.is_file() and p.stat().st_size>0, name
+
+          meta=json.loads((aggregate/'meta.json').read_text())
+          hashes={}
+          sizes={}
+          for name in required:
+              p=aggregate/name
+              hashes[name]=hashlib.sha256(p.read_bytes()).hexdigest()
+              sizes[name]=p.stat().st_size
+
+          def count_json(name):
+              value=json.loads((aggregate/name).read_text())
+              return len(value) if hasattr(value,'__len__') else None
+
+          report={
+            'status':'pass',
+            'generated_at_utc':datetime.now(timezone.utc).isoformat(),
+            'upstream_repo':'iconmaster5326/YGOJSON',
+            'upstream_ref':'fc001ff87ce55bf264659ef59185f9dbe294acfe',
+            'execution_model':'upstream-compatible multi-job staged cache',
+            'patches':['attribute null guard','race empty guard'],
+            'partitions_imported':8,
+            'upstream_validation_passed':True,
+            'aggregate_counts':{
+              'cards':count_json('cards.json'),
+              'sets':count_json('sets.json'),
+              'series':count_json('series.json'),
+              'distributions':count_json('distributions.json'),
+              'sealedProducts':count_json('sealedProducts.json'),
+            },
+            'aggregate_sha256':hashes,
+            'aggregate_sizes':sizes,
+            'meta':meta,
+            'production_writes':0,
+          }
+          assert report['aggregate_counts']['cards'] > 14000
+          assert report['aggregate_counts']['sets'] > 3000
+          Path('ygojson-shadow-full-refresh-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          Path('ygojson-shadow-aggregate-sha256.txt').write_text(''.join(f"{hashes[n]}  {n}\n" for n in sorted(hashes)))
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Package fresh aggregate
+        run: |
+          python - <<'PY'
+          import shutil
+          shutil.make_archive('ygojson-shadow-fresh-aggregate-v1','zip','ygojson-src/data/aggregate')
+          PY
+
+      - name: Capture compatibility patch
+        run: git -C ygojson-src diff -- src/ygojson/importers/ygoprodeck.py > ygojson-shadow-full-compat.patch
+
+      - name: Upload full shadow refresh evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygojson-shadow-full-refresh-v1-${{ github.run_id }}
+          path: |
+            ygojson-shadow-full-refresh-v1.json
+            ygojson-shadow-aggregate-sha256.txt
+            ygojson-shadow-full-compat.patch
+            ygojson-shadow-fresh-aggregate-v1.zip
+          retention-days: 30
+          if-no-files-found: error
