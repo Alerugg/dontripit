@@ -3,7 +3,7 @@ name: Search mobile layout gates
 on:
   push:
     branches:
-      - iphone-search-layout-v2
+      - iphone-search-layout-v3
     paths:
       - 'frontend/components/searchV2/SearchV2Results.js'
       - 'frontend/components/searchV2/SearchV2Polish.css'
