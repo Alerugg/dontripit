@@ -33,7 +33,7 @@ env:
 jobs:
   certify:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     services:
       postgres:
         image: postgres:16
@@ -59,6 +59,25 @@ jobs:
         with:
           ref: multilingual-ygo-v1
 
+      - name: Wait for certified shadow refresh source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FULL_REFRESH_RUN_ID: ${{ inputs.full_refresh_run_id || '31911427988' }}
+        run: |
+          set -euo pipefail
+          final_state=''
+          for attempt in $(seq 1 45); do
+            final_state="$(gh run view "$FULL_REFRESH_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --json status,conclusion --jq '.status+":"+(.conclusion // "")')"
+            echo "shadow refresh attempt=${attempt} state=${final_state}"
+            case "$final_state" in
+              completed:success) break ;;
+              completed:*) echo "Shadow refresh completed without success: $final_state" >&2; exit 1 ;;
+            esac
+            sleep 60
+          done
+          test "$final_state" = 'completed:success'
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -79,7 +98,8 @@ jobs:
             app/scripts/prepare_yugioh_multilingual_ephemeral_v1.py \
             app/scripts/certify_yugioh_multilingual_ephemeral_v1.py \
             app/scripts/certify_yugioh_multilingual_ephemeral_v2.py \
-            app/scripts/certify_yugioh_multilingual_ephemeral_v3.py
+            app/scripts/certify_yugioh_multilingual_ephemeral_v3.py \
+            app/scripts/audit_yugioh_multilingual_rollout_readiness_v1.py
 
       - name: Prove production is source-only and ephemeral is local
         run: |
@@ -197,6 +217,48 @@ jobs:
           },indent=2,sort_keys=True))
           PY
 
+      - name: Download certified overlay and localization-gap evidence
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OVERLAY_RUN: '31910377210'
+          GAPS_RUN: '31911720911'
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/overlay evidence/gaps
+          for run in "$OVERLAY_RUN" "$GAPS_RUN"; do
+            state="$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.status+":"+.conclusion')"
+            test "$state" = 'completed:success'
+          done
+          gh run download "$OVERLAY_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-current-physical-delta-ephemeral-v2-${OVERLAY_RUN}" --dir evidence/overlay
+          gh run download "$GAPS_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-current-localization-gaps-v2-${GAPS_RUN}" --dir evidence/gaps
+          test -s evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json
+          test -s evidence/gaps/yugioh-current-localization-gaps-v2.json
+
+      - name: Run final controlled rollout readiness gate
+        run: |
+          python -m app.scripts.audit_yugioh_multilingual_rollout_readiness_v1 \
+            --fresh-historical ../artifacts/yugioh-multilingual-fresh-ephemeral-v3.json \
+            --current-overlay ../evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json \
+            --localization-gaps ../evidence/gaps/yugioh-current-localization-gaps-v2.json \
+            --output ../artifacts/yugioh-multilingual-rollout-readiness-v1.json
+
+      - name: Enforce final readiness without production authorization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-multilingual-rollout-readiness-v1.json').read_text())
+          assert r['status']=='pass', r
+          assert r['controlled_rollout_candidate_ready'] is True, r
+          assert r['automatic_production_write_authorized'] is False, r
+          assert r['production_writes']==0, r
+          assert all(r['gates'].values()), r
+          print(json.dumps(r,indent=2,sort_keys=True))
+          PY
+
       - name: Upload fresh certification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -211,5 +273,14 @@ jobs:
             artifacts/yugioh-yaml-yugi-source-meta-v3.json
             /tmp/yugioh-production-shape-pre-migration.json
             /tmp/yugioh-multilingual-ephemeral-baseline.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload final readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-rollout-readiness-v1-${{ github.run_id }}
+          path: artifacts/yugioh-multilingual-rollout-readiness-v1.json
           retention-days: 90
           if-no-files-found: warn
