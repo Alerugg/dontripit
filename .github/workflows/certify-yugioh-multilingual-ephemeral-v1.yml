@@ -1,3 +1,4 @@
+# Certification workflow intentionally targets only local disposable PostgreSQL.
 name: Certify Yu-Gi-Oh Multilingual Ephemeral V1
 
 on:
