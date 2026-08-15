@@ -1,0 +1,109 @@
+name: Audit Yu-Gi-Oh multilingual DB compatibility v4
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/app/scripts/audit_yugioh_multilingual_db_compatibility_v4.py
+      - .github/workflows/audit-yugioh-multilingual-db-compatibility-v4.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-db-compatibility-v4-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  YGOJSON_URL: https://github.com/iconmaster5326/YGOJSON/releases/download/v1/aggregate.zip
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PYTHONPATH: .
+
+jobs:
+  compatibility-v4:
+    name: Read-only canonical regional/card-scoped compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Require production database read endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL_UNPOOLED:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL_UNPOOLED or DATABASE_URL secret is required" >&2
+            exit 1
+          fi
+
+      - name: Download immutable historical YGOJSON aggregate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ygojson-v4/extracted" artifacts
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/ygojson-v4/aggregate.zip" "$YGOJSON_URL"
+          unzip -q "$RUNNER_TEMP/ygojson-v4/aggregate.zip" \
+            -d "$RUNNER_TEMP/ygojson-v4/extracted"
+
+      - name: Audit canonical compatibility in explicit READ ONLY transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_multilingual_db_compatibility_v4 \
+            --input-dir "$RUNNER_TEMP/ygojson-v4/extracted" \
+            --report ../artifacts/yugioh-multilingual-db-compatibility-v4.json
+
+      - name: Enforce structural gate only
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('../artifacts/yugioh-multilingual-db-compatibility-v4.json').read_text())
+          if r['production_writes'] != 0 or not r['database_transaction_read_only']:
+              raise SystemExit('read-only safety invariant failed')
+          if not r['structural_pass']:
+              raise SystemExit('YGO multilingual compatibility v4 structural gate failed')
+          print(json.dumps({
+              'structural_pass': r['structural_pass'],
+              'schema_rollout_pass': r['schema_rollout_pass'],
+              'rollout_freshness_pass': r['rollout_freshness_pass'],
+              'production_rollout_ready': r['production_rollout_ready'],
+              'es_materializable': r['targets']['es']['materializable_canonical_prints'],
+              'ja_materializable': r['targets']['ja']['materializable_canonical_prints'],
+              'es_retained_missing_card': r['targets']['es']['retained_card_not_in_db_canonical_prints'],
+              'ja_retained_missing_card': r['targets']['ja']['retained_card_not_in_db_canonical_prints'],
+          }, indent=2))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-db-compatibility-v4
+          path: artifacts/yugioh-multilingual-db-compatibility-v4.json
+          if-no-files-found: warn
+          retention-days: 30
