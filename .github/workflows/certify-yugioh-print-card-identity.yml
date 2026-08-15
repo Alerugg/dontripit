@@ -1,0 +1,232 @@
+name: Certify Yu-Gi-Oh card-scoped print identity
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - multilingual-ygo-v1
+    paths:
+      - backend/alembic/versions/20260815_36_include_card_in_print_identity.py
+      - .github/workflows/certify-yugioh-print-card-identity.yml
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dontripit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dontripit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/dontripit_test
+      DATABASE_URL_UNPOOLED: postgresql+psycopg2://postgres:postgres@localhost:5432/dontripit_test
+      PYTHONPATH: ${{ github.workspace }}/backend
+
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: multilingual-ygo-v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Apply complete Alembic chain
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Verify new constraint and seed legitimate cross-card reuse
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect, text
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as conn:
+              dbname = conn.execute(text("SELECT current_database()" )).scalar_one()
+              assert dbname == "dontripit_test", dbname
+
+              constraints = {
+                  c["name"]: tuple(c.get("column_names") or ())
+                  for c in inspect(conn).get_unique_constraints("prints")
+              }
+              expected = (
+                  "card_id", "set_id", "collector_number", "language", "is_foil", "variant"
+              )
+              assert constraints.get("uq_prints_set_number_language_is_foil_variant") == expected, constraints
+
+              indexes = {i["name"] for i in inspect(conn).get_indexes("prints")}
+              assert "ix_prints_set_number_language_foil_variant" in indexes, indexes
+
+              game_id = conn.execute(text("""
+                  INSERT INTO games (slug, name)
+                  VALUES ('yugioh-print-identity-cert', 'YGO Print Identity Cert')
+                  RETURNING id
+              """)).scalar_one()
+              set_id = conn.execute(text("""
+                  INSERT INTO sets (game_id, code, region, name)
+                  VALUES (:game_id, 'WJ', 'jp', 'Weekly Shonen Jump family')
+                  RETURNING id
+              """), {"game_id": game_id}).scalar_one()
+              card_a = conn.execute(text("""
+                  INSERT INTO cards (game_id, name, card_key, yugoprodeck_id)
+                  VALUES (:game_id, 'Certification Card A', 'cert-card-a', '990000001')
+                  RETURNING id
+              """), {"game_id": game_id}).scalar_one()
+              card_b = conn.execute(text("""
+                  INSERT INTO cards (game_id, name, card_key, yugoprodeck_id)
+                  VALUES (:game_id, 'Certification Card B', 'cert-card-b', '990000002')
+                  RETURNING id
+              """), {"game_id": game_id}).scalar_one()
+
+              params = {
+                  "set_id": set_id,
+                  "collector": "WJ-01",
+                  "language": "ja",
+                  "rarity": "Ultra Rare",
+                  "variant": "rarity-ultra-rare",
+              }
+              conn.execute(text("""
+                  INSERT INTO prints
+                    (set_id, card_id, collector_number, language, rarity, is_foil, variant, print_key)
+                  VALUES
+                    (:set_id, :card_id, :collector, :language, :rarity, false, :variant, :print_key)
+              """), {**params, "card_id": card_a, "print_key": "cert-print-a"})
+
+              # Same visible slot, different Card: this is the exact YGO case
+              # migration 36 must permit.
+              conn.execute(text("""
+                  INSERT INTO prints
+                    (set_id, card_id, collector_number, language, rarity, is_foil, variant, print_key)
+                  VALUES
+                    (:set_id, :card_id, :collector, :language, :rarity, false, :variant, :print_key)
+              """), {**params, "card_id": card_b, "print_key": "cert-print-b"})
+
+              conn.execute(text("SAVEPOINT same_card_guard"))
+              same_card_duplicate_blocked = False
+              try:
+                  conn.execute(text("""
+                      INSERT INTO prints
+                        (set_id, card_id, collector_number, language, rarity, is_foil, variant, print_key)
+                      VALUES
+                        (:set_id, :card_id, :collector, :language, :rarity, false, :variant, :print_key)
+                  """), {**params, "card_id": card_a, "print_key": "cert-print-a-duplicate"})
+              except Exception:
+                  same_card_duplicate_blocked = True
+                  conn.execute(text("ROLLBACK TO SAVEPOINT same_card_guard"))
+              finally:
+                  conn.execute(text("RELEASE SAVEPOINT same_card_guard"))
+              assert same_card_duplicate_blocked, "same Card + same physical tuple must remain unique"
+
+              count = conn.execute(text("""
+                  SELECT COUNT(*) FROM prints
+                  WHERE set_id=:set_id AND collector_number='WJ-01'
+                    AND language='ja' AND variant='rarity-ultra-rare'
+              """), {"set_id": set_id}).scalar_one()
+              assert count == 2, count
+
+          print("card_scoped_print_identity=PASS")
+          print("cross_card_collector_reuse=PASS")
+          print("same_card_duplicate_blocked=PASS")
+          print("legacy_lookup_index=PASS")
+          print("production_writes=0")
+          PY
+
+      - name: Prove downgrade guard refuses destructive rollback
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          alembic downgrade 20260815_35 > /tmp/ygo-print-downgrade-guard.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/ygo-print-downgrade-guard.log
+          if [ "$status" -eq 0 ]; then
+            echo "ERROR: downgrade unexpectedly succeeded with legitimate cross-card collision"
+            exit 1
+          fi
+          alembic current | grep -q '20260815_36'
+          echo "destructive_downgrade_guard=PASS"
+
+      - name: Remove certification collision and prove reversible downgrade
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as conn:
+              deleted = conn.execute(
+                  text("DELETE FROM prints WHERE print_key='cert-print-b' RETURNING id")
+              ).all()
+              assert len(deleted) == 1, deleted
+          PY
+          alembic downgrade 20260815_35
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.connect() as conn:
+              constraints = {
+                  c["name"]: tuple(c.get("column_names") or ())
+                  for c in inspect(conn).get_unique_constraints("prints")
+              }
+              expected = ("set_id", "collector_number", "language", "is_foil", "variant")
+              assert constraints.get("uq_prints_set_number_language_is_foil_variant") == expected, constraints
+              indexes = {i["name"] for i in inspect(conn).get_indexes("prints")}
+              assert "ix_prints_set_number_language_foil_variant" not in indexes, indexes
+          print("clean_downgrade=PASS")
+          print("old_identity_restored=PASS")
+          PY
+
+      - name: Re-upgrade and certify final head
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          alembic upgrade head
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.connect() as conn:
+              constraints = {
+                  c["name"]: tuple(c.get("column_names") or ())
+                  for c in inspect(conn).get_unique_constraints("prints")
+              }
+              expected = (
+                  "card_id", "set_id", "collector_number", "language", "is_foil", "variant"
+              )
+              assert constraints.get("uq_prints_set_number_language_is_foil_variant") == expected, constraints
+              indexes = {i["name"] for i in inspect(conn).get_indexes("prints")}
+              assert "ix_prints_set_number_language_foil_variant" in indexes, indexes
+          print("reupgrade_head=PASS")
+          print("final_card_scoped_identity=PASS")
+          PY
+          alembic current
+          alembic heads
