@@ -6,6 +6,7 @@ on:
       - multilingual-mtg-v1
     paths:
       - 'backend/app/scripts/certify_mtg_multilingual_ephemeral_v1.py'
+      - 'backend/app/scripts/certify_mtg_multilingual_ephemeral_v1_runner.py'
       - 'backend/app/scripts/audit_mtg_multilingual_v1.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot.py'
       - 'backend/app/mtg_identity_v2.py'
@@ -67,6 +68,7 @@ jobs:
         run: |
           python -m py_compile \
             app/scripts/certify_mtg_multilingual_ephemeral_v1.py \
+            app/scripts/certify_mtg_multilingual_ephemeral_v1_runner.py \
             app/scripts/audit_mtg_multilingual_v1.py \
             app/scripts/build_mtg_v2_snapshot.py \
             app/mtg_identity_v2.py
@@ -89,7 +91,7 @@ jobs:
 
       - name: Run full two-pass ephemeral certification
         run: |
-          python -m app.scripts.certify_mtg_multilingual_ephemeral_v1 \
+          python -m app.scripts.certify_mtg_multilingual_ephemeral_v1_runner \
             --output /tmp/mtg-multilingual-ephemeral-certification.json \
             --snapshot /tmp/scryfall-all-cards-sealed.jsonl \
             --snapshot-meta /tmp/scryfall-all-cards-sealed-meta.json
