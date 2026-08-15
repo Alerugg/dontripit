@@ -1,0 +1,67 @@
+name: Audit MTG Multilingual Additive Delta V1
+
+on:
+  push:
+    branches:
+      - multilingual-mtg-v1
+    paths:
+      - 'backend/app/scripts/audit_mtg_multilingual_delta_v1.py'
+      - '.github/workflows/audit-mtg-multilingual-delta-v1.yml'
+      - '.github/mtg-multilingual-delta-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-multilingual-delta-v1
+  cancel-in-progress: true
+
+jobs:
+  audit-delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile delta audit
+        run: python -m py_compile app/scripts/audit_mtg_multilingual_delta_v1.py
+      - name: Measure additive ES JA delta read-only
+        run: python -m app.scripts.audit_mtg_multilingual_delta_v1 --output /tmp/mtg-multilingual-delta.json
+      - name: Gate identity safety
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/mtg-multilingual-delta.json').read_text())
+          assert r['database_writes'] == 0, r
+          assert r['status'] == 'pass', r
+          for lang in ('es','ja'):
+              c=r['languages'][lang]['counts']
+              assert c.get('remote_exact_prints',0) > 0, r
+              assert c.get('remote_exact_duplicates',0) == 0, r
+              assert c.get('natural_conflicts',0) == 0, r
+              assert c.get('source_objects_missing_canonical_oracle',0) == 0, r
+              assert c.get('source_objects_missing_set',0) == 0, r
+          print(json.dumps(r, indent=2, sort_keys=True))
+          PY
+      - name: Upload delta evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-multilingual-delta-${{ github.run_id }}
+          path: /tmp/mtg-multilingual-delta.json
+          retention-days: 90
+          if-no-files-found: warn
