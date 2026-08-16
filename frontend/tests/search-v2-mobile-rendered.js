@@ -4,6 +4,7 @@ const path = require('node:path')
 const { chromium } = require('playwright')
 
 const BASE_URL = process.env.QA_BASE_URL || 'http://127.0.0.1:3000'
+const BASE_ORIGIN = new URL(BASE_URL).origin
 const OUTPUT_DIR = process.env.QA_SCREENSHOT_DIR || '/tmp/search-v2-mobile-rendered'
 
 async function main() {
@@ -14,6 +15,8 @@ async function main() {
   const failures = []
   const requestFailures = []
   const resourceErrors = []
+  const resourceResponses = []
+  const failedRequests = []
 
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`))
   page.on('console', (message) => {
@@ -23,9 +26,41 @@ async function main() {
     else failures.push(`console: ${text}`)
   })
   page.on('response', (response) => {
-    if (response.url().includes('/api/search-v2') && response.status() >= 400) {
-      requestFailures.push(`${response.status()} ${response.url()}`)
+    const url = response.url()
+    const status = response.status()
+    if (url.includes('/api/search-v2') && status >= 400) {
+      requestFailures.push(`${status} ${url}`)
+      return
     }
+    if (status < 400) return
+
+    let origin = null
+    try { origin = new URL(url).origin } catch {}
+    const detail = {
+      status,
+      url,
+      origin,
+      resource_type: response.request().resourceType(),
+      first_party: origin === BASE_ORIGIN,
+    }
+    resourceResponses.push(detail)
+    if (detail.first_party) {
+      failures.push(`first-party-resource: ${status} ${url}`)
+    }
+  })
+  page.on('requestfailed', (request) => {
+    const url = request.url()
+    let origin = null
+    try { origin = new URL(url).origin } catch {}
+    const detail = {
+      url,
+      origin,
+      resource_type: request.resourceType(),
+      first_party: origin === BASE_ORIGIN,
+      error_text: request.failure()?.errorText || 'unknown',
+    }
+    failedRequests.push(detail)
+    if (detail.first_party) failures.push(`first-party-request-failed: ${detail.error_text} ${url}`)
   })
 
   const viewportCheck = async (label) => {
@@ -94,6 +129,8 @@ async function main() {
     if (requestFailures.length) failures.push(...requestFailures.map((row) => `search-v2-response: ${row}`))
     if (failures.length) throw new Error(failures.join('\n'))
 
+    const externalHttpFailures = resourceResponses.filter((row) => !row.first_party)
+    const externalNetworkFailures = failedRequests.filter((row) => !row.first_party)
     const report = {
       status: 'pass',
       viewport: { width: 390, height: 844 },
@@ -109,9 +146,13 @@ async function main() {
         exact_holo_result_rendered: true,
         market_row_within_viewport: true,
         search_bff_http_errors: 0,
+        first_party_http_resource_errors: resourceResponses.filter((row) => row.first_party).length,
+        first_party_network_failures: failedRequests.filter((row) => row.first_party).length,
         fatal_browser_errors: 0,
       },
-      resource_load_errors_observed: resourceErrors.length,
+      resource_load_console_errors_observed: resourceErrors.length,
+      external_http_failures: externalHttpFailures,
+      external_network_failures: externalNetworkFailures,
       production_writes: 0,
       database_mode: 'production-data-read-through-local-backend-forced-read-only',
       screenshots: ['pokemon-mobile-search.png', 'pokemon-mobile-holo.png'],
@@ -120,7 +161,15 @@ async function main() {
     console.log(JSON.stringify(report, null, 2))
   } catch (error) {
     await page.screenshot({ path: path.join(OUTPUT_DIR, 'failure.png'), fullPage: true }).catch(() => {})
-    const report = { status: 'fail', error: String(error), requestFailures, failures, resourceErrors }
+    const report = {
+      status: 'fail',
+      error: String(error),
+      requestFailures,
+      failures,
+      resourceErrors,
+      resourceResponses,
+      failedRequests,
+    }
     fs.writeFileSync(path.join(OUTPUT_DIR, 'failure.json'), `${JSON.stringify(report, null, 2)}\n`)
     console.error(JSON.stringify(report, null, 2))
     throw error
