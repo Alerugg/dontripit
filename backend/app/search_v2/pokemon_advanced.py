@@ -224,11 +224,14 @@ def advanced_pokemon_search(
     if has_price:
         where.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(where)
-    filter_from = f"""
+    core_from = """
       FROM print_search_profiles psp
       JOIN prints p ON p.id=psp.print_id
       JOIN cards c ON c.id=psp.card_id
       JOIN sets s ON s.id=p.set_id
+    """
+    filter_from = f"""
+      {core_from}
       {market_join}
     """
     order_sql = print_order_sql(
@@ -236,7 +239,13 @@ def advanced_pokemon_search(
         default="lower(c.name) ASC, s.release_date ASC NULLS LAST, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, psp.variant_family ASC, psp.exact_variant ASC, psp.print_id ASC",
     )
 
-    total = int(session.execute(text(f"SELECT COUNT(*) {filter_from} WHERE {where_sql}"), params).scalar_one() or 0)
+    # Counting physical matches does not require price/link enrichment unless
+    # price eligibility is itself part of the filter. The Cardmarket LATERAL
+    # join is intentionally retained for displayed rows and for has_price=True.
+    # This mirrors the already-certified One Piece path and avoids resolving
+    # external market identity/prices once per matching print just to COUNT(*).
+    count_from = filter_from if has_price else core_from
+    total = int(session.execute(text(f"SELECT COUNT(*) {count_from} WHERE {where_sql}"), params).scalar_one() or 0)
 
     rows = session.execute(
         text(
