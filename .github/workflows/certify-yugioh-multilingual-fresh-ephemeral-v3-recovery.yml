@@ -224,6 +224,16 @@ jobs:
             --name "yugioh-current-physical-delta-ephemeral-v2-${OVERLAY_RUN}" --dir evidence/overlay
           gh run download "$GAPS_RUN" --repo "$GITHUB_REPOSITORY" \
             --name "yugioh-current-localization-gaps-v2-${GAPS_RUN}" --dir evidence/gaps
+          overlay_json="$(find evidence/overlay -type f -name 'yugioh-current-physical-delta-ephemeral-v2.json' -print -quit)"
+          gaps_json="$(find evidence/gaps -type f -name 'yugioh-current-localization-gaps-v2.json' -print -quit)"
+          test -n "$overlay_json" && test -s "$overlay_json"
+          test -n "$gaps_json" && test -s "$gaps_json"
+          if [ "$overlay_json" != "evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json" ]; then
+            cp "$overlay_json" evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json
+          fi
+          if [ "$gaps_json" != "evidence/gaps/yugioh-current-localization-gaps-v2.json" ]; then
+            cp "$gaps_json" evidence/gaps/yugioh-current-localization-gaps-v2.json
+          fi
           test -s evidence/overlay/yugioh-current-physical-delta-ephemeral-v2.json
           test -s evidence/gaps/yugioh-current-localization-gaps-v2.json
 
