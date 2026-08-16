@@ -1,0 +1,41 @@
+name: Audit Search V2 middleware latency
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - .github/triggers/search-v2-post-fra1-cert
+
+permissions:
+  contents: read
+
+env:
+  FRA1_READY_AT: '2026-08-15T01:04:33Z'
+
+jobs:
+  middleware-metrics-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit dependency
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Audit middleware latency from existing production metrics
+        working-directory: backend
+        run: |
+          mkdir -p artifacts
+          SEARCH_V2_MIDDLEWARE_OUTPUT=artifacts/search-v2-middleware-latency.json python -m app.scripts.audit_search_v2_middleware_latency_readonly
+      - name: Upload middleware latency evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-middleware-latency-${{ github.run_id }}
+          path: backend/artifacts/search-v2-middleware-latency.json
+          retention-days: 90
