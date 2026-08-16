@@ -7,6 +7,22 @@ const BASE_URL = process.env.QA_BASE_URL || 'http://127.0.0.1:3000'
 const BASE_ORIGIN = new URL(BASE_URL).origin
 const OUTPUT_DIR = process.env.QA_SCREENSHOT_DIR || '/tmp/search-v2-mobile-rendered'
 
+function parsedUrl(value) {
+  try { return new URL(value) } catch { return null }
+}
+
+function isExpectedAnonymousResponse(detail) {
+  const parsed = parsedUrl(detail.url)
+  return detail.first_party && detail.status === 401 && parsed?.pathname === '/api/auth/me'
+}
+
+function isExpectedRscCancellation(detail) {
+  const parsed = parsedUrl(detail.url)
+  return detail.first_party
+    && /ERR_ABORTED/i.test(detail.error_text || '')
+    && parsed?.searchParams.has('_rsc')
+}
+
 async function main() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true })
   const browser = await chromium.launch({ headless: true })
@@ -34,33 +50,33 @@ async function main() {
     }
     if (status < 400) return
 
-    let origin = null
-    try { origin = new URL(url).origin } catch {}
+    const parsed = parsedUrl(url)
     const detail = {
       status,
       url,
-      origin,
+      origin: parsed?.origin || null,
       resource_type: response.request().resourceType(),
-      first_party: origin === BASE_ORIGIN,
+      first_party: parsed?.origin === BASE_ORIGIN,
     }
     resourceResponses.push(detail)
-    if (detail.first_party) {
+    if (detail.first_party && !isExpectedAnonymousResponse(detail)) {
       failures.push(`first-party-resource: ${status} ${url}`)
     }
   })
   page.on('requestfailed', (request) => {
     const url = request.url()
-    let origin = null
-    try { origin = new URL(url).origin } catch {}
+    const parsed = parsedUrl(url)
     const detail = {
       url,
-      origin,
+      origin: parsed?.origin || null,
       resource_type: request.resourceType(),
-      first_party: origin === BASE_ORIGIN,
+      first_party: parsed?.origin === BASE_ORIGIN,
       error_text: request.failure()?.errorText || 'unknown',
     }
     failedRequests.push(detail)
-    if (detail.first_party) failures.push(`first-party-request-failed: ${detail.error_text} ${url}`)
+    if (detail.first_party && !isExpectedRscCancellation(detail)) {
+      failures.push(`first-party-request-failed: ${detail.error_text} ${url}`)
+    }
   })
 
   const viewportCheck = async (label) => {
@@ -129,8 +145,17 @@ async function main() {
     if (requestFailures.length) failures.push(...requestFailures.map((row) => `search-v2-response: ${row}`))
     if (failures.length) throw new Error(failures.join('\n'))
 
+    const unexpectedFirstPartyHttp = resourceResponses.filter(
+      (row) => row.first_party && !isExpectedAnonymousResponse(row),
+    )
+    const unexpectedFirstPartyNetwork = failedRequests.filter(
+      (row) => row.first_party && !isExpectedRscCancellation(row),
+    )
+    const expectedAnonymousResponses = resourceResponses.filter(isExpectedAnonymousResponse)
+    const expectedRscCancellations = failedRequests.filter(isExpectedRscCancellation)
     const externalHttpFailures = resourceResponses.filter((row) => !row.first_party)
     const externalNetworkFailures = failedRequests.filter((row) => !row.first_party)
+
     const report = {
       status: 'pass',
       viewport: { width: 390, height: 844 },
@@ -146,10 +171,12 @@ async function main() {
         exact_holo_result_rendered: true,
         market_row_within_viewport: true,
         search_bff_http_errors: 0,
-        first_party_http_resource_errors: resourceResponses.filter((row) => row.first_party).length,
-        first_party_network_failures: failedRequests.filter((row) => row.first_party).length,
+        unexpected_first_party_http_resource_errors: unexpectedFirstPartyHttp.length,
+        unexpected_first_party_network_failures: unexpectedFirstPartyNetwork.length,
         fatal_browser_errors: 0,
       },
+      expected_anonymous_auth_responses: expectedAnonymousResponses,
+      expected_rsc_cancellations: expectedRscCancellations,
       resource_load_console_errors_observed: resourceErrors.length,
       external_http_failures: externalHttpFailures,
       external_network_failures: externalNetworkFailures,
