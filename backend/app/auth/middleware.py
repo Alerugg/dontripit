@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 import time
 
@@ -204,6 +205,34 @@ def register_api_product_middleware(flask_app: Flask) -> None:
                 return None
 
         provided_key = _extract_admin_header_key() if is_admin_route else _extract_api_key()
+
+        # The first-party Next.js BFF already keeps INTERNAL_API_KEY server-side.
+        # For bounded catalog reads, validating that exact deployment secret via
+        # PostgreSQL on every request only adds a second DB transaction before the
+        # real catalog query. Historical production metrics showed keyed BFF reads
+        # several seconds slower than equivalent public reads. Fast-path only the
+        # exact environment secret and only routes already classified as safe,
+        # bounded, read-only catalog operations. Admin, user, write-capable and
+        # third-party developer-key requests keep the full DB-backed auth/quota/
+        # rate-limit path below.
+        env_internal_key = os.getenv("INTERNAL_API_KEY", "").strip()
+        if (
+            provided_key
+            and env_internal_key
+            and not is_admin_route
+            and _is_safe_public_catalog_request(required_scope)
+            and hmac.compare_digest(provided_key, env_internal_key)
+        ):
+            g.api_meta = {
+                "plan": "internal-first-party",
+                "rate_limit": None,
+                "rate_remaining": None,
+                "quota_limit": None,
+                "quota_used": None,
+                "retry_after": None,
+            }
+            g.api_key_prefix = "internal"
+            return None
 
         if provided_key is None and not public_enabled:
             return jsonify({"error": "missing_api_key"}), 401
