@@ -1,0 +1,202 @@
+name: Certify Search V2 post-fra1
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - .github/triggers/search-v2-post-fra1-cert
+
+permissions:
+  contents: read
+
+env:
+  FRA1_READY_AT: '2026-08-15T01:04:33Z'
+
+jobs:
+  production-metrics-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install metrics dependency
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Read post-fra1 Search V2 metrics with a forced read-only session
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import psycopg2
+
+          url = (os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url, 'production database secret is missing'
+          cutoff = os.environ['FRA1_READY_AT']
+          conn = psycopg2.connect(url)
+          conn.autocommit = False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  mode = cur.fetchone()[0]
+                  assert mode == 'on', f'expected transaction_read_only=on, got {mode}'
+                  cur.execute(
+                      '''
+                      SELECT
+                        endpoint,
+                        count(*)::int AS samples,
+                        count(*) FILTER (WHERE status_code >= 400)::int AS errors,
+                        round(avg(latency_ms)::numeric, 1) AS avg_ms,
+                        percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
+                        percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
+                        max(latency_ms)::int AS max_ms,
+                        min(requested_at) AS first_seen,
+                        max(requested_at) AS last_seen
+                      FROM api_request_metrics
+                      WHERE requested_at >= %s::timestamptz
+                        AND (
+                          endpoint LIKE '/api/v2/search%%'
+                          OR endpoint LIKE '/api/v2/games/%%/facets%%'
+                        )
+                      GROUP BY endpoint
+                      ORDER BY endpoint
+                      ''',
+                      (cutoff,),
+                  )
+                  columns = [d.name for d in cur.description]
+                  rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+              conn.rollback()
+          finally:
+              conn.close()
+
+          def clean(value):
+              if hasattr(value, 'isoformat'):
+                  return value.isoformat()
+              if value is not None and value.__class__.__name__ == 'Decimal':
+                  return float(value)
+              return value
+
+          normalized = [{k: clean(v) for k, v in row.items()} for row in rows]
+          total = sum(row['samples'] for row in normalized)
+          errors = sum(row['errors'] for row in normalized)
+          assert total > 0, 'no post-fra1 Search V2 metric samples found'
+          assert any(row['endpoint'] == '/api/v2/search/advanced' for row in normalized), 'advanced Search V2 has no post-fra1 samples'
+          assert any(row['endpoint'] == '/api/v2/search/suggest' for row in normalized), 'suggest Search V2 has no post-fra1 samples'
+          report = {
+              'status': 'pass',
+              'source': 'production api_request_metrics',
+              'deployment_region': 'fra1',
+              'cutoff': cutoff,
+              'generated_at': datetime.now(timezone.utc).isoformat(),
+              'transaction_read_only': True,
+              'production_writes': 0,
+              'samples': total,
+              'errors': errors,
+              'endpoints': normalized,
+          }
+          Path('artifacts/search-v2-post-fra1-metrics.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY
+      - name: Upload post-fra1 performance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-post-fra1-metrics-${{ github.run_id }}
+          path: artifacts/search-v2-post-fra1-metrics.json
+          retention-days: 90
+
+  rendered-mobile-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PGOPTIONS: -c default_transaction_read_only=on
+      PUBLIC_HUB_CATALOG_ENABLED: 'true'
+      INTERNAL_API_ALLOW_PUBLIC: 'true'
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      QA_BASE_URL: http://127.0.0.1:3000
+      QA_SCREENSHOT_DIR: /tmp/search-v2-mobile-rendered
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend and frontend dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          cd frontend
+          npm ci
+          npm install --no-save playwright@1.54.2
+          npx playwright install --with-deps chromium
+      - name: Prove production database connections are forced read only
+        run: |
+          python - <<'PY'
+          import os, psycopg2
+          assert os.environ.get('DATABASE_URL'), 'DATABASE_URL_UNPOOLED secret is missing'
+          conn = psycopg2.connect(os.environ['DATABASE_URL'])
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  mode = cur.fetchone()[0]
+                  assert mode == 'on', mode
+                  cur.execute('CREATE TEMP TABLE read_only_probe_should_fail(id integer)')
+          except psycopg2.errors.ReadOnlySqlTransaction:
+              conn.rollback()
+              print('read-only safety gate: PostgreSQL rejected DDL as expected')
+          else:
+              conn.rollback()
+              raise AssertionError('read-only safety gate failed: DDL was not rejected')
+          finally:
+              conn.close()
+          PY
+      - name: Start local backend on production data in forced read-only mode
+        run: |
+          cd backend
+          python -m flask --app app.main run --host=127.0.0.1 --port=5000 > /tmp/search-v2-backend.log 2>&1 &
+          echo $! > /tmp/search-v2-backend.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5000/api/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/search-v2-backend.log
+          exit 1
+      - name: Start local Next.js frontend against the read-only backend
+        run: |
+          cd frontend
+          npm run dev > /tmp/search-v2-frontend.log 2>&1 &
+          echo $! > /tmp/search-v2-frontend.pid
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:3000/games/pokemon >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/search-v2-frontend.log
+          exit 1
+      - name: Run static mobile contract
+        working-directory: frontend
+        run: node --test tests/search-v2-mobile-contract.test.js
+      - name: Run rendered 390x844 Search V2 QA on real data
+        working-directory: frontend
+        run: node tests/search-v2-mobile-rendered.js
+      - name: Upload rendered QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-mobile-rendered-${{ github.run_id }}
+          path: |
+            /tmp/search-v2-mobile-rendered
+            /tmp/search-v2-backend.log
+            /tmp/search-v2-frontend.log
+          retention-days: 90
