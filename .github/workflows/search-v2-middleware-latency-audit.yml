@@ -32,7 +32,7 @@ jobs:
         working-directory: backend
         run: |
           mkdir -p artifacts
-          SEARCH_V2_MIDDLEWARE_OUTPUT=artifacts/search-v2-middleware-latency.json python -m app.scripts.audit_search_v2_middleware_latency_readonly
+          SEARCH_V2_MIDDLEWARE_OUTPUT=artifacts/search-v2-middleware-latency.json python app/scripts/audit_search_v2_middleware_latency_readonly.py
       - name: Upload middleware latency evidence
         uses: actions/upload-artifact@v4
         with:
