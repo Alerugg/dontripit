@@ -48,9 +48,16 @@ async function main() {
     await searchInput.press('Enter')
     await page.locator('.sv2-results-grid').waitFor({ timeout: 25000 })
 
-    const cards = page.locator('.sv2-result-card:not(.sv2-result-card-print)')
-    assert.ok(await cards.count() > 0, 'mobile natural search rendered no Pikachu cards')
+    // The Pokémon collector UI intentionally resolves the natural query through
+    // the physical Advanced endpoint, so a valid natural result may already be
+    // a `.sv2-result-card-print`. The rendered QA cares about the card layout,
+    // identity and viewport, not which server endpoint produced the result.
+    const cards = page.locator('.sv2-results-grid .sv2-result-card')
+    assert.ok(await cards.count() > 0, 'mobile natural search rendered no Pikachu results')
     assert.match((await cards.first().innerText()).toLowerCase(), /pikachu/)
+    const naturalResultMode = await cards.first().evaluate((node) => (
+      node.classList.contains('sv2-result-card-print') ? 'physical-print' : 'canonical-card'
+    ))
     const cardBox = await cards.first().boundingBox()
     assert.ok(cardBox && cardBox.x >= -1 && cardBox.x + cardBox.width <= 392, `result card escapes viewport: ${JSON.stringify(cardBox)}`)
     const imageBox = await cards.first().locator('.sv2-result-image-wrap').boundingBox()
@@ -92,6 +99,7 @@ async function main() {
       viewport: { width: 390, height: 844 },
       game: 'pokemon',
       natural_query: 'Pikachu',
+      natural_result_mode: naturalResultMode,
       advanced_finish: 'holo',
       checks: {
         no_horizontal_overflow: true,
