@@ -29,7 +29,11 @@ def main() -> int:
                 """
                 SELECT
                   endpoint,
-                  CASE WHEN api_key_prefix IS NULL THEN 'public-ip' ELSE 'api-key' END AS auth_mode,
+                  CASE
+                    WHEN api_key_prefix = 'internal' THEN 'internal-first-party'
+                    WHEN api_key_prefix IS NULL THEN 'public-ip'
+                    ELSE 'api-key'
+                  END AS auth_mode,
                   count(*)::int AS samples,
                   count(*) FILTER (WHERE status_code >= 400)::int AS errors,
                   round(avg(latency_ms)::numeric, 1) AS avg_ms,
@@ -79,6 +83,10 @@ def main() -> int:
         row for row in normalized
         if row["auth_mode"] == "api-key" and row["endpoint"].startswith("/api/v2/")
     ]
+    internal_search = [
+        row for row in normalized
+        if row["auth_mode"] == "internal-first-party" and row["endpoint"].startswith("/api/v2/")
+    ]
     public_search = [
         row for row in normalized
         if row["auth_mode"] == "public-ip" and row["endpoint"].startswith("/api/v2/")
@@ -94,11 +102,14 @@ def main() -> int:
             "health_skips_catalog_auth_and_rate_limit": True,
             "latency_ms_is_computed_before_metric_insert": True,
             "catalog_latency_includes_auth_rate_limit_and_route": True,
+            "internal_first_party_prefix": "internal",
         },
         "summary": {
             "rows": len(normalized),
             "health_groups": len(health),
             "keyed_search_groups": len(keyed_search),
+            "internal_first_party_search_groups": len(internal_search),
+            "internal_first_party_samples": sum(row["samples"] for row in internal_search),
             "public_search_groups": len(public_search),
         },
         "groups": normalized,
