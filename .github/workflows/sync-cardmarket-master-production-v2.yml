@@ -1,11 +1,6 @@
 name: Cardmarket Master Production Sync V2
 
 on:
-  schedule:
-    - cron: '20 4 * * *'
-  push:
-    branches: [catalog-v2]
-    paths: ['.github/workflows/sync-cardmarket-master-production-v2.yml']
   workflow_dispatch:
 
 permissions:
@@ -28,8 +23,6 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
