@@ -58,9 +58,7 @@ jobs:
                     params.append(p2)
                 cur.execute(f'''
                   SELECT p.id product_id,p.name product_name,p.product_type,
-                         p.external_id product_external_id,
-                         pv.id variant_id,pv.name variant_name,
-                         pv.external_id variant_external_id,pv.sku
+                         pv.id variant_id,pv.name variant_name
                   FROM products p
                   LEFT JOIN product_variants pv ON pv.product_id=p.id
                   WHERE p.game_id=%s AND {predicate}
