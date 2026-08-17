@@ -16,7 +16,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install psycopg2-binary==2.9.9
-      - name: Verify exact six and YGO identity migration
+      - name: Read exact post-repair state for six certified residuals
         working-directory: backend
         run: |
           python - <<'PY'
@@ -36,57 +36,63 @@ jobs:
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
+          IDS=('903009','903002','902998','902999','903000','903001')
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           conn.set_session(readonly=True,autocommit=True)
           with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT max(last_seen_at) capture FROM external_catalog_products WHERE source='cardmarket'")
             capture=cur.fetchone()['capture']
             cur.execute('''
-              SELECT e.id external_product_id,e.external_id,g.slug game,e.name,e.category,e.category_id,
-                     e.expansion_external_id,e.date_added,e.first_seen_at,e.last_seen_at,e.raw_json
-              FROM external_catalog_products e JOIN games g ON g.id=e.game_id
-              WHERE e.source='cardmarket' AND e.last_seen_at=%s AND e.product_group='non_single'
-                AND g.slug IN ('mtg','pokemon','yugioh','onepiece')
-                AND NOT EXISTS (
-                  SELECT 1 FROM external_catalog_product_variant_links l
-                  JOIN product_variants pv ON pv.id=l.product_variant_id JOIN products p ON p.id=pv.product_id
-                  WHERE l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact') AND p.game_id=e.game_id)
-                AND NOT EXISTS (
-                  SELECT 1 FROM product_identifiers pi JOIN product_variants pv ON pv.id=pi.product_variant_id
-                  JOIN products p ON p.id=pv.product_id
-                  WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id)
-              ORDER BY g.slug,e.external_id
-            ''',(capture,))
-            residuals=[dict(r) for r in cur.fetchall()]
-            cur.execute('''
-              SELECT e.external_id,e.name,e.category,e.category_id,e.expansion_external_id,e.date_added,
+              SELECT e.id external_product_id,e.external_id,g.slug game,e.name,e.category,e.expansion_external_id,
                      e.first_seen_at,e.last_seen_at,
-                     l.link_status,l.mapping_method,l.confidence,l.product_variant_id,
-                     p.id product_id,p.name canonical_name,p.product_type,
-                     pv.region,pv.language,pv.packaging,pv.sku,
-                     pi.external_id identifier_external_id
-              FROM external_catalog_products e
-              LEFT JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id
-              LEFT JOIN product_variants pv ON pv.id=l.product_variant_id
-              LEFT JOIN products p ON p.id=pv.product_id
-              LEFT JOIN product_identifiers pi ON pi.product_variant_id=pv.id AND pi.source='cardmarket'
-              WHERE e.source='cardmarket' AND e.game_id=5
-                AND (e.expansion_external_id='6695' OR e.external_id IN ('898547','898548','902998','902999','903000','903001'))
-              ORDER BY e.external_id,l.id
-            ''')
-            ygo_expansion=[dict(r) for r in cur.fetchall()]
+                     EXISTS(
+                       SELECT 1 FROM external_catalog_product_variant_links l
+                       JOIN product_variants pv ON pv.id=l.product_variant_id
+                       JOIN products p ON p.id=pv.product_id
+                       WHERE l.external_product_id=e.id
+                         AND l.link_status IN ('accepted','mapped','exact')
+                         AND p.game_id=e.game_id
+                     ) has_accepted_link,
+                     EXISTS(
+                       SELECT 1 FROM product_identifiers pi
+                       JOIN product_variants pv ON pv.id=pi.product_variant_id
+                       JOIN products p ON p.id=pv.product_id
+                       WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id
+                     ) has_identifier
+              FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+              WHERE e.source='cardmarket' AND e.external_id = ANY(%s)
+              ORDER BY e.external_id
+            ''',(list(IDS),))
+            targets=[dict(r) for r in cur.fetchall()]
+
             cur.execute('''
-              SELECT p.id product_id,p.name,p.product_type,pv.id product_variant_id,pv.region,pv.language,pv.packaging,pv.sku,
-                     pi.external_id cardmarket_identifier
-              FROM products p JOIN product_variants pv ON pv.product_id=p.id
-              LEFT JOIN product_identifiers pi ON pi.product_variant_id=pv.id AND pi.source='cardmarket'
-              WHERE p.game_id=5 AND (lower(p.name) LIKE '%beyond the brave%' OR pv.id IN (38901,38902))
-              ORDER BY p.id,pv.id
-            ''')
+              SELECT pi.external_id,p.id product_id,p.name canonical_name,p.product_type,
+                     pv.id product_variant_id,pv.language,pv.region,pv.packaging,pv.sku,
+                     count(ps.id) price_snapshot_count
+              FROM product_identifiers pi
+              JOIN product_variants pv ON pv.id=pi.product_variant_id
+              JOIN products p ON p.id=pv.product_id
+              LEFT JOIN price_snapshots ps ON ps.entity_type='product_variant' AND ps.entity_id=pv.id
+              WHERE pi.source='cardmarket' AND pi.external_id = ANY(%s)
+              GROUP BY pi.external_id,p.id,p.name,p.product_type,pv.id,pv.language,pv.region,pv.packaging,pv.sku
+              ORDER BY pi.external_id,p.id,pv.id
+            ''',(list(IDS),))
             canon=[dict(r) for r in cur.fetchall()]
           conn.close()
-          report={'mode':'READ_ONLY','capture':capture,'residual_count':len(residuals),'residuals':residuals,
-                  'ygo_expansion_6695':ygo_expansion,'beyond_brave_canonicals':canon}
-          print('SEALED_IDENTITY_REPORT='+json.dumps(report,default=str,sort_keys=True))
-          if len(residuals)!=6: raise SystemExit(f'Expected six residuals, got {len(residuals)}')
+
+          by_id={str(r['external_id']):r for r in targets}
+          missing=sorted(set(IDS)-set(by_id))
+          unresolved=sorted(i for i,r in by_id.items() if not r['has_accepted_link'] and not r['has_identifier'])
+          resolved=sorted(i for i,r in by_id.items() if r['has_accepted_link'] or r['has_identifier'])
+          report={
+            'mode':'READ_ONLY','capture':capture,'expected_ids':sorted(IDS),'missing_external_ids':missing,
+            'resolved_count':len(resolved),'resolved_ids':resolved,
+            'unresolved_count':len(unresolved),'unresolved_ids':unresolved,
+            'targets':targets,'canonical_rows':canon,
+          }
+          print('SEALED_POST_REPAIR_REPORT='+json.dumps(report,default=str,sort_keys=True))
+          if missing:
+            raise SystemExit(f'Missing external rows: {missing}')
+          if len(resolved) not in (0,6):
+            raise SystemExit(f'PARTIAL_STATE: resolved={resolved} unresolved={unresolved}')
           PY
