@@ -1,8 +1,6 @@
 name: Neon Ingest and Reindex
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       pokemon_set:
@@ -54,8 +52,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -73,41 +69,25 @@ jobs:
           echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the catalog rebuild."
           echo "MTG general ingest is quarantined; dedicated Scryfall Identity V2 workflows own MTG."
           echo "Riftbound is hard-paused in scheduled/general ingest until Riot production API certification."
+          echo "This legacy workflow is manual-only; Daily Catalog V2 owns production scheduling."
 
       - name: Run Alembic migrations
         run: alembic upgrade head
 
-      - name: Run daily refresh pipeline
+      - name: Run manually requested refresh pipeline
         run: |
           set -euo pipefail
 
-          EVENT_NAME="${{ github.event_name }}"
           ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
           YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
           INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
 
           ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
-          # MTG stays off here; dedicated certified Scryfall V2 workflows own it.
           MTG_LIMIT="0"
           YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
-          # Hard safety gate: do not allow schedule, repository variables, secrets or
-          # manual inputs to mutate Riftbound before Riot production API certification.
           RIFTBOUND_LIMIT="0"
           INCREMENTAL="${INCREMENTAL_INPUT:-true}"
-
-          # The legacy TCGdex connector collapsed distinct Pokémon identities and
-          # does not separate Pokémon TCG Pocket. V2 owns the physical catalog.
           SKIP_POKEMON="true"
-
-          if [ "${EVENT_NAME}" = "schedule" ]; then
-            # One Piece remote ingestion can involve thousands of card files. Refresh
-            # the full source once per week; incremental days skip it.
-            if [ "$(date -u +%u)" = "7" ]; then
-              ONEPIECE_LIMIT=""
-            else
-              ONEPIECE_LIMIT="0"
-            fi
-          fi
 
           ARGS=(
             --skip-pokemon "${SKIP_POKEMON}"
