@@ -1,9 +1,6 @@
 name: Apply MTG Direct Cardmarket Links
 
 on:
-  push:
-    branches: [catalog-v2]
-    paths: ['.github/workflows/apply-mtg-cardmarket-direct-links.yml']
   workflow_dispatch:
 
 permissions:
@@ -127,6 +124,22 @@ jobs:
                   updated_at=now()
               ''',rows,page_size=2000)
 
+              # Validate only the exact current safe snapshot. Historical accepted
+              # links are intentionally retained and must not make this postcondition fail.
+              current_external_ids=list(expected_by_external)
+              cur.execute('''
+                SELECT count(*),count(DISTINCT l.external_product_id)
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                  AND l.mapping_method='scryfall_cardmarket_id' AND l.link_status='accepted'
+                  AND l.external_product_id=ANY(%s)
+              ''',(game_id,current_external_ids))
+              applied_links,applied_products=map(int,cur.fetchone())
+              expected_links=sum(len(items) for _,_,items in safe)
+              if applied_links!=expected_links or applied_products!=len(safe):
+                raise AssertionError(f'Postcondition mismatch links={applied_links}/{expected_links} products={applied_products}/{len(safe)}')
+
               cur.execute('''
                 SELECT count(*),count(DISTINCT l.external_product_id)
                 FROM external_catalog_print_links l
@@ -134,10 +147,8 @@ jobs:
                 WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
                   AND l.mapping_method='scryfall_cardmarket_id' AND l.link_status='accepted'
               ''',(game_id,))
-              applied_links,applied_products=map(int,cur.fetchone())
-              expected_links=sum(len(items) for _,_,items in safe)
-              if applied_links!=expected_links or applied_products!=len(safe):
-                raise AssertionError(f'Postcondition mismatch links={applied_links}/{expected_links} products={applied_products}/{len(safe)}')
+              historical_links,historical_products=map(int,cur.fetchone())
+
               report={
                 'mode':'apply','game':'mtg','mapping_method':'scryfall_cardmarket_id',
                 'source_distinct_cardmarket_ids':len(groups),
@@ -145,6 +156,8 @@ jobs:
                 'conflicting_products_quarantined':len(conflicts),
                 'absent_current_products_quarantined':len(absent),
                 'applied_products':applied_products,'applied_print_links':applied_links,
+                'historical_accepted_products':historical_products,
+                'historical_accepted_print_links':historical_links,
                 'conflict_samples':conflicts[:50],'absent_samples':absent[:50],
               }
             conn.commit()
