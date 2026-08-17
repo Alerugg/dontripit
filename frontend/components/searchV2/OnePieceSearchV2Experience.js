@@ -26,10 +26,10 @@ const SEARCH_COPY_BY_GAME = {
     empty: 'Prueba otro Pokémon, número o set.',
   },
   yugioh: {
-    examples: ['Dark Magician', 'Blue-Eyes', '2017-EN001'],
-    placeholder: 'Dark Magician, Blue-Eyes, 2017-EN001…',
-    description: 'Empieza por el nombre o código que conoces. Después puedes precisar set, rareza o edición.',
-    empty: 'Prueba otro nombre, código o set.',
+    examples: ['Dark Magician', 'Mago Oscuro', 'ブラック・マジシャン'],
+    placeholder: 'Dark Magician, Mago Oscuro, ブラック・マジシャン…',
+    description: 'Busca por nombre en inglés, español o japonés, o por código. El idioma cambia el nombre visible sin romper la impresión física ni su precio exacto.',
+    empty: 'Prueba otro nombre localizado, código o set.',
   },
   magic: {
     examples: ['Black Lotus', 'Sol Ring', 'Lightning Bolt'],
@@ -49,10 +49,26 @@ const DEFAULT_SEARCH_COPY = {
 const ADVANCED_PAGE_SIZE = 24
 const NORMAL_PAGE_SIZE = 24
 const RESULT_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'number_asc', 'number_desc', 'name_asc', 'name_desc'])
+const YUGIOH_LANGUAGES = new Set(['all', 'en', 'es', 'ja'])
 
 function initialSort(searchParams) {
   const value = searchParams.get('sort') || 'relevance'
   return RESULT_SORTS.has(value) ? value : 'relevance'
+}
+
+function initialSearchLanguage(searchParams, gameSlug) {
+  if (gameSlug !== 'yugioh') return 'all'
+  const value = String(searchParams.get('lang') || 'all').toLowerCase()
+  return YUGIOH_LANGUAGES.has(value) ? value : 'all'
+}
+
+function visibleFacetGroups(groups, gameSlug) {
+  if (gameSlug !== 'yugioh') return groups
+  return Object.fromEntries(
+    Object.entries(groups || {})
+      .map(([group, facets]) => [group, (facets || []).filter((facet) => facet.key !== 'language')])
+      .filter(([, facets]) => facets.length > 0),
+  )
 }
 
 function suggestionForLegacyRow(item) {
@@ -91,6 +107,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')
   const [resultSort, setResultSort] = useState(initialSort(searchParams))
   const [onlyWithPrice, setOnlyWithPrice] = useState(searchParams.get('priced') === '1')
+  const [searchLanguage, setSearchLanguage] = useState(initialSearchLanguage(searchParams, game.slug))
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)
@@ -109,6 +126,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [advancedError, setAdvancedError] = useState('')
   const [advancedRan, setAdvancedRan] = useState(initialAdvancedRan)
 
+  const activeLanguage = game.slug === 'yugioh' && searchLanguage !== 'all' ? searchLanguage : ''
   const hasActiveAdvancedFilters = useMemo(() => hasFilterValues(advancedFilters), [advancedFilters])
   const advancedPageCount = Math.max(1, Math.ceil(advancedTotal / ADVANCED_PAGE_SIZE))
 
@@ -118,7 +136,7 @@ export default function OnePieceSearchV2Experience({ game }) {
       try {
         const payload = await fetchFacetsV2(game.slug)
         if (!cancelled) {
-          setFacetGroups(payload?.groups || {})
+          setFacetGroups(visibleFacetGroups(payload?.groups || {}, game.slug))
           setFacetError('')
         }
       } catch (requestError) {
@@ -139,7 +157,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     const handle = setTimeout(async () => {
       setSuggestionsLoading(true)
       try {
-        const rows = await suggestV2({ q: query.trim(), game: game.slug, limit: 8 })
+        const rows = await suggestV2({ q: query.trim(), game: game.slug, limit: 8, language: activeLanguage })
         if (!cancelled) setSuggestions(rows.map(suggestionForLegacyRow))
       } catch {
         if (!cancelled) setSuggestions([])
@@ -152,7 +170,7 @@ export default function OnePieceSearchV2Experience({ game }) {
       cancelled = true
       clearTimeout(handle)
     }
-  }, [game.slug, query])
+  }, [activeLanguage, game.slug, query])
 
   useEffect(() => {
     if (!submittedQuery.trim()) {
@@ -175,6 +193,7 @@ export default function OnePieceSearchV2Experience({ game }) {
           category: normalCategory,
           sort: resultSort,
           hasPrice: onlyWithPrice,
+          language: activeLanguage,
         })
         if (!cancelled) setNormalPayload(payload)
       } catch (requestError) {
@@ -188,7 +207,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     }
     runSearch()
     return () => { cancelled = true }
-  }, [game.slug, normalCategory, normalPage, normalType, onlyWithPrice, resultSort, submittedQuery])
+  }, [activeLanguage, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, resultSort, submittedQuery])
 
   useEffect(() => {
     if (initialAdvancedHydrated.current || !initialAdvancedRan) return
@@ -211,9 +230,10 @@ export default function OnePieceSearchV2Experience({ game }) {
     }
     if (resultSort !== 'relevance') params.set('sort', resultSort)
     if (onlyWithPrice) params.set('priced', '1')
+    if (game.slug === 'yugioh' && searchLanguage !== 'all') params.set('lang', searchLanguage)
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, submittedQuery])
+  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, searchLanguage, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
@@ -247,12 +267,13 @@ export default function OnePieceSearchV2Experience({ game }) {
     setNormalPage(1)
   }
 
-  async function runAdvanced(nextPage = 1, { reuseApplied = false, sortOverride = null, hasPriceOverride = null } = {}) {
+  async function runAdvanced(nextPage = 1, { reuseApplied = false, sortOverride = null, hasPriceOverride = null, languageOverride = null } = {}) {
     const page = Math.max(1, Number(nextPage) || 1)
     const filters = reuseApplied ? appliedAdvancedFilters : advancedFilters
     const searchQuery = reuseApplied ? advancedQuery : query.trim()
     const activeSort = sortOverride ?? resultSort
     const activeHasPrice = hasPriceOverride ?? onlyWithPrice
+    const activeDisplayLanguage = languageOverride ?? activeLanguage
 
     if (!reuseApplied) {
       setAppliedAdvancedFilters(filters)
@@ -271,6 +292,7 @@ export default function OnePieceSearchV2Experience({ game }) {
         filters,
         sort: activeSort,
         hasPrice: activeHasPrice,
+        language: activeDisplayLanguage,
         limit: ADVANCED_PAGE_SIZE,
         offset: (page - 1) * ADVANCED_PAGE_SIZE,
       })
@@ -295,6 +317,18 @@ export default function OnePieceSearchV2Experience({ game }) {
     setOnlyWithPrice(value)
     setNormalPage(1)
     if (advancedRan) runAdvanced(1, { reuseApplied: true, hasPriceOverride: value })
+  }
+
+  function changeSearchLanguage(value) {
+    const nextLanguage = YUGIOH_LANGUAGES.has(value) ? value : 'all'
+    setSearchLanguage(nextLanguage)
+    setNormalPage(1)
+    if (advancedRan) {
+      runAdvanced(1, {
+        reuseApplied: true,
+        languageOverride: nextLanguage === 'all' ? '' : nextLanguage,
+      })
+    }
   }
 
   function updateAdvancedFilter(key, value) {
@@ -359,6 +393,17 @@ export default function OnePieceSearchV2Experience({ game }) {
         ) : null}
 
         <div className="sv2-global-controls">
+          {game.slug === 'yugioh' ? (
+            <label>
+              <span>Idioma de la carta</span>
+              <select value={searchLanguage} onChange={(event) => changeSearchLanguage(event.target.value)}>
+                <option value="all">Todos los idiomas</option>
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="ja">日本語</option>
+              </select>
+            </label>
+          ) : null}
           <label>
             <span>Ordenar versiones</span>
             <select value={resultSort} onChange={(event) => changeResultSort(event.target.value)}>
