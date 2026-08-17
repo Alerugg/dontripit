@@ -19,7 +19,9 @@ WRITE_TOKENS = (
     'truncate ',
     'drop table',
     'create table',
-    'psql ',
+    'app.ingest.run',
+    'app.scripts.daily_refresh',
+    'sync_cardmarket_',
 )
 DEPLOY_TOKENS = (
     'vercel', 'render deploy', 'fly deploy', 'railway', 'docker push',
@@ -82,7 +84,6 @@ def _event_subblock(block: str, event: str) -> str:
 def _push_matches_main(block: str) -> bool:
     if not _event_present(block, 'push'):
         return False
-    # Inline/on: push has no branch filter, so it matches main.
     if block.lstrip().startswith('[') or ('\n' not in block and block.strip() == 'push'):
         return True
     push = _event_subblock(block, 'push')
@@ -128,7 +129,6 @@ def _branch_pattern_matches_main(value: str) -> bool:
     value = value.strip()
     if value in {'main', '*', '**'}:
         return True
-    # Conservative glob approximation.
     regex = '^' + re.escape(value).replace(r'\*\*', '.*').replace(r'\*', '[^/]*') + '$'
     try:
         return bool(re.match(regex, 'main'))
@@ -171,9 +171,6 @@ def _classify(root: Path) -> dict:
         }
         entries.append(entry)
 
-        # A merge to main must never trigger a workflow capable of mutating the
-        # production database. Scheduled production ownership is intentionally
-        # centralized in the daily orchestrator.
         if push_main and db_writer:
             failures.append({'unsafe_main_push_database_writer': rel})
         if has_schedule and db_writer and not rel.endswith('/daily-catalog-v2-orchestrator.yml'):
@@ -224,6 +221,7 @@ def main() -> int:
         'notes': {
             'main_push_database_writers_must_be_zero': True,
             'independent_scheduled_database_writers_must_be_zero': True,
+            'read_only_backup_restore_drills_may_remain_scheduled': True,
             'external_host_git_integrations': 'not observable from repository workflow files; deployment-related files are inventoried separately',
         },
     }
