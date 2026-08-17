@@ -58,7 +58,7 @@ jobs:
                     params.append(p2)
                 cur.execute(f'''
                   SELECT p.id product_id,p.name product_name,p.product_type,
-                         pv.id variant_id,pv.name variant_name
+                         to_jsonb(pv) product_variant
                   FROM products p
                   LEFT JOIN product_variants pv ON pv.product_id=p.id
                   WHERE p.game_id=%s AND {predicate}
