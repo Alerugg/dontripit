@@ -1,0 +1,98 @@
+name: Diagnose Cardmarket Sealed Current Gaps
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/diagnose-cardmarket-sealed-current-gaps.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary
+      - name: Diagnose current non-single Cardmarket structural gaps read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACTIVE=('mtg','pokemon','yugioh','onepiece')
+          ACCEPTED=('accepted','mapped','exact')
+          dsn=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('Production database secret is missing')
+          conn=psycopg2.connect(dsn)
+          conn.set_session(readonly=True, autocommit=True)
+          out={'mode':'production_read_only','production_writes':0,'gaps':[]}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute('''
+                WITH captures AS (
+                  SELECT game_id,max(last_seen_at) t
+                  FROM external_catalog_products
+                  WHERE source='cardmarket' AND product_group='non_single'
+                  GROUP BY game_id
+                ), current_products AS (
+                  SELECT e.*
+                  FROM external_catalog_products e
+                  JOIN captures c ON c.game_id=e.game_id AND c.t=e.last_seen_at
+                  JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                ), counts AS (
+                  SELECT cp.id,count(DISTINCT l.product_variant_id) FILTER (WHERE l.link_status=ANY(%s)) accepted_count
+                  FROM current_products cp
+                  LEFT JOIN external_catalog_product_variant_links l ON l.external_product_id=cp.id
+                  GROUP BY cp.id
+                )
+                SELECT g.slug game_slug, cp.id external_product_pk, cp.external_id,
+                       to_jsonb(cp) external_product, c.accepted_count
+                FROM current_products cp
+                JOIN counts c ON c.id=cp.id
+                JOIN games g ON g.id=cp.game_id
+                WHERE c.accepted_count<>1
+                ORDER BY g.slug,cp.external_id
+              ''',(list(ACTIVE),list(ACCEPTED)))
+              gaps=[dict(r) for r in cur.fetchall()]
+              for gap in gaps:
+                cur.execute('''
+                  SELECT to_jsonb(l) link,
+                         to_jsonb(pv) product_variant,
+                         to_jsonb(p) product
+                  FROM external_catalog_product_variant_links l
+                  LEFT JOIN product_variants pv ON pv.id=l.product_variant_id
+                  LEFT JOIN products p ON p.id=pv.product_id
+                  WHERE l.external_product_id=%s
+                  ORDER BY l.id
+                ''',(gap['external_product_pk'],))
+                gap['all_links']=[dict(r) for r in cur.fetchall()]
+              out['gaps']=gaps
+          finally:
+            conn.close()
+          Path('/tmp/cardmarket-sealed-current-gaps.json').write_text(json.dumps(out,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(out,indent=2,sort_keys=True,default=str))
+          if len(out['gaps']) != 6:
+              raise SystemExit(f'Expected 6 current gaps from gate V2, found {len(out["gaps"])}')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-sealed-current-gaps-${{ github.run_id }}
+          path: /tmp/cardmarket-sealed-current-gaps.json
+          retention-days: 30
+          if-no-files-found: error
