@@ -32,6 +32,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Audit legal, cookies, SEO and accessibility contracts
+        id: point9_contract
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run point9:audit 2>&1 | tee point9-audit.log
       - name: Run frontend contracts
         id: contracts
         continue-on-error: true
@@ -55,14 +62,19 @@ jobs:
         with:
           name: frontend-point9-qa-${{ github.sha }}
           path: |
+            frontend/point9-audit.log
             frontend/frontend-test.log
             frontend/frontend-build.log
-          retention-days: 14
+          retention-days: 90
           if-no-files-found: warn
       - name: Enforce gate
         if: always()
         shell: bash
         run: |
+          if [ "${{ steps.point9_contract.outcome }}" != "success" ]; then
+            echo "Point 9 frontend audit failed"
+            exit 1
+          fi
           if [ "${{ steps.contracts.outcome }}" != "success" ]; then
             echo "Frontend contract suite failed"
             exit 1
