@@ -11,25 +11,54 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
-CATALOG_TARGETS = {
-    "games": ("slug", "name"),
-    "sets": ("code", "name"),
-    "cards": ("card_key", "name"),
-    "prints": ("print_key", "collector_number", "variant"),
-    "products": ("name", "product_type"),
-    "product_variants": ("sku", "language", "region"),
-    "catalog_releases": ("external_id", "name", "source"),
-    "external_catalog_products": ("source", "external_id", "name", "category", "website_path"),
-    "regional_tcg_content": ("title", "source_key", "source_name", "item_url"),
+# Point 9 is about synthetic/demo residue created by the application or CI. Words
+# such as "Demo", "Sample", "Fake" and "Dummy" are NOT enough: they occur in
+# real, source-backed TCG names (for example official demo decks and cards).
+# The fail-closed checks below therefore target identity/provenance fields only.
+IDENTITY_TARGETS = {
+    "games": ("slug",),
+    "sets": ("tcgdex_id", "yugioh_id", "riftbound_id"),
+    "cards": ("card_key", "oracle_id", "tcgdex_id", "yugoprodeck_id", "riftbound_id"),
+    "prints": ("print_key", "scryfall_id", "tcgdex_id", "yugioh_id", "riftbound_id"),
+    "product_variants": ("sku",),
+    "catalog_releases": ("external_id", "source"),
+    "print_identifiers": ("source", "external_id"),
+    "product_identifiers": ("source", "external_id"),
+    "external_catalog_products": ("source", "external_id"),
+    "regional_tcg_content": ("source_key", "source_url", "item_url"),
 }
 
-# High-confidence fiction markers only. Deliberately exclude broad words such as
-# "test" and "example" from catalogue data because they can occur legitimately
-# in names or external identifiers.
-FICTION_MARKER = re.compile(
+# Exact provenance values that are unambiguously synthetic rather than a real
+# upstream connector. Keep this deliberately narrow.
+SYNTHETIC_SOURCE = re.compile(
+    r"^(demo|dummy|fake|fixture|lorem|placeholder|sample|test|e2e|mock)$",
+    re.IGNORECASE,
+)
+
+# Synthetic identity namespaces used by fixtures/local demos. Requiring an
+# explicit separator avoids false positives such as official set code DEM1.
+SYNTHETIC_NAMESPACE = re.compile(
+    r"(^|[:/|])(?:demo|dummy|fake|fixture|lorem|placeholder|sample|test|e2e|mock)(?=[:/|_-]|$)",
+    re.IGNORECASE,
+)
+
+# Human-readable names containing these words are observations only. They are
+# retained in the report to prove why name-based deletion would be unsafe.
+NAME_MARKER = re.compile(
     r"(^|[^a-z0-9])(demo|dummy|fake|fixture|lorem(?:\s+ipsum)?|placeholder|sample)([^a-z0-9]|$)",
     re.IGNORECASE,
 )
+
+NAME_TARGETS = {
+    "games": ("name",),
+    "sets": ("name",),
+    "cards": ("name",),
+    "products": ("name",),
+    "catalog_releases": ("name",),
+    "external_catalog_products": ("name",),
+    "regional_tcg_content": ("title",),
+}
+
 TEST_ACCOUNT = re.compile(
     r"(^|[+._-])(demo|dummy|fixture|placeholder|e2e|test)([+._-]|@)|@(example\.com|resend\.dev)$",
     re.IGNORECASE,
@@ -54,64 +83,106 @@ def _available_columns(cur) -> dict[str, set[str]]:
     return available
 
 
-def _scan_table(cur, table: str, columns: list[str], available: set[str]) -> dict:
+def _select_rows(cur, table: str, columns: list[str], available: set[str]) -> list[dict]:
     select_columns = (["id"] if "id" in available else []) + columns
     query = sql.SQL("SELECT {} FROM {}").format(
         sql.SQL(",").join(sql.Identifier(column) for column in select_columns),
         sql.Identifier(table),
     )
     cur.execute(query)
-    rows = [dict(row) for row in cur.fetchall()]
-    hits = []
-    for row in rows:
-        matches = []
-        for column in columns:
-            value = row.get(column)
-            if value is not None and FICTION_MARKER.search(str(value)):
-                matches.append({"column": column, "value": str(value)[:500]})
-        if matches:
-            identity = {key: value for key, value in row.items() if key == "id" or key in columns}
-            hits.append({"row": identity, "matches": matches})
-    return {"rows": len(rows), "columns": columns, "suspicious": len(hits), "hits": hits[:100]}
+    return [dict(row) for row in cur.fetchall()]
+
+
+def _synthetic_matches(table: str, row: dict, columns: list[str]) -> list[dict]:
+    matches = []
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            continue
+        rendered = str(value).strip()
+        if not rendered:
+            continue
+        if column in {"source", "source_key"}:
+            suspicious = bool(SYNTHETIC_SOURCE.fullmatch(rendered))
+        else:
+            suspicious = bool(SYNTHETIC_NAMESPACE.search(rendered))
+        if suspicious:
+            matches.append({"column": column, "value": rendered[:500]})
+    return matches
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Fail-closed, read-only audit for fictional production residue.")
+    parser = argparse.ArgumentParser(
+        description="Fail-closed, read-only audit for synthetic production residue."
+    )
     parser.add_argument("--report", help="Optional JSON report path")
     args = parser.parse_args()
 
     report = {
         "gate": "FAIL",
         "read_only": True,
-        "scanned": {},
-        "suspicious_rows": {},
+        "identity_scan": {},
+        "synthetic_rows": {},
+        "name_marker_observations": {},
         "test_accounts": [],
         "failures": [],
     }
 
     conn = psycopg2.connect(_database_url())
     try:
+        # PostgreSQL itself enforces that this audit cannot write production.
         conn.set_session(readonly=True, autocommit=False)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             available = _available_columns(cur)
 
-            for table, wanted in CATALOG_TARGETS.items():
+            for table, wanted in IDENTITY_TARGETS.items():
                 existing = available.get(table, set())
                 columns = [column for column in wanted if column in existing]
                 if not columns:
                     continue
-                result = _scan_table(cur, table, columns, existing)
-                report["scanned"][table] = {
-                    "rows": result["rows"],
-                    "columns": result["columns"],
-                    "suspicious": result["suspicious"],
+                rows = _select_rows(cur, table, columns, existing)
+                hits = []
+                for row in rows:
+                    matches = _synthetic_matches(table, row, columns)
+                    if matches:
+                        hits.append({"row": row, "matches": matches})
+                report["identity_scan"][table] = {
+                    "rows": len(rows),
+                    "columns": columns,
+                    "synthetic": len(hits),
                 }
-                if result["hits"]:
-                    report["suspicious_rows"][table] = result["hits"]
+                if hits:
+                    report["synthetic_rows"][table] = hits[:100]
 
-            # User accounts are not public catalogue content, but obvious CI/demo
-            # identities are still reported and fail the gate so they cannot become
-            # permanent production residue. Query only when the schema exposes users.email.
+            # Informational only: prove that catalogue names containing words like
+            # Demo/Sample/Fake/Dummy exist and must not be mistaken for fixtures.
+            for table, wanted in NAME_TARGETS.items():
+                existing = available.get(table, set())
+                columns = [column for column in wanted if column in existing]
+                if not columns:
+                    continue
+                rows = _select_rows(cur, table, columns, existing)
+                observations = []
+                count = 0
+                for row in rows:
+                    matches = []
+                    for column in columns:
+                        value = row.get(column)
+                        if value is not None and NAME_MARKER.search(str(value)):
+                            matches.append({"column": column, "value": str(value)[:500]})
+                    if matches:
+                        count += 1
+                        if len(observations) < 20:
+                            observations.append({"row": row, "matches": matches})
+                report["name_marker_observations"][table] = {
+                    "rows": len(rows),
+                    "observations": count,
+                    "examples": observations,
+                    "failing": False,
+                }
+
+            # Obvious CI/demo accounts are not public catalogue content, but should
+            # not become permanent production residue either.
             if "users" in available and "email" in available["users"]:
                 select = ["id", "email"]
                 if "created_at" in available["users"]:
@@ -131,11 +202,11 @@ def main() -> int:
     finally:
         conn.close()
 
-    suspicious_total = sum(item["suspicious"] for item in report["scanned"].values())
-    report["suspicious_total"] = suspicious_total
+    synthetic_total = sum(item["synthetic"] for item in report["identity_scan"].values())
+    report["synthetic_identity_total"] = synthetic_total
     report["test_account_total"] = len(report["test_accounts"])
-    if suspicious_total:
-        report["failures"].append({"fictional_catalog_rows": suspicious_total})
+    if synthetic_total:
+        report["failures"].append({"synthetic_identity_rows": synthetic_total})
     if report["test_account_total"]:
         report["failures"].append({"obvious_test_accounts": report["test_account_total"]})
     report["gate"] = "PASS" if not report["failures"] else "FAIL"
