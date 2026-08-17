@@ -16,7 +16,7 @@ concurrency:
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       TARGET_REF: ${{ github.ref_name }}
     steps:
@@ -31,9 +31,12 @@ jobs:
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
             // This workflow is the only owner of the daily production schedule.
-            // Children are workflow_dispatch-only. Riftbound remains excluded.
+            // Every production child below is workflow_dispatch-only and executes
+            // the exact ref dispatched by this orchestrator. Riftbound remains excluded.
             const pipeline = [
+              ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
               ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
+              ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
               ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
             ];
 
