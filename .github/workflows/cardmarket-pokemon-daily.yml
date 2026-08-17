@@ -1,8 +1,6 @@
 name: Cardmarket Pokémon Daily Sync
 
 on:
-  schedule:
-    - cron: '30 3 * * *'
   workflow_dispatch:
   pull_request:
     branches:
@@ -67,7 +65,7 @@ jobs:
           PY
 
   sync:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -76,8 +74,6 @@ jobs:
     steps:
       - name: Checkout production code
         uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
 
       - name: Set up Python
         uses: actions/setup-python@v5
