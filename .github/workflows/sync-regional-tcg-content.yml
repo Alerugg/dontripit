@@ -1,14 +1,6 @@
 name: Sync Regional TCG Content
 
 on:
-  push:
-    branches: [catalog-v2]
-    paths:
-      - 'backend/app/jobs/regional_content.py'
-      - 'backend/scripts/dedupe_regional_content.py'
-      - 'backend/scripts/verify_ingest.py'
-      - 'backend/alembic/versions/20260810_32_add_regional_tcg_content.py'
-      - '.github/workflows/sync-regional-tcg-content.yml'
   workflow_dispatch:
 
 permissions:
