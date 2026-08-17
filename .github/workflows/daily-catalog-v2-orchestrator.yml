@@ -1,0 +1,141 @@
+name: Daily Catalog V2 Orchestrator
+
+on:
+  schedule:
+    - cron: '20 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: daily-catalog-v2-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TARGET_REF: ${{ github.ref_name }}
+    steps:
+      - name: Dispatch the production children sequentially
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const targetRef = process.env.TARGET_REF;
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            // This workflow is the only owner of the daily production schedule.
+            // Children are workflow_dispatch-only. Riftbound remains excluded.
+            const pipeline = [
+              ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
+              ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
+            ];
+
+            async function api(label, fn, attempts = 6) {
+              let last;
+              for (let attempt = 1; attempt <= attempts; attempt += 1) {
+                try {
+                  return await fn();
+                } catch (error) {
+                  last = error;
+                  const status = Number(error?.status || 0);
+                  const retryable = !status || status === 409 || status === 429 || status >= 500;
+                  if (!retryable || attempt === attempts) throw error;
+                  const waitMs = Math.min(30000, 1500 * (2 ** (attempt - 1)));
+                  core.warning(`${label} failed (${attempt}/${attempts}, status ${status || 'transport'}); retrying in ${waitMs}ms`);
+                  await sleep(waitMs);
+                }
+              }
+              throw last;
+            }
+
+            async function branchSha() {
+              const response = await api('resolve target branch', () => github.rest.repos.getBranch({
+                owner,
+                repo,
+                branch: targetRef,
+              }));
+              return response.data.commit.sha;
+            }
+
+            async function resolveRun(workflowId, expectedSha, dispatchedAt) {
+              for (let attempt = 1; attempt <= 90; attempt += 1) {
+                const response = await api(`list runs ${workflowId}`, () => github.rest.actions.listWorkflowRuns({
+                  owner,
+                  repo,
+                  workflow_id: workflowId,
+                  branch: targetRef,
+                  event: 'workflow_dispatch',
+                  per_page: 30,
+                }));
+                const lowerBound = dispatchedAt - 15000;
+                const candidates = response.data.workflow_runs
+                  .filter(run => run.head_branch === targetRef)
+                  .filter(run => run.head_sha === expectedSha)
+                  .filter(run => Date.parse(run.created_at) >= lowerBound)
+                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                if (candidates.length) return candidates[0];
+                await sleep(4000);
+              }
+              throw new Error(`Could not resolve dispatched run for ${workflowId} at ${expectedSha}`);
+            }
+
+            async function waitForRun(workflowId, runId) {
+              const deadline = Date.now() + 60 * 60 * 1000;
+              while (Date.now() < deadline) {
+                const response = await api(`get run ${runId}`, () => github.rest.actions.getWorkflowRun({
+                  owner,
+                  repo,
+                  run_id: runId,
+                }));
+                if (response.data.status === 'completed') return response.data;
+                await sleep(10000);
+              }
+              throw new Error(`${workflowId} run ${runId} exceeded the wait window`);
+            }
+
+            const summary = [];
+            for (const [workflowId, label] of pipeline) {
+              const expectedSha = await branchSha();
+              const dispatchedAt = Date.now();
+              core.startGroup(`${label} (${workflowId})`);
+              await api(`dispatch ${workflowId}`, () => github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                ref: targetRef,
+              }));
+              const resolved = await resolveRun(workflowId, expectedSha, dispatchedAt);
+              const completed = await waitForRun(workflowId, resolved.id);
+              const row = {
+                workflow: workflowId,
+                run_id: completed.id,
+                conclusion: completed.conclusion,
+                head_sha: completed.head_sha,
+              };
+              summary.push(row);
+              core.info(JSON.stringify(row));
+              core.endGroup();
+              if (completed.conclusion !== 'success') {
+                core.setFailed(`${label} failed in run ${completed.id}: ${completed.conclusion}`);
+                break;
+              }
+            }
+
+            await core.summary
+              .addHeading('Daily Catalog V2')
+              .addTable([
+                [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}],
+                ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion)]),
+              ])
+              .write();
+
+            if (summary.length !== pipeline.length || summary.some(row => row.conclusion !== 'success')) {
+              throw new Error('Daily catalog pipeline did not complete successfully');
+            }
