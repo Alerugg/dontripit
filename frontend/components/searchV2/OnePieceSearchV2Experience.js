@@ -28,7 +28,7 @@ const SEARCH_COPY_BY_GAME = {
   yugioh: {
     examples: ['Dark Magician', 'Mago Oscuro', 'ブラック・マジシャン'],
     placeholder: 'Dark Magician, Mago Oscuro, ブラック・マジシャン…',
-    description: 'Busca por nombre en inglés, español o japonés, o por código. El idioma cambia el nombre visible sin romper la impresión física ni su precio exacto.',
+    description: 'Busca por nombre en inglés, español o japonés, o por código. El idioma selecciona versiones físicas localizadas sin mezclar su identidad ni el precio exacto.',
     empty: 'Prueba otro nombre localizado, código o set.',
   },
   magic: {
@@ -49,17 +49,28 @@ const DEFAULT_SEARCH_COPY = {
 const ADVANCED_PAGE_SIZE = 24
 const NORMAL_PAGE_SIZE = 24
 const RESULT_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'number_asc', 'number_desc', 'name_asc', 'name_desc'])
-const YUGIOH_LANGUAGES = new Set(['all', 'en', 'es', 'ja'])
+const YUGIOH_LANGUAGE_CODES = ['en', 'es', 'ja']
+const YUGIOH_LANGUAGES = new Set(YUGIOH_LANGUAGE_CODES)
+const YUGIOH_LANGUAGE_LABELS = {
+  en: 'English',
+  es: 'Español',
+  ja: '日本語',
+}
 
 function initialSort(searchParams) {
   const value = searchParams.get('sort') || 'relevance'
   return RESULT_SORTS.has(value) ? value : 'relevance'
 }
 
-function initialSearchLanguage(searchParams, gameSlug) {
-  if (gameSlug !== 'yugioh') return 'all'
-  const value = String(searchParams.get('lang') || 'all').toLowerCase()
-  return YUGIOH_LANGUAGES.has(value) ? value : 'all'
+function initialSearchLanguages(searchParams, gameSlug) {
+  if (gameSlug !== 'yugioh') return []
+  const raw = String(searchParams.get('lang') || '').trim().toLowerCase()
+  if (!raw || raw === 'all') return []
+  const values = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => YUGIOH_LANGUAGES.has(value))
+  return [...new Set(values)]
 }
 
 function visibleFacetGroups(groups, gameSlug) {
@@ -93,7 +104,12 @@ export default function OnePieceSearchV2Experience({ game }) {
   const initialAdvancedOpen = searchParams.get('advanced') === '1'
   const initialAdvancedFilters = readAdvancedFilters(searchParams)
   const initialAdvancedPage = safePage(searchParams.get('page'))
-  const initialAdvancedRan = initialAdvancedOpen && (Boolean(initialQuery.trim()) || hasFilterValues(initialAdvancedFilters))
+  const initialLanguages = initialSearchLanguages(searchParams, game.slug)
+  const initialAdvancedRan = initialAdvancedOpen && (
+    Boolean(initialQuery.trim())
+    || hasFilterValues(initialAdvancedFilters)
+    || (game.slug === 'yugioh' && initialLanguages.length > 0)
+  )
   const initialAdvancedHydrated = useRef(false)
 
   const [query, setQuery] = useState(initialQuery)
@@ -107,7 +123,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')
   const [resultSort, setResultSort] = useState(initialSort(searchParams))
   const [onlyWithPrice, setOnlyWithPrice] = useState(searchParams.get('priced') === '1')
-  const [searchLanguage, setSearchLanguage] = useState(initialSearchLanguage(searchParams, game.slug))
+  const [searchLanguages, setSearchLanguages] = useState(initialLanguages)
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)
@@ -126,8 +142,11 @@ export default function OnePieceSearchV2Experience({ game }) {
   const [advancedError, setAdvancedError] = useState('')
   const [advancedRan, setAdvancedRan] = useState(initialAdvancedRan)
 
-  const activeLanguage = game.slug === 'yugioh' && searchLanguage !== 'all' ? searchLanguage : ''
-  const hasActiveAdvancedFilters = useMemo(() => hasFilterValues(advancedFilters), [advancedFilters])
+  const activeLanguage = game.slug === 'yugioh' ? searchLanguages.join(',') : ''
+  const hasActiveAdvancedFilters = useMemo(
+    () => hasFilterValues(advancedFilters) || Boolean(activeLanguage),
+    [activeLanguage, advancedFilters],
+  )
   const advancedPageCount = Math.max(1, Math.ceil(advancedTotal / ADVANCED_PAGE_SIZE))
 
   useEffect(() => {
@@ -230,10 +249,10 @@ export default function OnePieceSearchV2Experience({ game }) {
     }
     if (resultSort !== 'relevance') params.set('sort', resultSort)
     if (onlyWithPrice) params.set('priced', '1')
-    if (game.slug === 'yugioh' && searchLanguage !== 'all') params.set('lang', searchLanguage)
+    if (game.slug === 'yugioh' && activeLanguage) params.set('lang', activeLanguage)
     const next = params.toString()
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
-  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, searchLanguage, submittedQuery])
+  }, [activeLanguage, advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
     const clean = String(nextQuery || '').trim()
@@ -320,13 +339,18 @@ export default function OnePieceSearchV2Experience({ game }) {
   }
 
   function changeSearchLanguage(value) {
-    const nextLanguage = YUGIOH_LANGUAGES.has(value) ? value : 'all'
-    setSearchLanguage(nextLanguage)
+    let nextLanguages = []
+    if (value !== 'all' && YUGIOH_LANGUAGES.has(value)) {
+      nextLanguages = searchLanguages.includes(value)
+        ? searchLanguages.filter((language) => language !== value)
+        : [...searchLanguages, value]
+    }
+    setSearchLanguages(nextLanguages)
     setNormalPage(1)
     if (advancedRan) {
       runAdvanced(1, {
         reuseApplied: true,
-        languageOverride: nextLanguage === 'all' ? '' : nextLanguage,
+        languageOverride: nextLanguages.join(','),
       })
     }
   }
@@ -394,15 +418,30 @@ export default function OnePieceSearchV2Experience({ game }) {
 
         <div className="sv2-global-controls">
           {game.slug === 'yugioh' ? (
-            <label>
+            <div className="sv2-language-control">
               <span>Idioma de la carta</span>
-              <select value={searchLanguage} onChange={(event) => changeSearchLanguage(event.target.value)}>
-                <option value="all">Todos los idiomas</option>
-                <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="ja">日本語</option>
-              </select>
-            </label>
+              <div className="sv2-chip-list" role="group" aria-label="Filtrar Yu-Gi-Oh por idioma">
+                <button
+                  type="button"
+                  className={`sv2-chip ${searchLanguages.length === 0 ? 'is-active' : ''}`}
+                  aria-pressed={searchLanguages.length === 0}
+                  onClick={() => changeSearchLanguage('all')}
+                >
+                  Todos
+                </button>
+                {YUGIOH_LANGUAGE_CODES.map((language) => (
+                  <button
+                    key={language}
+                    type="button"
+                    className={`sv2-chip ${searchLanguages.includes(language) ? 'is-active' : ''}`}
+                    aria-pressed={searchLanguages.includes(language)}
+                    onClick={() => changeSearchLanguage(language)}
+                  >
+                    {YUGIOH_LANGUAGE_LABELS[language]}
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : null}
           <label>
             <span>Ordenar versiones</span>
