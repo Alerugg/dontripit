@@ -8,6 +8,18 @@ on:
     paths:
       - 'backend/app/scripts/audit_yugioh_multilingual_search_live.py'
       - '.github/workflows/audit-yugioh-multilingual-search-live.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/search_v2/yugioh_query.py'
+      - 'backend/app/search_v2/yugioh_advanced.py'
+      - 'backend/app/scripts/audit_yugioh_multilingual_search_live.py'
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/lib/searchV2/**'
+      - '.github/workflows/audit-yugioh-multilingual-search-live.yml'
 
 permissions:
   contents: read
