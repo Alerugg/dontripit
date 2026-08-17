@@ -63,12 +63,19 @@ def _range(value, key: str) -> tuple[int | None, int | None]:
 
 
 def _display_language(value: str | None) -> str | None:
-    normalized = normalize_language(value) if value else None
-    if normalized is None:
+    if not value:
         return None
-    if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
-        raise ValueError("Yu-Gi-Oh language must be one of: en, es, ja")
-    return normalized
+    normalized_values: list[str] = []
+    for raw in str(value).split(","):
+        clean = raw.strip()
+        if not clean:
+            continue
+        normalized = normalize_language(clean)
+        if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
+            raise ValueError("Yu-Gi-Oh language must contain only: en, es, ja")
+        if normalized not in normalized_values:
+            normalized_values.append(normalized)
+    return ",".join(normalized_values) or None
 
 
 def advanced_yugioh_search(
@@ -108,7 +115,7 @@ def advanced_yugioh_search(
 
     if display_language:
         conditions.append(
-            "EXISTS (SELECT 1 FROM print_localizations pld WHERE pld.print_id=p.id AND lower(pld.language)=:display_language)"
+            "EXISTS (SELECT 1 FROM print_localizations pld WHERE pld.print_id=p.id AND lower(pld.language)=ANY(string_to_array(:display_language, ',')))"
         )
 
     q_raw = str(query or "").strip().casefold()
@@ -122,7 +129,7 @@ def advanced_yugioh_search(
             params["q"] = f"%{q_norm}%"
             params["q_code"] = f"%{q_norm.replace(' ', '-')}%"
         identity_parts.append(
-            "EXISTS (SELECT 1 FROM print_localizations plq WHERE plq.print_id=p.id AND plq.card_name IS NOT NULL AND position(:q_raw in lower(plq.card_name)) > 0 AND (:display_language IS NULL OR lower(plq.language)=:display_language))"
+            "EXISTS (SELECT 1 FROM print_localizations plq WHERE plq.print_id=p.id AND plq.card_name IS NOT NULL AND position(:q_raw in lower(plq.card_name)) > 0 AND (:display_language IS NULL OR lower(plq.language)=ANY(string_to_array(:display_language, ','))))"
         )
         params["q_raw"] = q_raw
         conditions.append(f"({' OR '.join(identity_parts)})")
@@ -134,7 +141,10 @@ def advanced_yugioh_search(
             continue
         if key == "language":
             normalized_languages = []
+            raw_languages: list[str] = []
             for item in _as_values(value):
+                raw_languages.extend(part.strip() for part in item.split(",") if part.strip())
+            for item in raw_languages:
                 normalized = normalize_language(item)
                 if normalized in SUPPORTED_DISPLAY_LANGUAGES and normalized not in normalized_languages:
                     normalized_languages.append(normalized)
@@ -231,7 +241,10 @@ def advanced_yugioh_search(
             FROM print_localizations pl
             WHERE pl.print_id=p.id
               AND lower(pl.language) IN ('en','es','ja')
-              AND (:display_language IS NULL OR lower(pl.language)=:display_language)
+              AND (
+                :display_language IS NULL
+                OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
+              )
             ORDER BY
               (lower(pl.card_name)=:q_raw) DESC,
               (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
