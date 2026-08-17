@@ -3,13 +3,12 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from app.search_v2.market_ordering import current_cardmarket_price_join, normalize_search_sort, print_order_sql
-from app.search_v2.normalization import normalize_search_text
+from app.search_v2.normalization import normalize_language, normalize_search_text
 
 
 SCALAR_FILTERS = {
     "set": ("lower(psp.normalized_set_code)", "print"),
     "collector_number": ("lower(psp.normalized_collector_number)", "print"),
-    "language": ("lower(psp.language)", "print"),
     "rarity": ("lower(psp.rarity)", "print"),
     "card_class": ("lower(csp.attributes_json->>'card_class')", "card"),
     "card_type": ("lower(csp.attributes_json->>'card_type')", "card"),
@@ -29,7 +28,8 @@ RANGE_FILTERS = {
     "link_value": "(csp.attributes_json->>'link_value')::int",
 }
 
-ALLOWED_FILTERS = set(SCALAR_FILTERS) | set(RANGE_FILTERS) | {"release", "link_marker"}
+SUPPORTED_DISPLAY_LANGUAGES = {"en", "es", "ja"}
+ALLOWED_FILTERS = set(SCALAR_FILTERS) | set(RANGE_FILTERS) | {"release", "link_marker", "language"}
 
 
 def _as_values(value) -> list[str]:
@@ -62,6 +62,15 @@ def _range(value, key: str) -> tuple[int | None, int | None]:
     return low, high
 
 
+def _display_language(value: str | None) -> str | None:
+    normalized = normalize_language(value) if value else None
+    if normalized is None:
+        return None
+    if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
+        raise ValueError("Yu-Gi-Oh language must be one of: en, es, ja")
+    return normalized
+
+
 def advanced_yugioh_search(
     session,
     *,
@@ -71,11 +80,13 @@ def advanced_yugioh_search(
     has_price: bool = False,
     limit: int = 50,
     offset: int = 0,
+    language: str | None = None,
 ) -> dict:
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Yu-Gi-Oh advanced search requires PostgreSQL")
 
     sort = normalize_search_sort(sort)
+    display_language = _display_language(language)
     if not isinstance(filters, dict):
         raise ValueError("filters must be an object")
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
@@ -89,23 +100,52 @@ def advanced_yugioh_search(
         raise ValueError("limit/offset must be integers") from exc
 
     conditions = ["g.slug='yugioh'"]
-    params: dict[str, object] = {"limit": bounded_limit, "offset": bounded_offset}
+    params: dict[str, object] = {
+        "limit": bounded_limit,
+        "offset": bounded_offset,
+        "display_language": display_language,
+    }
 
-    q_norm = normalize_search_text(query or "")
-    if q_norm:
-        # Advanced `q` is intentionally identity-only. Gameplay dimensions such as
-        # archetype/attribute/race and release metadata have dedicated facets. Using
-        # the broad card/print search_text here caused `Dark Magician` to match an
-        # unrelated card merely because its archetype or release contained that text.
+    if display_language:
         conditions.append(
-            "(csp.normalized_name LIKE :q OR psp.normalized_collector_number LIKE :q_code OR psp.normalized_set_code LIKE :q_code)"
+            "EXISTS (SELECT 1 FROM print_localizations pld WHERE pld.print_id=p.id AND lower(pld.language)=:display_language)"
         )
-        params["q"] = f"%{q_norm}%"
-        params["q_code"] = f"%{q_norm.replace(' ', '-')}%"
+
+    q_raw = str(query or "").strip().casefold()
+    q_norm = normalize_search_text(query or "")
+    if q_raw:
+        identity_parts = []
+        if q_norm:
+            identity_parts.append(
+                "csp.normalized_name LIKE :q OR psp.normalized_collector_number LIKE :q_code OR psp.normalized_set_code LIKE :q_code"
+            )
+            params["q"] = f"%{q_norm}%"
+            params["q_code"] = f"%{q_norm.replace(' ', '-')}%"
+        identity_parts.append(
+            "EXISTS (SELECT 1 FROM print_localizations plq WHERE plq.print_id=p.id AND plq.card_name IS NOT NULL AND position(:q_raw in lower(plq.card_name)) > 0 AND (:display_language IS NULL OR lower(plq.language)=:display_language))"
+        )
+        params["q_raw"] = q_raw
+        conditions.append(f"({' OR '.join(identity_parts)})")
+    else:
+        params["q_raw"] = ""
 
     for key, value in filters.items():
         if value in (None, "", [], {}):
             continue
+        if key == "language":
+            normalized_languages = []
+            for item in _as_values(value):
+                normalized = normalize_language(item)
+                if normalized in SUPPORTED_DISPLAY_LANGUAGES and normalized not in normalized_languages:
+                    normalized_languages.append(normalized)
+            if not normalized_languages:
+                raise ValueError("language must contain one of: en, es, ja")
+            conditions.append(
+                "EXISTS (SELECT 1 FROM print_localizations plf WHERE plf.print_id=p.id AND lower(plf.language)=ANY(:f_language))"
+            )
+            params["f_language"] = normalized_languages
+            continue
+
         if key in SCALAR_FILTERS:
             values = _as_values(value)
             if not values:
@@ -164,6 +204,15 @@ def advanced_yugioh_search(
             psp.release_names_json,
             psp.attributes_json AS print_attributes,
             csp.attributes_json AS card_attributes,
+            c.name AS canonical_name,
+            COALESCE(loc.card_name, c.name) AS display_name,
+            COALESCE(loc.set_name, s.name) AS display_set_name,
+            loc.language AS display_language,
+            (
+              SELECT array_agg(DISTINCT lower(pl2.language) ORDER BY lower(pl2.language))
+              FROM print_localizations pl2
+              WHERE pl2.print_id=p.id AND lower(pl2.language) IN ('en','es','ja')
+            ) AS available_languages,
             COUNT(*) OVER () AS total_count,
             cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,
             cm.cardmarket_price, cm.cardmarket_currency, cm.cardmarket_as_of,
@@ -174,6 +223,22 @@ def advanced_yugioh_search(
           JOIN prints p ON p.id=psp.print_id
           JOIN cards c ON c.id=psp.card_id
           JOIN sets s ON s.id=p.set_id
+          LEFT JOIN LATERAL (
+            SELECT
+              lower(pl.language) AS language,
+              pl.card_name,
+              pl.set_name
+            FROM print_localizations pl
+            WHERE pl.print_id=p.id
+              AND lower(pl.language) IN ('en','es','ja')
+              AND (:display_language IS NULL OR lower(pl.language)=:display_language)
+            ORDER BY
+              (lower(pl.card_name)=:q_raw) DESC,
+              (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
+              CASE lower(pl.language) WHEN 'en' THEN 0 WHEN 'es' THEN 1 WHEN 'ja' THEN 2 ELSE 3 END,
+              pl.id ASC
+            LIMIT 1
+          ) loc ON TRUE
           {market_join}
           WHERE {where_sql}
           ORDER BY {order_sql}
@@ -184,9 +249,12 @@ def advanced_yugioh_search(
           p.id AS print_id,
           c.id AS card_id,
           c.card_key,
-          c.name,
+          matched.canonical_name,
+          matched.display_name,
+          matched.display_set_name AS set_name,
+          matched.display_language,
+          matched.available_languages,
           s.code AS set_code,
-          s.name AS set_name,
           p.collector_number,
           p.language,
           p.rarity,
@@ -224,12 +292,15 @@ def advanced_yugioh_search(
                 "print_id": row["print_id"],
                 "card_id": row["card_id"],
                 "card_key": row["card_key"],
-                "name": row["name"],
+                "name": row["display_name"],
+                "canonical_name": row["canonical_name"],
                 "game": "yugioh",
                 "set_code": row["set_code"],
                 "set_name": row["set_name"],
                 "collector_number": row["collector_number"],
                 "language": row["language"],
+                "display_language": row["display_language"],
+                "available_languages": list(row["available_languages"] or []),
                 "rarity": row["rarity"],
                 "exact_variant": row["exact_variant"],
                 "variant_family": row["variant_family"],
@@ -255,4 +326,5 @@ def advanced_yugioh_search(
         "query": str(query or "").strip() or None,
         "sort": sort,
         "has_price": bool(has_price),
+        "language": display_language or "all",
     }
