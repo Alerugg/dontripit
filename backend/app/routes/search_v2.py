@@ -51,13 +51,27 @@ def _access_limit(maximum: int) -> int:
 
 
 def _yugioh_display_language(value) -> str | None:
-    raw = str(value or "").strip().lower()
-    if not raw or raw == "all":
+    if value is None:
         return None
-    normalized = normalize_language(raw)
-    if normalized not in YUGIOH_DISPLAY_LANGUAGES:
-        raise ValueError("Yu-Gi-Oh language must be one of: all, en, es, ja")
-    return normalized
+    raw_values = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    tokens: list[str] = []
+    for raw_value in raw_values:
+        tokens.extend(part.strip() for part in str(raw_value or "").split(","))
+
+    normalized_values: list[str] = []
+    for raw in tokens:
+        if not raw:
+            continue
+        if raw.lower() == "all":
+            return None
+        normalized = normalize_language(raw)
+        if normalized not in YUGIOH_DISPLAY_LANGUAGES:
+            raise ValueError(
+                "Yu-Gi-Oh language must be all or a comma-separated selection of: en, es, ja"
+            )
+        if normalized not in normalized_values:
+            normalized_values.append(normalized)
+    return ",".join(normalized_values) or None
 
 
 def _normal_search_for_game(session, *, query: str, game: str | None, limit: int, language: str | None = None):
