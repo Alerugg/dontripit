@@ -16,7 +16,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -28,67 +28,48 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install psycopg2-binary==2.9.9
-      - name: Audit exact live sealed residuals
-        working-directory: backend
+      - name: Audit exact six sealed identities and source prices
         run: |
           python - <<'PY'
-          import json, os, re, unicodedata
+          import json, os
           import psycopg2
           from psycopg2.extras import RealDictCursor
 
-          def norm(value):
-              raw=unicodedata.normalize('NFKD',str(value or '').casefold())
-              raw=''.join(c for c in raw if not unicodedata.combining(c))
-              return ' '.join(re.sub(r'[^a-z0-9]+',' ',raw).split())
-
+          ids=['903009','903002','902998','902999','903000','903001']
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           conn.set_session(readonly=True,autocommit=True)
           with conn.cursor(cursor_factory=RealDictCursor) as cur:
               cur.execute("SELECT max(last_seen_at) capture FROM external_catalog_products WHERE source='cardmarket'")
               capture=cur.fetchone()['capture']
               cur.execute('''
-                SELECT e.id external_product_id,e.external_id,g.slug game,e.game_id,e.name,e.category,e.category_id,
-                       e.expansion_external_id,e.date_added,e.website_path,e.raw_json
+                SELECT e.id external_product_id,e.external_id,g.slug game,e.name,e.category,e.category_id,
+                       e.expansion_external_id,e.date_added,e.website_path,e.last_seen_at,e.product_group,
+                       (SELECT count(*) FROM product_identifiers pi
+                        WHERE pi.source='cardmarket' AND pi.external_id=e.external_id) identifier_count,
+                       (SELECT count(*) FROM external_catalog_product_variant_links l
+                        WHERE l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact')) accepted_link_count,
+                       (SELECT count(*) FROM external_market_price_snapshots s
+                        WHERE s.external_product_id=e.id) source_price_rows,
+                       (SELECT max(s.as_of) FROM external_market_price_snapshots s
+                        WHERE s.external_product_id=e.id) latest_source_price_as_of
                 FROM external_catalog_products e JOIN games g ON g.id=e.game_id
-                WHERE e.source='cardmarket' AND e.last_seen_at=%s AND e.product_group='non_single'
-                  AND g.slug IN ('mtg','pokemon','yugioh','onepiece')
-                  AND NOT EXISTS (
-                    SELECT 1 FROM external_catalog_product_variant_links l
-                    JOIN product_variants pv ON pv.id=l.product_variant_id
-                    JOIN products p ON p.id=pv.product_id
-                    WHERE l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact') AND p.game_id=e.game_id
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM product_identifiers pi
-                    JOIN product_variants pv ON pv.id=pi.product_variant_id
-                    JOIN products p ON p.id=pv.product_id
-                    WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id
-                  )
-                ORDER BY g.slug,e.external_id
-              ''',(capture,))
-              residuals=[dict(r) for r in cur.fetchall()]
-              cur.execute('''
-                SELECT p.id product_id,p.game_id,g.slug game,p.name,p.product_type,p.set_id,p.release_date,
-                       pv.id product_variant_id,pv.language,pv.region,pv.packaging,pv.sku
-                FROM products p JOIN games g ON g.id=p.game_id
-                LEFT JOIN product_variants pv ON pv.product_id=p.id
-                WHERE g.slug IN ('mtg','pokemon','yugioh','onepiece')
-                ORDER BY p.id,pv.id
-              ''')
-              canon=[dict(r) for r in cur.fetchall()]
+                WHERE e.source='cardmarket' AND e.external_id = ANY(%s)
+                ORDER BY array_position(%s::text[],e.external_id)
+              ''',(ids,ids))
+              rows=[dict(r) for r in cur.fetchall()]
+              price_rows={}
+              for row in rows:
+                  cur.execute('''
+                    SELECT s.as_of,s.currency,s.price_variant,s.price_low,s.price_mid,s.price_market,s.price_last,
+                           s.avg1,s.avg7,s.avg30,s.raw_json
+                    FROM external_market_price_snapshots s
+                    WHERE s.external_product_id=%s
+                    ORDER BY s.as_of DESC,s.id DESC LIMIT 5
+                  ''',(row['external_product_id'],))
+                  price_rows[row['external_id']]=[dict(x) for x in cur.fetchall()]
           conn.close()
-          by_key={}
-          for row in canon:
-              by_key.setdefault((row['game'],norm(row['name'])),[]).append(row)
-          out=[]
-          for row in residuals:
-              item={k:v for k,v in row.items() if k!='raw_json'}
-              item['normalized_name']=norm(row['name'])
-              item['exact_normalized_canonical_candidates']=by_key.get((row['game'],item['normalized_name']),[])
-              item['raw_json']=row.get('raw_json')
-              out.append(item)
-          report={'mode':'READ_ONLY','capture':capture,'count':len(out),'residuals':out}
-          print('SEALED_RESIDUAL_REPORT='+json.dumps(report,default=str,sort_keys=True))
-          if len(out)!=6:
-              raise SystemExit(f'Expected exactly 6 live sealed residuals, got {len(out)}')
+          report={'mode':'READ_ONLY','capture':capture,'rows':rows,'price_rows':price_rows}
+          print('SEALED_PRICE_AUDIT='+json.dumps(report,default=str,sort_keys=True))
+          if len(rows)!=6:
+              raise SystemExit(f'Expected six source products, got {len(rows)}')
           PY
