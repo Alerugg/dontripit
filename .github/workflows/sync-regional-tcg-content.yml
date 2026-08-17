@@ -5,6 +5,7 @@ on:
     branches: [catalog-v2]
     paths:
       - 'backend/app/jobs/regional_content.py'
+      - 'backend/scripts/verify_ingest.py'
       - 'backend/alembic/versions/20260810_32_add_regional_tcg_content.py'
       - '.github/workflows/sync-regional-tcg-content.yml'
   workflow_dispatch:
@@ -29,8 +30,6 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -38,7 +37,7 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
       - name: Compile canonical regional pipeline
-        run: python -m py_compile app/jobs/regional_content.py alembic/versions/20260810_32_add_regional_tcg_content.py
+        run: python -m py_compile app/jobs/regional_content.py scripts/verify_ingest.py alembic/versions/20260810_32_add_regional_tcg_content.py
       - name: Apply content schema
         run: alembic upgrade head
       - name: Fetch and persist canonical official regional feeds
@@ -57,45 +56,14 @@ jobs:
           Path('/tmp/regional-tcg-content.json').write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + '\n')
           print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
           PY
-      - name: Prove canonical coverage and isolation
-        run: |
-          python - <<'PY'
-          import json, os
-          from datetime import datetime, timedelta, timezone
-          from sqlalchemy import create_engine, text
-          from app.jobs.regional_content import CANONICAL_SOURCE_KEYS, DEPRECATED_SOURCE_KEYS
-          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
-          cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-          with engine.connect() as conn:
-              rows = conn.execute(text('''
-                SELECT g.slug,c.region,count(*) items,
-                       count(*) FILTER (WHERE c.kind='news') news,
-                       count(*) FILTER (WHERE c.kind IN ('product','release')) releases
-                FROM regional_tcg_content c JOIN games g ON g.id=c.game_id
-                WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh')
-                  AND c.source_key = ANY(:keys)
-                  AND c.last_seen_at >= :cutoff
-                GROUP BY g.slug,c.region ORDER BY g.slug,c.region
-              '''), {'keys': list(CANONICAL_SOURCE_KEYS), 'cutoff': cutoff}).all()
-              deprecated = conn.execute(text('SELECT count(*) FROM regional_tcg_content WHERE source_key = ANY(:keys)'), {'keys': list(DEPRECATED_SOURCE_KEYS)}).scalar_one()
-              riftbound = conn.execute(text("SELECT count(*) FROM regional_tcg_content c JOIN games g ON g.id=c.game_id WHERE g.slug='riftbound'")).scalar_one()
-              nonofficial = conn.execute(text("SELECT count(*) FROM regional_tcg_content WHERE source_key = ANY(:keys) AND coalesce(raw_json->>'official','false') <> 'true'"), {'keys': list(CANONICAL_SOURCE_KEYS)}).scalar_one()
-          proof = [{'game':str(g),'region':str(r),'items':int(i),'news':int(n),'releases':int(rel)} for g,r,i,n,rel in rows]
-          required = {(g,r) for g in ('pokemon','onepiece','mtg','yugioh') for r in ('jp','eu','us')}
-          actual = {(x['game'],x['region']) for x in proof}
-          failures = []
-          if actual != required: failures.append({'regional_cells': {'missing': sorted(required-actual), 'unexpected': sorted(actual-required)}})
-          if int(deprecated): failures.append({'deprecated_source_rows': int(deprecated)})
-          if int(riftbound): failures.append({'riftbound_rows': int(riftbound)})
-          if int(nonofficial): failures.append({'nonofficial_rows': int(nonofficial)})
-          report = {'cells': proof, 'deprecated_source_rows': int(deprecated), 'riftbound_rows': int(riftbound), 'nonofficial_rows': int(nonofficial), 'gate': 'PASS' if not failures else 'FAIL', 'failures': failures}
-          print('REGIONAL_SYNC ' + json.dumps(report, sort_keys=True))
-          if failures: raise SystemExit(json.dumps(failures))
-          PY
+      - name: Verify regional ingest contract
+        run: python scripts/verify_ingest.py --window-hours 2 --report /tmp/regional-ingest-proof.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: regional-tcg-content-${{ github.run_id }}
-          path: /tmp/regional-tcg-content.json
+          path: |
+            /tmp/regional-tcg-content.json
+            /tmp/regional-ingest-proof.json
           retention-days: 90
           if-no-files-found: warn
