@@ -27,7 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install 'SQLAlchemy>=2,<3' psycopg2-binary==2.9.9
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
       - name: Repair exactly six certified sealed identities and prices
         working-directory: backend
         run: |
@@ -159,7 +160,6 @@ jobs:
             if len(created)!=6:
               raise RuntimeError(f'Expected six creations, got {len(created)}')
 
-            # Same certified unresolved definition must be zero before commit.
             remaining=[]
             rows=session.execute(
               select(ExternalCatalogProduct,Game.slug).join(Game,Game.id==ExternalCatalogProduct.game_id).where(
