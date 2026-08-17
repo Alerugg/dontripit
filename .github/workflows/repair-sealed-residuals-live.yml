@@ -1,0 +1,195 @@
+name: Repair Sealed Residuals Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/repair-sealed-residuals-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-sealed-residuals-live
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install 'SQLAlchemy>=2,<3' psycopg2-binary==2.9.9
+      - name: Repair exactly six certified sealed identities and prices
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          import json
+          from sqlalchemy import func, select
+
+          from app import db
+          db.init_engine()
+          from app.external_catalog_models import ExternalCatalogProduct, ExternalCatalogProductVariantLink, ExternalMarketPriceSnapshot
+          from app.jobs.cardmarket_product_catalog import _dimensions, _packaging, _product_type, SEALED_TYPES
+          from app.models import Game, PriceSnapshot, PriceSource, Product, ProductIdentifier, ProductVariant
+
+          SOURCE='cardmarket'
+          EXPECTED_CAPTURE=datetime.fromisoformat('2026-08-17T03:16:39.379518+00:00')
+          EXPECTED={
+            '903009': {'game':'mtg','name':'Commander: Foundations: Deck Set','category':'Magic Intropack','expansion':'6572'},
+            '903002': {'game':'pokemon','name':"Deck Crafter's Collection: Meowth ex",'category':'Pokémon Box Set','expansion':'6231'},
+            '902998': {'game':'yugioh','name':'Beyond the Brave Booster','category':'Yugioh Booster','expansion':'6695'},
+            '902999': {'game':'yugioh','name':'Beyond the Brave Booster Box','category':'Yugioh Display','expansion':'6695'},
+            '903000': {'game':'yugioh','name':'Beyond the Brave: 3-Pack Tuckbox','category':'Yugioh Special Edition','expansion':'6695'},
+            '903001': {'game':'yugioh','name':'Beyond the Brave Booster Box Case (12 Boxes)','category':'Yugioh Display','expansion':'6695'},
+          }
+          ACCEPTED={'accepted','mapped','exact'}
+
+          session=db.SessionLocal()
+          report={'mode':'WRITE_SCOPED','expected_external_ids':sorted(EXPECTED)}
+          try:
+            capture=session.execute(select(func.max(ExternalCatalogProduct.last_seen_at)).where(ExternalCatalogProduct.source==SOURCE)).scalar_one()
+            if capture != EXPECTED_CAPTURE:
+              raise RuntimeError(f'Capture changed: expected={EXPECTED_CAPTURE.isoformat()} actual={capture.isoformat() if capture else None}')
+
+            rows=session.execute(
+              select(ExternalCatalogProduct,Game.slug).join(Game,Game.id==ExternalCatalogProduct.game_id).where(
+                ExternalCatalogProduct.source==SOURCE,
+                ExternalCatalogProduct.last_seen_at==capture,
+                ExternalCatalogProduct.product_group=='non_single',
+                Game.slug.in_(('mtg','pokemon','yugioh','onepiece')),
+              )
+            ).all()
+
+            unresolved=[]
+            for external,slug in rows:
+              accepted=session.execute(select(ExternalCatalogProductVariantLink.id).where(
+                ExternalCatalogProductVariantLink.external_product_id==external.id,
+                ExternalCatalogProductVariantLink.link_status.in_(ACCEPTED),
+              )).first()
+              identifier=session.execute(
+                select(ProductIdentifier.id).join(ProductVariant,ProductVariant.id==ProductIdentifier.product_variant_id)
+                .join(Product,Product.id==ProductVariant.product_id).where(
+                  ProductIdentifier.source==SOURCE,
+                  ProductIdentifier.external_id==str(external.external_id),
+                  Product.game_id==external.game_id,
+                )
+              ).first()
+              if not accepted and not identifier:
+                unresolved.append(str(external.external_id))
+            if set(unresolved)!=set(EXPECTED):
+              raise RuntimeError(f'Unresolved set mismatch: {sorted(unresolved)}')
+
+            created=[]
+            for external_id,spec in EXPECTED.items():
+              pair=session.execute(
+                select(ExternalCatalogProduct,Game.slug).join(Game,Game.id==ExternalCatalogProduct.game_id).where(
+                  ExternalCatalogProduct.source==SOURCE,ExternalCatalogProduct.external_id==external_id
+                )
+              ).one()
+              external,slug=pair
+              actual={'game':str(slug),'name':str(external.name),'category':str(external.category),'expansion':str(external.expansion_external_id)}
+              if actual!=spec or external.last_seen_at!=capture or external.product_group!='non_single':
+                raise RuntimeError(f'Identity assertion failed for {external_id}: {actual}')
+              if session.execute(select(ProductIdentifier.id).where(ProductIdentifier.source==SOURCE,ProductIdentifier.external_id==external_id)).first():
+                raise RuntimeError(f'Identifier unexpectedly exists for {external_id}')
+              if session.execute(select(ExternalCatalogProductVariantLink.id).where(ExternalCatalogProductVariantLink.external_product_id==external.id)).first():
+                raise RuntimeError(f'Any pre-existing link blocks scoped repair for {external_id}')
+
+              ptype=_product_type(external.category)
+              if ptype not in SEALED_TYPES:
+                raise RuntimeError(f'Non-sealed taxonomy for {external_id}: {ptype}')
+              language,region=_dimensions(external.name)
+              product=Product(game_id=external.game_id,set_id=None,product_type=ptype,name=str(external.name),release_date=None)
+              session.add(product); session.flush()
+              variant=ProductVariant(product_id=product.id,language=language,region=region,
+                                     packaging=_packaging(external.category,ptype),sku=f'cardmarket:{external_id}'[:100])
+              session.add(variant); session.flush()
+              session.add(ProductIdentifier(product_variant_id=variant.id,source=SOURCE,external_id=external_id)); session.flush()
+              session.add(ExternalCatalogProductVariantLink(
+                external_product_id=external.id,product_variant_id=variant.id,mapping_method='cardmarket_product_identity',
+                confidence='exact',link_status='accepted',reviewed=True,evidence={
+                  'source':SOURCE,'idProduct':external_id,'category':external.category,'product_type':ptype,
+                  'catalog_scope':'sealed','idExpansion':external.expansion_external_id,
+                  'date_added':external.date_added.isoformat() if external.date_added else None,
+                  'website_path':external.website_path,'identity_policy':'1:1 source commercial product; no name inference',
+                  'repair_scope':'certified_six_2026-08-17',
+                }))
+              session.flush()
+
+              latest=session.execute(select(func.max(ExternalMarketPriceSnapshot.as_of)).where(
+                ExternalMarketPriceSnapshot.external_product_id==external.id)).scalar_one()
+              if latest is None:
+                raise RuntimeError(f'No external market price for {external_id}')
+              price_rows=session.execute(select(ExternalMarketPriceSnapshot).where(
+                ExternalMarketPriceSnapshot.external_product_id==external.id,
+                ExternalMarketPriceSnapshot.as_of==latest)).scalars().all()
+              preferred=[r for r in price_rows if r.price_variant in {'default','nonfoil'}]
+              if len(preferred)==1: price_row=preferred[0]
+              elif len(price_rows)==1: price_row=price_rows[0]
+              else: raise RuntimeError(f'Ambiguous latest prices for {external_id}: {len(price_rows)}')
+              if all(v is None for v in (price_row.price_low,price_row.price_mid,price_row.price_market,price_row.price_last,price_row.avg1,price_row.avg7,price_row.avg30)):
+                raise RuntimeError(f'Empty latest price for {external_id}')
+
+              source=session.execute(select(PriceSource).where(PriceSource.name==SOURCE)).scalar_one_or_none()
+              if source is None or source.currency!='EUR':
+                raise RuntimeError('Cardmarket EUR PriceSource missing or invalid')
+              session.add(PriceSnapshot(
+                entity_type='product_variant',entity_id=variant.id,source_id=source.id,currency=price_row.currency,
+                price_low=price_row.price_low,price_mid=price_row.price_mid,price_high=None,
+                price_market=price_row.price_market,price_last=price_row.price_last,quantity=None,as_of=price_row.as_of,
+                raw_json={'idProduct':external_id,'price_variant':price_row.price_variant,
+                          'avg1':str(price_row.avg1) if price_row.avg1 is not None else None,
+                          'avg7':str(price_row.avg7) if price_row.avg7 is not None else None,
+                          'avg30':str(price_row.avg30) if price_row.avg30 is not None else None,
+                          'projection':'exact_cardmarket_product_variant','repair_scope':'certified_six_2026-08-17'}))
+              session.flush()
+              created.append({'external_id':external_id,'product_id':int(product.id),'variant_id':int(variant.id),
+                              'product_type':ptype,'language':language,'region':region,'price_as_of':price_row.as_of.isoformat()})
+
+            if len(created)!=6:
+              raise RuntimeError(f'Expected six creations, got {len(created)}')
+
+            # Same certified unresolved definition must be zero before commit.
+            remaining=[]
+            rows=session.execute(
+              select(ExternalCatalogProduct,Game.slug).join(Game,Game.id==ExternalCatalogProduct.game_id).where(
+                ExternalCatalogProduct.source==SOURCE,ExternalCatalogProduct.last_seen_at==capture,
+                ExternalCatalogProduct.product_group=='non_single',Game.slug.in_(('mtg','pokemon','yugioh','onepiece')))
+            ).all()
+            for external,slug in rows:
+              accepted=session.execute(select(ExternalCatalogProductVariantLink.id).where(
+                ExternalCatalogProductVariantLink.external_product_id==external.id,
+                ExternalCatalogProductVariantLink.link_status.in_(ACCEPTED))).first()
+              identifier=session.execute(
+                select(ProductIdentifier.id).join(ProductVariant,ProductVariant.id==ProductIdentifier.product_variant_id)
+                .join(Product,Product.id==ProductVariant.product_id).where(
+                  ProductIdentifier.source==SOURCE,ProductIdentifier.external_id==str(external.external_id),Product.game_id==external.game_id)).first()
+              if not accepted and not identifier: remaining.append(str(external.external_id))
+            if remaining:
+              raise RuntimeError(f'Postcondition unresolved != 0: {sorted(remaining)}')
+
+            price_count=session.execute(select(func.count(PriceSnapshot.id)).where(
+              PriceSnapshot.entity_type=='product_variant',PriceSnapshot.entity_id.in_([x['variant_id'] for x in created]),
+              PriceSnapshot.source_id==source.id)).scalar_one()
+            if int(price_count)!=6:
+              raise RuntimeError(f'Expected six canonical price snapshots, got {price_count}')
+
+            session.commit()
+            report.update({'capture':capture.isoformat(),'created':created,'created_count':6,'remaining_unresolved':0,'canonical_prices_created':6,'committed':True})
+            print('SEALED_REPAIR_REPORT='+json.dumps(report,sort_keys=True))
+          except Exception:
+            session.rollback()
+            raise
+          finally:
+            session.close()
+          PY
