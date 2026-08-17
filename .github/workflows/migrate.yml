@@ -1,9 +1,6 @@
 name: Neon Migrations
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -27,7 +24,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      
       - name: Debug env (no secrets)
         run: |
           python - <<'PY'
