@@ -1,11 +1,6 @@
 name: Sync Cardmarket Website Paths
 
 on:
-  schedule:
-    - cron: '55 4 * * *'
-  push:
-    branches: [catalog-v2]
-    paths: ['.github/workflows/sync-cardmarket-website-paths.yml']
   workflow_dispatch:
 
 permissions:
@@ -28,8 +23,6 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
