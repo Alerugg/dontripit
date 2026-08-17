@@ -6,7 +6,9 @@ on:
     paths:
       - '.github/workflows/audit-point8-regional-daily.yml'
       - '.github/workflows/daily-catalog-v2-orchestrator.yml'
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
       - '.github/workflows/sync-cardmarket-master-production-v2.yml'
+      - '.github/workflows/sync-cardmarket-website-paths.yml'
       - '.github/workflows/sync-regional-tcg-content.yml'
       - 'backend/app/jobs/regional_content.py'
       - 'backend/scripts/dedupe_regional_content.py'
@@ -43,7 +45,9 @@ jobs:
           root = Path('.github/workflows')
           files = {
               'orchestrator': root / 'daily-catalog-v2-orchestrator.yml',
+              'canonical': root / 'refresh-onepiece-yugioh-canonical-v2.yml',
               'cardmarket': root / 'sync-cardmarket-master-production-v2.yml',
+              'paths': root / 'sync-cardmarket-website-paths.yml',
               'regional': root / 'sync-regional-tcg-content.yml',
           }
           text = {name: path.read_text(encoding='utf-8') for name, path in files.items()}
@@ -61,14 +65,16 @@ jobs:
               failures.append('unexpected_daily_cron')
 
           children = (
+              'refresh-onepiece-yugioh-canonical-v2.yml',
               'sync-cardmarket-master-production-v2.yml',
+              'sync-cardmarket-website-paths.yml',
               'sync-regional-tcg-content.yml',
           )
           for child in children:
               if text['orchestrator'].count(child) != 1:
                   failures.append(f'orchestrator_child_reference_invalid:{child}')
 
-          for child_name in ('cardmarket', 'regional'):
+          for child_name in ('canonical', 'cardmarket', 'paths', 'regional'):
               body = text[child_name]
               if 'workflow_dispatch:' not in body:
                   failures.append(f'{child_name}_missing_manual_dispatch')
@@ -98,11 +104,11 @@ jobs:
               'children': list(children),
               'child_push_triggers': {
                   name: '\n  push:' in text[name]
-                  for name in ('cardmarket', 'regional')
+                  for name in ('canonical', 'cardmarket', 'paths', 'regional')
               },
               'child_schedules': {
                   name: 'schedule:' in text[name]
-                  for name in ('cardmarket', 'regional')
+                  for name in ('canonical', 'cardmarket', 'paths', 'regional')
               },
               'failures': failures,
           }
