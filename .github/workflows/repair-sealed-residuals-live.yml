@@ -29,7 +29,7 @@ jobs:
           python-version: '3.12'
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
-      - name: Repair exactly six certified sealed identities and prices
+      - name: Repair exactly six certified sealed identities and available prices
         working-directory: backend
         run: |
           python - <<'PY'
@@ -45,6 +45,7 @@ jobs:
 
           SOURCE='cardmarket'
           EXPECTED_CAPTURE=datetime.fromisoformat('2026-08-17T03:16:39.379518+00:00')
+          EXPECTED_MISSING_PRICE={'903002'}
           EXPECTED={
             '903009': {'game':'mtg','name':'Commander: Foundations: Deck Set','category':'Magic Intropack','expansion':'6572'},
             '903002': {'game':'pokemon','name':"Deck Crafter's Collection: Meowth ex",'category':'Pokémon Box Set','expansion':'6231'},
@@ -55,7 +56,7 @@ jobs:
           }
 
           session=db.SessionLocal()
-          report={'mode':'WRITE_SCOPED','expected_external_ids':sorted(EXPECTED)}
+          report={'mode':'WRITE_SCOPED','expected_external_ids':sorted(EXPECTED),'expected_missing_price':sorted(EXPECTED_MISSING_PRICE)}
           try:
             capture=session.execute(select(func.max(ExternalCatalogProduct.last_seen_at)).where(ExternalCatalogProduct.source==SOURCE)).scalar_one()
             if capture != EXPECTED_CAPTURE:
@@ -66,6 +67,8 @@ jobs:
               raise RuntimeError('Cardmarket EUR PriceSource missing or invalid')
 
             created=[]
+            source_missing=[]
+            priced=[]
             for external_id,spec in EXPECTED.items():
               external,slug=session.execute(
                 select(ExternalCatalogProduct,Game.slug).join(Game,Game.id==ExternalCatalogProduct.game_id).where(
@@ -84,20 +87,22 @@ jobs:
 
               latest=session.execute(select(func.max(ExternalMarketPriceSnapshot.as_of)).where(
                 ExternalMarketPriceSnapshot.external_product_id==external.id)).scalar_one()
+              price_row=None
               if latest is None:
-                raise RuntimeError(f'No external market price for {external_id}')
-              price_rows=session.execute(select(ExternalMarketPriceSnapshot).where(
-                ExternalMarketPriceSnapshot.external_product_id==external.id,
-                ExternalMarketPriceSnapshot.as_of==latest)).scalars().all()
-              preferred=[r for r in price_rows if r.price_variant in {'default','nonfoil'}]
-              if len(preferred)==1:
-                price_row=preferred[0]
-              elif len(price_rows)==1:
-                price_row=price_rows[0]
+                source_missing.append(external_id)
               else:
-                raise RuntimeError(f'Ambiguous latest prices for {external_id}: {len(price_rows)}')
-              if all(v is None for v in (price_row.price_low,price_row.price_mid,price_row.price_market,price_row.price_last,price_row.avg1,price_row.avg7,price_row.avg30)):
-                raise RuntimeError(f'Empty latest price for {external_id}')
+                price_rows=session.execute(select(ExternalMarketPriceSnapshot).where(
+                  ExternalMarketPriceSnapshot.external_product_id==external.id,
+                  ExternalMarketPriceSnapshot.as_of==latest)).scalars().all()
+                preferred=[r for r in price_rows if r.price_variant in {'default','nonfoil'}]
+                if len(preferred)==1:
+                  price_row=preferred[0]
+                elif len(price_rows)==1:
+                  price_row=price_rows[0]
+                else:
+                  raise RuntimeError(f'Ambiguous latest prices for {external_id}: {len(price_rows)}')
+                if all(v is None for v in (price_row.price_low,price_row.price_mid,price_row.price_market,price_row.price_last,price_row.avg1,price_row.avg7,price_row.avg30)):
+                  raise RuntimeError(f'Empty latest price for {external_id}')
 
               ptype=_product_type(external.category)
               if ptype not in SEALED_TYPES:
@@ -120,22 +125,26 @@ jobs:
                           'website_path':external.website_path,
                           'identity_policy':'1:1 source commercial product; no name inference',
                           'repair_scope':'certified_six_2026-08-17'}))
-              session.add(PriceSnapshot(
-                entity_type='product_variant',entity_id=variant.id,source_id=price_source.id,currency=price_row.currency,
-                price_low=price_row.price_low,price_mid=price_row.price_mid,price_high=None,
-                price_market=price_row.price_market,price_last=price_row.price_last,quantity=None,as_of=price_row.as_of,
-                raw_json={'idProduct':external_id,'price_variant':price_row.price_variant,
-                          'avg1':str(price_row.avg1) if price_row.avg1 is not None else None,
-                          'avg7':str(price_row.avg7) if price_row.avg7 is not None else None,
-                          'avg30':str(price_row.avg30) if price_row.avg30 is not None else None,
-                          'projection':'exact_cardmarket_product_variant','repair_scope':'certified_six_2026-08-17'}))
+              if price_row is not None:
+                session.add(PriceSnapshot(
+                  entity_type='product_variant',entity_id=variant.id,source_id=price_source.id,currency=price_row.currency,
+                  price_low=price_row.price_low,price_mid=price_row.price_mid,price_high=None,
+                  price_market=price_row.price_market,price_last=price_row.price_last,quantity=None,as_of=price_row.as_of,
+                  raw_json={'idProduct':external_id,'price_variant':price_row.price_variant,
+                            'avg1':str(price_row.avg1) if price_row.avg1 is not None else None,
+                            'avg7':str(price_row.avg7) if price_row.avg7 is not None else None,
+                            'avg30':str(price_row.avg30) if price_row.avg30 is not None else None,
+                            'projection':'exact_cardmarket_product_variant','repair_scope':'certified_six_2026-08-17'}))
+                priced.append(external_id)
               session.flush()
               created.append({'external_id':external_id,'product_id':int(product.id),'variant_id':int(variant.id),
                               'product_type':ptype,'language':language,'region':region,'packaging':packaging,
-                              'price_as_of':price_row.as_of.isoformat()})
+                              'price_as_of':price_row.as_of.isoformat() if price_row is not None else None})
 
-            if len(created)!=6:
-              raise RuntimeError(f'Expected six creations, got {len(created)}')
+            if set(source_missing)!=EXPECTED_MISSING_PRICE:
+              raise RuntimeError(f'Unexpected source-price gap: {sorted(source_missing)}')
+            if len(created)!=6 or len(priced)!=5:
+              raise RuntimeError(f'Expected 6 creations and 5 source-price projections, got creations={len(created)} priced={len(priced)}')
 
             ids=list(EXPECTED)
             identifier_count=session.execute(select(func.count(ProductIdentifier.id)).where(
@@ -147,12 +156,13 @@ jobs:
             price_count=session.execute(select(func.count(PriceSnapshot.id)).where(
               PriceSnapshot.entity_type=='product_variant',PriceSnapshot.entity_id.in_([x['variant_id'] for x in created]),
               PriceSnapshot.source_id==price_source.id)).scalar_one()
-            if int(identifier_count)!=6 or int(accepted_link_count)!=6 or int(price_count)!=6:
+            if int(identifier_count)!=6 or int(accepted_link_count)!=6 or int(price_count)!=5:
               raise RuntimeError(f'Postcondition mismatch identifiers={identifier_count} links={accepted_link_count} prices={price_count}')
 
             session.commit()
             report.update({'capture':capture.isoformat(),'created':created,'created_count':6,
-                           'accepted_links':6,'identifiers':6,'canonical_prices_created':6,'committed':True})
+                           'accepted_links':6,'identifiers':6,'canonical_prices_created':5,
+                           'source_price_missing':sorted(source_missing),'committed':True})
             print('SEALED_REPAIR_REPORT='+json.dumps(report,sort_keys=True))
           except Exception:
             session.rollback()
