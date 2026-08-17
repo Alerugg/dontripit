@@ -48,7 +48,7 @@ jobs:
               ['project-yugioh-cardmarket-prices.yml', 'Yu-Gi-Oh prices'],
               ['project-onepiece-cardmarket-prices.yml', 'One Piece prices'],
               ['apply-cardmarket-product-catalog-bulk.yml', 'Non-single catalog and prices'],
-              ['sync-regional-tcg-content-v4.yml', 'Regional official content'],
+              ['sync-regional-tcg-content.yml', 'Regional official content'],
               ['repair-canonical-images.yml', 'Exact-source image repair'],
               ['audit-roadmap-1-8-live.yml', 'Roadmap 1-8 audit'],
               ['verify-catalog-v2-physical-truth-gates.yml', 'Final physical truth and current price integrity gate'],
