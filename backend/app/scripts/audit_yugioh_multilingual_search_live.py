@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from collections import defaultdict
 
 import psycopg2
 
@@ -169,22 +168,24 @@ def run() -> dict:
 
             cur.execute(
                 """
-                SELECT lower(coalesce(p.language,'')), count(*)
+                SELECT lower(coalesce(p.language,'')), count(DISTINCT p.id)
                 FROM prints p
                 JOIN cards c ON c.id=p.card_id
                 WHERE c.game_id=%s
                   AND lower(coalesce(p.language,'')) IN ('en','es','ja')
                   AND EXISTS (
                     SELECT 1
-                    FROM external_product_links epl
-                    WHERE epl.entity_type='print'
-                      AND epl.entity_id=p.id
-                      AND lower(epl.provider)='cardmarket'
-                      AND lower(coalesce(epl.status,''))='accepted'
+                    FROM external_catalog_print_links l
+                    JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE l.print_id=p.id
+                      AND e.source='cardmarket'
+                      AND e.product_group='single'
+                      AND e.game_id=%s
+                      AND l.link_status IN ('accepted','mapped','exact')
                   )
                 GROUP BY 1 ORDER BY 1
                 """,
-                (game_id,),
+                (game_id, game_id),
             )
             cardmarket_link_counts = {language: 0 for language in LANGUAGES}
             for language, count in cur.fetchall():
