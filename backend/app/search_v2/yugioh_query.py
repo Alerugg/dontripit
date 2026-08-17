@@ -9,12 +9,19 @@ SUPPORTED_DISPLAY_LANGUAGES = {"en", "es", "ja"}
 
 
 def _display_language(value: str | None) -> str | None:
-    normalized = normalize_language(value) if value else None
-    if normalized is None:
+    if not value:
         return None
-    if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
-        raise ValueError("Yu-Gi-Oh language must be one of: en, es, ja")
-    return normalized
+    normalized_values: list[str] = []
+    for raw in str(value).split(","):
+        clean = raw.strip()
+        if not clean:
+            continue
+        normalized = normalize_language(clean)
+        if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
+            raise ValueError("Yu-Gi-Oh language must contain only: en, es, ja")
+        if normalized not in normalized_values:
+            normalized_values.append(normalized)
+    return ",".join(normalized_values) or None
 
 
 def normal_yugioh_search(
@@ -27,9 +34,9 @@ def normal_yugioh_search(
     """Rank logical Cards while resolving localized display data per physical Print.
 
     ``print_localizations`` is the authoritative language surface. A selected
-    display language therefore filters by localization availability instead of
-    ``prints.language``. The physical ``print_id`` never changes, so exact images,
-    variants and downstream Cardmarket joins keep their original identity.
+    display-language set filters by localization availability instead of merely
+    relabeling an English row. The physical ``print_id`` never changes, so exact
+    images, variants and downstream Cardmarket joins retain their identity.
     """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Yu-Gi-Oh Search V2 requires PostgreSQL")
@@ -136,7 +143,10 @@ def normal_yugioh_search(
           WHERE g.slug='yugioh'
             AND pl.card_name IS NOT NULL
             AND lower(pl.language) IN ('en','es','ja')
-            AND (:display_language IS NULL OR lower(pl.language)=:display_language)
+            AND (
+              :display_language IS NULL
+              OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
+            )
             AND position(:q_raw in lower(pl.card_name)) > 0
           GROUP BY p.card_id
           ORDER BY score DESC, p.card_id ASC
@@ -217,7 +227,10 @@ def normal_yugioh_search(
             FROM print_localizations pl
             WHERE pl.print_id=p.id
               AND lower(pl.language) IN ('en','es','ja')
-              AND (:display_language IS NULL OR lower(pl.language)=:display_language)
+              AND (
+                :display_language IS NULL
+                OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
+              )
             ORDER BY
               (lower(pl.card_name)=:q_raw) DESC,
               (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
@@ -230,7 +243,8 @@ def normal_yugioh_search(
               :display_language IS NULL
               OR EXISTS (
                 SELECT 1 FROM print_localizations plf
-                WHERE plf.print_id=p.id AND lower(plf.language)=:display_language
+                WHERE plf.print_id=p.id
+                  AND lower(plf.language)=ANY(string_to_array(:display_language, ','))
               )
             )
           ORDER BY
