@@ -1,0 +1,147 @@
+name: Apply One Piece Cardmarket Release Exact Singles
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-onepiece-cardmarket-release-exact-singles.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-onepiece-cardmarket-release-exact-singles
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Rebuild Bandai release evidence and apply only global one-to-one links
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import execute_values,Json
+
+          def norm(v):
+            v=unicodedata.normalize('NFKD',str(v or '')); v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’',"'").replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',v)).strip()
+          def release_core(name):
+            raw=re.sub(r'\s*\[[^\]]+\]\s*$','',str(name or '').strip()).strip()
+            m=re.match(r'^(?:BOOSTER PACK|STARTER DECK|EXTRA BOOSTER|PREMIUM BOOSTER|ULTIMATE DECK)\s*-(.+)-\s*$',raw,flags=re.I)
+            return norm(m.group(1) if m else raw)
+          def sealed_bases(name,cat):
+            raw=str(name or '').strip(); out={norm(raw)}
+            for prefix in ('Starter Deck: ','Ultimate Deck: '):
+              if raw.casefold().startswith(prefix.casefold()): out.add(norm(raw[len(prefix):]))
+            for pat in (r'\s+Booster Box Case\s*\(.*\)$',r'\s+Booster Box$',r'\s+Sleeved Booster$',r'\s+Booster Display$',r'\s+Booster$',r'\s*:\s*Pre-Release Pack$'):
+              x=re.sub(pat,'',raw,flags=re.I).strip()
+              if x!=raw: out.add(norm(x))
+            return {x for x in out if x}
+          cr=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+          def parse(name):
+            m=cr.match(str(name or '').strip())
+            if not m:return None
+            c=m.group('collector').upper(); c=re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-',lambda x:f'{x.group(1).upper()}{int(x.group(2)):02d}-',c)
+            return norm(m.group('name')),c
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
+          try:
+            with conn.cursor() as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1"); gid=int(cur.fetchone()[0])
+              cur.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'"); latest=cur.fetchone()[0]
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='onepiece_official'",(gid,))
+              rels=[{'id':int(i),'external_id':str(e),'name':n} for i,e,n in cur.fetchall()]
+              idx=defaultdict(list)
+              for r in rels:idx[release_core(r['name'])].append(r)
+              cur.execute("SELECT external_id,expansion_external_id,name,category FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s",(gid,latest))
+              byexp=defaultdict(list)
+              for ext,exp,n,cat in cur.fetchall():byexp[str(exp or '')].append({'idProduct':str(ext),'name':n,'category':cat})
+              exp_rel={}; evidence={}; conflicts=[]
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for base in sealed_bases(item['name'],item['category']):
+                    ms=idx.get(base,[])
+                    if len(ms)==1:votes[ms[0]['id']].append({**item,'matched_core':base,'official_release':ms[0]['name'],'release_external_id':ms[0]['external_id']})
+                if len(votes)==1:
+                  rid=next(iter(votes));exp_rel[exp]=rid;evidence[exp]=votes[rid]
+                elif len(votes)>1:conflicts.append(exp)
+              if len(exp_rel)<60:raise AssertionError(f'One Piece release evidence regression: {len(exp_rel)}')
+
+              cur.execute('''SELECT pr.release_id,p.id,p.collector_number,p.variant,p.rarity,p.language,c.id,c.name,s.code
+                FROM print_releases pr JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE c.game_id=%s''',(gid,))
+              canon=defaultdict(list)
+              for rid,pid,col,var,rar,lang,cid,cname,scode in cur.fetchall():canon[(int(rid),norm(cname),str(col).upper())].append({'print_id':int(pid),'collector_number':col,'variant':var,'rarity':rar,'language':lang,'card_id':int(cid),'set_code':scode})
+              cur.execute("SELECT id,external_id,expansion_external_id,name,metacard_external_id FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s",(gid,latest))
+              singles=[{'external_product_id':int(i),'idProduct':str(e),'exp':str(x or ''),'name':n,'idMetacard':m} for i,e,x,n,m in cur.fetchall()]
+              counts=Counter()
+              for p in singles:
+                q=parse(p['name'])
+                if q:counts[(p['exp'],q[0],q[1])]+=1
+              prelim=[];status=Counter()
+              for p in singles:
+                rid=exp_rel.get(p['exp']);q=parse(p['name'])
+                if rid is None:status['unconfirmed_release_expansion']+=1;continue
+                if q is None:status['collector_not_parseable']+=1;continue
+                name,col=q;cands=canon.get((rid,name,col),[])
+                if counts[(p['exp'],name,col)]>1:status['duplicate_cardmarket_identity']+=1;continue
+                if not cands:status['release_print_no_match']+=1;continue
+                if len(cands)>1:status['official_release_print_ambiguity']+=1;continue
+                prelim.append((p,cands[0],rid));status['candidate']+=1
+              claims=defaultdict(list)
+              for p,c,r in prelim:claims[c['print_id']].append(p['idProduct'])
+              safe=[(p,c,r) for p,c,r in prelim if len(claims[c['print_id']])==1]
+              status['multiple_products_claim_print']=len(prelim)-len(safe);status['exact_safe']=len(safe)
+              if len(safe)<300:raise AssertionError(f'One Piece safe mapping regression: {len(safe)}')
+
+              expected={p['external_product_id']:c['print_id'] for p,c,_ in safe}
+              cur.execute('''SELECT l.external_product_id,l.print_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.game_id=%s AND e.source='cardmarket' AND l.external_product_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')''',(gid,list(expected)))
+              bad=[(int(e),int(p)) for e,p in cur.fetchall() if expected.get(int(e))!=int(p)]
+              if bad:raise AssertionError(f'Existing One Piece link conflict: {bad[:20]}')
+              values=[]
+              for p,c,rid in safe:
+                ev={'source':'cardmarket+onepiece_official','mapping_basis':['sealed_product_release_match','official_PrintRelease','unique_name_collector','global_one_to_one'],
+                    'idProduct':p['idProduct'],'idExpansion':p['exp'],'idMetacard':p['idMetacard'],'release_id':rid,'set_code':c['set_code'],'collector_number':c['collector_number'],'variant':c['variant'],'sealed_evidence':evidence[p['exp']][:10]}
+                values.append((p['external_product_id'],c['print_id'],'bandai_release_exact','exact','accepted',False,Json(ev)))
+              execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
+                ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',values,page_size=1000)
+              cur.execute('''SELECT count(*),count(DISTINCT l.external_product_id),count(DISTINCT l.print_id) FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.game_id=%s AND e.source='cardmarket' AND l.mapping_method='bandai_release_exact' AND l.link_status='accepted' ''',(gid,))
+              links,products,prints=map(int,cur.fetchone())
+              if links!=len(safe) or products!=len(safe) or prints!=len(safe):raise AssertionError({'safe':len(safe),'links':links,'products':products,'prints':prints})
+              report={'mode':'apply','game':'onepiece','confirmed_release_expansions':len(exp_rel),'conflicting_release_expansions_quarantined':len(conflicts),'status_counts':dict(status),'applied_products':products,'applied_prints':prints}
+            conn.commit()
+          except Exception:
+            conn.rollback();raise
+          finally:conn.close()
+          Path('/tmp/onepiece-cardmarket-links-apply.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n');print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-cardmarket-links-apply-${{ github.run_id }}
+          path: /tmp/onepiece-cardmarket-links-apply.json
+          retention-days: 90
+          if-no-files-found: warn

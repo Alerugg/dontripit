@@ -1,0 +1,136 @@
+name: Audit MTG Scryfall Batch Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-scryfall-batch-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests psycopg2-binary==2.9.9
+      - name: Batch compare one canonical object from every MTG set with live Scryfall
+        run: |
+          python - <<'PY'
+          import json, os, re, time, unicodedata
+          from collections import Counter
+          from pathlib import Path
+          import psycopg2, requests
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
+              return re.sub(r'\s+',' ',s).strip().casefold()
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT s.id set_pk,s.code,s.name set_name,s.release_date,
+                       count(*) print_count,
+                       count(*) FILTER (WHERE p.scryfall_id IS NOT NULL) scryfall_prints
+                FROM sets s JOIN games g ON g.id=s.game_id
+                JOIN prints p ON p.set_id=s.id
+                WHERE g.slug='mtg'
+                GROUP BY s.id,s.code,s.name,s.release_date
+                ORDER BY coalesce(s.release_date, DATE '1900-01-01'),s.id
+              ''')
+              sets=[dict(x) for x in c.fetchall()]
+              samples=[]
+              for s in sets:
+                  c.execute('''
+                    SELECT p.id print_id,p.scryfall_id,p.collector_number,p.rarity,p.language,p.variant,p.is_foil,
+                           c.name,c.oracle_id
+                    FROM prints p JOIN cards c ON c.id=p.card_id
+                    WHERE p.set_id=%s AND p.scryfall_id IS NOT NULL
+                    ORDER BY (p.language='en') DESC,p.id LIMIT 1
+                  ''',(s['set_pk'],))
+                  r=c.fetchone()
+                  if r:
+                      x=dict(r);x.update({k:s[k] for k in ('set_pk','code','set_name')});samples.append(x)
+          conn.close()
+
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 mtg-batch-parity (+https://dontripit.com)','Accept':'application/json'})
+          live={}; batch_errors=[]
+          for start in range(0,len(samples),75):
+              batch=samples[start:start+75]
+              rr=http.post('https://api.scryfall.com/cards/collection',json={'identifiers':[{'id':str(x['scryfall_id'])} for x in batch]},timeout=45)
+              if rr.status_code!=200:
+                  batch_errors.append({'start':start,'status':rr.status_code,'body':rr.text[:200]});continue
+              payload=rr.json()
+              for card in payload.get('data') or []:
+                  live[str(card.get('id'))]=card
+              for miss in payload.get('not_found') or []:
+                  batch_errors.append({'not_found':miss})
+              time.sleep(.12)
+
+          status=Counter();mismatches=[];gatherer_candidates=[]
+          for r in samples:
+              card=live.get(str(r['scryfall_id']))
+              if card is None:
+                  status['live_missing']+=1;mismatches.append({**r,'status':'live_missing'});continue
+              checks={
+                'name':norm(card.get('name'))==norm(r.get('name')),
+                'set_code':norm(card.get('set'))==norm(r.get('code')),
+                'collector':str(card.get('collector_number') or '').strip()==str(r.get('collector_number') or '').strip(),
+                'oracle_id':not r.get('oracle_id') or str(card.get('oracle_id') or '').lower()==str(r.get('oracle_id') or '').lower(),
+              }
+              if all(checks.values()): status['matched']+=1
+              else:
+                  status['mismatch']+=1;mismatches.append({**r,'status':'mismatch','checks':checks,'live':{k:card.get(k) for k in ('name','set','collector_number','oracle_id')}})
+              if card.get('multiverse_ids'):
+                  gatherer_candidates.append((r,card))
+
+          # Gatherer is Wizards' official database but is not an adequate complete
+          # physical-print API. Verify a deterministic spread of Scryfall objects
+          # that expose Wizards multiverse IDs rather than making 986 serial calls.
+          gatherer=Counter();gdetails=[]
+          if gatherer_candidates:
+              n=min(24,len(gatherer_candidates))
+              indexes=sorted({round(i*(len(gatherer_candidates)-1)/(n-1)) for i in range(n)}) if n>1 else [0]
+              gh=requests.Session();gh.headers.update({'User-Agent':'DontRipIt/1.0 gatherer-verifier'})
+              for idx in indexes:
+                  r,card=gatherer_candidates[idx];mid=str(card['multiverse_ids'][0])
+                  try:
+                      gr=gh.get(f'https://gatherer.wizards.com/Handlers/Image.ashx?type=card&multiverseid={mid}',timeout=12)
+                      ctype=(gr.headers.get('content-type') or '').lower()
+                      gs='ok' if gr.status_code==200 and ctype.startswith('image/') and len(gr.content)>1000 else f'http_{gr.status_code}'
+                  except Exception as exc:
+                      gs='request_error';gdetails.append({'scryfall_id':str(r['scryfall_id']),'multiverse_id':mid,'status':gs,'error':str(exc)[:140]});gatherer[gs]+=1;continue
+                  gatherer[gs]+=1
+                  if gs!='ok':gdetails.append({'scryfall_id':str(r['scryfall_id']),'multiverse_id':mid,'status':gs})
+
+          report={
+            'physical_source':'Scryfall',
+            'official_verifier':'Wizards Gatherer (sample where multiverse IDs exist)',
+            'db_sets':len(sets),'db_prints':sum(int(x['print_count']) for x in sets),
+            'sets_sampled':len(samples),'sets_without_scryfall_sample':len(sets)-len(samples),
+            'live_scryfall_objects_returned':len(live),'scryfall_status':dict(status),
+            'batch_errors':batch_errors,
+            'gatherer_sample_status':dict(gatherer),'gatherer_details':gdetails,
+            'mismatch_samples':mismatches[:250],
+          }
+          print(json.dumps({k:v for k,v in report.items() if k not in ('mismatch_samples','batch_errors','gatherer_details')},indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/mtg-scryfall-batch-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          if batch_errors or status.get('live_missing') or status.get('mismatch'):
+              raise SystemExit('MTG live Scryfall parity requires review')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-scryfall-batch-parity-${{ github.run_id }}
+          path: /tmp/mtg-scryfall-batch-parity.json
+          retention-days: 90
+          if-no-files-found: warn

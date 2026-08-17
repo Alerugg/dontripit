@@ -1,0 +1,141 @@
+name: Audit Step 4 Cron Inventory
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-step4-cron-inventory.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dontripit-step4-cron-inventory
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Inventory schedules and production freshness
+        run: |
+          python - <<'PY'
+          import glob, json, os, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          workflows=[]
+          scheduled=[]
+          for path in sorted(glob.glob('.github/workflows/*')):
+              if not path.endswith(('.yml','.yaml')):
+                  continue
+              raw=Path(path).read_text(encoding='utf-8', errors='replace')
+              crons=re.findall(r"cron\s*:\s*['\"]?([^'\"\n#]+)", raw, flags=re.I)
+              item={
+                  'path':path,
+                  'has_schedule': bool(re.search(r'^\s*schedule\s*:',raw,re.M)),
+                  'crons':[x.strip() for x in crons],
+                  'has_workflow_dispatch': bool(re.search(r'^\s*workflow_dispatch\s*:',raw,re.M)),
+                  'has_concurrency': bool(re.search(r'^\s*concurrency\s*:',raw,re.M)),
+                  'mentions_daily_refresh':'daily_refresh' in raw,
+                  'mentions_cardmarket':'cardmarket' in raw.lower(),
+                  'mentions_riftbound':'riftbound' in raw.lower(),
+                  'mentions_onepiece':'onepiece' in raw.lower(),
+                  'unsafe_onepiece': path.endswith('apply-onepiece-cardmarket-residual-bijection.yml') or path.endswith('apply-onepiece-cardmarket-trusted-expansion-bridge.yml'),
+              }
+              workflows.append(item)
+              if item['has_schedule'] or item['crons']:
+                  scheduled.append(item)
+
+          db_url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not db_url:
+              raise SystemExit('DATABASE_URL secret missing')
+          engine=create_engine(db_url,pool_pre_ping=True)
+          out={
+              'generated_at':datetime.now(timezone.utc).isoformat(),
+              'workflow_count':len(workflows),
+              'scheduled_workflows':scheduled,
+              'scheduled_count':len(scheduled),
+              'db':{},
+              'hard_failures':[],
+          }
+          with engine.connect() as c:
+              def rows(sql,params=None):
+                  return [dict(r) for r in c.execute(text(sql),params or {}).mappings().all()]
+              out['db']['print_counts']=rows('''
+                SELECT g.slug game, COUNT(*) prints
+                FROM prints p JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+                WHERE g.slug IN ('mtg','pokemon','yugioh','onepiece','riftbound')
+                GROUP BY g.slug ORDER BY g.slug
+              ''')
+              out['db']['accepted_cardmarket']=rows('''
+                SELECT g.slug game, COUNT(DISTINCT l.print_id) accepted_prints
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products ep ON ep.id=l.external_product_id
+                JOIN games g ON g.id=ep.game_id
+                WHERE l.link_status='accepted' AND ep.source='cardmarket'
+                GROUP BY g.slug ORDER BY g.slug
+              ''')
+              cols={r['column_name'] for r in rows("SELECT column_name FROM information_schema.columns WHERE table_name='price_snapshots'")}
+              if {'entity_type','entity_id','source','as_of'}.issubset(cols):
+                  out['db']['price_freshness']=rows('''
+                    SELECT g.slug game, MAX(ps.as_of) latest_price_as_of, COUNT(*) snapshots
+                    FROM price_snapshots ps
+                    JOIN prints p ON ps.entity_type='print' AND ps.entity_id=p.id
+                    JOIN cards ca ON ca.id=p.card_id JOIN games g ON g.id=ca.game_id
+                    WHERE ps.source='cardmarket' AND g.slug IN ('mtg','pokemon','yugioh','onepiece','riftbound')
+                    GROUP BY g.slug ORDER BY g.slug
+                  ''')
+              else:
+                  out['db']['price_freshness']={'skipped':'price_snapshots schema differs','columns':sorted(cols)}
+              out['db']['luffy_44257']=rows('''
+                SELECT ep.external_id id_product,l.link_status,l.mapping_method
+                FROM external_catalog_print_links l JOIN external_catalog_products ep ON ep.id=l.external_product_id
+                WHERE ep.source='cardmarket' AND l.print_id=44257 ORDER BY ep.external_id
+              ''')
+
+          for item in scheduled:
+              if item['unsafe_onepiece']:
+                  out['hard_failures'].append('unsafe_onepiece_workflow_scheduled:'+item['path'])
+              if item['mentions_riftbound']:
+                  out['hard_failures'].append('riftbound_present_in_active_schedule:'+item['path'])
+          luffy={str(x['id_product']):x['link_status'] for x in out['db']['luffy_44257']}
+          if luffy.get('720061')!='accepted': out['hard_failures'].append('luffy_720061_not_accepted')
+          if luffy.get('749435')=='accepted': out['hard_failures'].append('luffy_749435_reaccepted')
+          out['pass']=not out['hard_failures']
+          Path('audit-reports').mkdir(exist_ok=True)
+          Path('audit-reports/step4-cron-inventory.json').write_text(json.dumps(out,indent=2,default=str)+'\n',encoding='utf-8')
+          print(json.dumps(out,indent=2,default=str))
+          if out['hard_failures']:
+              raise SystemExit(1)
+          PY
+      - name: Persist inventory
+        if: always()
+        run: |
+          if [ -f audit-reports/step4-cron-inventory.json ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add audit-reports/step4-cron-inventory.json
+            if ! git diff --cached --quiet; then
+              git commit -m 'Persist step 4 cron inventory'
+              git push origin HEAD:catalog-v2
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: step4-cron-inventory
+          path: audit-reports/step4-cron-inventory.json

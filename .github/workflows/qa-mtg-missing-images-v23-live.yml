@@ -1,0 +1,38 @@
+name: QA MTG Missing Images V23 Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-mtg-missing-images-v23-live.yml'
+      - 'backend/app/scripts/audit_mtg_missing_images_v23.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Run established read-only MTG image audit
+        working-directory: backend
+        run: python -m app.scripts.audit_mtg_missing_images_v23 --output /tmp/mtg-missing-images-v23.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-missing-images-v23-${{ github.run_id }}
+          path: /tmp/mtg-missing-images-v23.json
+          retention-days: 90
+          if-no-files-found: warn

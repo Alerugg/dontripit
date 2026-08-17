@@ -1,0 +1,61 @@
+name: Project One Piece Cardmarket Prices
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/project-onepiece-cardmarket-prices.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-onepiece-cardmarket-prices
+  cancel-in-progress: false
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Apply only exact One Piece Cardmarket price projection
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app import db
+          from app.jobs.cardmarket_link_price_projection import build_link_price_projection_plan,apply_link_price_projection_plan
+          db.init_engine()
+          with db.SessionLocal() as session:
+              plan=build_link_price_projection_plan(session,game_slug='onepiece')
+              preflight=plan.summary()
+              if not preflight['write_ready'] or preflight['accepted_links'] < 300 or preflight['priceable_prints'] != preflight['accepted_links']:
+                  raise AssertionError(preflight)
+              result=apply_link_price_projection_plan(session,plan);session.commit()
+          report={'preflight':preflight,'apply':result}
+          Path('/tmp/onepiece-cardmarket-price-projection.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-cardmarket-price-projection-${{ github.run_id }}
+          path: /tmp/onepiece-cardmarket-price-projection.json
+          retention-days: 90
+          if-no-files-found: warn

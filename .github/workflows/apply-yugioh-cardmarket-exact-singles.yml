@@ -1,0 +1,163 @@
+name: Apply Yu-Gi-Oh Cardmarket Exact Singles
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-yugioh-cardmarket-exact-singles.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-yugioh-cardmarket-exact-singles
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Rebuild evidence and apply only one-to-one exact links
+        run: |
+          python - <<'PY'
+          import json, os, re, unicodedata
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import execute_values, Json
+
+          def norm(value):
+              value=unicodedata.normalize('NFKD',str(value or ''))
+              value=''.join(ch for ch in value if not unicodedata.combining(ch)).casefold().replace('&',' and ')
+              value=re.sub(r'[^a-z0-9]+',' ',value)
+              return re.sub(r'\s+',' ',value).strip()
+
+          def set_aliases(code,name):
+              out={norm(name)}
+              clean=re.sub(r'^\s*[A-Za-z]{1,5}[ -]?\d{1,3}\s*[:\-–—]\s*','',str(name or '')).strip()
+              out.add(norm(clean)); out.add(norm(f'{code} {clean}'))
+              return {x for x in out if x}
+
+          def sealed_bases(name,category):
+              raw=str(name or '').strip(); bases={norm(raw)}
+              if category in ('Yugioh Booster','Yugioh Display'):
+                  for suffix in (' booster display',' display',' booster box',' booster'):
+                      if raw.casefold().endswith(suffix): bases.add(norm(raw[:-len(suffix)]))
+              return {x for x in bases if x}
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url); conn.autocommit=False
+          report={}
+          try:
+            with conn.cursor() as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); game_id=int(cur.fetchone()[0])
+              cur.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'"); latest=cur.fetchone()[0]
+              cur.execute("SELECT id,code,name FROM sets WHERE game_id=%s",(game_id,)); sets=[{'id':int(i),'code':c,'name':n} for i,c,n in cur.fetchall()]
+              alias_index=defaultdict(list)
+              for s in sets:
+                for a in set_aliases(s['code'],s['name']): alias_index[a].append(s)
+              cur.execute('''SELECT external_id,expansion_external_id,name,category FROM external_catalog_products
+                WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s''',(game_id,latest))
+              by_exp=defaultdict(list)
+              for ext,exp,name,cat in cur.fetchall(): by_exp[str(exp or '')].append({'external_id':str(ext),'name':name,'category':cat})
+              crosswalk={}; conflicts=[]
+              for exp,items in by_exp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for base in sealed_bases(item['name'],item['category']):
+                    matches=alias_index.get(base,[])
+                    if len(matches)==1: votes[matches[0]['id']].append({'idProduct':item['external_id'],'name':item['name'],'category':item['category'],'alias':base})
+                if len(votes)==1:
+                  sid=next(iter(votes)); crosswalk[exp]={'set_id':sid,'evidence':votes[sid]}
+                elif len(votes)>1: conflicts.append(exp)
+              if conflicts: raise AssertionError(f'Conflicting sealed expansion evidence: {conflicts[:20]}')
+              if len(crosswalk)<350: raise AssertionError(f'YGO sealed crosswalk regression: {len(crosswalk)}')
+
+              cur.execute('''SELECT p.id,p.set_id,c.id,c.name,s.code,p.collector_number,p.variant,p.rarity,p.language
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE c.game_id=%s''',(game_id,))
+              canon=defaultdict(list)
+              for pid,sid,cid,cname,scode,num,var,rar,lang in cur.fetchall():
+                canon[(int(sid),norm(cname))].append({'print_id':int(pid),'card_id':int(cid),'set_code':scode,'collector_number':num,'variant':var,'rarity':rar,'language':lang})
+              cur.execute('''SELECT id,external_id,expansion_external_id,name,metacard_external_id FROM external_catalog_products
+                WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(game_id,latest))
+              singles=[{'external_product_id':int(i),'idProduct':str(ext),'exp':str(exp or ''),'name':name,'metacard_id':meta} for i,ext,exp,name,meta in cur.fetchall()]
+              name_counts=Counter((p['exp'],norm(p['name'])) for p in singles)
+              prelim=[]; status=Counter()
+              for p in singles:
+                cw=crosswalk.get(p['exp'])
+                if not cw: status['unconfirmed_expansion']+=1; continue
+                candidates=canon.get((cw['set_id'],norm(p['name'])),[])
+                if len(candidates)==0: status['name_no_match']+=1; continue
+                if len(candidates)>1: status['canonical_print_ambiguity']+=1; continue
+                if name_counts[(p['exp'],norm(p['name']))]>1: status['cardmarket_same_name_ambiguity']+=1; continue
+                prelim.append((p,candidates[0],cw)); status['exact_candidate']+=1
+              claims=defaultdict(list)
+              for p,c,cw in prelim: claims[c['print_id']].append(p['idProduct'])
+              multi={pid:ids for pid,ids in claims.items() if len(ids)>1}
+              if multi: raise AssertionError(f'Multiple Cardmarket products claim same YGO Print: {list(multi.items())[:20]}')
+              if len(prelim)<22000: raise AssertionError(f'YGO safe exact mapping regression: {len(prelim)}')
+
+              expected={p['external_product_id']:c['print_id'] for p,c,_ in prelim}
+              cur.execute('''SELECT l.external_product_id,l.print_id FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.game_id=%s AND e.source='cardmarket' AND l.external_product_id=ANY(%s)
+                  AND l.link_status IN ('accepted','mapped','exact')''',(game_id,list(expected)))
+              bad=[(int(ext),int(pid)) for ext,pid in cur.fetchall() if expected.get(int(ext))!=int(pid)]
+              if bad: raise AssertionError(f'Existing accepted YGO link conflict: {bad[:20]}')
+
+              rows=[]
+              for p,c,cw in prelim:
+                evidence={
+                  'source':'cardmarket','mapping_basis':['sealed_expansion_unique_match','exact_unique_card_name_within_set'],
+                  'idProduct':p['idProduct'],'idExpansion':p['exp'],'idMetacard':p['metacard_id'],
+                  'set_code':c['set_code'],'collector_number':c['collector_number'],'card_id':c['card_id'],
+                  'sealed_evidence':cw['evidence'][:10],
+                }
+                rows.append((p['external_product_id'],c['print_id'],'sealed_expansion_exact_name','exact','accepted',False,Json(evidence)))
+              execute_values(cur,'''
+                INSERT INTO external_catalog_print_links
+                  (external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence)
+                VALUES %s
+                ON CONFLICT (external_product_id,print_id) DO UPDATE SET
+                  mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,
+                  link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()
+              ''',rows,page_size=2000)
+              cur.execute('''SELECT count(*),count(DISTINCT l.external_product_id),count(DISTINCT l.print_id)
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.game_id=%s AND e.source='cardmarket' AND l.mapping_method='sealed_expansion_exact_name' AND l.link_status='accepted' ''',(game_id,))
+              links,products,prints=map(int,cur.fetchone())
+              if links!=len(prelim) or products!=len(prelim) or prints!=len(prelim):
+                raise AssertionError({'expected':len(prelim),'links':links,'products':products,'prints':prints})
+              report={'mode':'apply','game':'yugioh','sealed_confirmed_expansions':len(crosswalk),'status_counts':dict(status),
+                      'applied_products':products,'applied_prints':prints,'mapping_method':'sealed_expansion_exact_name'}
+            conn.commit()
+          except Exception:
+            conn.rollback(); raise
+          finally: conn.close()
+          Path('/tmp/ygo-cardmarket-links-apply.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-links-apply-${{ github.run_id }}
+          path: /tmp/ygo-cardmarket-links-apply.json
+          retention-days: 90
+          if-no-files-found: warn

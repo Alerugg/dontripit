@@ -1,0 +1,67 @@
+name: QA Cardmarket Riftbound Game Id
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/qa-cardmarket-riftbound-game-id.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests==2.32.3
+      - name: Probe recent Cardmarket downloadable game feeds
+        run: |
+          python - <<'PY'
+          import json,re,requests
+          from pathlib import Path
+
+          s=requests.Session(); s.headers.update({'User-Agent':'DontRipIt/1.0 feed-discovery'})
+          needles=('riftbound','spiritforged','unleashed','vendetta','origins')
+          found=[]; probes=[]
+          for gid in range(19,61):
+              url=f'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_{gid}.json'
+              rec={'idGame':gid,'url':url}
+              try:
+                  with s.get(url,stream=True,timeout=20) as r:
+                      rec['status']=r.status_code
+                      rec['content_length']=r.headers.get('Content-Length')
+                      rec['content_type']=r.headers.get('Content-Type')
+                      if r.status_code!=200:
+                          probes.append(rec); continue
+                      chunks=[]; total=0
+                      for chunk in r.iter_content(65536):
+                          if not chunk: continue
+                          chunks.append(chunk); total+=len(chunk)
+                          if total>=524288: break
+                      text=b''.join(chunks).decode('utf-8','ignore')
+                      low=text.lower()
+                      hits=[n for n in needles if n in low]
+                      rec['bytes_sampled']=len(text.encode('utf-8'))
+                      rec['hits']=hits
+                      rec['sample']=re.sub(r'\s+',' ',text[:1200])
+                      if 'riftbound' in hits or sum(n in hits for n in needles[1:])>=2:
+                          found.append(rec.copy())
+              except Exception as exc:
+                  rec['error']=repr(exc)
+              probes.append(rec)
+          report={'found':found,'probes':probes}
+          if len(found)!=1:
+              raise AssertionError({'expected_one_riftbound_game_id':found})
+          Path('/tmp/cardmarket-riftbound-game-id.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          print(json.dumps({'found':found},indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-riftbound-game-id-${{ github.run_id }}
+          path: /tmp/cardmarket-riftbound-game-id.json
+          retention-days: 30
+          if-no-files-found: warn

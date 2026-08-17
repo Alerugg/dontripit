@@ -1,0 +1,44 @@
+name: Project One Piece Exact Prices Now
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/project-onepiece-exact-prices-now.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Project only accepted exact One Piece links
+        run: |
+          set -euo pipefail
+          python scripts/project_cardmarket_link_prices.py --game onepiece --report /tmp/onepiece-projection-dry.json
+          python scripts/project_cardmarket_link_prices.py --game onepiece --apply --report /tmp/onepiece-projection-apply.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-exact-projection-${{ github.run_id }}
+          path: /tmp/onepiece-projection-*.json
+          retention-days: 30
+          if-no-files-found: warn

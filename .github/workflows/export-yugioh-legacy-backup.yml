@@ -1,0 +1,53 @@
+name: Export Yu-Gi-Oh Legacy Backup
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/export-yugioh-legacy-backup.yml'
+      - 'backend/app/scripts/export_yugioh_legacy_backup.py'
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Compile exporter
+        working-directory: backend
+        run: python -m compileall -q app/scripts/export_yugioh_legacy_backup.py
+      - name: Export legacy YGO rows read-only
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-legacy-backup
+          python -u -m app.scripts.export_yugioh_legacy_backup \
+            --output-dir /tmp/yugioh-legacy-backup \
+            | tee /tmp/yugioh-legacy-backup.log
+      - name: Upload recovery artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-legacy-backup-${{ github.sha }}
+          path: |
+            /tmp/yugioh-legacy-backup
+            /tmp/yugioh-legacy-backup.log
+          retention-days: 90
+          if-no-files-found: error

@@ -13,6 +13,7 @@ def test_onepiece_legacy_external_id_pattern_detects_legacy_suffixes():
 
 def test_onepiece_canonical_external_id_pattern_accepts_new_family():
     assert is_onepiece_canonical_external_id("OP01-016_p1")
+    assert is_onepiece_canonical_external_id("OP15-036_R1")
     assert is_onepiece_canonical_external_id("ST01-012")
     assert is_onepiece_canonical_external_id("P-001")
     assert not is_onepiece_canonical_external_id("st10-001-default-en")

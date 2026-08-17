@@ -1,0 +1,23 @@
+name: RETIRED - One Piece Cardmarket Global Residual Bijection
+
+# RETIRED 2026-08-11.
+# Global name+collector cardinality is NOT sufficient evidence of a physical
+# One Piece reprint/version. A single collector number can have many Cardmarket
+# versions across different official releases. This workflow is deliberately
+# non-writing and cannot create accepted mappings anymore.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retired:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain retirement
+        run: |
+          echo "RETIRED: global name+collector residual bijection is not physical-version-safe."
+          echo "Use the official CatalogRelease/PrintRelease -> Cardmarket expansion validated mapper instead."
+          exit 1

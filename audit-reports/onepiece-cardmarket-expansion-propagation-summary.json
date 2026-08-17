@@ -1,0 +1,24 @@
+{
+  "mode": "dry_run",
+  "game": "onepiece",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "canonical_en_prints": 4672,
+  "accepted_existing_prints": 3757,
+  "accepted_existing_products": 3757,
+  "trusted_expansion_anchors": 49,
+  "anchor_rejections": {
+    "non_unique_common_release": 21,
+    "insufficient_exact_anchor_prints": 5
+  },
+  "status_counts": {
+    "unanchored_expansion": 7763,
+    "no_unlinked_release_match": 289,
+    "release_match_ambiguous": 27,
+    "collector_not_parseable": 28,
+    "multiple_products_claim_print": 0,
+    "safe_candidate": 0
+  },
+  "safe_candidates": 0,
+  "safe_candidate_prints": 0,
+  "safe_candidate_products": 0
+}

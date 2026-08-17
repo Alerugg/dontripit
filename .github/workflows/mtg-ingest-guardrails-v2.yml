@@ -1,0 +1,51 @@
+name: MTG Ingest Guardrails V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/mtg-ingest-guardrails-v2.yml'
+      - '.github/workflows/ingest.yml'
+      - 'backend/app/ingest/base.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/tests/test_mtg_ingest_guardrails_v2.py'
+      - 'backend/tests/test_ingest_engine.py'
+  workflow_dispatch:
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile MTG ingest guardrail modules
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/ingest/base.py \
+            app/ingest/connectors/scryfall_mtg.py \
+            app/ingest/connectors/scryfall_mtg_v2.py
+
+      - name: Run focused MTG guardrail tests
+        working-directory: backend
+        run: pytest -q tests/test_mtg_ingest_guardrails_v2.py
+
+      - name: Re-run existing Scryfall ingest regression tests
+        working-directory: backend
+        run: pytest -q tests/test_ingest_engine.py -k scryfall

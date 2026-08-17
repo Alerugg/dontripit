@@ -1,0 +1,67 @@
+name: Audit Sealed Residuals Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-sealed-residuals-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-sealed-residuals-live
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Read six sealed identities only
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          IDS=('903009','903002','902998','902999','903000','903001')
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'], connect_timeout=15)
+          conn.set_session(readonly=True,autocommit=True)
+          with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SET statement_timeout = '20s'")
+            cur.execute('''
+              SELECT e.external_id,g.slug game,e.name,
+                     (SELECT count(*) FROM external_catalog_product_variant_links l
+                      WHERE l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact')) accepted_links,
+                     (SELECT count(*) FROM product_identifiers pi
+                      WHERE pi.source='cardmarket' AND pi.external_id=e.external_id) identifiers
+              FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+              WHERE e.source='cardmarket' AND e.external_id = ANY(%s)
+              ORDER BY e.external_id
+            ''',(list(IDS),))
+            targets=[dict(r) for r in cur.fetchall()]
+          conn.close()
+
+          by_id={str(r['external_id']):r for r in targets}
+          missing=sorted(set(IDS)-set(by_id))
+          resolved=sorted(i for i,r in by_id.items() if int(r['accepted_links'])>0 or int(r['identifiers'])>0)
+          unresolved=sorted(i for i,r in by_id.items() if int(r['accepted_links'])==0 and int(r['identifiers'])==0)
+          report={'mode':'READ_ONLY','expected_ids':sorted(IDS),'missing_external_ids':missing,
+                  'resolved_count':len(resolved),'resolved_ids':resolved,
+                  'unresolved_count':len(unresolved),'unresolved_ids':unresolved,'targets':targets}
+          print('SEALED_FAST_STATE='+json.dumps(report,default=str,sort_keys=True))
+          if missing: raise SystemExit(f'Missing external rows: {missing}')
+          if len(resolved) not in (0,6): raise SystemExit(f'PARTIAL_STATE: resolved={resolved} unresolved={unresolved}')
+          PY

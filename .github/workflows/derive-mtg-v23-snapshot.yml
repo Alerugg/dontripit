@@ -1,0 +1,130 @@
+name: Derive MTG V2.3 Snapshot
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/derive-mtg-v23-snapshot.yml'
+      - 'backend/app/scripts/upgrade_mtg_v22_snapshot_to_v23.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mtg-v23-snapshot-derivation
+  cancel-in-progress: false
+
+jobs:
+  derive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      V22_ARTIFACT_ID: '9026133384'
+      V22_ARTIFACT_ZIP_SHA256: '9680a8f2521e02a1ec070220fd13046d6431ebe7d88e096c83b3b7aad23749d3'
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile deterministic V2.3 transformer
+        working-directory: backend
+        run: python -m py_compile app/scripts/upgrade_mtg_v22_snapshot_to_v23.py
+
+      - name: Download exact frozen V2.2 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mtg-v22 /tmp/mtg-v22.zip
+          mkdir -p /tmp/mtg-v22
+          curl -fL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${V22_ARTIFACT_ID}/zip" \
+            -o /tmp/mtg-v22.zip
+          echo "${V22_ARTIFACT_ZIP_SHA256}  /tmp/mtg-v22.zip" | sha256sum -c -
+          unzip -q /tmp/mtg-v22.zip -d /tmp/mtg-v22
+          manifest=$(find /tmp/mtg-v22 -name manifest.json -type f -print -quit)
+          test -n "$manifest"
+          dirname "$manifest" > /tmp/mtg-v22-dir.txt
+
+      - name: Derive identifier-only V2.3 snapshot
+        working-directory: backend
+        run: |
+          source_dir=$(cat /tmp/mtg-v22-dir.txt)
+          python -u app/scripts/upgrade_mtg_v22_snapshot_to_v23.py \
+            --source-dir "$source_dir" \
+            --output-dir /tmp/mtg-v23
+
+      - name: Independently certify V2.3 invariants
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          root=Path('/tmp/mtg-v23')
+          manifest=json.loads((root/'manifest.json').read_text(encoding='utf-8'))
+          assert manifest['status']=='pass'
+          assert manifest['snapshot_schema_version']=='mtg-canonical-v2.3'
+          assert manifest['counts']['logical_cards']==37624
+          assert manifest['counts']['exact_prints']==161275
+          assert manifest['counts']['sets']==986
+          assert manifest['finish_counts']=={'etched':1218,'foil':65936,'nonfoil':94121}
+          policy=manifest['identifier_policy']
+          assert policy['exact_identifier_rows']==161275
+          assert policy['unique_source_external_pairs']==161275
+          assert policy['unique_print_source_pairs']==161275
+          assert policy['exact_print_identifier_source']=='scryfall_finish'
+
+          rows=0
+          source_external=set()
+          print_source=set()
+          with (root/'print_identifiers.jsonl').open(encoding='utf-8') as f:
+              for raw in f:
+                  row=json.loads(raw)
+                  rows+=1
+                  assert row['source']=='scryfall_finish'
+                  assert row['external_id'].endswith((':nonfoil',':foil',':etched'))
+                  source_external.add((row['source'],row['external_id']))
+                  print_source.add((row['print_key'],row['source']))
+          assert rows==161275
+          assert len(source_external)==161275
+          assert len(print_source)==161275
+
+          for name, meta in manifest['files'].items():
+              path=root/name
+              digest=hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest==meta['sha256'], name
+              with path.open(encoding='utf-8') as f:
+                  assert sum(1 for _ in f)==meta['rows'], name
+
+          print(json.dumps({
+              'status':'pass',
+              'schema':'mtg-canonical-v2.3',
+              'cards':37624,
+              'prints':161275,
+              'sets':986,
+              'exact_identifier_pairs':len(source_external),
+              'database_writes':0,
+          },indent=2,sort_keys=True))
+          PY
+
+      - name: Upload certified MTG V2.3 snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-v23-snapshot-${{ github.sha }}
+          path: /tmp/mtg-v23
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6

@@ -1,0 +1,55 @@
+name: Neon Activity Probe
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/db-activity-probe.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SQLAlchemy and psycopg2
+        run: pip install SQLAlchemy==2.0.36 psycopg2-binary==2.9.9
+      - name: Inspect active Neon sessions without modifying data
+        run: |
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, text
+
+          engine = create_engine(os.environ['DATABASE_URL'], pool_pre_ping=True)
+          sql = text('''
+              select
+                  pid,
+                  usename,
+                  application_name,
+                  state,
+                  wait_event_type,
+                  wait_event,
+                  extract(epoch from (now() - query_start))::int as query_age_seconds,
+                  extract(epoch from (now() - xact_start))::int as transaction_age_seconds,
+                  left(regexp_replace(query, '\\s+', ' ', 'g'), 220) as query_preview
+              from pg_stat_activity
+              where datname = current_database()
+                and pid <> pg_backend_pid()
+                and state <> 'idle'
+              order by query_start asc
+          ''')
+          with engine.connect() as conn:
+              rows = [dict(row._mapping) for row in conn.execute(sql)]
+          print(json.dumps(rows, indent=2, default=str))
+          PY

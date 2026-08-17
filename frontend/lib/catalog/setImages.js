@@ -1,29 +1,14 @@
-function normalizeGameSlug(value = '') {
-  return String(value || '').trim().toLowerCase()
+// Set logos must come from a source that actually exists in the catalog or in
+// `public/`. Don’t manufacture `/sets/<game>/<code>.png` candidates: the repo
+// currently has no backed set-logo asset tree and guessed paths create visible
+// first-party 404s in the public collector UI.
+//
+// Keep this helper as the single policy boundary so a future canonical asset
+// source can opt in deliberately without reintroducing path guessing.
+export function getLocalSetImageCandidates() {
+  return []
 }
 
-function compactSetCode(value = '') {
-  return String(value || '').trim().replace(/\s+/g, '')
-}
-
-export function getLocalSetImageCandidates(game, setCode = '') {
-  const gameSlug = normalizeGameSlug(game)
-  const rawCode = String(setCode || '').trim()
-
-  if (!gameSlug || !rawCode) return []
-
-  const compact = compactSetCode(rawCode)
-  const lower = compact.toLowerCase()
-  const upper = compact.toUpperCase()
-
-  return [...new Set([
-    `/sets/${gameSlug}/${rawCode}.png`,
-    `/sets/${gameSlug}/${compact}.png`,
-    `/sets/${gameSlug}/${lower}.png`,
-    `/sets/${gameSlug}/${upper}.png`,
-  ])]
-}
-
-export function getPrimaryLocalSetImage(game, setCode = '') {
-  return getLocalSetImageCandidates(game, setCode)[0] || ''
+export function getPrimaryLocalSetImage() {
+  return ''
 }

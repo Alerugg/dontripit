@@ -1,0 +1,76 @@
+name: Patch Step 3 Card Detail Contract
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-step3-card-detail-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Make legacy card detail truncation explicit and remove fake search names
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          catalog=Path('backend/app/routes/catalog.py')
+          text=catalog.read_text()
+          old='''            prints = session.execute(prints_sql, {"card_id": card_id}).mappings().all()\n            sets = session.execute(sets_sql, {"card_id": card_id}).mappings().all()'''
+          new='''            prints_total = int(session.execute(\n                text("SELECT COUNT(*) FROM prints WHERE card_id = :card_id"),\n                {"card_id": card_id},\n            ).scalar_one())\n            prints = session.execute(prints_sql, {"card_id": card_id}).mappings().all()\n            sets = session.execute(sets_sql, {"card_id": card_id}).mappings().all()'''
+          if old not in text:
+            raise SystemExit('catalog execution anchor not found')
+          text=text.replace(old,new,1)
+          old2='''            "sets": [dict(row) for row in sets],\n        }'''
+          new2='''            "sets": [dict(row) for row in sets],\n            "prints_pagination": {\n                "total": prints_total,\n                "limit": 50,\n                "offset": 0,\n                "complete": len(prints) >= prints_total,\n                "next_offset": len(prints) if len(prints) < prints_total else None,\n                "reader": f"/api/v1/cards/{card_id}/prints",\n            },\n        }'''
+          if old2 not in text:
+            raise SystemExit('catalog response anchor not found')
+          catalog.write_text(text.replace(old2,new2,1))
+
+          fed=Path('frontend/app/api/search-v2/federated/route.js')
+          text=fed.read_text()
+          fake='''    name: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,\n    title: cardName || `Carta #${item.collector_number || item.card_id || item.id}`,'''
+          real='''    name: cardName || null,\n    title: cardName || null,'''
+          if fake not in text:
+            raise SystemExit('federated fake-name anchor not found')
+          fed.write_text(text.replace(fake,real,1))
+          PY
+      - name: Verify syntax and no fabricated exact-print names
+        run: |
+          python -m py_compile backend/app/routes/catalog.py backend/app/routes/card_prints.py backend/app/routes/set_ui.py backend/app/main.py
+          python - <<'PY'
+          from pathlib import Path
+          paths=[
+            'frontend/app/api/catalog/set-detail/route.js',
+            'frontend/app/api/search-v2/federated/route.js',
+            'frontend/components/catalog/CatalogCard.js',
+            'frontend/components/searchV2/SearchV2Results.js',
+          ]
+          for path in paths:
+            text=Path(path).read_text()
+            if 'Carta #' in text or 'Carta sin título' in text:
+              raise AssertionError(f'fabricated public name remains in {path}')
+          catalog=Path('backend/app/routes/catalog.py').read_text()
+          for token in ('prints_pagination','prints_total','/api/v1/cards/{card_id}/prints'):
+            if token not in catalog: raise AssertionError(token)
+          print('step3_contract_patch=PASS')
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/routes/catalog.py frontend/app/api/search-v2/federated/route.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Make exact print card detail pagination explicit'
+          git push origin HEAD:catalog-v2

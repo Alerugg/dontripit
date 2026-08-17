@@ -1,0 +1,237 @@
+name: Cardmarket Point 4 Production Gate
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-point4-production-gate.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary
+      - name: Audit live Cardmarket identity and price invariants
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACTIVE=('mtg','pokemon','yugioh','onepiece')
+          ACCEPTED=('accepted','mapped','exact')
+          dsn=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('Production database secret is missing')
+          conn=psycopg2.connect(dsn)
+          out={'generated_at':datetime.now(timezone.utc).isoformat(),'games':{},'regressions':{},'failures':[]}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id,slug FROM games WHERE slug=ANY(%s) ORDER BY slug",(list(ACTIVE),))
+              games=[dict(r) for r in cur.fetchall()]
+              if {g['slug'] for g in games} != set(ACTIVE):
+                  raise AssertionError({'expected_games':ACTIVE,'actual':games})
+              cur.execute("SELECT id FROM price_sources WHERE name='cardmarket'")
+              row=cur.fetchone()
+              if not row:
+                  raise AssertionError('Cardmarket canonical price source is missing')
+              source_id=int(row['id'])
+
+              for game in games:
+                gid=int(game['id']); slug=str(game['slug']); r={}
+                cur.execute('''
+                  SELECT count(DISTINCT l.print_id) accepted_prints,count(*) accepted_links
+                  FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.product_group='single' AND e.game_id=%s
+                    AND l.link_status=ANY(%s)
+                ''',(gid,list(ACCEPTED)))
+                r.update(dict(cur.fetchone()))
+
+                cur.execute('''
+                  SELECT count(*) n FROM (
+                    SELECT l.print_id
+                    FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.product_group='single' AND e.game_id=%s AND l.link_status=ANY(%s)
+                    GROUP BY l.print_id HAVING count(DISTINCT l.external_product_id)<>1
+                  ) q
+                ''',(gid,list(ACCEPTED)))
+                r['single_print_ambiguities']=int(cur.fetchone()['n'])
+
+                cur.execute('''
+                  SELECT count(*) n FROM (
+                    SELECT l.external_product_id
+                    FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.product_group='single' AND e.game_id=%s AND l.link_status=ANY(%s)
+                    GROUP BY l.external_product_id HAVING count(DISTINCT l.print_id)<>1
+                  ) q
+                ''',(gid,list(ACCEPTED)))
+                r['single_product_ambiguities']=int(cur.fetchone()['n'])
+
+                cur.execute('''
+                  SELECT count(*) n
+                  FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                  WHERE e.source='cardmarket' AND e.product_group='single' AND e.game_id=%s
+                    AND l.link_status=ANY(%s) AND c.game_id<>e.game_id
+                ''',(gid,list(ACCEPTED)))
+                r['single_cross_game']=int(cur.fetchone()['n'])
+
+                cur.execute('''
+                  WITH accepted AS (
+                    SELECT l.print_id,min(e.external_id) id_product,count(DISTINCT l.external_product_id) n
+                    FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.product_group='single' AND e.game_id=%s AND l.link_status=ANY(%s)
+                    GROUP BY l.print_id
+                  ), latest AS (
+                    SELECT DISTINCT ON (ps.entity_id) ps.entity_id print_id,ps.as_of,ps.raw_json
+                    FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id
+                    WHERE ps.source_id=%s AND ps.entity_type='print' AND c.game_id=%s
+                    ORDER BY ps.entity_id,ps.as_of DESC,ps.id DESC
+                  )
+                  SELECT count(*) n FROM latest l LEFT JOIN accepted a ON a.print_id=l.print_id
+                  WHERE a.print_id IS NULL OR a.n<>1 OR coalesce(l.raw_json->>'idProduct','')<>coalesce(a.id_product,'')
+                ''',(gid,list(ACCEPTED),source_id,gid))
+                r['stale_or_mismatched_print_prices']=int(cur.fetchone()['n'])
+
+                cur.execute("SELECT max(last_seen_at) t FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,))
+                r['latest_external_catalog']=cur.fetchone()['t']
+                cur.execute('''
+                  SELECT max(p.as_of) t FROM external_market_price_snapshots p
+                  JOIN external_catalog_products e ON e.id=p.external_product_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s
+                ''',(gid,))
+                r['latest_external_price']=cur.fetchone()['t']
+                cur.execute('''
+                  SELECT max(ps.as_of) t FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id
+                  WHERE ps.source_id=%s AND ps.entity_type='print' AND c.game_id=%s
+                ''',(source_id,gid))
+                r['latest_canonical_print_price']=cur.fetchone()['t']
+
+                cur.execute('''
+                  WITH capture AS (
+                    SELECT max(last_seen_at) t FROM external_catalog_products
+                    WHERE source='cardmarket' AND product_group='non_single' AND game_id=%s
+                  ), current_products AS (
+                    SELECT e.id FROM external_catalog_products e,capture c
+                    WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.game_id=%s AND e.last_seen_at=c.t
+                  ), links AS (
+                    SELECT cp.id,count(DISTINCT l.product_variant_id) n
+                    FROM current_products cp LEFT JOIN external_catalog_product_variant_links l
+                      ON l.external_product_id=cp.id AND l.link_status=ANY(%s)
+                    GROUP BY cp.id
+                  )
+                  SELECT (SELECT count(*) FROM current_products) current_products,
+                         count(*) FILTER (WHERE n<>1) structural_ambiguities
+                  FROM links
+                ''',(gid,gid,list(ACCEPTED)))
+                sr=dict(cur.fetchone()); r['sealed_current_products']=int(sr['current_products'] or 0); r['sealed_structural_ambiguities']=int(sr['structural_ambiguities'] or 0)
+
+                cur.execute('''
+                  SELECT count(*) n
+                  FROM external_catalog_product_variant_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN product_variants pv ON pv.id=l.product_variant_id
+                  JOIN products p ON p.id=pv.product_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.game_id=%s
+                    AND l.link_status=ANY(%s) AND p.game_id<>e.game_id
+                ''',(gid,list(ACCEPTED)))
+                r['sealed_cross_game']=int(cur.fetchone()['n'])
+
+                cur.execute('''
+                  WITH accepted AS (
+                    SELECT l.product_variant_id,min(e.external_id) id_product,count(DISTINCT l.external_product_id) n
+                    FROM external_catalog_product_variant_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                    WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.game_id=%s AND l.link_status=ANY(%s)
+                    GROUP BY l.product_variant_id
+                  ), latest AS (
+                    SELECT DISTINCT ON (ps.entity_id) ps.entity_id variant_id,ps.as_of,ps.raw_json
+                    FROM price_snapshots ps JOIN product_variants pv ON pv.id=ps.entity_id JOIN products p ON p.id=pv.product_id
+                    WHERE ps.source_id=%s AND ps.entity_type='product_variant' AND p.game_id=%s
+                    ORDER BY ps.entity_id,ps.as_of DESC,ps.id DESC
+                  )
+                  SELECT count(*) n FROM latest l LEFT JOIN accepted a ON a.product_variant_id=l.variant_id
+                  WHERE a.product_variant_id IS NULL OR a.n<>1 OR coalesce(l.raw_json->>'idProduct','')<>coalesce(a.id_product,'')
+                ''',(gid,list(ACCEPTED),source_id,gid))
+                r['stale_or_mismatched_sealed_prices']=int(cur.fetchone()['n'])
+                cur.execute('''
+                  SELECT max(ps.as_of) t FROM price_snapshots ps JOIN product_variants pv ON pv.id=ps.entity_id JOIN products p ON p.id=pv.product_id
+                  WHERE ps.source_id=%s AND ps.entity_type='product_variant' AND p.game_id=%s
+                ''',(source_id,gid))
+                r['latest_canonical_sealed_price']=cur.fetchone()['t']
+
+                for key in ('single_print_ambiguities','single_product_ambiguities','single_cross_game','stale_or_mismatched_print_prices','sealed_structural_ambiguities','sealed_cross_game','stale_or_mismatched_sealed_prices'):
+                    if int(r[key]) != 0:
+                        out['failures'].append(f'{slug}:{key}={r[key]}')
+                out['games'][slug]=r
+
+              cur.execute('''
+                SELECT e.external_id,l.link_status,l.mapping_method
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=44257 AND e.source='cardmarket'
+                ORDER BY e.external_id,l.link_status
+              ''')
+              luffy_links=[dict(r) for r in cur.fetchall()]
+              accepted_luffy=sorted({str(r['external_id']) for r in luffy_links if r['link_status'] in ACCEPTED})
+              cur.execute('''
+                SELECT ps.as_of,ps.raw_json->>'idProduct' id_product
+                FROM price_snapshots ps JOIN price_sources s ON s.id=ps.source_id
+                WHERE ps.entity_type='print' AND ps.entity_id=44257 AND s.name='cardmarket'
+                ORDER BY ps.as_of DESC,ps.id DESC LIMIT 1
+              ''')
+              latest_luffy=cur.fetchone()
+              out['regressions']['luffy_44257']={
+                'accepted_products':accepted_luffy,
+                'all_links':luffy_links,
+                'latest_price':dict(latest_luffy) if latest_luffy else None,
+                'expected':'720061',
+                'forbidden':'749435',
+              }
+              latest_luffy_product=str(latest_luffy['id_product']) if latest_luffy and latest_luffy['id_product'] is not None else None
+              if accepted_luffy != ['720061']:
+                  out['failures'].append(f'luffy_44257 accepted={accepted_luffy}, expected=[720061]')
+              if latest_luffy_product != '720061':
+                  out['failures'].append(f'luffy_44257 latest_price={latest_luffy_product}, expected=720061')
+
+              cur.execute('''
+                SELECT g.slug,l.mapping_method,count(*) n
+                FROM external_catalog_product_variant_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id JOIN games g ON g.id=e.game_id
+                WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s) AND l.link_status=ANY(%s)
+                GROUP BY g.slug,l.mapping_method ORDER BY g.slug,n DESC
+              ''',(list(ACTIVE),list(ACCEPTED)))
+              out['sealed_mapping_methods']=[dict(r) for r in cur.fetchall()]
+          finally:
+            conn.close()
+
+          def serial(value):
+              if hasattr(value,'isoformat'): return value.isoformat()
+              raise TypeError(type(value).__name__)
+          Path('/tmp/cardmarket-point4-production-gate.json').write_text(json.dumps(out,indent=2,sort_keys=True,default=serial)+'\n')
+          print(json.dumps(out,indent=2,sort_keys=True,default=serial))
+          if out['failures']:
+              raise SystemExit('PRODUCTION GATE FAILED: '+ '; '.join(out['failures']))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-point4-production-gate-${{ github.run_id }}
+          path: /tmp/cardmarket-point4-production-gate.json
+          retention-days: 90
+          if-no-files-found: error

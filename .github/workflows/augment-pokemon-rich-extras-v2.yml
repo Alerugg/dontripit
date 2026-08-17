@@ -1,0 +1,125 @@
+name: Augment Pokemon Rich Extras V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/augment-pokemon-rich-extras-v2.yml'
+      - 'backend/app/scripts/augment_pokemon_rich_extras_v2.py'
+  workflow_dispatch:
+
+concurrency:
+  group: pokemon-rich-identity-augmentation
+  cancel-in-progress: false
+
+jobs:
+  augment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TCGDEX_SOURCE_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Checkout pinned official TCGdex cards database
+        run: |
+          set -euo pipefail
+          git init /tmp/tcgdex-cards
+          git -C /tmp/tcgdex-cards remote add origin https://github.com/tcgdex/cards-database.git
+          git -C /tmp/tcgdex-cards fetch --depth 1 origin "$TCGDEX_SOURCE_SHA"
+          git -C /tmp/tcgdex-cards checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/tcgdex-cards rev-parse HEAD)" = "$TCGDEX_SOURCE_SHA"
+
+      - name: Export canonical rich snapshot
+        run: |
+          bun backend/tools/export_tcgdex_rich_snapshot.ts \
+            --source-root /tmp/tcgdex-cards \
+            --source-version "$TCGDEX_SOURCE_SHA" \
+            --output /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json
+
+      - name: Re-run zero-collision preflight
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m app.scripts.preflight_pokemon_rich_extras_v2 \
+            --snapshot /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json \
+            | tee /tmp/pokemon-rich-extras-preflight.json
+
+      - name: Apply schema migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Add released English identities transactionally
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.augment_pokemon_rich_extras_v2 \
+            --snapshot /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json \
+            --backup-path /tmp/pokemon-rich-extras-before.json \
+            --report-path /tmp/pokemon-rich-extras-augmentation.json \
+            | tee /tmp/pokemon-rich-extras-augmentation.log
+
+      - name: Reconcile complete rich source after augmentation
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_pokemon_rich_snapshot_v2 \
+            --snapshot /tmp/pokemon-rich-snapshot.jsonl \
+            --manifest /tmp/pokemon-rich-manifest.json \
+            | tee /tmp/pokemon-rich-post-augmentation-audit.json
+          python - <<'PY'
+          import json
+          audit = json.load(open('/tmp/pokemon-rich-post-augmentation-audit.json', encoding='utf-8'))
+          identity = audit['identity']
+          extras = audit['extra_classification']
+          assert audit['status'] == 'pass', audit
+          assert identity['rest_physical_baseline_cards'] == 20964, identity
+          assert identity['canonical_english_cards'] == 21065, identity
+          assert identity['canonical_snapshot_coverage'] == 1.0, identity
+          assert extras['released_english_total'] == 101, extras
+          assert extras['released_english_accepted_in_neon'] == 101, extras
+          assert extras['released_english_pending'] == 0, extras
+          assert extras['regional_or_no_english'] == 94, extras
+          print(json.dumps({'status':'pass','identity':identity,'extras':extras}, indent=2))
+          PY
+
+      - name: Upload identity augmentation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-rich-identity-augmentation-${{ github.sha }}
+          path: |
+            /tmp/pokemon-rich-manifest.json
+            /tmp/pokemon-rich-extras-preflight.json
+            /tmp/pokemon-rich-extras-before.json
+            /tmp/pokemon-rich-extras-augmentation.json
+            /tmp/pokemon-rich-extras-augmentation.log
+            /tmp/pokemon-rich-post-augmentation-audit.json
+          retention-days: 180
+          if-no-files-found: warn

@@ -1,9 +1,11 @@
 import { redirect } from 'next/navigation'
 
-export default function LegacyExplorerDetailPage({ params }) {
-  if (params.type === 'print') {
-    redirect(`/prints/${params.id}`)
+export default async function LegacyExplorerDetailPage({ params }) {
+  const { type, id } = await params
+
+  if (type === 'print') {
+    redirect(`/prints/${id}`)
   }
 
-  redirect(`/cards/${params.id}`)
+  redirect(`/cards/${id}`)
 }

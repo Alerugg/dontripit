@@ -1,0 +1,114 @@
+name: Bootstrap One Piece Catalog Fast
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/bootstrap-onepiece-fast.yml'
+
+jobs:
+  bootstrap:
+    name: Fast One Piece bootstrap into Neon
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ONEPIECE_SOURCE: remote
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Re-validate fast bootstrap locally
+        run: pytest -q tests/test_bootstrap_onepiece_fast.py
+
+      - name: Verify required database secret
+        run: |
+          test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL_UNPOOLED missing"; exit 1; }
+          echo "Database secret configured"
+
+      - name: Apply existing migrations
+        run: alembic upgrade head
+
+      - name: Capture pre-bootstrap Catalog Health
+        run: python -m app.scripts.catalog_health --json > onepiece-fast-health-before.json
+
+      - name: Bootstrap One Piece with batched inserts
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.bootstrap_onepiece_fast | tee onepiece-fast-bootstrap-result.json
+
+      - name: Close stale cancelled One Piece ingest runs
+        if: success()
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from sqlalchemy import select
+          from app import db
+          from app.models import IngestRun, Source
+
+          db.init_engine()
+          now = datetime.now(timezone.utc)
+          with db.SessionLocal() as session:
+              source = session.execute(select(Source).where(Source.name == 'onepiece')).scalar_one_or_none()
+              if source is None:
+                  print('No One Piece source row found; nothing to clean')
+                  raise SystemExit(0)
+              rows = session.execute(
+                  select(IngestRun).where(
+                      IngestRun.source_id == source.id,
+                      IngestRun.status == 'running',
+                      IngestRun.finished_at.is_(None),
+                  )
+              ).scalars().all()
+              for row in rows:
+                  row.status = 'cancelled'
+                  row.finished_at = now
+                  row.error_summary = 'Cancelled legacy bootstrap; replaced by batched fast bootstrap'
+              session.commit()
+              print(f'Closed stale runs: {len(rows)}')
+          PY
+
+      - name: Capture post-bootstrap Catalog Health
+        if: always()
+        run: python -m app.scripts.catalog_health --json > onepiece-fast-health-after.json
+
+      - name: Print One Piece post-bootstrap summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('onepiece-fast-health-after.json')
+          if not path.exists():
+              print('No post-bootstrap health report available')
+              raise SystemExit(0)
+          payload = json.loads(path.read_text())
+          row = next((g for g in payload.get('games', []) if g.get('slug') == 'onepiece'), None)
+          print(json.dumps({'onepiece': row, 'totals': payload.get('totals')}, indent=2))
+          PY
+
+      - name: Upload fast bootstrap audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-fast-bootstrap-${{ github.sha }}
+          path: |
+            backend/onepiece-fast-health-before.json
+            backend/onepiece-fast-bootstrap-result.json
+            backend/onepiece-fast-health-after.json
+          retention-days: 30
+          if-no-files-found: warn

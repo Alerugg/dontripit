@@ -1,0 +1,34 @@
+name: Probe Pokemon Enrichment State V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/probe-pokemon-enrichment-state-v2.yml'
+      - 'backend/app/scripts/probe_pokemon_enrichment_state_v2.py'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m app.scripts.probe_pokemon_enrichment_state_v2 | tee /tmp/probe.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-enrichment-state-${{ github.sha }}
+          path: /tmp/probe.json
+          if-no-files-found: warn

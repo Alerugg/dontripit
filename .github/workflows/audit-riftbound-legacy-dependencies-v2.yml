@@ -1,0 +1,56 @@
+name: Audit Riftbound Legacy Dependencies V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-riftbound-legacy-dependencies-v2.yml'
+      - 'backend/app/scripts/audit_riftbound_legacy_dependencies_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: riftbound-legacy-dependencies-v2
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Audit Riftbound legacy dependencies read-only
+        run: python -m app.scripts.audit_riftbound_legacy_dependencies_v2
+
+      - name: Upload dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riftbound-legacy-dependencies-v2-${{ github.sha }}
+          path: /tmp/riftbound-legacy-dependencies-v2.json
+          retention-days: 90
+          if-no-files-found: error

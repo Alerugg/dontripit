@@ -1,3 +1,4 @@
+import logging
 import os
 
 from flask import Flask, jsonify
@@ -9,6 +10,7 @@ from app.auth.service import ensure_active_api_key
 from app.db import init_engine
 from app import db
 from app.routes.catalog import catalog_bp
+from app.routes.card_prints import card_prints_bp
 from app.routes.admin import admin_bp
 from app.routes.admin_ingest import admin_ingest_bp
 from app.routes.admin_ingest_status import admin_ingest_status_bp
@@ -18,8 +20,19 @@ from app.routes.admin_metrics import admin_metrics_bp
 from app.routes.docs import docs_bp
 from app.routes.games import games_bp
 from app.routes.health import health_bp
+from app.routes.market_current_products import market_current_products_bp
+from app.routes.market_reference import market_reference_bp
+from app.routes.market_search_read import market_search_read_bp
+from app.routes.market_print_summary import market_print_summary_bp
 from app.routes.search import search_bp
+from app.routes.search_v2 import search_v2_bp
 from app.routes.prices import prices_bp
+from app.routes.set_ui import set_ui_bp
+from app.routes.user_auth import user_auth_bp
+from app.routes.user_library import user_library_bp
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(database_url: str | None = None) -> Flask:
@@ -42,7 +55,16 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(health_bp)
     flask_app.register_blueprint(games_bp)
     flask_app.register_blueprint(catalog_bp)
+    flask_app.register_blueprint(card_prints_bp)
+    flask_app.register_blueprint(set_ui_bp)
     flask_app.register_blueprint(search_bp)
+    flask_app.register_blueprint(search_v2_bp)
+    flask_app.register_blueprint(market_current_products_bp)
+    flask_app.register_blueprint(market_reference_bp)
+    flask_app.register_blueprint(market_search_read_bp)
+    flask_app.register_blueprint(market_print_summary_bp)
+    flask_app.register_blueprint(user_auth_bp)
+    flask_app.register_blueprint(user_library_bp)
     flask_app.register_blueprint(docs_bp)
     flask_app.register_blueprint(admin_metrics_bp)
     flask_app.register_blueprint(admin_bp)
@@ -59,7 +81,8 @@ def create_app(database_url: str | None = None) -> Flask:
 
     @flask_app.errorhandler(Exception)
     def handle_uncaught(error: Exception):
-        return jsonify({"error": "internal_server_error", "detail": str(error)}), 500
+        logger.exception("Unhandled application error", exc_info=error)
+        return jsonify({"error": "internal_server_error"}), 500
 
     return flask_app
 

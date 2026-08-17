@@ -1,0 +1,116 @@
+name: QA Public Point 9 Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/qa-public-point9-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-point9-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Certify public collector journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, time
+          import urllib.parse, urllib.request
+
+          base='https://dontripit.com'
+          headers={'User-Agent':'Dontripit-Point9-QA/1.2'}
+
+          def request(path, expect_json=False, attempts=24):
+              last=None
+              for _ in range(attempts):
+                  try:
+                      req=urllib.request.Request(base+path,headers=headers)
+                      with urllib.request.urlopen(req,timeout=30) as response:
+                          body=response.read()
+                          if response.status==200:
+                              if expect_json:
+                                  return json.loads(body.decode('utf-8'))
+                              return body.decode('utf-8','replace')
+                          last=f'HTTP {response.status}'
+                  except Exception as exc:
+                      last=repr(exc)
+                  time.sleep(5)
+              raise AssertionError(f'{path} failed after retries: {last}')
+
+          pages=['/','/games/pokemon','/games/onepiece','/games/magic','/games/yugioh','/login','/register','/forgot-password','/reset-password']
+          for path in pages:
+              request(path)
+              print(f'page_ok={path}')
+
+          home=request('/')
+          for forbidden in ['€1.284,40','♡24 cartas','Cookies · pendiente de configuración final']:
+              assert forbidden not in home, f'legacy/fake UI leaked on home: {forbidden}'
+
+          register_html=request('/register')
+          assert 'marketing_consent' not in register_html, 'newsletter consent control still present in registration HTML'
+          assert 'Quiero recibir novedades' not in register_html, 'newsletter launch copy still present in registration HTML'
+
+          sets=request('/api/catalog/sets?game=onepiece&limit=100&offset=0',expect_json=True)
+          items=sets.get('items',sets if isinstance(sets,list) else [])
+          assert len(items)>=40, f'One Piece public set archive unexpectedly small: {len(items)}'
+          op15=next((row for row in items if str(row.get('code','')).lower().replace('-','')=='op15'),None)
+          assert op15, 'OP15 not found in One Piece set archive'
+          set_code=str(op15.get('code'))
+
+          page_size=50
+          offset=0
+          cards=[]
+          reported_total=None
+          first_page_has_more=False
+          while True:
+              detail=request('/api/catalog/set-detail?'+urllib.parse.urlencode({'game':'onepiece','set_code':set_code,'limit':page_size,'offset':offset}),expect_json=True)
+              page_cards=detail.get('cards') or []
+              page_offset=int(detail.get('offset') or offset)
+              page_total=int(detail.get('total') or len(page_cards))
+              if reported_total is None:
+                  reported_total=page_total
+                  first_page_has_more=(page_offset + len(page_cards)) < page_total
+              cards.extend(page_cards)
+              has_more=(page_offset + len(page_cards)) < page_total
+              if not has_more:
+                  break
+              assert page_cards, 'pagination reports more rows but returned no cards'
+              offset = page_offset + len(page_cards)
+              assert offset <= 5000, 'pagination safety limit reached'
+
+          assert reported_total and reported_total>50, f'OP15 catalog is unexpectedly small: {reported_total}'
+          assert first_page_has_more, 'OP15 first page should require another page'
+          assert len(cards)==reported_total, f'OP15 pagination incomplete: {len(cards)}/{reported_total}'
+          fallback_names=[row for row in cards if str(row.get('name','')).startswith('Carta #')]
+          assert len(fallback_names) <= max(3, int(len(cards)*0.05)), f'too many unresolved card names: {len(fallback_names)}/{len(cards)}'
+          exact=next((row for row in cards if row.get('id') and row.get('card_id')),None)
+          assert exact, 'no exact physical version available for navigation QA'
+
+          print_id=exact['id']
+          card_id=exact['card_id']
+          request(f'/prints/{print_id}')
+          request(f'/games/onepiece/cards/{card_id}')
+          print(json.dumps({
+              'onepiece_public_sets':len(items),
+              'op15_code':set_code,
+              'op15_versions_loaded':len(cards),
+              'reported_total':reported_total,
+              'pagination':'pass',
+              'fallback_names':len(fallback_names),
+              'exact_print_route':'pass',
+              'card_route':'pass',
+              'fake_home_metrics':'absent',
+              'newsletter_ui':'absent',
+          },sort_keys=True))
+          PY

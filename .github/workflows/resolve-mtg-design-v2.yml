@@ -1,0 +1,61 @@
+name: Resolve MTG Design V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/resolve-mtg-design-v2.yml'
+      - 'backend/app/scripts/audit_external_id_query_usage_v2.py'
+      - 'backend/app/scripts/resolve_mtg_identity_edgecases_v2.py'
+  workflow_dispatch:
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile design audits
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/scripts/audit_external_id_query_usage_v2.py \
+            app/scripts/resolve_mtg_identity_edgecases_v2.py
+      - name: Audit external-ID query usage statically
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_external_id_query_usage_v2 \
+            --repo-root .. \
+            --report-path /tmp/external-id-query-usage-v2.json \
+            | tee /tmp/external-id-query-usage-v2.log
+      - name: Resolve MTG source identity edge cases
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.resolve_mtg_identity_edgecases_v2 \
+            --report-path /tmp/mtg-identity-edgecases-v2.json \
+            | tee /tmp/mtg-identity-edgecases-v2.log
+      - name: Upload MTG design evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-design-v2-${{ github.sha }}
+          path: |
+            /tmp/external-id-query-usage-v2.json
+            /tmp/external-id-query-usage-v2.log
+            /tmp/mtg-identity-edgecases-v2.json
+            /tmp/mtg-identity-edgecases-v2.log
+          retention-days: 90
+          if-no-files-found: error

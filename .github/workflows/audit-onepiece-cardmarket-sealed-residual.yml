@@ -1,0 +1,155 @@
+name: Audit One Piece Cardmarket Sealed Residual
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-cardmarket-sealed-residual.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit deterministic residuals inside sealed-anchored official releases
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+            v=unicodedata.normalize('NFKD',str(v or ''));v=''.join(c for c in v if not unicodedata.combining(c)).casefold().replace('’',"'").replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',v)).strip()
+          def release_core(name):
+            raw=re.sub(r'\s*\[[^\]]+\]\s*$','',str(name or '').strip()).strip()
+            m=re.match(r'^(?:BOOSTER PACK|STARTER DECK|EXTRA BOOSTER|PREMIUM BOOSTER|ULTIMATE DECK)\s*-(.+)-\s*$',raw,flags=re.I)
+            return norm(m.group(1) if m else raw)
+          def sealed_bases(name):
+            raw=str(name or '').strip();out={norm(raw)}
+            for prefix in ('Starter Deck: ','Ultimate Deck: '):
+              if raw.casefold().startswith(prefix.casefold()):out.add(norm(raw[len(prefix):]))
+            for pat in (r'\s+Booster Box Case\s*\(.*\)$',r'\s+Booster Box$',r'\s+Sleeved Booster$',r'\s+Booster Display$',r'\s+Booster$',r'\s*:\s*Pre-Release Pack$'):
+              x=re.sub(pat,'',raw,flags=re.I).strip()
+              if x!=raw:out.add(norm(x))
+            return {x for x in out if x}
+          cr=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+          def parse(name):
+            m=cr.match(str(name or '').strip())
+            if not m:return None
+            c=m.group('collector').upper();c=re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-',lambda x:f'{x.group(1).upper()}{int(x.group(2)):02d}-',c)
+            return norm(m.group('name')),c
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='onepiece_official'",(gid,))
+              rels=[dict(r) for r in cur.fetchall()];idx=defaultdict(list)
+              for r in rels:idx[release_core(r['name'])].append(r)
+              cur.execute("SELECT external_id,expansion_external_id,name,category FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s",(gid,latest))
+              byexp=defaultdict(list)
+              for r in cur.fetchall():byexp[str(r['expansion_external_id'] or '')].append(dict(r))
+              exp_rel={};conflicts=[]
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for base in sealed_bases(item['name']):
+                    ms=idx.get(base,[])
+                    if len(ms)==1:votes[int(ms[0]['id'])].append({'idProduct':str(item['external_id']),'name':item['name'],'official_release':ms[0]['name']})
+                if len(votes)==1:exp_rel[exp]=next(iter(votes))
+                elif len(votes)>1:conflicts.append(exp)
+              if len(exp_rel)<60:raise AssertionError({'sealed_release_anchor_regression':len(exp_rel)})
+
+              cur.execute('''SELECT pr.release_id,p.id print_id,p.collector_number,p.variant,p.rarity,c.name card_name,s.code set_code
+                FROM print_releases pr JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                WHERE c.game_id=%s AND lower(p.language)='en' ''',(gid,))
+              canon=defaultdict(list)
+              for r in cur.fetchall():canon[(int(r['release_id']),norm(r['card_name']),str(r['collector_number']).upper())].append(dict(r))
+              cur.execute('''SELECT id external_product_id,external_id id_product,expansion_external_id,name market_name
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(gid,latest))
+              market_groups=defaultdict(list)
+              for r in cur.fetchall():
+                d=dict(r);q=parse(d['market_name'])
+                if q and str(d['expansion_external_id'] or '') in exp_rel:
+                  market_groups[(str(d['expansion_external_id'] or ''),q[0],q[1])].append(d)
+              cur.execute('''SELECT l.external_product_id,l.print_id,e.expansion_external_id,e.name market_name
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
+              existing=[dict(r) for r in cur.fetchall()]
+              links_by_print=defaultdict(set);links_by_product=defaultdict(set)
+              for r in existing:
+                links_by_print[int(r['print_id'])].add(int(r['external_product_id']));links_by_product[int(r['external_product_id'])].add(int(r['print_id']))
+
+              safe=[];status=Counter();amb=[]
+              for (exp,n,col),ms in market_groups.items():
+                rid=exp_rel[exp];cs=canon.get((rid,n,col),[])
+                if not cs:status['no_official_group']+=1;continue
+                cids={int(x['print_id']) for x in cs};mids={int(x['external_product_id']) for x in ms}
+                if len(cids)!=len(mids):status['cardinality_mismatch']+=1;continue
+                cross=[]
+                for pid in cids:
+                  for eid in links_by_print.get(pid,set()):
+                    if eid not in mids:cross.append(('print',pid,eid))
+                for eid in mids:
+                  for pid in links_by_product.get(eid,set()):
+                    if pid not in cids:cross.append(('product',eid,pid))
+                if cross:status['cross_group_existing_link']+=1;continue
+                # Existing accepted relations inside group must already be one-to-one.
+                if any(len(links_by_print.get(pid,set()) & mids)>1 for pid in cids) or any(len(links_by_product.get(eid,set()) & cids)>1 for eid in mids):
+                  status['existing_non_bijective']+=1;continue
+                uc=[x for x in cs if not (links_by_print.get(int(x['print_id']),set()) & mids)]
+                um=[x for x in ms if not (links_by_product.get(int(x['external_product_id']),set()) & cids)]
+                if len(uc)==1 and len(um)==1:
+                  safe.append({'print_id':int(uc[0]['print_id']),'external_product_id':int(um[0]['external_product_id']),'idProduct':str(um[0]['id_product']),
+                    'expansion_external_id':exp,'release_id':rid,'card_name':uc[0]['card_name'],'collector_number':uc[0]['collector_number'],'variant':uc[0]['variant'],'rarity':uc[0]['rarity'],'set_code':uc[0]['set_code'],
+                    'group_size':len(cids),'already_linked_in_group':len(cids)-1})
+                  status['safe_residual']+=1
+                elif not uc and not um:status['fully_linked_group']+=1
+                else:
+                  status['residual_ambiguous']+=1
+                  if len(amb)<100:amb.append({'expansion':exp,'release_id':rid,'collector':col,'canonical':len(cids),'market':len(mids),'uc':len(uc),'um':len(um)})
+              pc=Counter(x['print_id'] for x in safe);ec=Counter(x['external_product_id'] for x in safe)
+              global_safe=[x for x in safe if pc[x['print_id']]==1 and ec[x['external_product_id']]==1]
+              status['global_collision_removed']=len(safe)-len(global_safe)
+              # Targets must be completely unlinked globally, not merely within group.
+              final=[x for x in global_safe if not links_by_print.get(x['print_id']) and not links_by_product.get(x['external_product_id'])]
+              status['global_target_already_linked_removed']=len(global_safe)-len(final);status['final_safe']=len(final)
+              report={'mode':'dry_run','game':'onepiece','latest_cardmarket_snapshot':str(latest),'sealed_release_anchors':len(exp_rel),'sealed_anchor_conflicts':len(conflicts),
+                'status_counts':dict(status),'safe_candidates':len(final),'safe_candidate_prints':len({x['print_id'] for x in final}),'safe_candidate_products':len({x['external_product_id'] for x in final}),
+                'candidate_sample':final[:150],'ambiguous_sample':amb}
+              summary={k:v for k,v in report.items() if not k.endswith('_sample')}
+              Path('/tmp/op-sealed-residual.json').write_text(json.dumps(report,indent=2,default=str)+'\n');Path('/tmp/op-sealed-residual-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n')
+              print(json.dumps(summary,indent=2,default=str))
+          finally:conn.close()
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/op-sealed-residual-summary.json audit-reports/onepiece-cardmarket-sealed-residual-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-cardmarket-sealed-residual-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update One Piece sealed residual Cardmarket audit"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-cardmarket-sealed-residual-${{ github.run_id }}
+          path: /tmp/op-sealed-residual.json
+          retention-days: 90

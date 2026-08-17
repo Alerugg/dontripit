@@ -1,0 +1,70 @@
+name: Audit Production Backend DB Target
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-production-backend-db-target.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PostgreSQL driver
+        run: pip install psycopg2-binary==2.9.9
+      - name: Correlate recent backend requests in canonical Neon read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgresql+psycopg2://'):
+              url='postgresql://'+url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url='postgresql://'+url[len('postgres://'):]
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SET TRANSACTION READ ONLY')
+                  cur.execute('SELECT current_database()')
+                  database=str(cur.fetchone()[0])
+                  cur.execute("SELECT current_setting('neon.project_id', true)")
+                  project_id=str(cur.fetchone()[0])
+                  cur.execute("""
+                    SELECT endpoint,status_code,latency_ms,api_key_prefix,requested_at
+                    FROM api_request_metrics
+                    WHERE requested_at >= now() - interval '30 minutes'
+                    ORDER BY requested_at DESC
+                    LIMIT 40
+                  """)
+                  rows=[{
+                    'endpoint':str(endpoint),'status_code':int(status),'latency_ms':int(latency),
+                    'api_key_prefix':prefix,'requested_at':requested.isoformat(),
+                  } for endpoint,status,latency,prefix,requested in cur.fetchall()]
+              conn.rollback()
+          finally:
+              conn.close()
+          matched=[row for row in rows if row['status_code']==401 and '/catalog' in row['endpoint']]
+          report={
+            'status':'pass' if matched else 'inconclusive',
+            'mode':'read_only','database_writes':0,'database':database,'neon_project_id':project_id,
+            'recent_requests':rows,'recent_catalog_401_matches':matched,
+            'inference':'A matching production 401 recorded here proves the backend handling that request uses this canonical Neon database.' if matched else 'No matching request found in the current window.',
+          }
+          print(json.dumps(report,indent=2,default=str))
+          if not matched:
+              raise SystemExit('No matching recent catalog 401 found in canonical Neon')
+          PY

@@ -1,0 +1,78 @@
+name: Inspect One Piece Cardmarket Price Variants
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/inspect-onepiece-cardmarket-price-variants.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Inspect both normal and foil latest snapshots for known exact mappings
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          sql=text('''
+          WITH latest AS (
+            SELECT e.id external_product_id,max(s.as_of) as_of
+            FROM external_catalog_products e
+            JOIN external_market_price_snapshots s ON s.external_product_id=e.id
+            JOIN games g ON g.id=e.game_id
+            WHERE e.source='cardmarket' AND g.slug='onepiece'
+            GROUP BY e.id
+          )
+          SELECT p.id print_id,p.collector_number,p.variant,p.is_foil,
+                 e.external_id cardmarket_id,e.website_path,
+                 s.price_variant,s.price_low,s.price_mid,s.price_market,s.price_last,
+                 s.avg1,s.avg7,s.avg30,s.as_of
+          FROM prints p
+          JOIN cards c ON c.id=p.card_id
+          JOIN games g ON g.id=c.game_id AND g.slug='onepiece'
+          JOIN external_catalog_print_links l ON l.print_id=p.id AND l.link_status IN ('accepted','mapped','exact')
+          JOIN external_catalog_products e ON e.id=l.external_product_id AND e.source='cardmarket'
+          LEFT JOIN latest x ON x.external_product_id=e.id
+          LEFT JOIN external_market_price_snapshots s ON s.external_product_id=e.id AND s.as_of=x.as_of
+          WHERE p.collector_number IN ('OP15-001','OP15-003','OP15-119')
+          ORDER BY p.collector_number,p.variant,p.id,s.price_variant
+          ''')
+          with engine.connect() as conn:
+              rows=conn.execute(sql).mappings().all()
+          out=[]
+          for r in rows:
+              d={}
+              for k,v in dict(r).items():
+                  if hasattr(v,'isoformat'): d[k]=v.isoformat()
+                  elif v is not None and v.__class__.__name__=='Decimal': d[k]=float(v)
+                  else: d[k]=v
+              out.append(d)
+          report={'rows':out}
+          Path('/tmp/onepiece-price-variants.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-price-variants-${{ github.run_id }}
+          path: /tmp/onepiece-price-variants.json
+          retention-days: 7
+          if-no-files-found: error

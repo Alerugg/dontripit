@@ -1,0 +1,100 @@
+name: Catalog Health Audit
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/models.py'
+      - 'backend/app/scripts/catalog_health.py'
+      - 'backend/app/scripts/ingest_status.py'
+      - 'backend/app/scripts/daily_refresh.py'
+      - 'backend/app/scripts/bootstrap_onepiece_fast.py'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh_v2.py'
+      - 'backend/tests/test_catalog_health.py'
+      - 'backend/tests/test_ingest_status.py'
+      - 'backend/tests/test_daily_refresh.py'
+      - 'backend/tests/test_scryfall_incremental.py'
+      - 'backend/tests/test_scryfall_bulk_v2.py'
+      - 'backend/tests/test_ygoprodeck_incremental_v2.py'
+      - 'backend/tests/test_bootstrap_onepiece_fast.py'
+      - '.github/workflows/catalog-health.yml'
+      - '.github/workflows/ingest.yml'
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Validate catalog and refresh logic
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run focused recovery tests
+        run: >-
+          pytest -q
+          tests/test_catalog_health.py
+          tests/test_ingest_status.py
+          tests/test_daily_refresh.py
+          tests/test_scryfall_incremental.py
+          tests/test_scryfall_bulk_v2.py
+          tests/test_ygoprodeck_incremental_v2.py
+          tests/test_bootstrap_onepiece_fast.py
+
+  neon-audit:
+    name: Audit Neon catalog (read only)
+    needs: tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify database secret exists
+        run: |
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL_UNPOOLED is not configured"
+            exit 1
+          fi
+          echo "Database secret is configured"
+
+      - name: Generate Catalog Health JSON
+        run: python -m app.scripts.catalog_health --json > catalog-health.json
+
+      - name: Print Catalog Health report
+        run: cat catalog-health.json
+
+      - name: Upload Catalog Health artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-health-${{ github.sha }}
+          path: backend/catalog-health.json
+          retention-days: 30

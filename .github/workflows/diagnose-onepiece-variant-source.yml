@@ -1,0 +1,76 @@
+name: Diagnose One Piece Variant Source
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/diagnose-onepiece-variant-source.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Discover cards API pagination contract
+        run: |
+          python - <<'PY'
+          import json
+          import requests
+
+          base='https://one-piece.cards/api/cards'
+          session=requests.Session()
+          session.headers.update({'User-Agent':'DontRipIt/1.0 catalog verifier'})
+          variants=[
+              {'set':'OP15-EB04'},
+              {'set':'OP15-EB04','limit':500},
+              {'set':'OP15-EB04','limit':200},
+              {'set':'OP15-EB04','limit':60,'offset':60},
+              {'set':'OP15-EB04','limit':60,'page':2},
+              {'set':'OP-15','limit':500},
+              {'set':'OP-15','limit':200},
+              {'set':'OP-15','limit':60,'offset':60},
+              {'set':'OP-15','limit':60,'page':2},
+          ]
+          report=[]
+          for params in variants:
+              try:
+                  r=session.get(base,params=params,timeout=20)
+                  entry={'params':params,'url':r.url,'status':r.status_code,'length':len(r.content)}
+                  if r.ok:
+                      payload=r.json()
+                      if isinstance(payload,dict):
+                          cards=payload.get('cards') or []
+                          entry['keys']=list(payload.keys())
+                          entry['meta']={k:v for k,v in payload.items() if k!='cards'}
+                      elif isinstance(payload,list):
+                          cards=payload
+                          entry['keys']='list'
+                          entry['meta']={}
+                      else:
+                          cards=[];entry['keys']=str(type(payload));entry['meta']={}
+                      entry['card_count']=len(cards)
+                      entry['english_count']=sum(1 for c in cards if str(c.get('lang') or '').lower()=='en')
+                      entry['jp_count']=sum(1 for c in cards if str(c.get('lang') or '').lower()=='jp')
+                      entry['op15_count']=sum(1 for c in cards if str(c.get('card_id') or '').upper().startswith('OP15-'))
+                      entry['eb04_count']=sum(1 for c in cards if str(c.get('card_id') or '').upper().startswith('EB04-'))
+                      entry['first_ids']=[str(c.get('id')) for c in cards[:3]]
+                      entry['last_ids']=[str(c.get('id')) for c in cards[-3:]]
+                  report.append(entry)
+              except Exception as exc:
+                  report.append({'params':params,'error':repr(exc)})
+          print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          open('/tmp/variant-source-pagination.json','w').write(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-variant-source-pagination-${{ github.run_id }}
+          path: /tmp/variant-source-pagination.json
+          retention-days: 30

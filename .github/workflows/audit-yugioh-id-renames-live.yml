@@ -1,0 +1,96 @@
+name: Audit Yu-Gi-Oh Source ID Replacements
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-yugioh-id-renames-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build current canonical source snapshot
+        run: python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+      - name: Resolve stale IDs to current IDs by canonical name
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from collections import defaultdict
+          from sqlalchemy import create_engine, text
+
+          source=[]
+          with Path('/tmp/ygo-current/cards.jsonl').open() as f:
+              for line in f: source.append(json.loads(line))
+          source_by_key={str(r['card_key']):r for r in source}
+          source_by_name=defaultdict(list)
+          for r in source: source_by_name[str(r['name']).casefold().strip()].append(r)
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          engine=create_engine(url)
+          with engine.connect() as conn:
+              gid=conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db=conn.execute(text("SELECT id,name,card_key,yugoprodeck_id FROM cards WHERE game_id=:g"),{'g':gid}).mappings().all()
+          db_by_key={str(r['card_key']):r for r in db if r['card_key']}
+          source_keys=set(source_by_key); db_keys=set(db_by_key)
+          missing=sorted(source_keys-db_keys); stale=sorted(db_keys-source_keys)
+          pairs=[]
+          unresolved=[]
+          for old_key in stale:
+              old=db_by_key[old_key]
+              candidates=[r for r in source_by_name[str(old['name']).casefold().strip()] if str(r['card_key']) in missing]
+              if len(candidates)==1:
+                  new=candidates[0]
+                  pairs.append({
+                      'db_card_id':int(old['id']),
+                      'name':old['name'],
+                      'old_card_key':old_key,
+                      'old_yugoprodeck_id':str(old['yugoprodeck_id']),
+                      'new_card_key':str(new['card_key']),
+                      'new_yugoprodeck_id':str(new['yugoprodeck_id']),
+                      'match_evidence':'unique_exact_casefold_name_among_current_missing_ids',
+                  })
+              else:
+                  unresolved.append({'old_card_key':old_key,'name':old['name'],'candidate_count':len(candidates),'candidate_ids':[r['yugoprodeck_id'] for r in candidates]})
+          new_keys={p['new_card_key'] for p in pairs}
+          report={
+              'mode':'read_only',
+              'missing_current_ids':len(missing),
+              'stale_db_ids':len(stale),
+              'resolved_one_to_one':len(pairs),
+              'unresolved_old':len(unresolved),
+              'unresolved_new':len(set(missing)-new_keys),
+              'pairs':pairs,
+              'unresolved':unresolved,
+              'safe_for_in_place_id_migration':len(pairs)==len(missing)==len(stale) and not unresolved,
+          }
+          Path('/tmp/ygo-id-renames.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ygo-id-renames-${{ github.run_id }}
+          path: /tmp/ygo-id-renames.json
+          retention-days: 30
+          if-no-files-found: error

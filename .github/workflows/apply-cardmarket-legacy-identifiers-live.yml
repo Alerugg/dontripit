@@ -1,0 +1,89 @@
+name: Apply Certified Legacy Cardmarket Identifiers Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-cardmarket-legacy-identifiers-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-certified-legacy-cardmarket-identifiers
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Promote exact direct identifiers only
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
+          report={'status':'started'}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                WITH accepted AS (
+                  SELECT DISTINCT print_id FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket' AND e.product_group='single' AND l.link_status IN ('accepted','mapped','exact')
+                )
+                SELECT pi.print_id,pi.external_id,g.slug game_slug,e.id external_product_id,eg.slug product_game,e.product_group,
+                       (SELECT count(*) FROM print_identifiers p2 WHERE p2.print_id=pi.print_id AND lower(p2.source)='cardmarket') direct_count,
+                       (SELECT count(*) FROM external_catalog_products e2 WHERE e2.source='cardmarket' AND e2.external_id=pi.external_id) product_count
+                FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id JOIN cards card ON card.id=p.card_id JOIN games g ON g.id=card.game_id
+                LEFT JOIN accepted a ON a.print_id=pi.print_id
+                JOIN external_catalog_products e ON e.source='cardmarket' AND e.external_id=pi.external_id AND e.product_group='single'
+                JOIN games eg ON eg.id=e.game_id
+                WHERE lower(pi.source)='cardmarket' AND a.print_id IS NULL
+                ORDER BY pi.print_id
+              ''')
+              rows=[dict(r) for r in c.fetchall()]
+              safe=[r for r in rows if r['game_slug']==r['product_game'] and int(r['direct_count'])==1 and int(r['product_count'])==1]
+              if len(safe)!=4 or {r['game_slug'] for r in safe}!={'pokemon'}:
+                raise AssertionError({'expected_exactly_four_safe_pokemon_direct_ids':safe})
+              inserted=0
+              for r in safe:
+                c.execute('''
+                  INSERT INTO external_catalog_print_links
+                    (print_id,external_product_id,mapping_method,confidence,link_status,created_at,updated_at)
+                  VALUES (%s,%s,'direct_print_identifier',1.0,'accepted',now(),now())
+                  ON CONFLICT (print_id,external_product_id) DO UPDATE SET
+                    mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,updated_at=now()
+                ''',(int(r['print_id']),int(r['external_product_id'])))
+                inserted += 1
+              c.execute('''
+                SELECT count(DISTINCT l.print_id) n FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE l.print_id=ANY(%s) AND e.source='cardmarket' AND e.product_group='single'
+                  AND l.link_status IN ('accepted','mapped','exact')
+              ''',([int(r['print_id']) for r in safe],))
+              verified=int(c.fetchone()['n'])
+              if verified!=4: raise AssertionError({'verified':verified})
+              report={'status':'validated_and_applied','links':safe,'verified':verified}
+            conn.commit()
+          except Exception as exc:
+            conn.rollback(); report={'status':'failed','error':repr(exc)}; raise
+          finally:
+            conn.close(); Path('/tmp/legacy-cardmarket-apply.json').write_text(json.dumps(report,indent=2,default=str)+'\n'); print(json.dumps(report,indent=2,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-cardmarket-apply-${{ github.run_id }}
+          path: /tmp/legacy-cardmarket-apply.json
+          retention-days: 90

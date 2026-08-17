@@ -1,0 +1,173 @@
+name: Audit One Piece Cardmarket Secondary Crosswalk Revalidation
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-cardmarket-secondary-crosswalk-revalidation.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: audit-onepiece-cardmarket-secondary-crosswalk-revalidation
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary
+      - name: Revalidate secondary crosswalk against official physical releases
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          report={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece'")
+              gid=int(cur.fetchone()['id'])
+
+              # Useful DB structure/data for exact product diagnosis.
+              cur.execute("""SELECT table_name,column_name,data_type FROM information_schema.columns
+                             WHERE table_schema='public' AND (table_name ILIKE '%expansion%' OR column_name ILIKE '%expansion%')
+                             ORDER BY table_name,ordinal_position""")
+              report['expansion_schema']=[dict(r) for r in cur.fetchall()]
+
+              cur.execute("""SELECT external_id,name,expansion_external_id,category,website_path,metacard_external_id,raw_json
+                             FROM external_catalog_products
+                             WHERE source='cardmarket' AND game_id=%s AND external_id IN ('749435','873863')
+                             ORDER BY external_id""",(gid,))
+              report['target_market_products']=[dict(r) for r in cur.fetchall()]
+
+              # Current official physical memberships for every One Piece print.
+              cur.execute("""SELECT pr.print_id,cr.id AS release_id,cr.external_id AS release_external_id,cr.name AS release_name,cr.source
+                             FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id
+                             JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE c.game_id=%s""",(gid,))
+              release_rows=[dict(r) for r in cur.fetchall()]
+              memberships=defaultdict(list)
+              release_meta={}
+              for r in release_rows:
+                memberships[int(r['print_id'])].append(int(r['release_id']))
+                release_meta[int(r['release_id'])]={'external_id':r['release_external_id'],'name':r['release_name'],'source':r['source']}
+
+              # Strong seed: only bandai_release_exact, whose workflow requires official PrintRelease and
+              # sealed_product_release_match. Do NOT bootstrap trust from secondary/global/residual mappings.
+              cur.execute("""SELECT l.print_id,l.mapping_method,l.evidence,e.external_id AS id_product,e.expansion_external_id
+                             FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                               AND l.link_status='accepted' AND l.mapping_method='bandai_release_exact'""",(gid,))
+              seeds=[dict(r) for r in cur.fetchall()]
+              exp_votes=defaultdict(Counter)
+              seed_detail=[]
+              for s in seeds:
+                ev=s.get('evidence') or {}
+                rid=ev.get('release_id') if isinstance(ev,dict) else None
+                if rid is None:
+                  rs=memberships.get(int(s['print_id']),[])
+                  rid=rs[0] if len(rs)==1 else None
+                if rid is not None and int(rid) in memberships.get(int(s['print_id']),[]):
+                  exp=str(s.get('expansion_external_id') or '')
+                  exp_votes[exp][int(rid)]+=1
+                  seed_detail.append({'expansion_external_id':exp,'release_id':int(rid),'print_id':int(s['print_id']),'id_product':s['id_product']})
+
+              trusted_bridge={}
+              ambiguous_bridge={}
+              for exp,votes in exp_votes.items():
+                if len(votes)==1:
+                  rid=next(iter(votes))
+                  trusted_bridge[exp]={'release_id':rid,'release':release_meta.get(rid),'seed_count':sum(votes.values())}
+                else:
+                  ambiguous_bridge[exp]={'votes':dict(votes),'releases':{str(r):release_meta.get(r) for r in votes}}
+              report['strong_seed_count']=len(seeds)
+              report['trusted_expansion_release_bridge']=trusted_bridge
+              report['ambiguous_seed_expansions']=ambiguous_bridge
+
+              # Revalidate the potentially poisoned secondary crosswalk.
+              cur.execute("""SELECT l.id AS link_id,l.print_id,l.external_product_id,l.mapping_method,l.evidence,
+                                    e.external_id AS id_product,e.name AS market_name,e.expansion_external_id,e.website_path,
+                                    p.collector_number,p.variant,p.rarity,c.name AS card_name
+                             FROM external_catalog_print_links l
+                             JOIN external_catalog_products e ON e.id=l.external_product_id
+                             JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+                             WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                               AND l.link_status='accepted' AND l.mapping_method='op_variant_cm_global_exact'
+                             ORDER BY l.print_id""",(gid,))
+              xs=[dict(r) for r in cur.fetchall()]
+              classes=Counter(); rows=[]
+              for x in xs:
+                exp=str(x.get('expansion_external_id') or '')
+                bridge=trusted_bridge.get(exp)
+                official=sorted(set(memberships.get(int(x['print_id']),[])))
+                if bridge:
+                  rid=int(bridge['release_id'])
+                  if rid in official:
+                    cls='release_consistent_exact'
+                  else:
+                    cls='release_mismatch'
+                else:
+                  cls='unproven_expansion'
+                classes[cls]+=1
+                rows.append({**x,'classification':cls,'official_release_ids':official,
+                             'official_releases':[{'id':r,**(release_meta.get(r) or {})} for r in official],
+                             'trusted_bridge':bridge})
+              report['secondary_crosswalk']={'total':len(xs),'classification':dict(classes),
+                                             'release_mismatches':[r for r in rows if r['classification']=='release_mismatch'],
+                                             'unproven_sample':[r for r in rows if r['classification']=='unproven_expansion'][:300]}
+              report['target_print_44257']=[r for r in rows if int(r['print_id'])==44257]
+
+              # All ST01-012 current Cardmarket versions from the feed, including raw_json to identify exact expansion.
+              cur.execute("""SELECT external_id AS id_product,name,expansion_external_id,category,website_path,metacard_external_id,raw_json
+                             FROM external_catalog_products
+                             WHERE source='cardmarket' AND game_id=%s AND product_group='single'
+                               AND last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s)
+                               AND upper(name) LIKE '%%ST01-012%%'
+                             ORDER BY external_id""",(gid,gid))
+              report['st01_012_versions']=[dict(r) for r in cur.fetchall()]
+          finally:
+            conn.close()
+
+          p=Path('/tmp/onepiece-secondary-crosswalk-revalidation.json')
+          p.write_text(json.dumps(report,indent=2,default=str,sort_keys=True)+'\n')
+          print(json.dumps({
+            'strong_seed_count':report.get('strong_seed_count'),
+            'trusted_bridges':len(report.get('trusted_expansion_release_bridge',{})),
+            'ambiguous_seed_expansions':len(report.get('ambiguous_seed_expansions',{})),
+            'secondary_classification':report.get('secondary_crosswalk',{}).get('classification'),
+            'target_print_44257':report.get('target_print_44257'),
+            'target_market_products':report.get('target_market_products'),
+            'st01_012_versions':report.get('st01_012_versions'),
+          },indent=2,default=str))
+          PY
+      - name: Persist report
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/onepiece-secondary-crosswalk-revalidation.json audit-reports/onepiece-secondary-crosswalk-revalidation.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-secondary-crosswalk-revalidation.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record One Piece physical-release revalidation'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-secondary-crosswalk-revalidation-${{ github.run_id }}
+          path: /tmp/onepiece-secondary-crosswalk-revalidation.json
+          retention-days: 90

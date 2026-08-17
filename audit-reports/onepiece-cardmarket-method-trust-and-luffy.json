@@ -1,0 +1,1142 @@
+{
+  "luffy_44257_current_links": [
+    {
+      "evidence": {
+        "canonical_set_code": "st-01",
+        "canonical_variant": "p1",
+        "cardmarket_id_product": "749435",
+        "certified_audit_run_id": 31424881435,
+        "collector_number": "ST01-012",
+        "source": "one-piece.cards",
+        "source_kind": "secondary_explicit_crosswalk",
+        "source_url": "https://one-piece.cards/cards/en%3AST01-012_p1",
+        "source_variant_id": "en:ST01-012_p1",
+        "validation": [
+          "semantic_variant_id_exact",
+          "collector_exact",
+          "canonical_variant_exact",
+          "current_cardmarket_product",
+          "global_one_to_one",
+          "no_existing_conflict"
+        ]
+      },
+      "expansion_external_id": "5303",
+      "external_product_id": 294280,
+      "id_product": "749435",
+      "link_id": 586284,
+      "mapping_method": "op_variant_cm_global_exact",
+      "website_path": "/OnePiece/Products?idProduct=749435"
+    }
+  ],
+  "luffy_44257_pillars_candidates": [],
+  "methods": [
+    {
+      "mapping_method": "op_variant_cm_global_exact",
+      "n": 3093,
+      "sample": [
+        {
+          "card_name": "Just Shut Up and Come with Us!!!!",
+          "collector_number": "EB01-009",
+          "evidence": {
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "p1",
+            "cardmarket_id_product": "852302",
+            "certified_audit_run_id": 31424881435,
+            "collector_number": "EB01-009",
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB01-009_p1",
+            "source_variant_id": "en:EB01-009_p1",
+            "validation": [
+              "semantic_variant_id_exact",
+              "collector_exact",
+              "canonical_variant_exact",
+              "current_cardmarket_product",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6242",
+          "id_product": "852302",
+          "print_id": 40758,
+          "rarity": "C",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Just Shut Up and Come with Us!!!!",
+          "collector_number": "EB01-009",
+          "evidence": {
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "r1",
+            "cardmarket_id_product": "852303",
+            "certified_audit_run_id": 31424881435,
+            "collector_number": "EB01-009",
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB01-009_r1",
+            "source_variant_id": "en:EB01-009_r1",
+            "validation": [
+              "semantic_variant_id_exact",
+              "collector_exact",
+              "canonical_variant_exact",
+              "current_cardmarket_product",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6242",
+          "id_product": "852303",
+          "print_id": 40759,
+          "rarity": "C",
+          "variant": "r1"
+        },
+        {
+          "card_name": "Cavendish",
+          "collector_number": "EB01-012",
+          "evidence": {
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "r1",
+            "cardmarket_id_product": "852304",
+            "certified_audit_run_id": 31424881435,
+            "collector_number": "EB01-012",
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB01-012_r1",
+            "source_variant_id": "en:EB01-012_r1",
+            "validation": [
+              "semantic_variant_id_exact",
+              "collector_exact",
+              "canonical_variant_exact",
+              "current_cardmarket_product",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6242",
+          "id_product": "852304",
+          "print_id": 40761,
+          "rarity": "SR",
+          "variant": "r1"
+        },
+        {
+          "card_name": "Cavendish",
+          "collector_number": "EB01-012",
+          "evidence": {
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "default",
+            "cardmarket_id_product": "767968",
+            "certified_audit_run_id": 31424881435,
+            "collector_number": "EB01-012",
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB01-012",
+            "source_variant_id": "en:EB01-012",
+            "validation": [
+              "semantic_variant_id_exact",
+              "collector_exact",
+              "canonical_variant_exact",
+              "current_cardmarket_product",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "5585",
+          "id_product": "767968",
+          "print_id": 40762,
+          "rarity": "SR",
+          "variant": "default"
+        },
+        {
+          "card_name": "Cavendish",
+          "collector_number": "EB01-012",
+          "evidence": {
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "p1",
+            "cardmarket_id_product": "767969",
+            "certified_audit_run_id": 31424881435,
+            "collector_number": "EB01-012",
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB01-012_p1",
+            "source_variant_id": "en:EB01-012_p1",
+            "validation": [
+              "semantic_variant_id_exact",
+              "collector_exact",
+              "canonical_variant_exact",
+              "current_cardmarket_product",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "5585",
+          "id_product": "767969",
+          "print_id": 40763,
+          "rarity": "SR",
+          "variant": "p1"
+        }
+      ]
+    },
+    {
+      "mapping_method": "bandai_release_exact",
+      "n": 316,
+      "sample": [
+        {
+          "card_name": "Just Shut Up and Come with Us!!!!",
+          "collector_number": "EB01-009",
+          "evidence": {
+            "collector_number": "EB01-009",
+            "idExpansion": "5585",
+            "idMetacard": "430419",
+            "idProduct": "767965",
+            "mapping_basis": [
+              "sealed_product_release_match",
+              "official_PrintRelease",
+              "unique_name_collector",
+              "global_one_to_one"
+            ],
+            "release_id": 64,
+            "sealed_evidence": [
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750063",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster",
+                "idProduct": "750064",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750065",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              }
+            ],
+            "set_code": "eb-01",
+            "source": "cardmarket+onepiece_official",
+            "variant": "default"
+          },
+          "expansion_external_id": "5585",
+          "id_product": "767965",
+          "print_id": 40760,
+          "rarity": "C",
+          "variant": "default"
+        },
+        {
+          "card_name": "Scratchmen Apoo",
+          "collector_number": "EB01-015",
+          "evidence": {
+            "collector_number": "EB01-015",
+            "idExpansion": "5585",
+            "idMetacard": "430425",
+            "idProduct": "767973",
+            "mapping_basis": [
+              "sealed_product_release_match",
+              "official_PrintRelease",
+              "unique_name_collector",
+              "global_one_to_one"
+            ],
+            "release_id": 64,
+            "sealed_evidence": [
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750063",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster",
+                "idProduct": "750064",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750065",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              }
+            ],
+            "set_code": "eb-01",
+            "source": "cardmarket+onepiece_official",
+            "variant": "default"
+          },
+          "expansion_external_id": "5585",
+          "id_product": "767973",
+          "print_id": 40767,
+          "rarity": "R",
+          "variant": "default"
+        },
+        {
+          "card_name": "Scratchmen Apoo",
+          "collector_number": "EB01-015",
+          "evidence": {
+            "collector_number": "EB01-015",
+            "idExpansion": "6151",
+            "idMetacard": "430425",
+            "idProduct": "829112",
+            "mapping_basis": [
+              "sealed_product_release_match",
+              "official_PrintRelease",
+              "unique_name_collector",
+              "global_one_to_one"
+            ],
+            "release_id": 93,
+            "sealed_evidence": [
+              {
+                "category": "One Piece Preconstructed Decks",
+                "idProduct": "826847",
+                "matched_core": "green jewelry bonney",
+                "name": "Starter Deck: Green Jewelry Bonney",
+                "official_release": "STARTER DECK -GREEN Jewelry Bonney- [ST-24]",
+                "release_external_id": "569024"
+              }
+            ],
+            "set_code": "eb-01",
+            "source": "cardmarket+onepiece_official",
+            "variant": "p3"
+          },
+          "expansion_external_id": "6151",
+          "id_product": "829112",
+          "print_id": 40768,
+          "rarity": "R",
+          "variant": "p3"
+        },
+        {
+          "card_name": "Mountain God",
+          "collector_number": "EB01-018",
+          "evidence": {
+            "collector_number": "EB01-018",
+            "idExpansion": "5585",
+            "idMetacard": "430428",
+            "idProduct": "767976",
+            "mapping_basis": [
+              "sealed_product_release_match",
+              "official_PrintRelease",
+              "unique_name_collector",
+              "global_one_to_one"
+            ],
+            "release_id": 64,
+            "sealed_evidence": [
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750063",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster",
+                "idProduct": "750064",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750065",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              }
+            ],
+            "set_code": "eb-01",
+            "source": "cardmarket+onepiece_official",
+            "variant": "default"
+          },
+          "expansion_external_id": "5585",
+          "id_product": "767976",
+          "print_id": 40774,
+          "rarity": "C",
+          "variant": "default"
+        },
+        {
+          "card_name": "Oh Come My Way",
+          "collector_number": "EB01-038",
+          "evidence": {
+            "collector_number": "EB01-038",
+            "idExpansion": "5585",
+            "idMetacard": "430448",
+            "idProduct": "768001",
+            "mapping_basis": [
+              "sealed_product_release_match",
+              "official_PrintRelease",
+              "unique_name_collector",
+              "global_one_to_one"
+            ],
+            "release_id": 64,
+            "sealed_evidence": [
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750063",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster",
+                "idProduct": "750064",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              },
+              {
+                "category": "One Piece Booster Boxes",
+                "idProduct": "750065",
+                "matched_core": "memorial collection",
+                "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                "release_external_id": "569201"
+              }
+            ],
+            "set_code": "eb-01",
+            "source": "cardmarket+onepiece_official",
+            "variant": "default"
+          },
+          "expansion_external_id": "5585",
+          "id_product": "768001",
+          "print_id": 40777,
+          "rarity": "C",
+          "variant": "default"
+        }
+      ]
+    },
+    {
+      "mapping_method": "op_variant_cm_exact",
+      "n": 195,
+      "sample": [
+        {
+          "card_name": "Sabo",
+          "collector_number": "PRB02-014",
+          "evidence": {
+            "canonical_variant": "p2",
+            "cardmarket_id_product": "880060",
+            "certified_audit_run_id": 31421975728,
+            "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+            "collector_number": "PRB02-014",
+            "official_release_id": 66,
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3APRB02-014_p2",
+            "source_variant_id": "en:PRB02-014_p2",
+            "validation": [
+              "explicit_cardmarket_id",
+              "official_release_print",
+              "collector_exact",
+              "variant_exact",
+              "cardmarket_mirror_current",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6456",
+          "id_product": "880060",
+          "print_id": 41278,
+          "rarity": "SP CARD",
+          "variant": "p2"
+        },
+        {
+          "card_name": "Bartholomew Kuma",
+          "collector_number": "EB04-054",
+          "evidence": {
+            "canonical_variant": "default",
+            "cardmarket_id_product": "879533",
+            "certified_audit_run_id": 31421975728,
+            "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+            "collector_number": "EB04-054",
+            "official_release_id": 66,
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB04-054",
+            "source_variant_id": "en:EB04-054",
+            "validation": [
+              "explicit_cardmarket_id",
+              "official_release_print",
+              "collector_exact",
+              "variant_exact",
+              "cardmarket_mirror_current",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6456",
+          "id_product": "879533",
+          "print_id": 42425,
+          "rarity": "R",
+          "variant": "default"
+        },
+        {
+          "card_name": "Jewelry Bonney",
+          "collector_number": "EB04-001",
+          "evidence": {
+            "canonical_variant": "default",
+            "cardmarket_id_product": "879502",
+            "certified_audit_run_id": 31421975728,
+            "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+            "collector_number": "EB04-001",
+            "official_release_id": 66,
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB04-001",
+            "source_variant_id": "en:EB04-001",
+            "validation": [
+              "explicit_cardmarket_id",
+              "official_release_print",
+              "collector_exact",
+              "variant_exact",
+              "cardmarket_mirror_current",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6456",
+          "id_product": "879502",
+          "print_id": 42445,
+          "rarity": "L",
+          "variant": "default"
+        },
+        {
+          "card_name": "Jewelry Bonney",
+          "collector_number": "EB04-001",
+          "evidence": {
+            "canonical_variant": "p1",
+            "cardmarket_id_product": "879503",
+            "certified_audit_run_id": 31421975728,
+            "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+            "collector_number": "EB04-001",
+            "official_release_id": 66,
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB04-001_p1",
+            "source_variant_id": "en:EB04-001_p1",
+            "validation": [
+              "explicit_cardmarket_id",
+              "official_release_print",
+              "collector_exact",
+              "variant_exact",
+              "cardmarket_mirror_current",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6456",
+          "id_product": "879503",
+          "print_id": 42446,
+          "rarity": "L",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Jewelry Bonney",
+          "collector_number": "EB04-002",
+          "evidence": {
+            "canonical_variant": "default",
+            "cardmarket_id_product": "879504",
+            "certified_audit_run_id": 31421975728,
+            "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+            "collector_number": "EB04-002",
+            "official_release_id": 66,
+            "source": "one-piece.cards",
+            "source_kind": "secondary_explicit_crosswalk",
+            "source_url": "https://one-piece.cards/cards/en%3AEB04-002",
+            "source_variant_id": "en:EB04-002",
+            "validation": [
+              "explicit_cardmarket_id",
+              "official_release_print",
+              "collector_exact",
+              "variant_exact",
+              "cardmarket_mirror_current",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ]
+          },
+          "expansion_external_id": "6456",
+          "id_product": "879504",
+          "print_id": 42447,
+          "rarity": "R",
+          "variant": "default"
+        }
+      ]
+    },
+    {
+      "mapping_method": "bandai_trusted_expansion_exact",
+      "n": 110,
+      "sample": [
+        {
+          "card_name": "Shirahoshi",
+          "collector_number": "EB01-057",
+          "evidence": {
+            "canonical_collector_number": "EB01-057",
+            "canonical_rarity": "SP CARD",
+            "canonical_set_code": "eb-01",
+            "canonical_variant": "p2",
+            "exact_anchor_prints": 143,
+            "idExpansion": "6033",
+            "idProduct": "827262",
+            "identity_basis": [
+              "trusted_expansion_from_existing_exact_links",
+              "single_common_official_release_across_all_anchor_prints",
+              "at_least_two_exact_anchor_prints",
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "unique_unlinked_print_inside_official_release",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ],
+            "release_id": 70,
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6033",
+          "id_product": "827262",
+          "print_id": 40791,
+          "rarity": "SP CARD",
+          "variant": "p2"
+        },
+        {
+          "card_name": "Kaya",
+          "collector_number": "OP03-044",
+          "evidence": {
+            "canonical_collector_number": "OP03-044",
+            "canonical_rarity": "R",
+            "canonical_set_code": "op-03",
+            "canonical_variant": "p2",
+            "exact_anchor_prints": 2,
+            "idExpansion": "5267",
+            "idProduct": "815150",
+            "identity_basis": [
+              "trusted_expansion_from_existing_exact_links",
+              "single_common_official_release_across_all_anchor_prints",
+              "at_least_two_exact_anchor_prints",
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "unique_unlinked_print_inside_official_release",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ],
+            "release_id": 118,
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "5267",
+          "id_product": "815150",
+          "print_id": 40823,
+          "rarity": "R",
+          "variant": "p2"
+        },
+        {
+          "card_name": "Bad Manners Kick Course",
+          "collector_number": "OP04-016",
+          "evidence": {
+            "canonical_collector_number": "OP04-016",
+            "canonical_rarity": "R",
+            "canonical_set_code": "op-04",
+            "canonical_variant": "p3",
+            "exact_anchor_prints": 5,
+            "idExpansion": "6650",
+            "idProduct": "900274",
+            "identity_basis": [
+              "trusted_expansion_from_existing_exact_links",
+              "single_common_official_release_across_all_anchor_prints",
+              "at_least_two_exact_anchor_prints",
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "unique_unlinked_print_inside_official_release",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ],
+            "release_id": 86,
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6650",
+          "id_product": "900274",
+          "print_id": 40835,
+          "rarity": "R",
+          "variant": "p3"
+        },
+        {
+          "card_name": "Sabo",
+          "collector_number": "OP04-083",
+          "evidence": {
+            "canonical_collector_number": "OP04-083",
+            "canonical_rarity": "SR",
+            "canonical_set_code": "op-04",
+            "canonical_variant": "p5",
+            "exact_anchor_prints": 2,
+            "idExpansion": "5267",
+            "idProduct": "815151",
+            "identity_basis": [
+              "trusted_expansion_from_existing_exact_links",
+              "single_common_official_release_across_all_anchor_prints",
+              "at_least_two_exact_anchor_prints",
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "unique_unlinked_print_inside_official_release",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ],
+            "release_id": 118,
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "5267",
+          "id_product": "815151",
+          "print_id": 40845,
+          "rarity": "SR",
+          "variant": "p5"
+        },
+        {
+          "card_name": "Donquixote Rosinante",
+          "collector_number": "OP05-030",
+          "evidence": {
+            "canonical_collector_number": "OP05-030",
+            "canonical_rarity": "R",
+            "canonical_set_code": "op-05",
+            "canonical_variant": "p2",
+            "exact_anchor_prints": 2,
+            "idExpansion": "5267",
+            "idProduct": "815152",
+            "identity_basis": [
+              "trusted_expansion_from_existing_exact_links",
+              "single_common_official_release_across_all_anchor_prints",
+              "at_least_two_exact_anchor_prints",
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "unique_unlinked_print_inside_official_release",
+              "global_one_to_one",
+              "no_existing_conflict"
+            ],
+            "release_id": 118,
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "5267",
+          "id_product": "815152",
+          "print_id": 40859,
+          "rarity": "R",
+          "variant": "p2"
+        }
+      ]
+    },
+    {
+      "mapping_method": "bandai_global_residual_exact",
+      "n": 31,
+      "sample": [
+        {
+          "card_name": "Cavendish",
+          "collector_number": "ST36-001",
+          "evidence": {
+            "canonical_collector_number": "ST36-001",
+            "canonical_rarity": "C",
+            "canonical_set_code": "st-36",
+            "canonical_variant": "default",
+            "group_size": 1,
+            "idExpansion": "6645",
+            "idProduct": "900578",
+            "identity_basis": [
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "global_equal_cardinality",
+              "no_existing_cross_identity_link",
+              "global_one_to_one"
+            ],
+            "resolution_kind": "global_identity_unique",
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6645",
+          "id_product": "900578",
+          "print_id": 44835,
+          "rarity": "C",
+          "variant": "default"
+        },
+        {
+          "card_name": "Killer",
+          "collector_number": "ST36-002",
+          "evidence": {
+            "canonical_collector_number": "ST36-002",
+            "canonical_rarity": "SR",
+            "canonical_set_code": "st-36",
+            "canonical_variant": "default",
+            "group_size": 1,
+            "idExpansion": "6645",
+            "idProduct": "900579",
+            "identity_basis": [
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "global_equal_cardinality",
+              "no_existing_cross_identity_link",
+              "global_one_to_one"
+            ],
+            "resolution_kind": "global_identity_unique",
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6645",
+          "id_product": "900579",
+          "print_id": 44836,
+          "rarity": "SR",
+          "variant": "default"
+        },
+        {
+          "card_name": "Scratchmen Apoo",
+          "collector_number": "ST36-003",
+          "evidence": {
+            "canonical_collector_number": "ST36-003",
+            "canonical_rarity": "C",
+            "canonical_set_code": "st-36",
+            "canonical_variant": "default",
+            "group_size": 1,
+            "idExpansion": "6645",
+            "idProduct": "900580",
+            "identity_basis": [
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "global_equal_cardinality",
+              "no_existing_cross_identity_link",
+              "global_one_to_one"
+            ],
+            "resolution_kind": "global_identity_unique",
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6645",
+          "id_product": "900580",
+          "print_id": 44837,
+          "rarity": "C",
+          "variant": "default"
+        },
+        {
+          "card_name": "Bartolomeo",
+          "collector_number": "ST36-004",
+          "evidence": {
+            "canonical_collector_number": "ST36-004",
+            "canonical_rarity": "C",
+            "canonical_set_code": "st-36",
+            "canonical_variant": "default",
+            "group_size": 1,
+            "idExpansion": "6645",
+            "idProduct": "900581",
+            "identity_basis": [
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "global_equal_cardinality",
+              "no_existing_cross_identity_link",
+              "global_one_to_one"
+            ],
+            "resolution_kind": "global_identity_unique",
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6645",
+          "id_product": "900581",
+          "print_id": 44838,
+          "rarity": "C",
+          "variant": "default"
+        },
+        {
+          "card_name": "Eustass\"Captain\"Kid",
+          "collector_number": "ST36-005",
+          "evidence": {
+            "canonical_collector_number": "ST36-005",
+            "canonical_rarity": "SR",
+            "canonical_set_code": "st-36",
+            "canonical_variant": "default",
+            "group_size": 1,
+            "idExpansion": "6645",
+            "idProduct": "900582",
+            "identity_basis": [
+              "exact_normalized_card_name",
+              "exact_collector_number",
+              "global_equal_cardinality",
+              "no_existing_cross_identity_link",
+              "global_one_to_one"
+            ],
+            "resolution_kind": "global_identity_unique",
+            "source": "onepiece_official+cardmarket"
+          },
+          "expansion_external_id": "6645",
+          "id_product": "900582",
+          "print_id": 44839,
+          "rarity": "SR",
+          "variant": "default"
+        }
+      ]
+    },
+    {
+      "mapping_method": "bandai_sealed_residual_exact",
+      "n": 9,
+      "sample": [
+        {
+          "card_name": "Gedatsu",
+          "collector_number": "OP05-102",
+          "evidence": {
+            "already_linked_in_group": 1,
+            "collector_number": "OP05-102",
+            "group_size": 2,
+            "idExpansion": "5426",
+            "idProduct": "747825",
+            "identity_basis": [
+              "sealed_product_exact_release_anchor",
+              "official_print_release",
+              "equal_group_cardinality",
+              "existing_group_links_one_to_one",
+              "single_remaining_canonical_print",
+              "single_remaining_cardmarket_product",
+              "global_candidate_one_to_one",
+              "globally_unlinked_targets"
+            ],
+            "rarity": "R",
+            "release_id": 76,
+            "set_code": "op-05",
+            "source": "onepiece_official+cardmarket",
+            "variant": "p1"
+          },
+          "expansion_external_id": "5426",
+          "id_product": "747825",
+          "print_id": 40886,
+          "rarity": "R",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Nami",
+          "collector_number": "OP01-016",
+          "evidence": {
+            "already_linked_in_group": 0,
+            "collector_number": "OP01-016",
+            "group_size": 1,
+            "idExpansion": "5481",
+            "idProduct": "733268",
+            "identity_basis": [
+              "sealed_product_exact_release_anchor",
+              "official_print_release",
+              "equal_group_cardinality",
+              "existing_group_links_one_to_one",
+              "single_remaining_canonical_print",
+              "single_remaining_cardmarket_product",
+              "global_candidate_one_to_one",
+              "globally_unlinked_targets"
+            ],
+            "rarity": "SP CARD",
+            "release_id": 76,
+            "set_code": "op-01",
+            "source": "onepiece_official+cardmarket",
+            "variant": "p4"
+          },
+          "expansion_external_id": "5481",
+          "id_product": "733268",
+          "print_id": 41417,
+          "rarity": "SP CARD",
+          "variant": "p4"
+        },
+        {
+          "card_name": "Yamato",
+          "collector_number": "OP06-022",
+          "evidence": {
+            "already_linked_in_group": 1,
+            "collector_number": "OP06-022",
+            "group_size": 2,
+            "idExpansion": "5524",
+            "idProduct": "760513",
+            "identity_basis": [
+              "sealed_product_exact_release_anchor",
+              "official_print_release",
+              "equal_group_cardinality",
+              "existing_group_links_one_to_one",
+              "single_remaining_canonical_print",
+              "single_remaining_cardmarket_product",
+              "global_candidate_one_to_one",
+              "globally_unlinked_targets"
+            ],
+            "rarity": "L",
+            "release_id": 75,
+            "set_code": "op-06",
+            "source": "onepiece_official+cardmarket",
+            "variant": "p1"
+          },
+          "expansion_external_id": "5524",
+          "id_product": "760513",
+          "print_id": 42160,
+          "rarity": "L",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Buggy",
+          "collector_number": "OP09-042",
+          "evidence": {
+            "already_linked_in_group": 1,
+            "collector_number": "OP09-042",
+            "group_size": 2,
+            "idExpansion": "5755",
+            "idProduct": "802910",
+            "identity_basis": [
+              "sealed_product_exact_release_anchor",
+              "official_print_release",
+              "equal_group_cardinality",
+              "existing_group_links_one_to_one",
+              "single_remaining_canonical_print",
+              "single_remaining_cardmarket_product",
+              "global_candidate_one_to_one",
+              "globally_unlinked_targets"
+            ],
+            "rarity": "L",
+            "release_id": 72,
+            "set_code": "op-09",
+            "source": "onepiece_official+cardmarket",
+            "variant": "p1"
+          },
+          "expansion_external_id": "5755",
+          "id_product": "802910",
+          "print_id": 43634,
+          "rarity": "L",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Marshall.D.Teach",
+          "collector_number": "OP09-081",
+          "evidence": {
+            "already_linked_in_group": 1,
+            "collector_number": "OP09-081",
+            "group_size": 2,
+            "idExpansion": "5755",
+            "idProduct": "802961",
+            "identity_basis": [
+              "sealed_product_exact_release_anchor",
+              "official_print_release",
+              "equal_group_cardinality",
+              "existing_group_links_one_to_one",
+              "single_remaining_canonical_print",
+              "single_remaining_cardmarket_product",
+              "global_candidate_one_to_one",
+              "globally_unlinked_targets"
+            ],
+            "rarity": "L",
+            "release_id": 72,
+            "set_code": "op-09",
+            "source": "onepiece_official+cardmarket",
+            "variant": "p1"
+          },
+          "expansion_external_id": "5755",
+          "id_product": "802961",
+          "print_id": 43679,
+          "rarity": "L",
+          "variant": "p1"
+        }
+      ]
+    },
+    {
+      "mapping_method": "op_commercial_expansion_exact",
+      "n": 3,
+      "sample": [
+        {
+          "card_name": "Ryuma",
+          "collector_number": "OP15-036",
+          "evidence": {
+            "base_cardmarket_id_product": "879951",
+            "base_print_id": 42531,
+            "canonical_variant": "r1",
+            "cardmarket_anchor_non_single_id": "900756",
+            "cardmarket_anchor_non_single_name": "Starter Deck: Green Roronoa Zoro Deck Pack",
+            "cardmarket_expansion_external_id": "6649",
+            "cardmarket_id_product": "900296",
+            "collector_number": "OP15-036",
+            "mapping_basis": [
+              "official_exactly_two_physical_entries",
+              "official_alternate_product_set",
+              "cardmarket_commercial_expansion_anchor",
+              "unique_collector_inside_expansion",
+              "base_print_already_exact",
+              "global_no_conflict"
+            ],
+            "official_cardlist_url": "https://en.onepiece-cardgame.com/cardlist/?freewords=OP15-036",
+            "official_other_set": "STARTER DECK -GREEN Roronoa Zoro- [ST-32]",
+            "source": "onepiece_official+cardmarket_current_catalog"
+          },
+          "expansion_external_id": "6649",
+          "id_product": "900296",
+          "print_id": 42532,
+          "rarity": "C",
+          "variant": "r1"
+        },
+        {
+          "card_name": "El Thor",
+          "collector_number": "OP15-075",
+          "evidence": {
+            "base_cardmarket_id_product": "879997",
+            "base_print_id": 42578,
+            "canonical_variant": "p1",
+            "cardmarket_anchor_non_single_id": "897457",
+            "cardmarket_anchor_non_single_name": "Premium Card Collection - Best Selection Vol.6",
+            "cardmarket_expansion_external_id": "5267",
+            "cardmarket_id_product": "900752",
+            "collector_number": "OP15-075",
+            "mapping_basis": [
+              "official_exactly_two_physical_entries",
+              "official_alternate_product_set",
+              "cardmarket_commercial_expansion_anchor",
+              "unique_collector_inside_expansion",
+              "base_print_already_exact",
+              "global_no_conflict"
+            ],
+            "official_cardlist_url": "https://en.onepiece-cardgame.com/cardlist/?freewords=OP15-075",
+            "official_other_set": "Premium Card Collection -Best Selection Vol.6-",
+            "source": "onepiece_official+cardmarket_current_catalog"
+          },
+          "expansion_external_id": "5267",
+          "id_product": "900752",
+          "print_id": 42579,
+          "rarity": "UC",
+          "variant": "p1"
+        },
+        {
+          "card_name": "Nami",
+          "collector_number": "OP15-108",
+          "evidence": {
+            "base_cardmarket_id_product": "880035",
+            "base_print_id": 42617,
+            "canonical_variant": "p1",
+            "cardmarket_anchor_non_single_id": "897457",
+            "cardmarket_anchor_non_single_name": "Premium Card Collection - Best Selection Vol.6",
+            "cardmarket_expansion_external_id": "5267",
+            "cardmarket_id_product": "900753",
+            "collector_number": "OP15-108",
+            "mapping_basis": [
+              "official_exactly_two_physical_entries",
+              "official_alternate_product_set",
+              "cardmarket_commercial_expansion_anchor",
+              "unique_collector_inside_expansion",
+              "base_print_already_exact",
+              "global_no_conflict"
+            ],
+            "official_cardlist_url": "https://en.onepiece-cardgame.com/cardlist/?freewords=OP15-108",
+            "official_other_set": "Premium Card Collection -Best Selection Vol.6-",
+            "source": "onepiece_official+cardmarket_current_catalog"
+          },
+          "expansion_external_id": "5267",
+          "id_product": "900753",
+          "print_id": 42618,
+          "rarity": "R",
+          "variant": "p1"
+        }
+      ]
+    }
+  ],
+  "pillars_cardmarket_expansions": [],
+  "pillars_release": {
+    "external_id": "569103",
+    "id": 78,
+    "name": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]"
+  },
+  "trusted_bridge_count": 30
+}

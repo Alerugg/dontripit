@@ -1,0 +1,69 @@
+name: Rebuild Search V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/rebuild-search-v2.yml'
+      - 'backend/app/search_v2/facets.py'
+      - 'backend/app/search_v2/indexer.py'
+      - 'backend/app/search_v2/onepiece_source.py'
+      - 'backend/app/scripts/rebuild_search_v2.py'
+  workflow_dispatch:
+
+concurrency:
+  group: onepiece-catalog-write-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify database secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Apply Search V2 schema
+        run: alembic upgrade head
+      - name: Verify Alembic head
+        run: |
+          set -o pipefail
+          alembic current 2>&1 | tee /tmp/alembic-current.txt
+          grep -q '20260807_19' /tmp/alembic-current.txt
+      - name: Build One Piece Search V2 profiles
+        run: |
+          set -o pipefail
+          python -m app.scripts.rebuild_search_v2 | tee /tmp/search-v2-build.json
+      - name: Verify Search V2 database counts
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/search-v2-build.json'))
+          assert p['verified']['card_profiles'] == 2665, p
+          assert p['verified']['print_profiles'] == 4672, p
+          assert p['verified']['facets'] >= 19, p
+          print(json.dumps(p['verified'], indent=2))
+          print(json.dumps(p['stats'].get('coverage', {}), indent=2))
+          PY
+      - name: Upload Search V2 build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-build-${{ github.sha }}
+          path: /tmp/search-v2-build.json
+          if-no-files-found: warn
+          retention-days: 30

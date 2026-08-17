@@ -1,0 +1,167 @@
+name: Audit YGO Cardmarket Metacard Release Exact
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-yugioh-cardmarket-metacard-release-exact.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit metacard identity only inside independently validated Konami product anchors
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          def words(v):
+            t=unicodedata.normalize('NFKD',str(v or '')).casefold();t=''.join(c for c in t if not unicodedata.combining(c));t=t.replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',t)).strip()
+          SUFFIXES=(' booster box case',' booster case',' booster display',' booster box',' display',' booster',' structure deck',' starter deck',' speed duel box',' speed duel starter deck',' special edition',' tin',' mega tin',' box',' case')
+          PREFIXES=('yugioh ','yu gi oh ')
+          def bases(name):
+            raw=words(name);out={raw};changed=True
+            while changed:
+              changed=False
+              for p in PREFIXES:
+                if raw.startswith(p) and len(raw)>len(p):raw=raw[len(p):].strip();out.add(raw);changed=True
+              for s in SUFFIXES:
+                if raw.endswith(s) and len(raw)>len(s):raw=raw[:-len(s)].strip();out.add(raw);changed=True
+            return {x for x in out if x}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='konami_neuron'",(gid,))
+              releases=[dict(r) for r in cur.fetchall()];name_idx=defaultdict(list)
+              for r in releases:name_idx[words(r['name'])].append(r)
+              cur.execute('''SELECT external_id id_product,expansion_external_id,name,category FROM external_catalog_products
+                WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s''',(gid,latest))
+              byexp_non=defaultdict(list)
+              for r in cur.fetchall():byexp_non[str(r['expansion_external_id'] or '')].append(dict(r))
+              anchors={};anchor_conflicts=0
+              for exp,items in byexp_non.items():
+                votes=defaultdict(list)
+                for item in items:
+                  for b in bases(item['name']):
+                    ms=name_idx.get(b,[])
+                    if len(ms)==1:votes[int(ms[0]['id'])].append(item)
+                if len(votes)==1:anchors[exp]=next(iter(votes))
+                elif len(votes)>1:anchor_conflicts+=1
+              if len(anchors)!=325:raise AssertionError({'anchor_regression':len(anchors)})
+
+              # Konami release membership with canonical logical card id.
+              cur.execute('''SELECT pr.release_id,pr.print_id,p.card_id,c.name card_name,p.collector_number,p.rarity,p.variant,p.language
+                FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id JOIN prints p ON p.id=pr.print_id JOIN cards c ON c.id=p.card_id
+                WHERE cr.game_id=%s AND cr.source='konami_neuron' ''',(gid,))
+              official=[dict(r) for r in cur.fetchall()];print_releases=defaultdict(set);release_card_prints=defaultdict(list);print_meta={}
+              for r in official:
+                rid=int(r['release_id']);pid=int(r['print_id']);cid=int(r['card_id']);print_releases[pid].add(rid);release_card_prints[(rid,cid)].append(r);print_meta[pid]=r
+
+              # Current exact links + Cardmarket metacard. This calibrates metacard -> canonical logical card.
+              cur.execute('''SELECT e.id external_product_id,e.external_id id_product,e.expansion_external_id,e.metacard_external_id,e.name market_name,
+                       l.print_id,p.card_id
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                JOIN prints p ON p.id=l.print_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND e.last_seen_at=%s
+                  AND l.link_status IN ('accepted','mapped','exact') AND l.confidence='exact' ''',(gid,latest))
+              exact=[dict(r) for r in cur.fetchall()];exact_by_exp=defaultdict(list);meta_cards=defaultdict(set);meta_anchor_counts=Counter();by_print=defaultdict(set);by_product=defaultdict(set)
+              for r in exact:
+                exp=str(r['expansion_external_id'] or '');exact_by_exp[exp].append(r);pid=int(r['print_id']);eid=int(r['external_product_id']);by_print[pid].add(eid);by_product[eid].add(pid)
+                mid=str(r['metacard_external_id'] or '')
+                if mid:meta_cards[mid].add(int(r['card_id']));meta_anchor_counts[mid]+=1
+              if len(by_print)!=24253:raise AssertionError({'current_exact_prints':len(by_print)})
+              trusted_meta={mid:next(iter(cids)) for mid,cids in meta_cards.items() if len(cids)==1}
+              conflicting_meta={mid:sorted(cids) for mid,cids in meta_cards.items() if len(cids)>1}
+
+              # Validate independent expansion anchors against all currently exact mappings.
+              validated={};validation=Counter()
+              for exp,rid in anchors.items():
+                rows=exact_by_exp.get(exp,[])
+                bad=[r for r in rows if rid not in print_releases.get(int(r['print_id']),set())]
+                if bad:validation['anchor_conflict']+=1;continue
+                validated[exp]=rid
+                if rows:validation['with_existing']+=1
+                else:validation['name_only']+=1
+
+              cur.execute('''SELECT id external_product_id,external_id id_product,expansion_external_id,metacard_external_id,name market_name,website_path
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='single' AND last_seen_at=%s''',(gid,latest))
+              singles=[dict(r) for r in cur.fetchall()];market_groups=defaultdict(list)
+              for r in singles:
+                exp=str(r['expansion_external_id'] or '');mid=str(r['metacard_external_id'] or '')
+                if exp in validated and mid in trusted_meta:market_groups[(exp,validated[exp],mid,trusted_meta[mid])].append(r)
+
+              status=Counter();pre=[];samples=[]
+              for (exp,rid,mid,cid),ms in market_groups.items():
+                cs=release_card_prints.get((rid,cid),[])
+                if not cs:status['no_official_print_for_metacard_identity']+=1;continue
+                cids={int(x['print_id']) for x in cs};mids={int(x['external_product_id']) for x in ms}
+                # Every existing exact link touching this group must remain within the group.
+                cross=False
+                for p in cids:
+                  if any(e not in mids for e in by_print.get(p,set())):cross=True
+                for e in mids:
+                  if any(p not in cids for p in by_product.get(e,set())):cross=True
+                if cross:status['cross_group_existing_link']+=1;continue
+                uc=[x for x in cs if not by_print.get(int(x['print_id']))]
+                um=[x for x in ms if not by_product.get(int(x['external_product_id']))]
+                # Direct unique physical identity.
+                if len(cids)==1 and len(mids)==1 and len(uc)==1 and len(um)==1:
+                  c=uc[0];m=um[0];kind='metacard_release_unique';status[kind]+=1
+                # Residual bijection only if full group cardinality is equal and exactly one target remains.
+                elif len(cids)==len(mids) and len(uc)==1 and len(um)==1:
+                  c=uc[0];m=um[0];kind='metacard_release_residual';status[kind]+=1
+                else:
+                  status['still_ambiguous_or_cardinality_mismatch']+=1;continue
+                pre.append({'kind':kind,'print_id':int(c['print_id']),'external_product_id':int(m['external_product_id']),'idProduct':str(m['id_product']),
+                  'idMetacard':mid,'metacard_exact_anchor_count':int(meta_anchor_counts[mid]),'cardmarket_expansion_id':exp,'release_id':rid,
+                  'card_name':c['card_name'],'collector_number':c['collector_number'],'rarity':c['rarity'],'variant':c['variant'],'language':c['language'],'market_name':m['market_name'],
+                  'canonical_group_size':len(cids),'cardmarket_group_size':len(mids)})
+              pc=Counter(x['print_id'] for x in pre);ec=Counter(x['external_product_id'] for x in pre)
+              safe=[x for x in pre if pc[x['print_id']]==1 and ec[x['external_product_id']]==1 and not by_print.get(x['print_id']) and not by_product.get(x['external_product_id'])]
+              status['global_collision_or_linked_removed']=len(pre)-len(safe);status['final_safe']=len(safe)
+              report={'mode':'dry_run','game':'yugioh','latest_cardmarket_snapshot':str(latest),'current_exact_prints':len(by_print),'exact_links':len(exact),
+                'metacards_seen_in_exact_links':len(meta_cards),'trusted_metacards_single_canonical_card':len(trusted_meta),'conflicting_metacards':len(conflicting_meta),
+                'product_name_anchors':len(anchors),'validated_anchors':len(validated),'validation_counts':dict(validation),'status_counts':dict(status),
+                'safe_candidates':len(safe),'safe_prints':len({x['print_id'] for x in safe}),'safe_products':len({x['external_product_id'] for x in safe}),
+                'candidate_sample':safe[:200],'conflicting_metacard_sample':dict(list(conflicting_meta.items())[:50])}
+              summary={k:v for k,v in report.items() if not k.endswith('_sample')}
+              Path('/tmp/ygo-metacard-release-exact.json').write_text(json.dumps(report,indent=2,default=str)+'\n');Path('/tmp/ygo-metacard-release-exact-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n');print(json.dumps(summary,indent=2,default=str))
+          finally:conn.close()
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/ygo-metacard-release-exact-summary.json audit-reports/yugioh-cardmarket-metacard-release-exact-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/yugioh-cardmarket-metacard-release-exact-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Update YGO metacard release exact audit'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-metacard-release-exact-${{ github.run_id }}
+          path: /tmp/ygo-metacard-release-exact.json
+          retention-days: 90

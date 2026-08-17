@@ -1,0 +1,450 @@
+{
+  "pokemon": {
+    "certified": 4,
+    "details": [
+      {
+        "card_name": "Charon's Choice",
+        "collector_number": "RT6",
+        "idProduct": "278574",
+        "print_id": 53078,
+        "set_code": "RR",
+        "source_conflict": null,
+        "tcgdex_declared_id": "278574"
+      },
+      {
+        "card_name": "Mr. Briney\u2019s Compassion",
+        "collector_number": "8",
+        "idProduct": "277439",
+        "print_id": 53375,
+        "set_code": "P2",
+        "source_conflict": null,
+        "tcgdex_declared_id": null
+      },
+      {
+        "card_name": "Bill\u2019s Maintenance",
+        "collector_number": "6",
+        "idProduct": "277488",
+        "print_id": 53424,
+        "set_code": "P5",
+        "source_conflict": null,
+        "tcgdex_declared_id": null
+      },
+      {
+        "card_name": "Potion",
+        "collector_number": "15",
+        "idProduct": "297277",
+        "print_id": 63858,
+        "set_code": "TK10A",
+        "source_conflict": {
+          "declared_expansion": "1758",
+          "declared_id": "297246",
+          "declared_product_name": "Pikipek [Rock Smash]",
+          "resolution": "source_id_rejected_because_it_resolves_to_different_card_name"
+        },
+        "tcgdex_declared_id": "297246"
+      }
+    ]
+  },
+  "yugioh": {
+    "by_expansion": {
+      "1078": 1,
+      "1488": 15,
+      "1517": 6,
+      "1657": 4,
+      "1677": 4,
+      "1712": 2,
+      "2429": 6,
+      "2844": 5
+    },
+    "certified": 43,
+    "details": [
+      {
+        "card_name": "Five-Headed Dragon",
+        "collector_number": "SD09-ENSS1",
+        "expansion": "1078",
+        "idProduct": "103406",
+        "official_pid": "12202001",
+        "official_release": "STRUCTURE DECK DINOSAUR'S RAGE SPECIAL EDITION",
+        "print_id": 139576
+      },
+      {
+        "card_name": "Odd-Eyes Dragon",
+        "collector_number": "YS14-ENA01",
+        "expansion": "1488",
+        "idProduct": "268089",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147798
+      },
+      {
+        "card_name": "Des Volstgalph",
+        "collector_number": "YS14-ENA02",
+        "expansion": "1488",
+        "idProduct": "268090",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147799
+      },
+      {
+        "card_name": "Kuraz the Light Monarch",
+        "collector_number": "YS14-ENA03",
+        "expansion": "1488",
+        "idProduct": "268091",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147800
+      },
+      {
+        "card_name": "D.D. Warrior Lady",
+        "collector_number": "YS14-ENA04",
+        "expansion": "1488",
+        "idProduct": "268092",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147801
+      },
+      {
+        "card_name": "Sacred Crane",
+        "collector_number": "YS14-ENA05",
+        "expansion": "1488",
+        "idProduct": "268093",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147802
+      },
+      {
+        "card_name": "Amazoness Sage",
+        "collector_number": "YS14-ENA06",
+        "expansion": "1488",
+        "idProduct": "268094",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147803
+      },
+      {
+        "card_name": "Injection Fairy Lily",
+        "collector_number": "YS14-ENA07",
+        "expansion": "1488",
+        "idProduct": "268095",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147804
+      },
+      {
+        "card_name": "The A. Forces",
+        "collector_number": "YS14-ENA08",
+        "expansion": "1488",
+        "idProduct": "268096",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147805
+      },
+      {
+        "card_name": "Reinforcement of the Army",
+        "collector_number": "YS14-ENA09",
+        "expansion": "1488",
+        "idProduct": "268097",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147806
+      },
+      {
+        "card_name": "Dark Hole",
+        "collector_number": "YS14-ENA10",
+        "expansion": "1488",
+        "idProduct": "268098",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147807
+      },
+      {
+        "card_name": "Swords of Revealing Light",
+        "collector_number": "YS14-ENA11",
+        "expansion": "1488",
+        "idProduct": "268099",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147808
+      },
+      {
+        "card_name": "Mirror Force",
+        "collector_number": "YS14-ENA12",
+        "expansion": "1488",
+        "idProduct": "268100",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147809
+      },
+      {
+        "card_name": "Call of the Haunted",
+        "collector_number": "YS14-ENA13",
+        "expansion": "1488",
+        "idProduct": "268101",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147810
+      },
+      {
+        "card_name": "Magic Cylinder",
+        "collector_number": "YS14-ENA14",
+        "expansion": "1488",
+        "idProduct": "268102",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147811
+      },
+      {
+        "card_name": "Divine Wrath",
+        "collector_number": "YS14-ENA15",
+        "expansion": "1488",
+        "idProduct": "268103",
+        "official_pid": "13312001",
+        "official_release": "SUPER STARTER SPACE-TIME SHOWDOWN Power-Up Pack",
+        "print_id": 147812
+      },
+      {
+        "card_name": "Effect Veiler",
+        "collector_number": "NKRT-EN039",
+        "expansion": "1517",
+        "idProduct": "271117",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130688
+      },
+      {
+        "card_name": "Mystical Space Typhoon",
+        "collector_number": "NKRT-EN040",
+        "expansion": "1517",
+        "idProduct": "271118",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130689
+      },
+      {
+        "card_name": "Gold Sarcophagus",
+        "collector_number": "NKRT-EN041",
+        "expansion": "1517",
+        "idProduct": "271119",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130690
+      },
+      {
+        "card_name": "Forbidden Lance",
+        "collector_number": "NKRT-EN042",
+        "expansion": "1517",
+        "idProduct": "271120",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130691
+      },
+      {
+        "card_name": "Torrential Tribute",
+        "collector_number": "NKRT-EN043",
+        "expansion": "1517",
+        "idProduct": "271121",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130692
+      },
+      {
+        "card_name": "Compulsory Evacuation Device",
+        "collector_number": "NKRT-EN044",
+        "expansion": "1517",
+        "idProduct": "271122",
+        "official_pid": "18808003",
+        "official_release": "NOBLE KNIGHTS OF THE ROUND TABLE BOX SET Power-Up Pack",
+        "print_id": 130693
+      },
+      {
+        "card_name": "Ultimaya Tzolkin",
+        "collector_number": "CORE-ENSE1",
+        "expansion": "1657",
+        "idProduct": "286938",
+        "official_pid": "12211003",
+        "official_release": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+        "print_id": 109529
+      },
+      {
+        "card_name": "Frightfur Tiger",
+        "collector_number": "CORE-ENSE2",
+        "expansion": "1657",
+        "idProduct": "286939",
+        "official_pid": "12211003",
+        "official_release": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+        "print_id": 109530
+      },
+      {
+        "card_name": "Engraver of the Mark",
+        "collector_number": "CORE-ENSE3",
+        "expansion": "1657",
+        "idProduct": "286940",
+        "official_pid": "12211003",
+        "official_release": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+        "print_id": 109531
+      },
+      {
+        "card_name": "Destruction Sword Flash",
+        "collector_number": "CORE-ENSE4",
+        "expansion": "1657",
+        "idProduct": "286941",
+        "official_pid": "12211003",
+        "official_release": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+        "print_id": 109532
+      },
+      {
+        "card_name": "Ultimaya Tzolkin",
+        "collector_number": "DOCS-ENSE1",
+        "expansion": "1677",
+        "idProduct": "286933",
+        "official_pid": "12211002",
+        "official_release": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+        "print_id": 112806
+      },
+      {
+        "card_name": "Frightfur Tiger",
+        "collector_number": "DOCS-ENSE2",
+        "expansion": "1677",
+        "idProduct": "286934",
+        "official_pid": "12211002",
+        "official_release": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+        "print_id": 112807
+      },
+      {
+        "card_name": "Engraver of the Mark",
+        "collector_number": "DOCS-ENSE3",
+        "expansion": "1677",
+        "idProduct": "286935",
+        "official_pid": "12211002",
+        "official_release": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+        "print_id": 112808
+      },
+      {
+        "card_name": "Destruction Sword Flash",
+        "collector_number": "DOCS-ENSE4",
+        "expansion": "1677",
+        "idProduct": "286936",
+        "official_pid": "12211002",
+        "official_release": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+        "print_id": 112809
+      },
+      {
+        "card_name": "Blackwing - Gram the Shining Star",
+        "collector_number": "TDIL-ENSE1",
+        "expansion": "1712",
+        "idProduct": "292737",
+        "official_pid": "12212002",
+        "official_release": "THE DARK ILLUSION SPECIAL EDITION (UK)",
+        "print_id": 146047
+      },
+      {
+        "card_name": "Number S39: Utopia the Lightning",
+        "collector_number": "TDIL-ENSE2",
+        "expansion": "1712",
+        "idProduct": "292738",
+        "official_pid": "12212002",
+        "official_release": "THE DARK ILLUSION SPECIAL EDITION (UK)",
+        "print_id": 146048
+      },
+      {
+        "card_name": "Dark Magician",
+        "collector_number": "DUPO-EN101",
+        "expansion": "2429",
+        "idProduct": "371759",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116063
+      },
+      {
+        "card_name": "Elemental HERO Neos",
+        "collector_number": "DUPO-EN102",
+        "expansion": "2429",
+        "idProduct": "371760",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116064
+      },
+      {
+        "card_name": "Stardust Dragon",
+        "collector_number": "DUPO-EN103",
+        "expansion": "2429",
+        "idProduct": "371761",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116065
+      },
+      {
+        "card_name": "Number 39: Utopia",
+        "collector_number": "DUPO-EN104",
+        "expansion": "2429",
+        "idProduct": "371762",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116066
+      },
+      {
+        "card_name": "Odd-Eyes Pendulum Dragon",
+        "collector_number": "DUPO-EN105",
+        "expansion": "2429",
+        "idProduct": "371763",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116067
+      },
+      {
+        "card_name": "Decode Talker",
+        "collector_number": "DUPO-EN106",
+        "expansion": "2429",
+        "idProduct": "371764",
+        "official_pid": "18813001",
+        "official_release": "DUEL POWER VARIANT CARDS",
+        "print_id": 116068
+      },
+      {
+        "card_name": "Two-Headed King Rex",
+        "collector_number": "SBTK-ENSP1",
+        "expansion": "2844",
+        "idProduct": "426841",
+        "official_pid": "1202001006",
+        "official_release": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+        "print_id": 139531
+      },
+      {
+        "card_name": "Jack's Knight",
+        "collector_number": "SBTK-ENSP2",
+        "expansion": "2844",
+        "idProduct": "426836",
+        "official_pid": "1202001006",
+        "official_release": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+        "print_id": 139532
+      },
+      {
+        "card_name": "Sphere Kuriboh",
+        "collector_number": "SBTK-ENSP3",
+        "expansion": "2844",
+        "idProduct": "426831",
+        "official_pid": "1202001006",
+        "official_release": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+        "print_id": 139533
+      },
+      {
+        "card_name": "Riryoku",
+        "collector_number": "SBTK-ENSP4",
+        "expansion": "2844",
+        "idProduct": "426826",
+        "official_pid": "1202001006",
+        "official_release": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+        "print_id": 139534
+      },
+      {
+        "card_name": "Reinforcements",
+        "collector_number": "SBTK-ENSP5",
+        "expansion": "2844",
+        "idProduct": "426821",
+        "official_pid": "1202001006",
+        "official_release": "SPEED DUEL: TRIALS OF THE KINGDOM Sneak Peak",
+        "print_id": 139535
+      }
+    ]
+  }
+}

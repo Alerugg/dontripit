@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { normalizeGameSlug } from '../../../../lib/catalog/games'
-import { getNewsByGame } from '../../../../../backend/app/news/service.js'
+import { getNewsByGame } from '../../../../lib/news/service'
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)

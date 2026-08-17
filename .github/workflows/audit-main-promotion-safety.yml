@@ -1,0 +1,63 @@
+name: Audit Main Promotion Safety
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/scripts/audit_main_promotion.py'
+      - '.github/workflows/audit-main-promotion-safety.yml'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-main-promotion-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout promotion candidate
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+          path: candidate
+      - name: Checkout current main snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main-snapshot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile safety auditor
+        run: python -m py_compile candidate/.github/scripts/audit_main_promotion.py
+      - name: Inventory every workflow and enforce merge safety
+        run: |
+          python candidate/.github/scripts/audit_main_promotion.py \
+            --catalog-root candidate \
+            --main-root main-snapshot \
+            --report /tmp/main-promotion-safety.json
+      - name: Inventory Vercel/deployment configuration files
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo 'Candidate deployment-related repository files:'
+            find candidate -maxdepth 4 -type f \
+              \( -name 'vercel.json' -o -path '*/.vercel/*' -o -name 'render.yaml' -o -name 'fly.toml' -o -name 'railway.json' -o -name 'Dockerfile' \) \
+              -print | sort || true
+          } | tee /tmp/deployment-files.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-promotion-safety-${{ github.run_id }}
+          path: |
+            /tmp/main-promotion-safety.json
+            /tmp/deployment-files.txt
+          retention-days: 90
+          if-no-files-found: warn

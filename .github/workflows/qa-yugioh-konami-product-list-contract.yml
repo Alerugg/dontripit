@@ -1,0 +1,69 @@
+name: QA YuGiOh Konami Product List Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-product-list-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Inspect official Included-in product list and product locators
+        run: |
+          python - <<'PY'
+          import json,re,requests
+          from bs4 import BeautifulSoup
+          urls=[
+            'https://www.db.yugioh-card.com/yugiohdb/card_list.action?request_locale=en',
+            'https://www.db.yugioh-card.com/yugiohdb/Productos/card_list.action?request_locale=en',
+          ]
+          h={'User-Agent':'DontRipIt/1.0 konami-product-list-contract','Accept':'text/html'}
+          report=[]
+          for url in urls:
+            try:
+              r=requests.get(url,headers=h,timeout=30,allow_redirects=True)
+              item={'requested_url':url,'status':r.status_code,'final_url':r.url,'length':len(r.text)}
+              if r.status_code==200:
+                s=BeautifulSoup(r.text,'html.parser')
+                item['title']=s.title.get_text(' ',strip=True) if s.title else None
+                item['forms']=[{'action':f.get('action'),'method':f.get('method'),'id':f.get('id'),'class':f.get('class')} for f in s.find_all('form')[:20]]
+                hidden=[]
+                for inp in s.find_all('input'):
+                  value=inp.get('value') or ''
+                  if 'pid=' in value or inp.get('name') in ('pid','cid','ope'):
+                    hidden.append({'name':inp.get('name'),'type':inp.get('type'),'value':value,'class':inp.get('class')})
+                item['pid_inputs']=hidden[:50]
+                hrefs=[]
+                for a in s.find_all('a',href=True):
+                  href=a.get('href') or ''
+                  if 'pid=' in href:
+                    hrefs.append({'text':' '.join(a.stripped_strings)[:160],'href':href})
+                item['pid_links']=hrefs[:50]
+                # Inspect nodes containing a product locator or first visible release records.
+                samples=[]
+                for node in s.find_all(string=re.compile(r'CHAOS ORIGINS|STARTER DECK YUYA|25TH ANNIVERSARY RARITY COLLECTION 2',re.I))[:10]:
+                  anc=node.parent
+                  chain=[]
+                  for _ in range(6):
+                    if not anc:break
+                    chain.append({'tag':anc.name,'id':anc.get('id'),'class':anc.get('class'),'text':' '.join(anc.stripped_strings)[:900]})
+                    anc=anc.parent
+                  samples.append(chain)
+                item['product_node_samples']=samples
+                item['inputs_count']=len(s.find_all('input'))
+                item['links_count']=len(s.find_all('a'))
+              report.append(item)
+            except Exception as exc:
+              report.append({'requested_url':url,'error':str(exc)})
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          PY

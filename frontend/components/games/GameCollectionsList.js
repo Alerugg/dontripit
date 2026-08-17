@@ -3,7 +3,6 @@
 import './GameCollectionsList.css'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { getLocalSetImageCandidates } from '../../lib/catalog/setImages'
 
 const BLOCKED_CODES_BY_GAME = {
   pokemon: new Set(['base', 'meta', 'promos']),
@@ -92,51 +91,17 @@ function buildAllSetsHref(gameSlug) {
   return `/games/${gameSlug}/sets`
 }
 
-function buildSetImageSrc(gameSlug, setCode) {
-  const code = normalizeCode(setCode)
-  if (!code) return ''
-  return `/sets/${gameSlug}/${code}.png`
-}
-
-function CollectionLogo({ gameSlug, setCode, code, name }) {
-  const candidates = useMemo(
-    () => getLocalSetImageCandidates(gameSlug, setCode),
-    [gameSlug, setCode],
-  )
-  const [candidateIndex, setCandidateIndex] = useState(0)
-  const [broken, setBroken] = useState(false)
-  const src = candidates[candidateIndex] || buildSetImageSrc(gameSlug, setCode)
-
-  useEffect(() => {
-    setCandidateIndex(0)
-    setBroken(false)
-  }, [gameSlug, setCode])
-
-  function handleImageError() {
-    if (candidateIndex < candidates.length - 1) {
-      setCandidateIndex((current) => current + 1)
-      return
-    }
-    setBroken(true)
-  }
-
+function CollectionLogo({ code, name }) {
+  // The catalog does not currently expose a canonical set-logo URL and the
+  // repository has no backed `public/sets/<game>` asset tree. Render the
+  // existing code badge directly rather than issuing speculative image URLs
+  // that are guaranteed to 404. When canonical set imagery is added, this
+  // component can consume that explicit field instead of guessing filenames.
   return (
-    <div className="game-collection-media">
-      {!broken && src ? (
-        <img
-          src={src}
-          alt={name}
-          className="game-collection-logo"
-          loading="lazy"
-          onError={handleImageError}
-        />
-      ) : null}
-
-      {(broken || !src) ? (
-        <div className="game-collection-media-fallback">
-          <span>{String(code || '').toUpperCase()}</span>
-        </div>
-      ) : null}
+    <div className="game-collection-media" aria-label={`${name} (${String(code || '').toUpperCase()})`}>
+      <div className="game-collection-media-fallback">
+        <span>{String(code || '').toUpperCase()}</span>
+      </div>
     </div>
   )
 }
@@ -222,7 +187,6 @@ export default function GameCollectionsList({
         <>
           <div className={`game-collections-grid ${safeMode === 'full' ? 'is-full' : 'is-hub'}`}>
             {visibleCollections.map((collection) => {
-              const rawCode = String(collection.code || collection.set_code || '').trim()
               const code = normalizeCode(collection.code || collection.set_code)
               const name = normalizeName(collection.name || collection.title)
               const cardCount = getCardCount(collection)
@@ -234,7 +198,7 @@ export default function GameCollectionsList({
                   href={buildSetHref(safeGameSlug, code)}
                   className="game-collection-card"
                 >
-                  <CollectionLogo gameSlug={safeGameSlug} setCode={rawCode} code={code} name={name} />
+                  <CollectionLogo code={code} name={name} />
 
                   <div className="game-collection-body">
                     <h3>{name}</h3>

@@ -148,10 +148,12 @@ def get_prices():
                 PriceSnapshot.as_of,
                 PriceSnapshot.price_market,
                 PriceSnapshot.price_low,
+                PriceSnapshot.price_mid,
                 PriceSnapshot.price_high,
                 PriceSnapshot.price_last,
                 PriceSnapshot.quantity,
                 PriceSnapshot.currency,
+                PriceSnapshot.raw_json,
                 PriceSource.name.label("source"),
             )
             .join(PriceSource, PriceSource.id == PriceSnapshot.source_id)
@@ -173,11 +175,13 @@ def get_prices():
             "as_of": row["as_of"].isoformat(),
             "market": float(row["price_market"]) if row["price_market"] is not None else None,
             "low": float(row["price_low"]) if row["price_low"] is not None else None,
+            "mid": float(row["price_mid"]) if row["price_mid"] is not None else None,
             "high": float(row["price_high"]) if row["price_high"] is not None else None,
             "last": float(row["price_last"]) if row["price_last"] is not None else None,
             "qty": row["quantity"],
             "currency": row["currency"],
             "source": row["source"],
+            "finish": row["raw_json"].get("finish") if isinstance(row["raw_json"], dict) else None,
         }
         for row in rows
     ]

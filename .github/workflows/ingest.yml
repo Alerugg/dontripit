@@ -1,15 +1,162 @@
-name: Legacy Ingest (Manual Only)
+name: Neon Ingest and Reindex
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
+    inputs:
+      pokemon_set:
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
+        required: false
+        type: string
+      pokemon_all_sets:
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
+        required: false
+        default: false
+        type: boolean
+      pokemon_limit:
+        description: 'Legacy Pokémon input (temporarily quarantined while V2 is certified)'
+        required: false
+        type: string
+      onepiece_limit:
+        description: 'One Piece cards; blank = full catalog, 0 = skip'
+        required: false
+        default: '200'
+        type: string
+      mtg_limit:
+        description: 'MTG is quarantined here until Identity V2/storage certification; this input is currently ignored'
+        required: false
+        default: '0'
+        type: string
+      yugioh_limit:
+        description: 'Yu-Gi-Oh ingest limit; 0 = skip'
+        required: false
+        default: '500'
+        type: string
+      incremental:
+        description: 'Use incremental mode'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
-  notice:
+  ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ONEPIECE_SOURCE: remote
     steps:
-      - run: |
-          echo "Legacy daily_refresh scheduling is disabled."
-          echo "Production scheduling is owned by daily-catalog-v2-orchestrator.yml and executes catalog-v2 certified jobs."
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Debug env (no secrets)
+        run: |
+          if [ -n "${DATABASE_URL:-}" ]; then echo "DATABASE_URL is set"; else echo "DATABASE_URL is NOT set"; fi
+          if [ -n "${DATABASE_URL_UNPOOLED:-}" ]; then echo "DATABASE_URL_UNPOOLED is set"; else echo "DATABASE_URL_UNPOOLED is NOT set"; fi
+          if [ -n "${GITHUB_TOKEN:-}" ]; then echo "GITHUB_TOKEN is set for One Piece source access"; fi
+          echo "Legacy Pokémon ingest is quarantined; Pokémon V2 owns the catalog rebuild."
+          echo "MTG general ingest is quarantined; dedicated Scryfall Identity V2 workflows own MTG."
+          echo "Riftbound is hard-paused in scheduled/general ingest until Riot production API certification."
+          echo "This legacy workflow is manual-only; Daily Catalog V2 owns production scheduling."
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run manually requested refresh pipeline
+        run: |
+          set -euo pipefail
+
+          ONEPIECE_LIMIT_INPUT="${{ github.event.inputs.onepiece_limit || '' }}"
+          YUGIOH_LIMIT_INPUT="${{ github.event.inputs.yugioh_limit || '' }}"
+          INCREMENTAL_INPUT="${{ github.event.inputs.incremental || '' }}"
+
+          ONEPIECE_LIMIT="${ONEPIECE_LIMIT_INPUT:-200}"
+          MTG_LIMIT="0"
+          YUGIOH_LIMIT="${YUGIOH_LIMIT_INPUT:-500}"
+          RIFTBOUND_LIMIT="0"
+          INCREMENTAL="${INCREMENTAL_INPUT:-true}"
+          SKIP_POKEMON="true"
+
+          ARGS=(
+            --skip-pokemon "${SKIP_POKEMON}"
+            --mtg-limit "${MTG_LIMIT}"
+            --yugioh-limit "${YUGIOH_LIMIT}"
+            --riftbound-limit "${RIFTBOUND_LIMIT}"
+            --incremental "${INCREMENTAL}"
+          )
+
+          if [ -n "${ONEPIECE_LIMIT}" ]; then
+            ARGS+=(--onepiece-limit "${ONEPIECE_LIMIT}")
+          fi
+
+          echo "Resolved ARGS:"
+          printf '  %q' "${ARGS[@]}"
+          echo
+
+          STDOUT_FILE="$(mktemp)"
+
+          set +e
+          python -u -m app.scripts.daily_refresh "${ARGS[@]}" \
+            > >(tee "${STDOUT_FILE}") \
+            2> >(tee /dev/stderr)
+          CMD_STATUS=$?
+          set -e
+
+          if [ -s "${STDOUT_FILE}" ]; then
+            echo "Daily refresh final summary:"
+            tail -n 1 "${STDOUT_FILE}" | python -m json.tool || true
+          else
+            echo "No stdout summary captured"
+          fi
+
+          if [ "${CMD_STATUS}" -ne 0 ]; then
+            echo "daily_refresh reported a failed/degraded connector state (exit ${CMD_STATUS})"
+            exit "${CMD_STATUS}"
+          fi
+
+      - name: Generate post-refresh Catalog Health snapshot
+        if: always()
+        run: python -m app.scripts.catalog_health --json > catalog-health-after-refresh.json
+
+      - name: Print post-refresh Catalog Health totals
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('catalog-health-after-refresh.json')
+          if not path.exists():
+              print('Catalog Health snapshot unavailable')
+              raise SystemExit(0)
+          payload = json.loads(path.read_text())
+          print(json.dumps({
+              'generated_at': payload.get('generated_at'),
+              'totals': payload.get('totals'),
+              'status_counts': payload.get('status_counts'),
+              'games': [
+                  {'slug': row.get('slug'), 'status': row.get('status'), 'counts': row.get('counts')}
+                  for row in payload.get('games', [])
+              ],
+          }, indent=2))
+          PY
+
+      - name: Upload post-refresh Catalog Health artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-health-after-refresh-${{ github.run_id }}
+          path: backend/catalog-health-after-refresh.json
+          retention-days: 30
+          if-no-files-found: ignore

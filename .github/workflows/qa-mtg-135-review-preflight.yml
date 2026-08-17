@@ -1,0 +1,113 @@
+name: QA MTG 135 Review Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-mtg-135-review-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Classify all 135 MTG review prints and dependent references
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import Counter
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          FINISH_IDS=[159643,162796,162971,163535,163626,164948,168154,168456,168677,171046,171453,173124,173503,176332,176889,177523,179826,184892,184957,184974,185025,185465,185982,186595,186852,187025,187078,188378,188459,194409,195325,195999,197638,201209,201919,202158,202450,204471,205337,206665,206940,207696,209882,212887,213309,215113,216746,219064,222315,224598,225312,225445,226446,226904,227993,232622,233380,233827,234295,234686,235524,235721,236663,237675,238100,238238,239939,240066,241642,241950,242530,242944,243973,246962,247750,248344,250823,255211,256093,259816,261867,262956,263148,263739,265320,266014,268183,269446,270849,271307,271753,271994,272099,273411,274139,279240,279873,280873,281273,282483,284457,284997,285211,285765,290439,292206,293761,296188,297863,298168,302660,304474,304638,305542,305700,306230,306646,306844,308925,309129,310888,311811,311869,314655,315411,315697,316233,317097,317174,318141,319003]
+          COLLECTOR_IDS=[272959,272960,307059,307060]
+          ALL_IDS=FINISH_IDS+COLLECTOR_IDS
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT p.id print_id,p.scryfall_id,p.card_id,p.set_id,p.collector_number,p.language,p.rarity,p.variant,p.is_foil,p.print_key,
+                     c.name,s.code set_code,s.name set_name
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+              WHERE p.id=ANY(%s) ORDER BY p.id
+            ''',(ALL_IDS,))
+            rows=[dict(x) for x in c.fetchall()]
+            assert len(rows)==135, f'expected 135 target prints, got {len(rows)}'
+
+            c.execute('''
+              SELECT tc.table_name,kcu.column_name
+              FROM information_schema.table_constraints tc
+              JOIN information_schema.key_column_usage kcu ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+              JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema
+              WHERE tc.constraint_type='FOREIGN KEY' AND ccu.table_schema='public' AND ccu.table_name='prints' AND ccu.column_name='id'
+              ORDER BY tc.table_name,kcu.column_name
+            ''')
+            fks=[dict(x) for x in c.fetchall()]
+            fk_counts=[]
+            for fk in fks:
+              table=fk['table_name'];col=fk['column_name']
+              c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=ANY(%s)',(ALL_IDS,))
+              n=int(c.fetchone()['n'])
+              if n: fk_counts.append({'table':table,'column':col,'rows':n})
+
+            c.execute('''
+              SELECT bad.id bad_print_id,bad.scryfall_id,bad.variant bad_variant,
+                     array_agg(good.id ORDER BY good.id) FILTER (WHERE good.id IS NOT NULL) sibling_ids,
+                     array_agg(good.variant ORDER BY good.id) FILTER (WHERE good.id IS NOT NULL) sibling_variants
+              FROM prints bad
+              LEFT JOIN prints good ON good.scryfall_id=bad.scryfall_id AND good.id<>bad.id AND NOT (good.id=ANY(%s))
+              WHERE bad.id=ANY(%s)
+              GROUP BY bad.id,bad.scryfall_id,bad.variant ORDER BY bad.id
+            ''',(FINISH_IDS,FINISH_IDS))
+            siblings=[dict(x) for x in c.fetchall()]
+
+            # Focused tables are counted only when the expected print_id column
+            # actually exists; FK discovery above remains the source of truth.
+            c.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'")
+            columns={(x['table_name'],x['column_name']) for x in c.fetchall()}
+            focused={}
+            for table,col in [
+              ('external_catalog_print_links','print_id'),('collection_items','print_id'),
+              ('wishlist_items','print_id'),('print_images','print_id'),('print_identifiers','print_id'),
+              ('print_attributes','print_id'),('print_search_profiles','print_id'),('print_releases','print_id')]:
+              if (table,col) in columns:
+                c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=ANY(%s)',(ALL_IDS,))
+                focused[table]=int(c.fetchone()['n'])
+
+            corrections={272959:'2433',272960:'2433',307059:'2434',307060:'2434'}
+            collisions=[]
+            for pid,new_col in corrections.items():
+              c.execute('SELECT * FROM prints WHERE id=%s',(pid,));p=dict(c.fetchone())
+              c.execute('''SELECT id,collector_number,language,variant,is_foil,scryfall_id FROM prints
+                           WHERE set_id=%s AND collector_number=%s AND language=%s AND variant=%s AND id<>%s''',
+                        (p['set_id'],new_col,p['language'],p['variant'],pid))
+              hits=[dict(x) for x in c.fetchall()]
+              if hits: collisions.append({'print_id':pid,'new_collector':new_col,'hits':hits})
+          conn.close()
+
+          sibling_status=Counter();no_sibling=[]
+          for row in siblings:
+            ids=row.get('sibling_ids') or []
+            sibling_status[f'{len(ids)}_siblings']+=1
+            if not ids:no_sibling.append(row)
+          out={
+            'target_prints':len(rows),'finish_review_prints':len(FINISH_IDS),'collector_review_prints':len(COLLECTOR_IDS),
+            'finish_sets':dict(Counter(r['set_code'] for r in rows if r['print_id'] in FINISH_IDS)),
+            'fk_reference_counts':fk_counts,'focused_reference_counts':focused,
+            'finish_sibling_status':dict(sibling_status),'finish_without_valid_sibling':len(no_sibling),
+            'collector_correction_collisions':len(collisions),
+            'collector_rows':[r for r in rows if r['print_id'] in COLLECTOR_IDS],
+            'finish_no_sibling_rows':no_sibling,'collector_collision_rows':collisions,
+          }
+          print(json.dumps(out,indent=2,ensure_ascii=False,default=str))
+          PY

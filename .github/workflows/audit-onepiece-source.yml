@@ -1,0 +1,68 @@
+name: Audit One Piece Official Coverage
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/scripts/audit_onepiece_official_source.py'
+      - '.github/workflows/audit-onepiece-source.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Audit official One Piece source coverage
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.audit_onepiece_official_source --workers 8 --timeout 30 | tee onepiece-official-source-audit.json
+
+      - name: Print compact audit summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('onepiece-official-source-audit.json')
+          if not path.exists():
+              print('Audit output unavailable')
+              raise SystemExit(0)
+          payload = json.loads(path.read_text())
+          print(json.dumps({
+              'series_options': payload.get('series_options'),
+              'series_fetched': payload.get('series_fetched'),
+              'series_errors': payload.get('series_errors'),
+              'totals': payload.get('totals'),
+              'raw_collector_families': payload.get('raw_collector_families'),
+              'skipped_collector_families': payload.get('skipped_collector_families'),
+              'commercial_set_codes': payload.get('commercial_set_codes'),
+              'multi_series_set_codes_count': len(payload.get('commercial_set_codes_used_by_multiple_series') or []),
+              'duplicate_raw_ids_count': len(payload.get('raw_print_ids_seen_in_multiple_series') or []),
+              'cross_series_canonical_identities_count': len(payload.get('canonical_print_identities_seen_in_multiple_series') or []),
+          }, indent=2))
+          PY
+
+      - name: Upload One Piece source audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-official-source-audit-${{ github.sha }}
+          path: backend/onepiece-official-source-audit.json
+          retention-days: 30
+          if-no-files-found: warn

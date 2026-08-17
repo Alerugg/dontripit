@@ -2,7 +2,7 @@ name: Verify Catalog V2 Physical Truth Gates
 
 on:
   push:
-    branches: [main]
+    branches: [catalog-v2]
     paths: ['.github/workflows/verify-catalog-v2-physical-truth-gates.yml']
   workflow_dispatch:
 

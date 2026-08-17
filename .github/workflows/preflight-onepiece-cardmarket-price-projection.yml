@@ -1,0 +1,54 @@
+name: Preflight One Piece Cardmarket Price Projection
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/preflight-onepiece-cardmarket-price-projection.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build read-only One Piece price plan
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app import db
+          from app.jobs.cardmarket_link_price_projection import build_link_price_projection_plan
+          db.init_engine()
+          with db.SessionLocal() as session:
+              plan=build_link_price_projection_plan(session,game_slug='onepiece')
+              report=plan.summary(); session.rollback()
+          if not report['write_ready'] or report['accepted_links'] < 300:
+              raise AssertionError(report)
+          Path('/tmp/onepiece-cardmarket-price-preflight.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-cardmarket-price-preflight-${{ github.run_id }}
+          path: /tmp/onepiece-cardmarket-price-preflight.json
+          retention-days: 30
+          if-no-files-found: error

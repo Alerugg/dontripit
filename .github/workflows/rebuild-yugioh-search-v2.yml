@@ -1,0 +1,118 @@
+name: Rebuild and Certify Yu-Gi-Oh Search V2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/scripts/rebuild_yugioh_search_v2_fast.py'
+      - 'backend/app/search_v2/yugioh_facets.py'
+      - 'backend/app/search_v2/yugioh_profiles.py'
+      - 'backend/migrations/versions/**'
+
+concurrency:
+  group: yugioh-search-v2-write
+  cancel-in-progress: false
+
+jobs:
+  rebuild-certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      REPORT_DIR: /tmp/yugioh-search-v2-certification
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile Yu-Gi-Oh Search V2 certification code
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/scripts/rebuild_yugioh_search_v2_fast.py \
+            app/scripts/benchmark_yugioh_search_v2.py \
+            app/search_v2/yugioh_facets.py \
+            app/search_v2/yugioh_profiles.py \
+            app/search_v2/yugioh_query.py \
+            app/search_v2/yugioh_advanced.py \
+            app/search_v2/yugioh_facet_values.py
+
+      - name: Apply schema migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Rebuild Yu-Gi-Oh Search V2 transactionally
+        working-directory: backend
+        run: |
+          mkdir -p "$REPORT_DIR"
+          python -m app.scripts.rebuild_yugioh_search_v2_fast \
+            --report-path "$REPORT_DIR/rebuild.json"
+
+      - name: Run strict Yu-Gi-Oh Search V2 benchmark
+        working-directory: backend
+        run: |
+          python -m app.scripts.benchmark_yugioh_search_v2 \
+            --report-path "$REPORT_DIR/benchmark.json"
+
+      - name: Audit Neon storage after Search V2 write
+        working-directory: backend
+        run: |
+          python -m app.scripts.audit_database_storage_v2 \
+            --report-path "$REPORT_DIR/storage.json"
+
+      - name: Enforce post-write storage ceiling
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ['REPORT_DIR'])
+          rebuild = json.loads((root / 'rebuild.json').read_text())
+          benchmark = json.loads((root / 'benchmark.json').read_text())
+          storage = json.loads((root / 'storage.json').read_text())
+
+          if rebuild.get('status') != 'committed':
+              raise SystemExit(f"rebuild not committed: {rebuild}")
+          if benchmark.get('status') != 'pass':
+              raise SystemExit(f"benchmark not green: {benchmark}")
+          size_mb = float(storage['database_size_mb'])
+          if size_mb >= 480.0:
+              raise SystemExit(f"database size {size_mb:.2f} MiB exceeds 480 MiB certification ceiling")
+
+          summary = {
+              'status': 'pass',
+              'game': 'yugioh',
+              'cards': rebuild['visible_after_commit']['card_search_profiles'],
+              'prints': rebuild['visible_after_commit']['print_search_profiles'],
+              'facets': rebuild['visible_after_commit']['facet_definitions'],
+              'max_benchmark_ms': benchmark.get('max_elapsed_ms'),
+              'database_size_mb': size_mb,
+              'headroom_to_512_mb': round(512.0 - size_mb, 2),
+          }
+          (root / 'certification-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Upload Yu-Gi-Oh Search V2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-search-v2-certification-${{ github.sha }}
+          path: /tmp/yugioh-search-v2-certification
+          if-no-files-found: warn
+          retention-days: 90

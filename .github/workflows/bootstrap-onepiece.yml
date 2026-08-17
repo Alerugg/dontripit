@@ -1,0 +1,80 @@
+name: Bootstrap One Piece Catalog
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/bootstrap-onepiece.yml'
+
+jobs:
+  bootstrap:
+    name: Bootstrap One Piece into Neon
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ONEPIECE_SOURCE: remote
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify required database secret
+        run: |
+          test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL_UNPOOLED missing"; exit 1; }
+          echo "Database secret configured"
+
+      - name: Apply existing migrations
+        run: alembic upgrade head
+
+      - name: Capture pre-bootstrap Catalog Health
+        run: python -m app.scripts.catalog_health --json > onepiece-health-before.json
+
+      - name: Bootstrap One Piece only
+        run: |
+          set -o pipefail
+          python -u -m app.scripts.bootstrap_onepiece | tee onepiece-bootstrap-result.json
+
+      - name: Capture post-bootstrap Catalog Health
+        if: always()
+        run: python -m app.scripts.catalog_health --json > onepiece-health-after.json
+
+      - name: Print One Piece post-bootstrap summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('onepiece-health-after.json')
+          if not path.exists():
+              print('No post-bootstrap health report available')
+              raise SystemExit(0)
+          payload = json.loads(path.read_text())
+          row = next((g for g in payload.get('games', []) if g.get('slug') == 'onepiece'), None)
+          print(json.dumps({'onepiece': row, 'totals': payload.get('totals')}, indent=2))
+          PY
+
+      - name: Upload bootstrap audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-bootstrap-${{ github.sha }}
+          path: |
+            backend/onepiece-health-before.json
+            backend/onepiece-bootstrap-result.json
+            backend/onepiece-health-after.json
+          retention-days: 30
+          if-no-files-found: warn

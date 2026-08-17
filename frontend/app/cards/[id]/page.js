@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import TopNav from '../../../components/layout/TopNav'
 import StatePanel from '../../../components/catalog/StatePanel'
@@ -9,6 +9,7 @@ import { fetchCardById } from '../../../lib/catalog/client'
 import { getGameExplorerHref } from '../../../lib/catalog/routes'
 
 export default function CardDetailPage({ params }) {
+  const { id } = use(params)
   const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -21,7 +22,7 @@ export default function CardDetailPage({ params }) {
       setError('')
 
       try {
-        const payload = await fetchCardById(params.id)
+        const payload = await fetchCardById(id)
         if (!cancelled) setCard(payload)
       } catch (requestError) {
         if (!cancelled) {
@@ -37,13 +38,15 @@ export default function CardDetailPage({ params }) {
     return () => {
       cancelled = true
     }
-  }, [params.id])
+  }, [id])
+
+  const backHref = card?.game ? getGameExplorerHref(card.game) : '/#games'
 
   return (
     <main>
       <TopNav />
       <section className="detail-shell">
-        <Link href={getGameExplorerHref(card?.game || 'pokemon')} className="back-link">← Volver al explorer</Link>
+        <Link href={backHref} className="back-link">← Volver al catálogo</Link>
         {loading && <StatePanel title="Cargando carta" description="Preparando carta, sets y variantes." />}
         {!loading && error && <StatePanel title="No pudimos cargar la carta" description={error} error />}
         {!loading && !error && card && <CardDetailLayout card={card} />}

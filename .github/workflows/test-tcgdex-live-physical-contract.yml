@@ -1,0 +1,55 @@
+name: TCGdex Live Physical Contract
+
+on:
+  push:
+    branches:
+      - multilingual-v1
+    paths:
+      - ".github/workflows/test-tcgdex-live-physical-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgdex-live-physical-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: multilingual-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prove listed JA set survives broken detail endpoint
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from app.ingest.connectors.tcgdex_pokemon_multilingual_physical import (
+              PhysicalMultilingualTcgdexPokemonConnector,
+          )
+
+          connector = PhysicalMultilingualTcgdexPokemonConnector()
+          rows = connector._load_remote(set_id="SM1+", limit=3, lang="ja")
+          assert len(rows) == 3, f"expected 3 recovered rows, got {len(rows)}"
+          assert all(row.get("_language") == "ja" for row in rows)
+          assert all((row.get("set") or {}).get("id") == "SM1+" for row in rows)
+          assert all(str(row.get("id") or "").startswith("SM1+-") for row in rows)
+          print({"set": "SM1+", "language": "ja", "recovered": len(rows), "ids": [row["id"] for row in rows]})
+          PY

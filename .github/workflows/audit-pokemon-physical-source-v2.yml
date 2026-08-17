@@ -1,0 +1,38 @@
+name: Audit Pokemon Physical Source V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-pokemon-physical-source-v2.yml'
+      - 'backend/app/pokemon_source_inventory.py'
+      - 'backend/app/scripts/audit_pokemon_physical_source_v2.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Audit physical Pokémon source
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_pokemon_physical_source_v2 | tee /tmp/pokemon-physical-source-v2.json
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-physical-source-v2-${{ github.sha }}
+          path: /tmp/pokemon-physical-source-v2.json
+          retention-days: 90
+          if-no-files-found: warn

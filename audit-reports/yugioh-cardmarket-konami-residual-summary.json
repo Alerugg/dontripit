@@ -1,0 +1,26 @@
+{
+  "mode": "dry_run",
+  "game": "yugioh",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "konami_memberships": 39362,
+  "accepted_exact_links": 22389,
+  "expansions_with_exact_links": 342,
+  "bridged_expansions": 215,
+  "bridge_rejections": {
+    "mapped_print_without_konami_release": 101,
+    "non_unique_release_intersection": 17,
+    "insufficient_samples": 9
+  },
+  "status_counts": {
+    "fully_linked_group": 14134,
+    "residual_still_ambiguous": 1301,
+    "no_official_name_group": 259,
+    "cardinality_mismatch": 196,
+    "global_collision_removed": 0,
+    "global_target_already_linked_removed": 0,
+    "final_safe": 0
+  },
+  "safe_candidates": 0,
+  "safe_candidate_prints": 0,
+  "safe_candidate_products": 0
+}

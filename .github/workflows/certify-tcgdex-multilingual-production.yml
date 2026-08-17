@@ -1,0 +1,106 @@
+name: Certify TCGdex Multilingual Production
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/certify-tcgdex-multilingual-production.yml'
+      - 'backend/app/scripts/gate_tcgdex_multilingual_production_release.py'
+      - '.github/multilingual-production-postflight-trigger'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgdex-multilingual-production-postflight
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact production commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile postflight gate
+        run: python -m py_compile app/scripts/gate_tcgdex_multilingual_production_release.py
+
+      - name: Restore sealed before-write EN identity baseline
+        run: |
+          cat > /tmp/tcgdex-multilingual-production-before.json <<'JSON'
+          {
+            "status": "pass",
+            "mode": "sealed-before-write-baseline",
+            "database_writes": 0,
+            "en_print_identity_sha256": "932cc27f85bbf5a4f9f510d32a16ffed225b18a315e41a55be62157f3fd3b07c"
+          }
+          JSON
+
+      - name: Run strict production postflight read-only
+        run: |
+          python -m app.scripts.gate_tcgdex_multilingual_production_release \
+            --validate-after \
+            --baseline /tmp/tcgdex-multilingual-production-before.json \
+            --report /tmp/tcgdex-multilingual-production-after.json
+
+      - name: Gate final multilingual production state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/tcgdex-multilingual-production-after.json').read_text())
+          assert report['status'] == 'pass', report
+          assert report['database_writes'] == 0, report
+          assert report['alembic_version'] == '20260814_34', report
+          assert report['canonical_sets_unchanged'] is True, report
+          assert report['canonical_cards_unchanged'] is True, report
+          assert report['existing_en_print_identities_unchanged'] is True, report
+          assert report['en_print_identity_sha256'] == '932cc27f85bbf5a4f9f510d32a16ffed225b18a315e41a55be62157f3fd3b07c', report
+          assert report['totals'] == {'sets': 273, 'cards': 29224, 'prints': 55962}, report
+          assert report['language_counts'] == {'en': 33757, 'es': 14046, 'ja': 8159}, report
+          assert report['source_counts']['es'] == {
+              'print_identifiers': 14046,
+              'card_identifiers': 14046,
+              'set_identifiers': 102,
+              'localizations': 14046,
+          }, report
+          assert report['source_counts']['ja'] == {
+              'print_identifiers': 8159,
+              'card_identifiers': 8159,
+              'set_identifiers': 70,
+              'localizations': 8159,
+          }, report
+          assert report['pocket_leaks'] == {'es': [], 'ja': []}, report
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload postflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgdex-multilingual-production-postflight-${{ github.run_id }}
+          path: |
+            /tmp/tcgdex-multilingual-production-before.json
+            /tmp/tcgdex-multilingual-production-after.json
+          retention-days: 90
+          if-no-files-found: warn

@@ -1,0 +1,111 @@
+name: Audit Public Release Readiness
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/audit-public-release-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build 2>&1 | tee /tmp/frontend-build.log
+      - name: Audit release-critical public files and visible placeholder copy
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          require_file() {
+            local path="$1"
+            test -s "$path" || fail "Required public release file is missing or empty: $path"
+            echo "PASS file: $path"
+          }
+
+          require_text() {
+            local needle="$1"
+            local path="$2"
+            grep -Fq "$needle" "$path" || fail "Required release marker '$needle' is missing from $path"
+            echo "PASS marker: $needle in $path"
+          }
+
+          require_file frontend/app/robots.js
+          require_file frontend/app/sitemap.js
+          require_file frontend/app/privacy/page.js
+          require_file frontend/app/terms/page.js
+          require_file frontend/app/cookies/page.js
+          require_file frontend/app/accessibility.css
+
+          require_text 'dri_session' frontend/app/cookies/page.js
+          require_text 'info@dontripit.com' frontend/app/privacy/page.js
+          require_text 'Saltar al contenido principal' frontend/app/layout.js
+          require_text 'prefers-reduced-motion' frontend/app/accessibility.css
+          require_text '/cookies' frontend/components/layout/SiteFooter.js
+
+          # User-facing release files must not say that mandatory legal work is still pending.
+          if grep -RniE --include='*.js' --include='*.jsx' \
+            'informaci[oó]n legal pendiente|pendiente de completar|lorem ipsum|fake data|datos ficticios' \
+            frontend/app frontend/components; then
+            fail 'Release-blocking placeholder/legal-pending copy found in public UI.'
+          fi
+          echo 'PASS placeholder scan: no release-blocking copy found.'
+
+          # Production source must not point back to the retired Railway API.
+          if grep -Rni 'dontripit-production\.up\.railway\.app' frontend \
+            --exclude-dir=node_modules \
+            --exclude-dir=.next \
+            --exclude='package-lock.json'; then
+            fail 'Legacy Railway endpoint remains in frontend runtime source.'
+          fi
+          echo 'PASS legacy infrastructure scan: no Railway runtime reference found.'
+
+          cat > /tmp/public-release-readiness.json <<'JSON'
+          {
+            "frontend_tests": "pass",
+            "production_build": "pass",
+            "privacy": "present",
+            "terms": "present",
+            "cookies": "present",
+            "robots": "present",
+            "sitemap": "present",
+            "keyboard_skip_link": "present",
+            "reduced_motion": "present",
+            "release_blocking_placeholder_copy": 0,
+            "legacy_railway_frontend_references": 0
+          }
+          JSON
+          cat /tmp/public-release-readiness.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-release-readiness-${{ github.run_id }}
+          path: |
+            /tmp/frontend-build.log
+            /tmp/public-release-readiness.json
+          retention-days: 90
+          if-no-files-found: warn

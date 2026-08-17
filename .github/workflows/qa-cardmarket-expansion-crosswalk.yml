@@ -1,0 +1,46 @@
+name: QA Cardmarket Expansion Crosswalk
+
+on:
+  pull_request:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/jobs/cardmarket_expansion_crosswalk.py'
+      - 'backend/scripts/derive_cardmarket_expansion_crosswalk.py'
+      - 'backend/tests/test_cardmarket_expansion_crosswalk.py'
+      - '.github/workflows/qa-cardmarket-expansion-crosswalk.yml'
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/jobs/cardmarket_expansion_crosswalk.py'
+      - 'backend/scripts/derive_cardmarket_expansion_crosswalk.py'
+      - 'backend/tests/test_cardmarket_expansion_crosswalk.py'
+      - '.github/workflows/qa-cardmarket-expansion-crosswalk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crosswalk-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Compile crosswalk tooling
+        working-directory: backend
+        run: python -m compileall -q app/jobs/cardmarket_expansion_crosswalk.py scripts/derive_cardmarket_expansion_crosswalk.py
+      - name: Run crosswalk regression tests
+        working-directory: backend
+        env:
+          API_KEY_REQUIRED: 'false'
+        run: pytest -q tests/test_cardmarket_expansion_crosswalk.py --tb=short

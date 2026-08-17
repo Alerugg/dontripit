@@ -1,0 +1,183 @@
+name: Audit Cardmarket Canonical Projection Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-cardmarket-canonical-projection-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compare canonical prints exact links external prices and projections
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          summary_sql=text('''
+          WITH canonical AS (
+            SELECT g.slug, count(*) canonical_prints
+            FROM prints p
+            JOIN cards c ON c.id=p.card_id
+            JOIN games g ON g.id=c.game_id
+            WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+            GROUP BY g.slug
+          ),
+          accepted AS (
+            SELECT g.slug,
+                   count(*) accepted_link_rows,
+                   count(DISTINCT l.print_id) accepted_prints
+            FROM external_catalog_print_links l
+            JOIN external_catalog_products e ON e.id=l.external_product_id AND e.source='cardmarket' AND e.product_group='single'
+            JOIN games g ON g.id=e.game_id
+            WHERE l.link_status IN ('accepted','mapped','exact')
+              AND g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+            GROUP BY g.slug
+          ),
+          ambiguous AS (
+            SELECT slug, count(*) ambiguous_prints
+            FROM (
+              SELECT g.slug,l.print_id,count(DISTINCT l.external_product_id) products
+              FROM external_catalog_print_links l
+              JOIN external_catalog_products e ON e.id=l.external_product_id AND e.source='cardmarket' AND e.product_group='single'
+              JOIN games g ON g.id=e.game_id
+              WHERE l.link_status IN ('accepted','mapped','exact')
+                AND g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+              GROUP BY g.slug,l.print_id
+              HAVING count(DISTINCT l.external_product_id) > 1
+            ) x GROUP BY slug
+          ),
+          external_priced AS (
+            SELECT g.slug,
+                   count(DISTINCT l.print_id) accepted_prints_with_external_price
+            FROM external_catalog_print_links l
+            JOIN external_catalog_products e ON e.id=l.external_product_id AND e.source='cardmarket' AND e.product_group='single'
+            JOIN games g ON g.id=e.game_id
+            JOIN external_market_price_snapshots eps ON eps.external_product_id=e.id
+            WHERE l.link_status IN ('accepted','mapped','exact')
+              AND g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+            GROUP BY g.slug
+          ),
+          projected AS (
+            SELECT g.slug,
+                   count(DISTINCT ps.entity_id) projected_prints,
+                   max(ps.as_of) latest_projection
+            FROM price_snapshots ps
+            JOIN price_sources src ON src.id=ps.source_id AND lower(src.name)='cardmarket'
+            JOIN prints p ON p.id=ps.entity_id AND ps.entity_type='print'
+            JOIN cards c ON c.id=p.card_id
+            JOIN games g ON g.id=c.game_id
+            WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+            GROUP BY g.slug
+          ),
+          identifiers AS (
+            SELECT g.slug,count(DISTINCT pi.print_id) cardmarket_identifier_prints
+            FROM print_identifiers pi
+            JOIN prints p ON p.id=pi.print_id
+            JOIN cards c ON c.id=p.card_id
+            JOIN games g ON g.id=c.game_id
+            WHERE pi.source='cardmarket'
+              AND g.slug IN ('pokemon','onepiece','mtg','yugioh','riftbound')
+            GROUP BY g.slug
+          )
+          SELECT c.slug,c.canonical_prints,
+                 COALESCE(a.accepted_link_rows,0) accepted_link_rows,
+                 COALESCE(a.accepted_prints,0) accepted_prints,
+                 COALESCE(am.ambiguous_prints,0) ambiguous_prints,
+                 COALESCE(ep.accepted_prints_with_external_price,0) accepted_prints_with_external_price,
+                 COALESCE(p.projected_prints,0) projected_prints,
+                 p.latest_projection,
+                 COALESCE(i.cardmarket_identifier_prints,0) cardmarket_identifier_prints
+          FROM canonical c
+          LEFT JOIN accepted a USING(slug)
+          LEFT JOIN ambiguous am USING(slug)
+          LEFT JOIN external_priced ep USING(slug)
+          LEFT JOIN projected p USING(slug)
+          LEFT JOIN identifiers i USING(slug)
+          ORDER BY c.slug
+          ''')
+
+          sample_sql=text('''
+          SELECT p.id print_id,p.collector_number,p.variant,p.language,p.rarity,
+                 l.link_status,l.mapping_method,l.confidence,
+                 e.external_id cardmarket_id,e.name cardmarket_name,e.website_path,
+                 eps.price_variant,eps.price_low,eps.price_market,eps.price_last,eps.as_of external_price_as_of,
+                 ps.price_low projected_low,ps.price_market projected_market,ps.as_of projected_as_of
+          FROM prints p
+          JOIN cards c ON c.id=p.card_id
+          JOIN games g ON g.id=c.game_id AND g.slug='onepiece'
+          LEFT JOIN external_catalog_print_links l ON l.print_id=p.id AND l.link_status IN ('accepted','mapped','exact')
+          LEFT JOIN external_catalog_products e ON e.id=l.external_product_id AND e.source='cardmarket'
+          LEFT JOIN LATERAL (
+            SELECT x.* FROM external_market_price_snapshots x
+            WHERE x.external_product_id=e.id
+            ORDER BY x.as_of DESC,x.id DESC LIMIT 1
+          ) eps ON true
+          LEFT JOIN LATERAL (
+            SELECT x.* FROM price_snapshots x
+            JOIN price_sources s ON s.id=x.source_id AND lower(s.name)='cardmarket'
+            WHERE x.entity_type='print' AND x.entity_id=p.id
+            ORDER BY x.as_of DESC,x.id DESC LIMIT 1
+          ) ps ON true
+          WHERE p.collector_number IN ('OP15-001','OP15-003','OP15-119')
+          ORDER BY p.collector_number,p.variant,p.id
+          ''')
+
+          with engine.connect() as conn:
+              rows=conn.execute(summary_sql).mappings().all()
+              samples=conn.execute(sample_sql).mappings().all()
+
+          def clean(row):
+              result={}
+              for k,v in dict(row).items():
+                  if hasattr(v,'isoformat'): result[k]=v.isoformat()
+                  elif hasattr(v,'__float__') and v.__class__.__name__=='Decimal': result[k]=float(v)
+                  else: result[k]=v
+              return result
+
+          summary=[]
+          for row in rows:
+              d=clean(row)
+              total=int(d['canonical_prints'])
+              accepted=int(d['accepted_prints'])
+              projected=int(d['projected_prints'])
+              d['accepted_pct']=round(accepted*100/total,4) if total else 0
+              d['projected_pct']=round(projected*100/total,4) if total else 0
+              summary.append(d)
+
+          report={'mode':'read_only','summary':summary,'onepiece_samples':[clean(r) for r in samples]}
+          out=Path('/tmp/cardmarket-canonical-projection.json')
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False)+'\n',encoding='utf-8')
+          print(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-canonical-projection-${{ github.run_id }}
+          path: /tmp/cardmarket-canonical-projection.json
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,115 @@
+name: Apply Cardmarket Product Catalog
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/alembic/versions/20260810_31_expand_product_name_for_cardmarket_catalog.py'
+      - 'backend/app/jobs/cardmarket_product_catalog.py'
+      - '.github/workflows/apply-cardmarket-product-catalog.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-cardmarket-product-catalog
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile product catalog tooling
+        run: |
+          python -m py_compile app/jobs/cardmarket_product_catalog.py \
+            alembic/versions/20260810_31_expand_product_name_for_cardmarket_catalog.py
+      - name: Apply additive schema migration
+        run: alembic upgrade head
+      - name: Bootstrap exact Cardmarket product identities and prices
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app import db
+          from app.jobs.cardmarket_product_catalog import (
+              bootstrap_cardmarket_product_catalog,
+              project_cardmarket_product_prices,
+          )
+
+          db.init_engine()
+          with db.SessionLocal() as session:
+              bootstrap = bootstrap_cardmarket_product_catalog(session)
+              session.commit()
+          with db.SessionLocal() as session:
+              pricing = project_cardmarket_product_prices(session)
+              session.commit()
+
+          payload={'bootstrap':bootstrap.summary(),'pricing':pricing.summary()}
+          if payload['bootstrap']['current_products'] != 13173:
+              raise AssertionError(f"Unexpected current Cardmarket non-single count: {payload}")
+          if payload['bootstrap']['accepted_links_created'] + payload['bootstrap']['accepted_links_reused'] != 13173:
+              raise AssertionError(f"Not every current Cardmarket product has an accepted exact link: {payload}")
+          if payload['pricing']['linked_products'] < 13173:
+              raise AssertionError(f"Canonical product links regressed: {payload}")
+          if payload['pricing']['priceable_products'] < 10000:
+              raise AssertionError(f"Unexpected Cardmarket product price coverage regression: {payload}")
+          if payload['pricing']['ambiguous_price_variants']:
+              raise AssertionError(f"Ambiguous non-single Cardmarket price variants: {payload}")
+          Path('/tmp/cardmarket-product-catalog.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(payload,indent=2,sort_keys=True))
+          PY
+      - name: Verify 1:1 current product identity in production
+        run: |
+          python - <<'PY'
+          import json,os
+          from sqlalchemy import create_engine,text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              rows=conn.execute(text('''
+                WITH current AS (
+                  SELECT e.id,e.external_id,e.game_id
+                  FROM external_catalog_products e
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                    AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                )
+                SELECT count(*) total,
+                  count(*) FILTER (WHERE pi.external_id IS NOT NULL) identifiers,
+                  count(*) FILTER (WHERE l.product_variant_id IS NOT NULL) accepted_links,
+                  count(*) FILTER (WHERE p.game_id IS DISTINCT FROM c.game_id) cross_game
+                FROM current c
+                LEFT JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=c.external_id
+                LEFT JOIN product_variants pv ON pv.id=pi.product_variant_id
+                LEFT JOIN products p ON p.id=pv.product_id
+                LEFT JOIN external_catalog_product_variant_links l
+                  ON l.external_product_id=c.id AND l.product_variant_id=pv.id AND l.link_status='accepted'
+              ''')).mappings().one()
+          proof={k:int(v) for k,v in rows.items()}
+          if proof != {'total':13173,'identifiers':13173,'accepted_links':13173,'cross_game':0}:
+              raise AssertionError(proof)
+          print(json.dumps(proof,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-product-catalog-${{ github.run_id }}
+          path: /tmp/cardmarket-product-catalog.json
+          retention-days: 90
+          if-no-files-found: warn

@@ -1,0 +1,32 @@
+name: Schema Head Probe
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/schema-head-probe.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Print Alembic heads and history tail
+        run: |
+          echo '=== HEADS ==='
+          alembic heads
+          echo '=== HISTORY TAIL ==='
+          alembic history | head -25
+          echo '=== VERSION FILES ==='
+          ls -1 alembic/versions | tail -20

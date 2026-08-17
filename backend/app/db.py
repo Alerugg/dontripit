@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 
 
 def get_database_url() -> str:
-    database_url = os.getenv("DATABASE_URL")
+    database_url = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_UNPOOLED")
     if database_url:
         return database_url
     return "postgresql+psycopg2://localhost:5432/appdb"

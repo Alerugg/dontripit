@@ -1,0 +1,77 @@
+name: Benchmark Pokemon Search V2 Latency
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/benchmark-pokemon-search-v2-latency.yml'
+      - 'backend/app/scripts/benchmark_pokemon_search_v2_fast.py'
+      - 'backend/app/search_v2/pokemon_query.py'
+      - 'backend/app/search_v2/pokemon_advanced.py'
+      - 'backend/app/search_v2/pokemon_facet_values.py'
+      - 'backend/app/routes/search_v2.py'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Wait for the production HP range index
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import time
+          from sqlalchemy import text
+          from app import db
+
+          db.init_engine()
+          for attempt in range(30):
+              with db.SessionLocal() as session:
+                  ready = session.execute(
+                      text("SELECT to_regclass('public.ix_print_search_profiles_game_hp_int') IS NOT NULL")
+                  ).scalar_one()
+              if ready:
+                  print({'index_ready': True, 'attempt': attempt + 1})
+                  break
+              time.sleep(10)
+          else:
+              raise SystemExit('production HP range index was not applied within five minutes')
+          PY
+      - name: Compile production search path
+        working-directory: backend
+        run: python -m compileall -q app/search_v2 app/routes/search_v2.py app/scripts/benchmark_pokemon_search_v2_fast.py
+      - name: Run functional and latency gates read-only
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_pokemon_search_v2_fast \
+            --report-path /tmp/pokemon-search-v2-latency.json \
+            | tee /tmp/pokemon-search-v2-latency.log
+      - name: Upload latency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-search-v2-latency-${{ github.sha }}
+          path: |
+            /tmp/pokemon-search-v2-latency.json
+            /tmp/pokemon-search-v2-latency.log
+          retention-days: 90
+          if-no-files-found: warn

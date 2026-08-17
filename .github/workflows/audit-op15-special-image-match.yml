@@ -1,0 +1,72 @@
+name: Audit OP15 Special Image Match
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-op15-special-image-match.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests pillow imagehash
+      - name: Compare source special images with official canonical images
+        run: |
+          python - <<'PY'
+          import hashlib,io,json,math
+          from pathlib import Path
+          import imagehash,requests
+          from PIL import Image,ImageChops,ImageStat
+
+          pairs=[
+            {'collector':'OP15-036','canonical_variant':'r1','cardmarket_id':'883418','source_variant':'OP15-036_cm883418'},
+            {'collector':'OP15-075','canonical_variant':'p1','cardmarket_id':'883395','source_variant':'OP15-075_cm883395'},
+            {'collector':'OP15-108','canonical_variant':'p1','cardmarket_id':'883935','source_variant':'OP15-108_cm883935'},
+          ]
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 visual-identity-verifier'})
+          report=[]
+          for pair in pairs:
+            source_url=f"https://one-piece.cards/images/en/{pair['source_variant']}.jpg"
+            canonical_url=f"https://en.onepiece-cardgame.com/images/cardlist/card/{pair['collector']}_{pair['canonical_variant']}.png"
+            sr=http.get(source_url,timeout=20); cr=http.get(canonical_url,timeout=20)
+            sr.raise_for_status(); cr.raise_for_status()
+            simg=Image.open(io.BytesIO(sr.content)).convert('RGB')
+            cimg=Image.open(io.BytesIO(cr.content)).convert('RGB')
+            ph_source=imagehash.phash(simg,hash_size=16); ph_canon=imagehash.phash(cimg,hash_size=16)
+            dh_source=imagehash.dhash(simg,hash_size=16); dh_canon=imagehash.dhash(cimg,hash_size=16)
+            ah_source=imagehash.average_hash(simg,hash_size=16); ah_canon=imagehash.average_hash(cimg,hash_size=16)
+            target=(300,419)
+            a=simg.resize(target); b=cimg.resize(target)
+            diff=ImageChops.difference(a,b)
+            stat=ImageStat.Stat(diff)
+            rms=math.sqrt(sum(v*v for v in stat.rms)/3)
+            entry={**pair,
+              'source_url':source_url,'canonical_url':canonical_url,
+              'source_status':sr.status_code,'canonical_status':cr.status_code,
+              'source_size':simg.size,'canonical_size':cimg.size,
+              'source_sha256':hashlib.sha256(sr.content).hexdigest(),'canonical_sha256':hashlib.sha256(cr.content).hexdigest(),
+              'phash_distance':ph_source-ph_canon,'dhash_distance':dh_source-dh_canon,'ahash_distance':ah_source-ah_canon,
+              'pixel_rms_0_255':round(rms,4),
+            }
+            # Exact same artwork encoded/resized should remain very close on 256-bit perceptual hashes.
+            entry['visual_match']=entry['phash_distance'] <= 12 and entry['dhash_distance'] <= 20 and entry['ahash_distance'] <= 20
+            report.append(entry)
+          out={'pairs':report,'all_visual_match':all(x['visual_match'] for x in report)}
+          print(json.dumps(out,indent=2))
+          Path('/tmp/op15-special-image-match.json').write_text(json.dumps(out,indent=2)+'\n')
+          if not out['all_visual_match']:
+            raise AssertionError({'visual_mismatch':report})
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op15-special-image-match-${{ github.run_id }}
+          path: /tmp/op15-special-image-match.json
+          retention-days: 90

@@ -1,0 +1,60 @@
+name: Audit MTG Live Prebootstrap V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-mtg-live-prebootstrap-v2.yml'
+      - 'backend/app/scripts/audit_mtg_live_prebootstrap_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-live-prebootstrap-readonly
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile read-only audit
+        run: python -m py_compile app/scripts/audit_mtg_live_prebootstrap_v2.py
+
+      - name: Audit current MTG identity and dependents read-only
+        run: python -m app.scripts.audit_mtg_live_prebootstrap_v2 --output /tmp/mtg-live-prebootstrap-v2.json
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-live-prebootstrap-v2-${{ github.sha }}
+          path: /tmp/mtg-live-prebootstrap-v2.json
+          retention-days: 90
+          if-no-files-found: warn

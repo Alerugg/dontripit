@@ -1,0 +1,204 @@
+name: Apply MTG Identity Schema V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/apply-mtg-identity-schema-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-identity-schema-v2-live
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Capture and gate pre-migration state
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('No Neon database URL configured')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          engine = create_engine(url, pool_pre_ping=True)
+
+          def snapshot(conn):
+              version = conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
+              cards = {
+                  str(slug): int(count)
+                  for slug, count in conn.execute(text('''
+                      SELECT g.slug, COUNT(c.id)::bigint
+                      FROM games g LEFT JOIN cards c ON c.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''))
+              }
+              prints = {
+                  str(slug): int(count)
+                  for slug, count in conn.execute(text('''
+                      SELECT g.slug, COUNT(p.id)::bigint
+                      FROM games g
+                      LEFT JOIN cards c ON c.game_id=g.id
+                      LEFT JOIN prints p ON p.card_id=c.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''))
+              }
+              old_constraint = bool(conn.execute(text('''
+                  SELECT EXISTS(
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid='prints'::regclass
+                      AND conname='uq_prints_scryfall_id'
+                  )
+              ''')).scalar_one())
+              new_index = conn.execute(text('''
+                  SELECT COALESCE(bool_and(i.indisvalid AND i.indisready), false)
+                  FROM pg_class idx
+                  JOIN pg_index i ON i.indexrelid=idx.oid
+                  WHERE idx.relname='uq_prints_scryfall_variant'
+              ''')).scalar_one()
+              return {
+                  'alembic_version': str(version),
+                  'database_bytes': int(conn.execute(text('SELECT pg_database_size(current_database())')).scalar_one()),
+                  'cards_by_game': cards,
+                  'prints_by_game': prints,
+                  'legacy_scryfall_unique_constraint': old_constraint,
+                  'exact_scryfall_variant_index_valid': bool(new_index),
+              }
+
+          with engine.connect() as conn:
+              state = snapshot(conn)
+
+          if state['alembic_version'] not in {'20260808_24', '20260808_25'}:
+              raise SystemExit(f"Unexpected live Alembic version: {state['alembic_version']}")
+          if state['alembic_version'] == '20260808_24':
+              if not state['legacy_scryfall_unique_constraint']:
+                  raise SystemExit('Expected legacy Scryfall unique constraint before migration')
+              if state['exact_scryfall_variant_index_valid']:
+                  raise SystemExit('New Scryfall+variant index unexpectedly exists before migration')
+          else:
+              if state['legacy_scryfall_unique_constraint'] or not state['exact_scryfall_variant_index_valid']:
+                  raise SystemExit('Live schema claims revision 25 but Scryfall identity DDL is inconsistent')
+
+          Path('/tmp/mtg-schema-before.json').write_text(json.dumps(state, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(state, indent=2, sort_keys=True))
+          PY
+
+      - name: Apply only MTG identity schema revision
+        run: alembic upgrade 20260808_25
+
+      - name: Verify no catalog rows changed and schema is exact
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          before = json.loads(Path('/tmp/mtg-schema-before.json').read_text())
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          engine = create_engine(url, pool_pre_ping=True)
+
+          with engine.connect() as conn:
+              after = {
+                  'alembic_version': str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()),
+                  'database_bytes': int(conn.execute(text('SELECT pg_database_size(current_database())')).scalar_one()),
+                  'cards_by_game': {
+                      str(slug): int(count)
+                      for slug, count in conn.execute(text('''
+                          SELECT g.slug, COUNT(c.id)::bigint
+                          FROM games g LEFT JOIN cards c ON c.game_id=g.id
+                          GROUP BY g.slug ORDER BY g.slug
+                      '''))
+                  },
+                  'prints_by_game': {
+                      str(slug): int(count)
+                      for slug, count in conn.execute(text('''
+                          SELECT g.slug, COUNT(p.id)::bigint
+                          FROM games g
+                          LEFT JOIN cards c ON c.game_id=g.id
+                          LEFT JOIN prints p ON p.card_id=c.id
+                          GROUP BY g.slug ORDER BY g.slug
+                      '''))
+                  },
+                  'legacy_scryfall_unique_constraint': bool(conn.execute(text('''
+                      SELECT EXISTS(
+                        SELECT 1 FROM pg_constraint
+                        WHERE conrelid='prints'::regclass
+                          AND conname='uq_prints_scryfall_id'
+                      )
+                  ''')).scalar_one()),
+                  'exact_scryfall_variant_index_valid': bool(conn.execute(text('''
+                      SELECT COALESCE(bool_and(i.indisvalid AND i.indisready), false)
+                      FROM pg_class idx
+                      JOIN pg_index i ON i.indexrelid=idx.oid
+                      WHERE idx.relname='uq_prints_scryfall_variant'
+                  ''')).scalar_one()),
+              }
+
+          if after['alembic_version'] != '20260808_25':
+              raise SystemExit(f"Unexpected post-migration Alembic version: {after['alembic_version']}")
+          if after['legacy_scryfall_unique_constraint']:
+              raise SystemExit('Legacy global Scryfall unique constraint still exists')
+          if not after['exact_scryfall_variant_index_valid']:
+              raise SystemExit('Exact Scryfall+variant unique index is missing or invalid')
+          if before['cards_by_game'] != after['cards_by_game']:
+              raise SystemExit('Card counts changed during schema-only migration')
+          if before['prints_by_game'] != after['prints_by_game']:
+              raise SystemExit('Print counts changed during schema-only migration')
+
+          report = {
+              'status': 'pass',
+              'database_writes_to_catalog_rows': 0,
+              'before': before,
+              'after': after,
+              'database_size_delta_bytes': after['database_bytes'] - before['database_bytes'],
+          }
+          Path('/tmp/mtg-schema-live-report.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload live schema evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-identity-schema-v2-live-${{ github.sha }}
+          path: |
+            /tmp/mtg-schema-before.json
+            /tmp/mtg-schema-live-report.json
+          retention-days: 90
+          if-no-files-found: warn

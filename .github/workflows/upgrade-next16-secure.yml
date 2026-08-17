@@ -1,0 +1,102 @@
+name: Upgrade Next 16 Securely
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/upgrade-next16-secure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      INTERNAL_API_KEY: ci-placeholder-key
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+          fetch-depth: 0
+      - name: Set up Node.js 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Reclassify build-only packages as dev dependencies
+        run: |
+          node - <<'NODE'
+          const fs = require('fs')
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+          pkg.dependencies ||= {}
+          pkg.devDependencies ||= {}
+          for (const name of ['autoprefixer', 'eslint', 'eslint-config-next', 'postcss', 'tailwindcss']) {
+            if (pkg.dependencies[name]) {
+              pkg.devDependencies[name] = pkg.dependencies[name]
+              delete pkg.dependencies[name]
+            }
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          NODE
+      - name: Resolve patched Next and compatible React
+        run: npm install next@16.3.0 react@19.2.8 react-dom@19.2.8 --save-exact
+      - name: Verify resolved runtime versions
+        run: |
+          node - <<'NODE'
+          const pkg=require('./package.json')
+          const lock=require('./package-lock.json')
+          const resolved={
+            package:{next:pkg.dependencies.next,react:pkg.dependencies.react,reactDom:pkg.dependencies['react-dom']},
+            lock:{
+              next:lock.packages?.['node_modules/next']?.version,
+              react:lock.packages?.['node_modules/react']?.version,
+              reactDom:lock.packages?.['node_modules/react-dom']?.version,
+            },
+            devDependencies:Object.keys(pkg.devDependencies||{}).sort(),
+          }
+          console.log(JSON.stringify(resolved,null,2))
+          if (resolved.package.next !== '16.3.0' || resolved.lock.next !== '16.3.0') process.exit(2)
+          NODE
+      - name: Block high or critical production vulnerabilities
+        run: |
+          npm audit --omit=dev --json > /tmp/next16-audit.json || true
+          node - <<'NODE'
+          const fs=require('fs')
+          const audit=JSON.parse(fs.readFileSync('/tmp/next16-audit.json','utf8'))
+          const counts=audit.metadata?.vulnerabilities || {}
+          console.log(JSON.stringify({counts,vulnerabilities:audit.vulnerabilities},null,2))
+          if ((counts.critical||0)>0 || (counts.high||0)>0) process.exit(3)
+          NODE
+      - name: Run all frontend tests
+        run: npm test
+      - name: Build production frontend
+        run: npm run build
+      - name: Commit dependency upgrade only after all gates pass
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No package changes to commit"
+          else
+            git commit -m "Upgrade frontend runtime to patched Next.js 16.3.0"
+            git push origin HEAD:catalog-v2
+          fi
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: next16-security-evidence-${{ github.sha }}
+          path: /tmp/next16-audit.json
+          if-no-files-found: warn
+          retention-days: 30

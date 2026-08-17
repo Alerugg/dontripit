@@ -1,0 +1,140 @@
+name: Audit Pokemon Cardmarket Physical Conflict Salvage
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-pokemon-cardmarket-physical-conflict-salvage.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit whether stronger physical-variant declarations salvage quarantined IDs
+        run: |
+          python - <<'PY'
+          import json,os
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='pokemon' LIMIT 1");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+              cur.execute('''
+                SELECT p.id print_id,p.card_id,p.print_key,p.variant,p.is_foil,p.language,p.collector_number,s.code set_code,c.name card_name,c.tcgdex_id,
+                  pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_cardmarket_id,
+                  pa.attributes_json #>> '{third_party,cardmarket}' card_level_cardmarket_id,
+                  pa.attributes_json #>> '{physical_variant,variant_hash}' variant_hash,
+                  pa.attributes_json #>> '{physical_variant,release_context}' release_context,
+                  cm_physical.id physical_external_product_id,cm_physical.name physical_market_name,cm_physical.expansion_external_id physical_expansion,
+                  cm_card.id card_external_product_id,cm_card.name card_market_name,cm_card.expansion_external_id card_expansion
+                FROM prints p JOIN cards c ON c.id=p.card_id AND c.game_id=%s JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                LEFT JOIN external_catalog_products cm_physical ON cm_physical.source='cardmarket' AND cm_physical.game_id=%s AND cm_physical.product_group='single'
+                  AND cm_physical.last_seen_at=%s AND cm_physical.external_id=pa.attributes_json #>> '{physical_variant,third_party,cardmarket}'
+                LEFT JOIN external_catalog_products cm_card ON cm_card.source='cardmarket' AND cm_card.game_id=%s AND cm_card.product_group='single'
+                  AND cm_card.last_seen_at=%s AND cm_card.external_id=pa.attributes_json #>> '{third_party,cardmarket}'
+                WHERE NULLIF(pa.attributes_json #>> '{physical_variant,third_party,cardmarket}','') IS NOT NULL
+                   OR NULLIF(pa.attributes_json #>> '{third_party,cardmarket}','') IS NOT NULL
+              ''',(gid,gid,latest,gid,latest))
+              rows=[]
+              for r in cur.fetchall():
+                d=dict(r);physical=str(d['physical_cardmarket_id'] or '').strip() or None;card=str(d['card_level_cardmarket_id'] or '').strip() or None
+                cmid=physical or card;ext=d['physical_external_product_id'] if physical else d['card_external_product_id']
+                if not cmid or ext is None:continue
+                d.update({'cardmarket_id':cmid,'external_product_id':int(ext),'evidence_kind':'physical_variant' if physical else 'card_level'})
+                if physical and card and physical!=card:d['evidence_kind']='physical_overrides_card_level'
+                rows.append(d)
+              by=defaultdict(list)
+              for r in rows:by[r['cardmarket_id']].append(r)
+
+              cur.execute('''SELECT l.external_product_id,l.print_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')''',(gid,))
+              accepted=[dict(r) for r in cur.fetchall()];by_ext=defaultdict(set);by_print=defaultdict(set)
+              for r in accepted:by_ext[int(r['external_product_id'])].add(int(r['print_id']));by_print[int(r['print_id'])].add(int(r['external_product_id']))
+
+              conflict_groups=[];status=Counter();safe_links=[];samples=[]
+              for cmid,items in by.items():
+                signatures={(str(x['set_code']),str(x['collector_number']),int(x['card_id'])) for x in items}
+                external_ids={int(x['external_product_id']) for x in items}
+                if len(external_ids)==1 and len(signatures)==1:continue
+                conflict_groups.append((cmid,items));status['identity_conflict_groups']+=1
+                explicit=[x for x in items if x['evidence_kind'] in ('physical_variant','physical_overrides_card_level')]
+                weaker=[x for x in items if x['evidence_kind']=='card_level']
+                if not explicit:
+                  status['no_physical_evidence']+=1;continue
+                exp_sigs={(str(x['set_code']),str(x['collector_number']),int(x['card_id'])) for x in explicit}
+                exp_exts={int(x['external_product_id']) for x in explicit}
+                if len(exp_exts)!=1:
+                  status['physical_evidence_external_conflict']+=1;continue
+                if len(exp_sigs)!=1:
+                  status['physical_evidence_identity_conflict']+=1;continue
+                ext=next(iter(exp_exts));expected={int(x['print_id']) for x in explicit}
+                existing=by_ext.get(ext,set())
+                if existing and not existing.issubset(expected):
+                  status['existing_product_link_conflict']+=1;continue
+                candidate=[];blocked=[]
+                for x in explicit:
+                  pid=int(x['print_id']);other=by_print.get(pid,set())-{ext}
+                  if other:blocked.append((pid,sorted(other)))
+                  elif pid not in existing:candidate.append(x)
+                if blocked:
+                  status['physical_print_already_mapped_elsewhere']+=1;continue
+                if not candidate:
+                  status['physical_expected_already_complete']+=1;continue
+                # Require conflicting declarations to be strictly weaker card-level rows.
+                conflicting_exp_signature=next(iter(exp_sigs))
+                stronger_wrong=[x for x in items if (str(x['set_code']),str(x['collector_number']),int(x['card_id']))!=conflicting_exp_signature and x['evidence_kind']!='card_level']
+                if stronger_wrong:
+                  status['competing_physical_evidence']+=1;continue
+                for x in candidate:
+                  safe_links.append({'cardmarket_id':cmid,'external_product_id':ext,'print_id':int(x['print_id']),'card_name':x['card_name'],'set_code':x['set_code'],
+                    'collector_number':x['collector_number'],'variant':x['variant'],'is_foil':bool(x['is_foil']),'variant_hash':x['variant_hash'],'release_context':x['release_context'],
+                    'tcgdex_id':x['tcgdex_id'],'weaker_conflicting_rows':len(weaker),'explicit_group_size':len(explicit)})
+                status['salvageable_groups']+=1;status['salvageable_links']+=len(candidate)
+                if len(samples)<100:samples.append({'cardmarket_id':cmid,'external_product_id':ext,'explicit_prints':sorted(expected),'new_candidate_prints':[int(x['print_id']) for x in candidate],
+                  'physical_signature':list(conflicting_exp_signature),'weaker_conflicting_rows':len(weaker),'total_declared_rows':len(items)})
+
+              # Global target checks.
+              pair_count=Counter((x['external_product_id'],x['print_id']) for x in safe_links)
+              if any(v!=1 for v in pair_count.values()):raise AssertionError('duplicate salvage pairs')
+              report={'mode':'dry_run','game':'pokemon','latest_cardmarket_snapshot':str(latest),'source_declared_products':len(by),'accepted_cardmarket_print_links':len(accepted),
+                'status_counts':dict(status),'safe_new_links':len(safe_links),'safe_products':len({x['external_product_id'] for x in safe_links}),'safe_prints':len({x['print_id'] for x in safe_links}),
+                'candidate_sample':safe_links[:150],'group_sample':samples}
+              summary={k:v for k,v in report.items() if not k.endswith('_sample')}
+              Path('/tmp/pokemon-physical-conflict-salvage.json').write_text(json.dumps(report,indent=2,default=str)+'\n');Path('/tmp/pokemon-physical-conflict-salvage-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n')
+              print(json.dumps(summary,indent=2,default=str))
+          finally:conn.close()
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/pokemon-physical-conflict-salvage-summary.json audit-reports/pokemon-cardmarket-physical-conflict-salvage-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/pokemon-cardmarket-physical-conflict-salvage-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update Pokemon physical Cardmarket conflict salvage audit"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-cardmarket-physical-conflict-salvage-${{ github.run_id }}
+          path: /tmp/pokemon-physical-conflict-salvage.json
+          retention-days: 90

@@ -1,0 +1,48 @@
+name: Patch Search Price Lookup Performance
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-search-price-lookup-performance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Use constant game slugs in current price joins
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          replacements={
+            'backend/app/search_v2/advanced.py':('current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")','current_cardmarket_price_join(print_id="p.id", game_slug="onepiece")'),
+            'backend/app/search_v2/pokemon_advanced.py':('current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")','current_cardmarket_price_join(print_id="p.id", game_slug="pokemon")'),
+            'backend/app/search_v2/yugioh_advanced.py':('current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")','current_cardmarket_price_join(print_id="p.id", game_slug="yugioh")'),
+            'backend/app/search_v2/mtg_advanced.py':('current_cardmarket_price_join(print_id="p.id", game_id="psp.game_id")','current_cardmarket_price_join(print_id="p.id", game_slug="mtg")'),
+            'backend/app/routes/set_ui.py':('current_cardmarket_price_join(print_id="p.id", game_id="c.game_id")','current_cardmarket_price_join(print_id="p.id", game_slug=game)'),
+          }
+          for filename,(old,new) in replacements.items():
+            p=Path(filename); s=p.read_text(); assert old in s, filename; p.write_text(s.replace(old,new,1))
+          PY
+      - name: Verify syntax
+        run: |
+          python -m py_compile backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py backend/app/routes/set_ui.py
+          ! grep -R 'current_cardmarket_price_join.*game_id=' backend/app/search_v2 backend/app/routes/set_ui.py
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/search_v2 backend/app/routes/set_ui.py
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Optimize current Cardmarket search price lookup'
+          git push origin HEAD:catalog-v2

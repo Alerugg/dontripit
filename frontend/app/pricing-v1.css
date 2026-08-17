@@ -1,0 +1,81 @@
+/* Pricing V1 — transparent Cardmarket metrics */
+.ux-price-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.ux-price-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ux-price-heading h2 {
+  margin: 3px 0 0;
+  font-size: 1.08rem;
+}
+
+.ux-price-main {
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.45rem;
+  white-space: nowrap;
+}
+
+.ux-price-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ux-price-metric {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--ux-line);
+  border-radius: 13px;
+  background: rgba(255,255,255,.025);
+}
+
+.ux-price-metric.is-featured {
+  border-color: rgba(139,92,246,.36);
+  background: rgba(139,92,246,.09);
+}
+
+.ux-price-metric span,
+.library-price-label {
+  display: block;
+  color: var(--ux-muted);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.ux-price-metric strong {
+  display: block;
+  margin-top: 5px;
+  font-size: .96rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ux-price-explainer {
+  padding-top: 3px;
+  border-top: 1px solid var(--ux-line);
+}
+
+.library-price-metrics {
+  color: var(--ux-muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .ux-price-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ux-price-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -1,0 +1,40 @@
+name: Search V2 regression contracts
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - .github/triggers/search-v2-post-fra1-cert
+
+permissions:
+  contents: read
+
+jobs:
+  search-v2-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Run backend Search V2 regression contracts
+        working-directory: backend
+        run: |
+          pytest -q \
+            tests/test_pokemon_advanced_count_performance_contract.py \
+            tests/test_internal_first_party_catalog_fast_path.py
+      - name: Run frontend Search/mobile asset contracts
+        working-directory: frontend
+        run: |
+          node --test \
+            tests/search-v2-mobile-contract.test.js \
+            tests/set-images-backed-contract.test.js

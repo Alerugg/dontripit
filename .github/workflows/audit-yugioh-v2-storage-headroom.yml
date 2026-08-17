@@ -1,0 +1,52 @@
+name: Audit Yu-Gi-Oh V2 Storage Headroom
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-yugioh-v2-storage-headroom.yml'
+      - 'backend/app/scripts/audit_yugioh_v2_storage_headroom.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Compile storage audit
+        working-directory: backend
+        run: python -m compileall -q app/scripts/audit_yugioh_v2_storage_headroom.py
+      - name: Measure current database and projected atomic-replace peak
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_yugioh_v2_storage_headroom \
+            --report-path /tmp/yugioh-v2-storage-headroom.json \
+            | tee /tmp/yugioh-v2-storage-headroom.log
+      - name: Upload storage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-v2-storage-headroom-${{ github.sha }}
+          path: |
+            /tmp/yugioh-v2-storage-headroom.json
+            /tmp/yugioh-v2-storage-headroom.log
+          retention-days: 90
+          if-no-files-found: error

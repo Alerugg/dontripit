@@ -1,0 +1,62 @@
+name: Audit Multilingual Catalog EN ES JA
+
+on:
+  push:
+    branches: [multilingual-v1]
+    paths:
+      - 'backend/app/scripts/audit_multilingual_catalog.py'
+      - '.github/workflows/audit-multilingual-catalog.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-multilingual-catalog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout multilingual sandbox
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install audit dependency only
+        run: pip install psycopg2-binary==2.9.9
+
+      - name: Compile auditor
+        run: python -m py_compile app/scripts/audit_multilingual_catalog.py
+
+      - name: Run strict read-only production audit
+        run: python app/scripts/audit_multilingual_catalog.py
+
+      - name: Publish audit summary
+        if: always()
+        run: |
+          if [ -f /tmp/multilingual-catalog-audit.md ]; then
+            cat /tmp/multilingual-catalog-audit.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multilingual-catalog-audit-${{ github.run_id }}
+          path: |
+            /tmp/multilingual-catalog-audit.json
+            /tmp/multilingual-catalog-audit.md
+          if-no-files-found: warn
+          retention-days: 90

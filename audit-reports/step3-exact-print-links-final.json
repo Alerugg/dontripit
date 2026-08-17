@@ -1,0 +1,100 @@
+{
+  "db": {
+    "accepted_cardmarket": {
+      "accepted_prints": 199086,
+      "ambiguous_accepted_prints": 0,
+      "wrong_game_or_group": 0
+    },
+    "card_counts": {
+      "blue_eyes": 78,
+      "sol_ring": 170
+    },
+    "games": {
+      "mtg": {
+        "blank_names": 0,
+        "placeholder_names": 0,
+        "prints": 161144
+      },
+      "onepiece": {
+        "blank_names": 0,
+        "placeholder_names": 0,
+        "prints": 4672
+      },
+      "pokemon": {
+        "blank_names": 0,
+        "placeholder_names": 0,
+        "prints": 33757
+      },
+      "yugioh": {
+        "blank_names": 0,
+        "placeholder_names": 0,
+        "prints": 44226
+      }
+    },
+    "luffy_44257_links": [
+      {
+        "id_product": "720061",
+        "link_status": "accepted",
+        "mapping_method": "bandai_physical_release_unique_exact"
+      },
+      {
+        "id_product": "749435",
+        "link_status": "quarantined",
+        "mapping_method": "op_variant_cm_global_exact"
+      }
+    ],
+    "luffy_44257_releases": [
+      {
+        "code": null,
+        "external_id": "569103",
+        "id": 78,
+        "name": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+        "source": "onepiece_official"
+      }
+    ]
+  },
+  "hard_failures": [],
+  "http": {
+    "blue_eyes_prints_3": {
+      "seconds": 2.787,
+      "status": 200
+    },
+    "luffy_exact_price": {
+      "seconds": 12.075,
+      "status": 200
+    },
+    "luffy_physical_release": {
+      "seconds": 1.747,
+      "status": 200
+    },
+    "luffy_search_page2": {
+      "seconds": 2.748,
+      "status": 200
+    },
+    "op03_luffy_checklist": {
+      "seconds": 2.667,
+      "status": 200
+    },
+    "sol_ring_legacy_card": {
+      "seconds": 3.878,
+      "status": 200
+    },
+    "sol_ring_prints_1": {
+      "seconds": 2.068,
+      "status": 200
+    },
+    "sol_ring_prints_2": {
+      "seconds": 1.925,
+      "status": 200
+    },
+    "sol_ring_prints_last": {
+      "seconds": 3.338,
+      "status": 200
+    }
+  },
+  "pass": true,
+  "static": {
+    "fake_name_hits": {},
+    "missing_contracts": {}
+  }
+}

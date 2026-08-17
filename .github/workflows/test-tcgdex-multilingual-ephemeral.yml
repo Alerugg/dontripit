@@ -1,0 +1,154 @@
+name: TCGdex Multilingual Bulk Ephemeral Certification
+
+on:
+  push:
+    branches:
+      - multilingual-bulk-rollout
+    paths:
+      - "backend/app/scripts/bulk_tcgdex_multilingual_backfill.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py"
+      - "backend/app/scripts/seed_multilingual_ephemeral_catalog.py"
+      - "backend/app/scripts/validate_tcgdex_multilingual_ephemeral.py"
+      - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - "backend/alembic/versions/20260814_34_add_catalog_entity_identifiers.py"
+      - ".github/workflows/test-tcgdex-multilingual-ephemeral.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgdex-multilingual-bulk-ephemeral-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: multilingual_ephemeral
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d multilingual_ephemeral"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout bulk sandbox
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile bulk certification code
+        run: |
+          python -m py_compile \
+            app/scripts/bulk_tcgdex_multilingual_backfill.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/scripts/seed_multilingual_ephemeral_catalog.py \
+            app/scripts/validate_tcgdex_multilingual_ephemeral.py
+
+      - name: Migrate ephemeral PostgreSQL only
+        env:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_ephemeral
+          PYTHONPATH: .
+        run: alembic upgrade head
+
+      - name: Seed Pokémon canonical identity from production read-only
+        env:
+          PRODUCTION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PRODUCTION_DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          EPHEMERAL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
+        run: python app/scripts/seed_multilingual_ephemeral_catalog.py
+
+      - name: Assert bulk writer has no production credential
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
+        run: |
+          test -z "${PRODUCTION_DATABASE_URL:-}"
+          test -z "${PRODUCTION_DATABASE_URL_UNPOOLED:-}"
+          python - <<'PY'
+          import os
+          value = os.environ['DATABASE_URL']
+          assert 'localhost:5432/multilingual_ephemeral' in value, value
+          print('bulk writer target guard: ephemeral only')
+          PY
+
+      - name: Run transactional bulk ES JA writer against ephemeral DB
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
+          PYTHONPATH: .
+          INGEST_LOG_LEVEL: WARNING
+        run: python -m app.scripts.bulk_tcgdex_multilingual_backfill
+
+      - name: Validate exact live ES JA coverage and canonical immutability
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/multilingual_ephemeral
+          PYTHONPATH: .
+        run: python app/scripts/validate_tcgdex_multilingual_ephemeral.py --snapshot /tmp/multilingual-bulk-pass.json
+
+      - name: Gate certified bulk output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/tcgdex-multilingual-bulk-report.json').read_text())
+          assert report['status'] == 'pass', report
+          assert report['mode'] == 'single-transaction-bulk-es-ja', report
+          assert report['es_written']['prints'] == 14046, report
+          assert report['ja_written']['prints'] == 8159, report
+          assert report['final']['totals'] == {'sets': 273, 'cards': 29224, 'prints': 22205}, report
+          assert report['final']['language_counts'] == {'es': 14046, 'ja': 8159}, report
+          assert report['database_transaction_seconds'] < 180, report
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Publish certification summary
+        if: always()
+        run: |
+          {
+            echo "# TCGdex multilingual bulk ephemeral certification"
+            echo
+            echo "- Production access: read-only canonical seed only."
+            echo "- Writer target: ephemeral PostgreSQL only."
+            echo "- ES + JA: one database transaction."
+            echo "- Pocket/stale-empty scope: physical writer policy."
+            echo
+            if [ -f /tmp/tcgdex-multilingual-bulk-report.json ]; then
+              echo '```json'
+              cat /tmp/tcgdex-multilingual-bulk-report.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgdex-multilingual-bulk-ephemeral-${{ github.run_id }}
+          path: |
+            /tmp/pokemon-multilingual-ephemeral-baseline.json
+            /tmp/tcgdex-multilingual-bulk-report.json
+            /tmp/multilingual-bulk-pass.json
+            /tmp/pokemon-multilingual-ephemeral-validation.json
+          if-no-files-found: warn
+          retention-days: 90

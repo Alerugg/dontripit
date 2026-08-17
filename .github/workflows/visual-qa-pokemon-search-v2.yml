@@ -1,0 +1,114 @@
+name: Visual QA Pokemon Search V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/visual-qa-pokemon-search-v2.yml'
+      - 'frontend/tests/pokemon-search-v2-visual.js'
+      - 'frontend/next.config.js'
+      - 'frontend/app/games/[slug]/page.js'
+      - 'frontend/components/games/PokemonExplorerV2Page.js'
+      - 'frontend/components/search/**'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/lib/searchV2/**'
+      - 'frontend/lib/catalog/internalApi.js'
+      - 'frontend/app/api/search-v2/**'
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/search_v2/pokemon_*.py'
+  workflow_dispatch:
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PUBLIC_API_ENABLED: 'true'
+      PUBLIC_IP_RATE_LIMIT_RPM: '200'
+      INTERNAL_API_BASE_URL: http://127.0.0.1:5000
+      INTERNAL_API_ALLOW_PUBLIC: 'true'
+      ADMIN_CONSOLE_USERNAME: admin
+      ADMIN_CONSOLE_PASSWORD: visual-qa-password
+      QA_BASE_URL: http://127.0.0.1:3000
+      QA_SCREENSHOT_DIR: /tmp/pokemon-visual-qa
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "visual-pokemon-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "INTERNAL_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Playwright Chromium for QA runner
+        working-directory: frontend
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Start Flask backend against Neon
+        run: |
+          set -euo pipefail
+          (cd backend && python -m flask --app app.main:app run --host=127.0.0.1 --port=5000 > /tmp/pokemon-backend.log 2>&1) &
+          echo $! > /tmp/pokemon-backend.pid
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5000/api/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/pokemon-backend.log
+          exit 1
+      - name: Build Next.js frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Start Next.js frontend
+        run: |
+          set -euo pipefail
+          (cd frontend && npm start > /tmp/pokemon-frontend.log 2>&1) &
+          echo $! > /tmp/pokemon-frontend.pid
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000/games/pokemon >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/pokemon-frontend.log
+          exit 1
+      - name: Run Chromium interaction and responsive QA
+        working-directory: frontend
+        run: node tests/pokemon-search-v2-visual.js
+      - name: Upload visual QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-search-v2-visual-${{ github.sha }}
+          path: |
+            /tmp/pokemon-visual-qa
+            /tmp/pokemon-backend.log
+            /tmp/pokemon-frontend.log
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true

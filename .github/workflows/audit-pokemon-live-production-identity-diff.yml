@@ -1,0 +1,173 @@
+name: Audit Pokemon Live Production Identity Diff
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-pokemon-live-production-identity-diff.yml'
+      - 'backend/app/pokemon_source_inventory.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compare current TCGdex physical identities with production
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os, re, unicodedata
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+          from app.pokemon_source_inventory import load_inventory
+
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
+              return re.sub(r'\s+',' ',s).strip().casefold()
+
+          inv=load_inventory()
+          source_sets={str(x['set_id']):x for x in inv.physical_sets}
+          source_cards={str(k):v for k,v in inv.physical_cards.items()}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT s.id set_pk,s.tcgdex_id,s.code,s.name,s.release_date,
+                       count(distinct c.id) cards,count(distinct p.id) prints
+                FROM sets s JOIN games g ON g.id=s.game_id
+                LEFT JOIN prints p ON p.set_id=s.id
+                LEFT JOIN cards c ON c.id=p.card_id
+                WHERE g.slug='pokemon'
+                GROUP BY s.id,s.tcgdex_id,s.code,s.name,s.release_date
+                ORDER BY s.id
+              ''')
+              db_sets=[dict(x) for x in c.fetchall()]
+              c.execute('''
+                SELECT c.id card_pk,c.tcgdex_id,c.name,c.card_key,
+                       min(p.collector_number) collector_number,
+                       min(s.tcgdex_id) set_tcgdex_id,
+                       count(distinct p.id) print_count
+                FROM cards c JOIN games g ON g.id=c.game_id
+                LEFT JOIN prints p ON p.card_id=c.id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon'
+                GROUP BY c.id,c.tcgdex_id,c.name,c.card_key
+                ORDER BY c.id
+              ''')
+              db_cards=[dict(x) for x in c.fetchall()]
+          conn.close()
+
+          db_sets_by_source=defaultdict(list)
+          no_set_source_id=[]
+          for row in db_sets:
+              sid=str(row.get('tcgdex_id') or '').strip()
+              if sid: db_sets_by_source[sid].append(row)
+              else: no_set_source_id.append(row)
+
+          duplicate_set_ids={k:v for k,v in db_sets_by_source.items() if len(v)>1}
+          db_set_ids=set(db_sets_by_source)
+          source_set_ids=set(source_sets)
+          production_only_set_ids=sorted(db_set_ids-source_set_ids)
+          source_only_set_ids=sorted(source_set_ids-db_set_ids)
+
+          db_cards_by_source=defaultdict(list)
+          no_card_source_id=[]
+          for row in db_cards:
+              cid=str(row.get('tcgdex_id') or '').strip()
+              if cid: db_cards_by_source[cid].append(row)
+              else: no_card_source_id.append(row)
+          duplicate_card_ids={k:v for k,v in db_cards_by_source.items() if len(v)>1}
+          db_card_ids=set(db_cards_by_source)
+          source_card_ids=set(source_cards)
+          prod_only_card_ids=sorted(db_card_ids-source_card_ids)
+          source_only_card_ids=sorted(source_card_ids-db_card_ids)
+
+          overlaps=sorted(db_card_ids & source_card_ids)
+          mismatches=[]; mismatch_fields=Counter()
+          for cid in overlaps:
+              rows=db_cards_by_source[cid]
+              if len(rows)!=1: continue
+              dbrow=rows[0]; src=source_cards[cid]
+              bad=[]
+              if norm(dbrow.get('name'))!=norm(src.get('name')): bad.append('name')
+              src_local=str(src.get('local_id') or '').strip()
+              db_col=str(dbrow.get('collector_number') or '').strip()
+              if src_local and db_col and norm(src_local)!=norm(db_col): bad.append('local_id_vs_collector')
+              src_set=str(src.get('set_id') or '').strip(); db_set=str(dbrow.get('set_tcgdex_id') or '').strip()
+              if src_set and db_set and src_set!=db_set: bad.append('set_id')
+              if bad:
+                  for f in bad:mismatch_fields[f]+=1
+                  mismatches.append({'tcgdex_id':cid,'fields':bad,'source':src,'production':dbrow})
+
+          # The live set endpoint can declare more cards than /cards currently
+          # exposes. Keep this separate from identity differences so it is never
+          # mistaken for evidence that production data should be deleted.
+          source_declared_anomalies=[]
+          for sid,row in source_sets.items():
+              declared=row.get('declared_total'); endpoint=row.get('set_endpoint_cards')
+              actual=sum(1 for c in source_cards.values() if c.get('set_id')==sid)
+              if declared is not None and int(declared)!=actual:
+                  source_declared_anomalies.append({'set_id':sid,'name':row.get('set_name'),'declared_total':declared,'current_global_cards':actual,'set_endpoint_cards':endpoint})
+
+          def expand_set(ids, mapping):
+              return [{**mapping[i], 'set_id':i} for i in ids]
+          def expand_cards(ids, mapping, cap=500):
+              return [mapping[i] for i in ids[:cap]]
+
+          report={
+            'source':'TCGdex REST v2/en current physical inventory',
+            'policy':'Read-only reconciliation. Production-only identities are historical/source-contracted until independently disproven; never delete solely because the current upstream omitted them.',
+            'source_physical_sets':len(source_sets),'production_sets':len(db_sets),
+            'source_physical_cards':len(source_cards),'production_cards':len(db_cards),
+            'production_sets_without_tcgdex_id':len(no_set_source_id),
+            'production_cards_without_tcgdex_id':len(no_card_source_id),
+            'duplicate_production_set_tcgdex_ids':len(duplicate_set_ids),
+            'duplicate_production_card_tcgdex_ids':len(duplicate_card_ids),
+            'production_only_sets':len(production_only_set_ids),
+            'source_only_sets':len(source_only_set_ids),
+            'production_only_cards':len(prod_only_card_ids),
+            'source_only_cards':len(source_only_card_ids),
+            'overlap_cards':len(overlaps),
+            'overlap_identity_mismatches':len(mismatches),
+            'mismatches_by_field':dict(mismatch_fields),
+            'source_declared_count_anomalies':len(source_declared_anomalies),
+            'production_only_set_rows':[row for sid in production_only_set_ids for row in db_sets_by_source[sid]],
+            'source_only_set_rows':expand_set(source_only_set_ids,source_sets),
+            'production_only_card_rows':[row for cid in prod_only_card_ids[:1000] for row in db_cards_by_source[cid]],
+            'source_only_card_rows':expand_cards(source_only_card_ids,source_cards),
+            'identity_mismatch_rows':mismatches[:1000],
+            'source_declared_anomalies':source_declared_anomalies,
+            'sets_without_source_id':no_set_source_id,
+            'cards_without_source_id':no_card_source_id[:1000],
+          }
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_rows') and k not in ('source_declared_anomalies','sets_without_source_id','cards_without_source_id')},indent=2,ensure_ascii=False,default=str))
+          if production_only_set_ids: print('production_only_sets',json.dumps(report['production_only_set_rows'],ensure_ascii=False,default=str))
+          if source_only_set_ids: print('source_only_sets',json.dumps(report['source_only_set_rows'],ensure_ascii=False,default=str))
+          print('production_only_card_sample',json.dumps(report['production_only_card_rows'][:20],ensure_ascii=False,default=str))
+          print('source_only_card_sample',json.dumps(report['source_only_card_rows'][:20],ensure_ascii=False,default=str))
+          print('identity_mismatch_sample',json.dumps(report['identity_mismatch_rows'][:20],ensure_ascii=False,default=str))
+          Path('/tmp/pokemon-live-production-identity-diff.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-live-production-identity-diff-${{ github.run_id }}
+          path: /tmp/pokemon-live-production-identity-diff.json
+          retention-days: 90
+          if-no-files-found: warn

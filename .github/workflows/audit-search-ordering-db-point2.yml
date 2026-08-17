@@ -1,0 +1,88 @@
+name: Audit Search Ordering DB Point 2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-search-ordering-db-point2.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Execute real search SQL against production DB
+        env:
+          PYTHONPATH: backend
+        run: |
+          python - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from sqlalchemy.orm import Session
+          from app.search_v2.advanced import advanced_onepiece_search
+          from app.search_v2.pokemon_advanced import advanced_pokemon_search
+          from app.search_v2.yugioh_advanced import advanced_yugioh_search
+          from app.search_v2.mtg_advanced import advanced_mtg_search
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'], pool_pre_ping=True)
+          cases={
+            'onepiece':(advanced_onepiece_search,'Luffy',{}),
+            'pokemon':(advanced_pokemon_search,'Pikachu',{}),
+            'yugioh':(advanced_yugioh_search,'Dark Magician',{}),
+            'mtg':(advanced_mtg_search,'Sol Ring',{}),
+          }
+          report={'pass':True,'games':{},'failures':[]}
+          for game,(fn,q,filters) in cases.items():
+            started=time.time()
+            try:
+              with Session(engine) as session:
+                session.execute(text("SET LOCAL statement_timeout = '12000ms'"))
+                first=fn(session,filters=filters,query=q,sort='price_desc',has_price=True,limit=5,offset=0)
+                second=fn(session,filters=filters,query=q,sort='price_desc',has_price=True,limit=5,offset=5)
+                first_prices=[x.get('cardmarket_price') for x in first['items']]
+                second_prices=[x.get('cardmarket_price') for x in second['items']]
+                ids1=[int(x['print_id']) for x in first['items']]
+                ids2=[int(x['print_id']) for x in second['items']]
+                ok=True
+                if first['total'] <= 0:
+                  ok=False; report['failures'].append(f'{game}: no priced results for audit query')
+                if any(v is None or float(v)<=0 for v in first_prices+second_prices):
+                  ok=False; report['failures'].append(f'{game}: has_price returned null/nonpositive')
+                if any(float(first_prices[i]) < float(first_prices[i+1]) for i in range(len(first_prices)-1)):
+                  ok=False; report['failures'].append(f'{game}: page1 not price_desc')
+                if any(float(second_prices[i]) < float(second_prices[i+1]) for i in range(len(second_prices)-1)):
+                  ok=False; report['failures'].append(f'{game}: page2 not price_desc')
+                if first_prices and second_prices and float(first_prices[-1]) < float(second_prices[0]):
+                  ok=False; report['failures'].append(f'{game}: ordering breaks across page boundary')
+                if set(ids1)&set(ids2):
+                  ok=False; report['failures'].append(f'{game}: duplicate prints across consecutive pages')
+                report['games'][game]={
+                  'ok':ok,'query':q,'total_priced':first['total'],'page1_ids':ids1,'page2_ids':ids2,
+                  'page1_prices':first_prices,'page2_prices':second_prices,'seconds':round(time.time()-started,3),
+                }
+            except Exception as exc:
+              report['failures'].append(f'{game}: {type(exc).__name__}: {exc}')
+              report['games'][game]={'ok':False,'query':q,'seconds':round(time.time()-started,3),'error':str(exc)[:500]}
+          report['pass']=not report['failures']
+          Path('/tmp/search-ordering-point2.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if not report['pass']: raise SystemExit(2)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-ordering-point2-${{ github.run_id }}
+          path: /tmp/search-ordering-point2.json
+          retention-days: 30

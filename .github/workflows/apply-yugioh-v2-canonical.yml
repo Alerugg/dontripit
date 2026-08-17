@@ -1,0 +1,109 @@
+name: Apply Yu-Gi-Oh V2 Canonical Snapshot
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/apply-yugioh-v2-canonical.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: yugioh-v2-canonical-replace
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      CERTIFIED_ARTIFACT_ID: '9024131008'
+      CERTIFIED_ARTIFACT_SHA256: 'ad14f581a8b74d75d643a360b168c82066ff655d54e86d9574e37aa850089949'
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile certified loader and backup exporter
+        working-directory: backend
+        run: |
+          python -m compileall -q \
+            app/scripts/apply_yugioh_v2_snapshot.py \
+            app/scripts/export_yugioh_legacy_backup.py \
+            app/scripts/verify_yugioh_v2_snapshot_manifest.py
+
+      - name: Download exact certified snapshot artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-certified /tmp/yugioh-certified.zip
+          mkdir -p /tmp/yugioh-certified
+          curl -fL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CERTIFIED_ARTIFACT_ID}/zip" \
+            -o /tmp/yugioh-certified.zip
+          echo "${CERTIFIED_ARTIFACT_SHA256}  /tmp/yugioh-certified.zip" | sha256sum -c -
+          unzip -q /tmp/yugioh-certified.zip -d /tmp/yugioh-certified
+          test -f /tmp/yugioh-certified/yugioh-v2-snapshot/manifest.json
+
+      - name: Re-verify frozen snapshot manifest
+        working-directory: backend
+        run: |
+          python -u -m app.scripts.verify_yugioh_v2_snapshot_manifest \
+            /tmp/yugioh-certified/yugioh-v2-snapshot/manifest.json \
+            | tee /tmp/yugioh-certified-verification.log
+
+      - name: Export fresh pre-write legacy recovery backup
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-prewrite-backup
+          python -u -m app.scripts.export_yugioh_legacy_backup \
+            --output-dir /tmp/yugioh-prewrite-backup \
+            | tee /tmp/yugioh-prewrite-backup.log
+
+      - name: Transactionally replace Yu-Gi-Oh canonical catalog
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.apply_yugioh_v2_snapshot \
+            --snapshot-dir /tmp/yugioh-certified/yugioh-v2-snapshot \
+            --artifact-sha256 "${CERTIFIED_ARTIFACT_SHA256}" \
+            --report-path /tmp/yugioh-v2-apply-report.json \
+            | tee /tmp/yugioh-v2-apply.log
+
+      - name: Upload canonical replacement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-v2-canonical-apply-${{ github.sha }}
+          path: |
+            /tmp/yugioh-v2-apply-report.json
+            /tmp/yugioh-v2-apply.log
+            /tmp/yugioh-certified-verification.log
+            /tmp/yugioh-prewrite-backup
+            /tmp/yugioh-prewrite-backup.log
+          retention-days: 90
+          if-no-files-found: warn

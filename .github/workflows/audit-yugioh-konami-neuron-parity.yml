@@ -1,0 +1,130 @@
+name: Audit YuGiOh Konami Neuron Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-yugioh-konami-neuron-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Compare one exact print per release with Konami Neuron
+        run: |
+          python - <<'PY'
+          import json, os, re, time, unicodedata
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2, requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          YGO='https://db.ygoprodeck.com/api/v7/cardinfo.php'
+          KONAMI='https://www.db.yugioh-card.com/yugiohdb/card_search.action'
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'").replace('–','-').replace('—','-')
+              return re.sub(r'\s+',' ',s).strip().casefold()
+          def rarity_ok(page_text, code, rarity):
+              t=norm(page_text); c=norm(code); r=norm(rarity)
+              pos=t.find(c)
+              if pos<0:return False
+              # Neuron displays code, product name, rarity abbreviation and full rarity together.
+              window=t[pos:pos+500]
+              return r in window if r and r!='unknown' else True
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT cr.id release_id,cr.name release_name,cr.code release_code,cr.release_date,
+                       p.id print_id,p.collector_number,p.rarity,c.id card_pk,c.yugoprodeck_id,c.name card_name
+                FROM catalog_releases cr
+                JOIN games g ON g.id=cr.game_id
+                JOIN print_releases pr ON pr.release_id=cr.id
+                JOIN prints p ON p.id=pr.print_id
+                JOIN cards c ON c.id=p.card_id
+                WHERE g.slug='yugioh'
+                ORDER BY cr.id,p.id
+              ''')
+              all_rows=[dict(x) for x in c.fetchall()]
+          conn.close()
+          first_by_release={}
+          for r in all_rows:first_by_release.setdefault(r['release_id'],r)
+          samples=list(first_by_release.values())
+
+          # Fetch YGOPRODeck with misc=yes in pages so Konami IDs are available.
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 ygo-konami-parity','Accept':'application/json'})
+          konami_by_passcode={};offset=0;page_size=500
+          while True:
+              resp=http.get(YGO,params={'num':page_size,'offset':offset,'misc':'yes'},timeout=60)
+              resp.raise_for_status(); data=(resp.json() or {}).get('data') or []
+              if not data:break
+              for card in data:
+                  misc=card.get('misc_info') or []
+                  kid=None
+                  if misc and isinstance(misc[0],dict):kid=misc[0].get('konami_id')
+                  if kid:konami_by_passcode[str(card.get('id'))]=str(kid)
+              if len(data)<page_size:break
+              offset+=page_size;time.sleep(0.08)
+
+          grouped=defaultdict(list)
+          missing_konami=[]
+          for r in samples:
+              kid=konami_by_passcode.get(str(r.get('yugoprodeck_id') or ''))
+              if not kid:missing_konami.append(r);continue
+              grouped[kid].append(r)
+
+          kh=requests.Session();kh.headers.update({'User-Agent':'DontRipIt/1.0 official-konami-parity','Accept':'text/html'})
+          counts=Counter();details=[];checked_rows=0
+          for i,(kid,rows) in enumerate(grouped.items(),1):
+              try:
+                  resp=kh.get(KONAMI,params={'cid':kid,'ope':'2','request_locale':'en'},timeout=30)
+              except Exception as exc:
+                  counts['request_error']+=len(rows);details.append({'konami_id':kid,'status':'request_error','error':str(exc)[:160]});continue
+              if resp.status_code!=200:
+                  counts[f'http_{resp.status_code}']+=len(rows);details.append({'konami_id':kid,'status':f'http_{resp.status_code}'});continue
+              soup=BeautifulSoup(resp.text,'html.parser'); text=' '.join(soup.stripped_strings)
+              h1=soup.find('h1'); page_name=' '.join(h1.stripped_strings) if h1 else ''
+              for r in rows:
+                  checked_rows+=1
+                  name_match=norm(r['card_name']) in norm(page_name) or norm(r['card_name']) in norm(text[:1500])
+                  code_match=norm(r['collector_number']) in norm(text)
+                  rare_match=rarity_ok(text,r['collector_number'],r['rarity']) if code_match else False
+                  status='matched' if name_match and code_match and rare_match else ('code_found_rarity_mismatch' if name_match and code_match else 'not_found_exact')
+                  counts[status]+=1
+                  if status!='matched':details.append({**r,'konami_id':kid,'official_name':page_name,'status':status,'name_match':name_match,'code_match':code_match,'rarity_match':rare_match})
+              if i%100==0:print('progress',i,'/',len(grouped),'checked_rows',checked_rows,dict(counts),flush=True)
+              time.sleep(0.10)
+
+          report={
+            'official_source':'Konami Yu-Gi-Oh! Neuron TCG Card Database',
+            'canonical_ingest_source':'YGOPRODeck',
+            'db_releases':len(first_by_release),'db_release_memberships':len(all_rows),
+            'release_samples':len(samples),'sample_cards_with_konami_id':sum(len(v) for v in grouped.values()),
+            'sample_cards_without_konami_id':len(missing_konami),
+            'unique_konami_pages_requested':len(grouped),'status_counts':dict(counts),
+            'mismatch_samples':details[:400],
+            'missing_konami_samples':missing_konami[:100],
+          }
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('samples')},indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/yugioh-konami-neuron-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-konami-neuron-parity-${{ github.run_id }}
+          path: /tmp/yugioh-konami-neuron-parity.json
+          retention-days: 90
+          if-no-files-found: warn

@@ -135,20 +135,41 @@ def _run_connector(connector_name: str, path: str | None = None, **kwargs) -> di
     return result
 
 
+def _attempted_connector_states(summary: dict) -> list[tuple[str, bool]]:
+    states: list[tuple[str, bool]] = []
+    for key in ("pokemon", "onepiece", "mtg", "yugioh", "riftbound"):
+        item = summary[key]
+        if item.get("skipped"):
+            continue
+        states.append((key, bool(item.get("ok"))))
+    return states
+
+
 def run_daily_refresh(args: argparse.Namespace) -> dict:
     started_at = datetime.now(timezone.utc)
     summary: dict = {
         "started_at": started_at.isoformat(),
         "incremental": bool(args.incremental),
         "batch_size": args.batch_size,
-        "pokemon": {"ok": False, "skipped": bool(args.skip_pokemon or args.pokemon_limit == 0), "runs": [], "totals": _empty_stats()},
+        "pokemon": {
+            "ok": False,
+            "skipped": bool(args.skip_pokemon or args.pokemon_limit == 0),
+            "runs": [],
+            "totals": _empty_stats(),
+        },
+        "onepiece": {
+            "ok": False,
+            "skipped": bool(args.skip_onepiece or args.onepiece_limit == 0),
+            "run": None,
+            "totals": _empty_stats(),
+        },
         "mtg": {"ok": False, "skipped": bool(args.mtg_limit == 0), "run": None, "totals": _empty_stats()},
         "yugioh": {"ok": False, "skipped": bool(args.yugioh_limit == 0), "run": None, "totals": _empty_stats()},
         "riftbound": {"ok": False, "skipped": bool(args.riftbound_limit == 0), "run": None, "totals": _empty_stats()},
         "reindex": {"ok": False, "stats": {}, "error": None},
     }
 
-    if not args.skip_pokemon and args.pokemon_limit != 0:
+    if not summary["pokemon"]["skipped"]:
         pokemon_sets = _resolve_pokemon_sets(args, summary)
 
         for pokemon_set in pokemon_sets:
@@ -163,15 +184,30 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
             pokemon_run["set"] = pokemon_set
             summary["pokemon"]["runs"].append(pokemon_run)
             _accumulate(summary["pokemon"]["totals"], pokemon_run["stats"])
-            if pokemon_run["ok"]:
-                summary["pokemon"]["ok"] = True
             print(
                 "[daily_refresh] pokemon_run=" + json.dumps(pokemon_run, ensure_ascii=False, sort_keys=True),
                 flush=True,
             )
             time.sleep(max(args.sleep_seconds, 0))
 
-    if args.mtg_limit != 0:
+        summary["pokemon"]["ok"] = bool(summary["pokemon"]["runs"]) and all(
+            run["ok"] for run in summary["pokemon"]["runs"]
+        )
+
+    if not summary["onepiece"]["skipped"]:
+        onepiece_run = _run_connector(
+            "onepiece",
+            args.path,
+            limit=args.onepiece_limit,
+            incremental=args.incremental,
+            fixture=args.fixture,
+        )
+        summary["onepiece"]["run"] = onepiece_run
+        summary["onepiece"]["ok"] = onepiece_run["ok"]
+        _accumulate(summary["onepiece"]["totals"], onepiece_run["stats"])
+        print("[daily_refresh] onepiece_run=" + json.dumps(onepiece_run, ensure_ascii=False, sort_keys=True), flush=True)
+
+    if not summary["mtg"]["skipped"]:
         mtg_run = _run_connector(
             "scryfall_mtg",
             args.path,
@@ -184,7 +220,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["mtg"]["totals"], mtg_run["stats"])
         print("[daily_refresh] mtg_run=" + json.dumps(mtg_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    if args.yugioh_limit != 0:
+    if not summary["yugioh"]["skipped"]:
         yugioh_run = _run_connector(
             "ygoprodeck_yugioh",
             args.path,
@@ -197,7 +233,7 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["yugioh"]["totals"], yugioh_run["stats"])
         print("[daily_refresh] yugioh_run=" + json.dumps(yugioh_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    if args.riftbound_limit != 0:
+    if not summary["riftbound"]["skipped"]:
         riftbound_run = _run_connector(
             "riftbound",
             args.path,
@@ -210,18 +246,12 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
         _accumulate(summary["riftbound"]["totals"], riftbound_run["stats"])
         print("[daily_refresh] riftbound_run=" + json.dumps(riftbound_run, ensure_ascii=False, sort_keys=True), flush=True)
 
-    connector_mutations = (
-        summary["pokemon"]["totals"]["inserted"]
-        + summary["pokemon"]["totals"]["updated"]
-        + summary["mtg"]["totals"]["inserted"]
-        + summary["mtg"]["totals"]["updated"]
-        + summary["yugioh"]["totals"]["inserted"]
-        + summary["yugioh"]["totals"]["updated"]
-        + summary["riftbound"]["totals"]["inserted"]
-        + summary["riftbound"]["totals"]["updated"]
+    connector_mutations = sum(
+        summary[key]["totals"]["inserted"] + summary[key]["totals"]["updated"]
+        for key in ("pokemon", "onepiece", "mtg", "yugioh", "riftbound")
     )
     should_reindex = (not args.incremental) and connector_mutations > 0
-    summary["reindex"]["trigger"] = "full_refresh" if should_reindex else "skipped_targeted_connector_reindex"
+    summary["reindex"]["trigger"] = "full_refresh" if should_reindex else "connector_managed_or_no_mutations"
 
     if should_reindex:
         try:
@@ -234,13 +264,46 @@ def run_daily_refresh(args: argparse.Namespace) -> dict:
             summary["reindex"]["error"] = str(exc)
     else:
         summary["reindex"]["ok"] = True
-        summary["reindex"]["stats"] = {"skipped": True, "mutations": connector_mutations}
+        summary["reindex"]["stats"] = {
+            "skipped": True,
+            "mutations": connector_mutations,
+            "reason": "incremental connectors reindex touched entities themselves" if args.incremental else "no mutations",
+        }
 
     summary["ended_at"] = datetime.now(timezone.utc).isoformat()
     summary["duration_seconds"] = (datetime.now(timezone.utc) - started_at).total_seconds()
 
-    all_failed = not summary["pokemon"]["ok"] and not summary["mtg"]["ok"] and not summary["yugioh"]["ok"] and not summary["riftbound"]["ok"]
-    summary["exit_code"] = 1 if all_failed else 0
+    attempted = _attempted_connector_states(summary)
+    succeeded = [name for name, ok in attempted if ok]
+    failed = [name for name, ok in attempted if not ok]
+    skipped = [
+        key
+        for key in ("pokemon", "onepiece", "mtg", "yugioh", "riftbound")
+        if summary[key].get("skipped")
+    ]
+
+    summary["connectors"] = {
+        "attempted": [name for name, _ok in attempted],
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+    if failed and succeeded:
+        summary["status"] = "degraded"
+    elif failed:
+        summary["status"] = "failed"
+    elif attempted:
+        summary["status"] = "success"
+    else:
+        summary["status"] = "skipped"
+
+    if not summary["reindex"]["ok"]:
+        summary["status"] = "failed" if not succeeded else "degraded"
+
+    # A degraded refresh must be visible to CI. Previously the script returned 0
+    # as long as any connector succeeded, masking broken sources for months.
+    summary["exit_code"] = 1 if failed or not summary["reindex"]["ok"] else 0
     return summary
 
 
@@ -249,6 +312,7 @@ def build_refresh_args(
     path: str | None = None,
     pokemon_set: str | None = None,
     pokemon_limit: int | None = None,
+    onepiece_limit: int | None = None,
     mtg_limit: int | None = None,
     yugioh_limit: int | None = None,
     riftbound_limit: int | None = None,
@@ -257,6 +321,7 @@ def build_refresh_args(
     fixture: bool = False,
     riftbound_fixture: bool = False,
     skip_pokemon: bool = False,
+    skip_onepiece: bool = False,
     pokemon_all: bool = False,
     pokemon_all_sets: bool = False,
     pokemon_sets: str | None = None,
@@ -266,6 +331,7 @@ def build_refresh_args(
         path=path,
         pokemon_set=pokemon_set,
         pokemon_limit=pokemon_limit,
+        onepiece_limit=onepiece_limit,
         mtg_limit=mtg_limit,
         yugioh_limit=yugioh_limit,
         riftbound_limit=riftbound_limit,
@@ -274,6 +340,7 @@ def build_refresh_args(
         fixture=fixture,
         riftbound_fixture=riftbound_fixture,
         skip_pokemon=skip_pokemon,
+        skip_onepiece=skip_onepiece,
         pokemon_all=pokemon_all,
         pokemon_all_sets=pokemon_all_sets,
         pokemon_sets=pokemon_sets,
@@ -282,29 +349,33 @@ def build_refresh_args(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run daily incremental refresh (Pokemon + MTG + reindex)")
+    parser = argparse.ArgumentParser(
+        description="Run catalog refresh (Pokemon + One Piece + MTG + Yu-Gi-Oh + Riftbound)"
+    )
     parser.add_argument("--path", default=None, help="Optional fixture path")
     parser.add_argument("--pokemon-set", default=None, help="Single Pokemon set code (ex: base1)")
     parser.add_argument("--pokemon-sets", default=None, help="Comma-separated Pokemon set codes")
     parser.add_argument("--skip-pokemon", type=_to_bool, default=False, help="Skip Pokemon connector execution")
-    parser.add_argument("--pokemon-all", type=_to_bool, default=False, help="Run a small curated list of Pokemon sets")
+    parser.add_argument("--skip-onepiece", type=_to_bool, default=False, help="Skip One Piece connector execution")
+    parser.add_argument("--pokemon-all", type=_to_bool, default=False, help="Run all Pokemon sets from TCGdex")
     parser.add_argument("--pokemon-all-sets", type=_to_bool, default=False, help="Iterate all Pokemon sets from TCGdex")
-    parser.add_argument("--batch-size", type=int, default=200, help="Max records per connector call")
+    parser.add_argument("--batch-size", type=int, default=200, help="Compatibility setting for refresh jobs")
     parser.add_argument("--pokemon-limit", type=int, default=None)
+    parser.add_argument("--onepiece-limit", type=int, default=None)
     parser.add_argument("--mtg-limit", type=int, default=None)
     parser.add_argument("--yugioh-limit", type=int, default=None)
     parser.add_argument("--riftbound-limit", type=int, default=None)
     parser.add_argument("--riftbound-fixture", type=_to_bool, default=False)
     parser.add_argument("--incremental", type=_to_bool, default=True)
     parser.add_argument("--fixture", type=_to_bool, default=False)
-    parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Sleep between remote connector calls")
+    parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Sleep between Pokemon set connector calls")
     args = parser.parse_args()
 
     if args.batch_size <= 0:
         args.batch_size = 200
 
     db.init_engine()
-    summary = {"exit_code": 1, "error": "daily_refresh_failed"}
+    summary = {"exit_code": 1, "status": "failed", "error": "daily_refresh_failed"}
     try:
         summary = run_daily_refresh(args)
     except Exception as exc:  # noqa: BLE001

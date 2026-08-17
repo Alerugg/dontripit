@@ -1,0 +1,105 @@
+name: Audit Roadmap 1-8 Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-roadmap-1-8-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-roadmap-1-8-live
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Certify current Cardmarket sealed closure
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ids=['903009','903002','902998','902999','903000','903001']
+          expected_missing_price={'903002'}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.set_session(readonly=True,autocommit=True)
+          with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT max(last_seen_at) capture FROM external_catalog_products WHERE source='cardmarket'")
+              capture=cur.fetchone()['capture']
+              cur.execute('''
+                SELECT e.external_id,g.slug game,e.name,e.category,e.last_seen_at,
+                       (SELECT count(*) FROM product_identifiers pi
+                        JOIN product_variants pv ON pv.id=pi.product_variant_id
+                        JOIN products p ON p.id=pv.product_id
+                        WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id) identifier_count,
+                       (SELECT count(*) FROM external_catalog_product_variant_links l
+                        JOIN product_variants pv ON pv.id=l.product_variant_id
+                        JOIN products p ON p.id=pv.product_id
+                        WHERE l.external_product_id=e.id AND l.link_status='accepted' AND p.game_id=e.game_id) accepted_link_count,
+                       (SELECT count(*) FROM external_market_price_snapshots s WHERE s.external_product_id=e.id) source_price_rows,
+                       (SELECT count(*) FROM price_snapshots ps
+                        JOIN price_sources src ON src.id=ps.source_id
+                        JOIN external_catalog_product_variant_links l ON l.product_variant_id=ps.entity_id
+                        WHERE ps.entity_type='product_variant' AND src.name='cardmarket'
+                          AND l.external_product_id=e.id AND l.link_status='accepted') canonical_price_rows
+                FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                WHERE e.source='cardmarket' AND e.external_id=ANY(%s)
+                ORDER BY array_position(%s::text[],e.external_id)
+              ''',(ids,ids))
+              exact=[dict(r) for r in cur.fetchall()]
+
+              cur.execute('''
+                SELECT g.slug game,count(*) unresolved
+                FROM external_catalog_products e
+                JOIN games g ON g.id=e.game_id
+                WHERE e.source='cardmarket' AND e.last_seen_at=%s AND e.product_group='non_single'
+                  AND g.slug IN ('mtg','pokemon','yugioh','onepiece')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM external_catalog_product_variant_links l
+                    JOIN product_variants pv ON pv.id=l.product_variant_id
+                    JOIN products p ON p.id=pv.product_id
+                    WHERE l.external_product_id=e.id AND l.link_status='accepted' AND p.game_id=e.game_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM product_identifiers pi
+                    JOIN product_variants pv ON pv.id=pi.product_variant_id
+                    JOIN products p ON p.id=pv.product_id
+                    WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id
+                  )
+                GROUP BY g.slug ORDER BY g.slug
+              ''',(capture,))
+              unresolved=[dict(r) for r in cur.fetchall()]
+          conn.close()
+
+          missing_price={r['external_id'] for r in exact if int(r['source_price_rows'])==0}
+          report={'mode':'READ_ONLY','capture':capture,'exact':exact,'current_unresolved':unresolved,
+                  'source_price_missing':sorted(missing_price)}
+          print('SEALED_CLOSURE_AUDIT='+json.dumps(report,default=str,sort_keys=True))
+          if len(exact)!=6:
+              raise SystemExit(f'Expected 6 exact rows, got {len(exact)}')
+          for r in exact:
+              if int(r['identifier_count'])!=1 or int(r['accepted_link_count'])!=1:
+                  raise SystemExit(f"Identity/link postcondition failed for {r['external_id']}: {r}")
+              if r['external_id'] not in expected_missing_price and int(r['canonical_price_rows'])<1:
+                  raise SystemExit(f"Canonical price missing for priceable source product {r['external_id']}")
+          if missing_price!=expected_missing_price:
+              raise SystemExit(f'Unexpected source-price gap: {sorted(missing_price)}')
+          if unresolved:
+              raise SystemExit(f'Current sealed unresolved remain: {unresolved}')
+          PY

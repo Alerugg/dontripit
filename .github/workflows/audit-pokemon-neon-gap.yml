@@ -1,0 +1,49 @@
+name: Audit Pokemon Neon Gap
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-pokemon-neon-gap.yml'
+      - 'backend/app/scripts/audit_pokemon_neon_gap.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compare complete TCGdex source to Neon read-only
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_pokemon_neon_gap | tee /tmp/pokemon-neon-gap-audit.json
+
+      - name: Upload gap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-neon-gap-audit-${{ github.sha }}
+          path: /tmp/pokemon-neon-gap-audit.json
+          if-no-files-found: warn
+          retention-days: 90

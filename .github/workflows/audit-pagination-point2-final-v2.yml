@@ -1,0 +1,86 @@
+name: Audit Pagination Point 2 Final Gate V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-pagination-point2-final-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Static pagination and Point 1 contracts
+        run: |
+          python -m py_compile backend/app/routes/catalog.py backend/app/routes/set_ui.py backend/app/routes/search_v2.py backend/app/search_v2/market_ordering.py backend/app/search_v2/advanced.py backend/app/search_v2/pokemon_advanced.py backend/app/search_v2/yugioh_advanced.py backend/app/search_v2/mtg_advanced.py scripts/audit_pagination_point2_final_v2.py
+          python - <<'PY'
+          from pathlib import Path
+          required={
+            'backend/app/routes/catalog.py':['max_offset = min(max_offset, 100_000)','include_meta'],
+            'backend/app/routes/set_ui.py':['cardmarket_id_product','unfiltered_total'],
+            'backend/app/search_v2/market_ordering.py':['cardmarket_id_product','cardmarket_website_path','price_desc','price_asc'],
+            'frontend/components/games/GameCollectionsDirectoryPage.js':['PAGE_SIZE = 24','fetchSetsPage'],
+            'frontend/components/games/GameSetPage.js':['PAGE_SIZE = 36','fetchSetDetail'],
+            'frontend/app/api/search-v2/federated/route.js':["kind === 'sets' ? offset : 0","/api/v1/market/current-products",'marketFromSearchItem','sets_page'],
+            'frontend/components/searchV2/FederatedSearchResults.js':["activeType === 'sets'","paginationTotal = setsPage.total"],
+            'frontend/components/searchV2/OnePieceSearchV2Experience.js':['kind: normalType','hasPrice: onlyWithPrice'],
+          }
+          for file,tokens in required.items():
+            text=Path(file).read_text(); missing=[x for x in tokens if x not in text]
+            if missing: raise AssertionError({file:missing})
+          fed=Path('frontend/app/api/search-v2/federated/route.js').read_text()
+          adv=Path('frontend/app/api/search-v2/advanced/route.js').read_text()
+          if 'cardmarket-batch' in fed or 'cardmarket-batch' in adv: raise AssertionError('duplicate Cardmarket search enrichment')
+          if "callInternalApi('/api/v1/market/products'" in fed: raise AssertionError('historical sealed reader regression')
+          if 'limit: 500' in Path('frontend/components/games/GameCollectionsDirectoryPage.js').read_text(): raise AssertionError('500-set bulk fetch regression')
+          if 'limit: 1000' in Path('frontend/components/games/GameSetPage.js').read_text(): raise AssertionError('1000-print bulk fetch regression')
+          print('static_contracts=PASS')
+          PY
+      - name: Frontend tests and production build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Production DB and HTTP final audit
+        env:
+          PYTHONPATH: backend
+        run: python scripts/audit_pagination_point2_final_v2.py
+      - name: Persist hardened final gate
+        if: always()
+        run: |
+          mkdir -p audit-reports
+          if [ -f /tmp/pagination-point2-final-v2.json ]; then cp /tmp/pagination-point2-final-v2.json audit-reports/pagination-point2-final-v2.json; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/pagination-point2-final-v2.json 2>/dev/null || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record hardened pagination point 2 gate'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pagination-point2-final-v2-${{ github.run_id }}
+          path: /tmp/pagination-point2-final-v2.json
+          retention-days: 90

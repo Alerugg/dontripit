@@ -1,0 +1,141 @@
+name: Audit YuGiOh Konami Product Release Crosswalk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-yugioh-konami-product-release-crosswalk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Build deterministic official-product to canonical-release crosswalk
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import Counter,defaultdict
+          from datetime import datetime
+          from pathlib import Path
+          from urllib.parse import parse_qs,urlparse
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          URL='https://www.db.yugioh-card.com/yugiohdb/card_list.action?request_locale=en'
+          def norm(v):
+            s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'").replace('–','-').replace('—','-')
+            s=re.sub(r'\b20\d{2}\b',' ',s)
+            s=re.sub(r'[^a-zA-Z0-9]+',' ',s).strip().casefold()
+            return re.sub(r'\s+',' ',s)
+          def compact(v): return re.sub(r'[^a-z0-9]','',norm(v))
+          def get_pid(value):
+            m=re.search(r'[?&]pid=(\d+)',value or '')
+            return m.group(1) if m else None
+
+          r=requests.get(URL,headers={'User-Agent':'DontRipIt/1.0 konami-product-crosswalk','Accept':'text/html'},timeout=45);r.raise_for_status()
+          s=BeautifulSoup(r.text,'html.parser')
+          official=[]
+          for row in s.select('#update_list .t_row'):
+            inp=row.select_one('input.link_value'); pid=get_pid(inp.get('value') if inp else '')
+            main=row.select_one('.main p') or row.select_one('.main')
+            name=' '.join(main.stripped_strings).strip() if main else ''
+            time_node=row.select_one('.time'); raw_date=' '.join(time_node.stripped_strings).strip() if time_node else ''
+            date=None
+            m=re.search(r'(\d{4})/(\d{2})/(\d{2})',raw_date)
+            if m: date=f'{m.group(1)}-{m.group(2)}-{m.group(3)}'
+            inside=' '.join((row.select_one('.inside') or row).stripped_strings)
+            cat=''
+            cm=re.search(r'【([^】]+)】',inside)
+            if cm:cat=cm.group(1).strip()
+            if pid and name:
+              official.append({'pid':pid,'name':name,'release_date':date,'category':cat,'classes':row.get('class') or []})
+          # unique by pid
+          official_by_pid={x['pid']:x for x in official}; official=list(official_by_pid.values())
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute('''
+              SELECT cr.id,cr.source,cr.external_id,cr.name,cr.code,cr.release_type,cr.release_date,cr.language,cr.region,
+                     count(pr.print_id) memberships
+              FROM catalog_releases cr JOIN games g ON g.id=cr.game_id
+              LEFT JOIN print_releases pr ON pr.release_id=cr.id
+              WHERE g.slug='yugioh'
+              GROUP BY cr.id ORDER BY cr.id
+            ''')
+            db=[dict(x) for x in c.fetchall()]
+          conn.close()
+
+          off_by_name=defaultdict(list);off_by_name_date=defaultdict(list)
+          for x in official:
+            off_by_name[norm(x['name'])].append(x)
+            off_by_name_date[(norm(x['name']),str(x['release_date'] or ''))].append(x)
+          db_by_name=defaultdict(list);db_by_name_date=defaultdict(list)
+          for x in db:
+            db_by_name[norm(x['name'])].append(x)
+            db_by_name_date[(norm(x['name']),str(x['release_date'] or ''))].append(x)
+
+          pairs=[];db_status={};used_pids=set();status=Counter()
+          for d in db:
+            key=(norm(d['name']),str(d['release_date'] or ''))
+            candidates=off_by_name_date.get(key,[])
+            method='exact_name_date'
+            if len(candidates)!=1:
+              candidates=off_by_name.get(norm(d['name']),[])
+              method='exact_normalized_name'
+            if len(candidates)==1:
+              o=candidates[0]
+              # Reject a name-only pair if release dates are both known and disagree.
+              if method=='exact_normalized_name' and d.get('release_date') and o.get('release_date') and str(d['release_date'])!=str(o['release_date']):
+                db_status[d['id']]='date_conflict';status['date_conflict']+=1;continue
+              pairs.append({'release_id':d['id'],'release_name':d['name'],'release_code':d['code'],'release_date':str(d['release_date'] or ''),'memberships':d['memberships'],'pid':o['pid'],'official_name':o['name'],'official_date':o['release_date'],'official_category':o['category'],'method':method})
+              used_pids.add(o['pid']);db_status[d['id']]='paired';status['paired']+=1
+            elif len(candidates)>1:
+              db_status[d['id']]='official_ambiguity';status['official_ambiguity']+=1
+            else:
+              db_status[d['id']]='no_official_name_match';status['no_official_name_match']+=1
+
+          # A product pid should never be auto-linked to multiple DB releases.
+          pid_pairs=defaultdict(list)
+          for p in pairs:pid_pairs[p['pid']].append(p)
+          conflicted_pids={pid:rows for pid,rows in pid_pairs.items() if len(rows)>1}
+          safe_pairs=[p for p in pairs if p['pid'] not in conflicted_pids]
+          safe_release_ids={p['release_id'] for p in safe_pairs};safe_pids={p['pid'] for p in safe_pairs}
+          official_unmatched=[x for x in official if x['pid'] not in safe_pids]
+          db_unmatched=[x for x in db if x['id'] not in safe_release_ids]
+
+          report={
+            'official_products':len(official),'db_catalog_releases':len(db),
+            'safe_pairs':len(safe_pairs),'safe_memberships':sum(int(p['memberships']) for p in safe_pairs),
+            'conflicted_official_pids':len(conflicted_pids),
+            'official_unmatched_products':len(official_unmatched),'db_unmatched_releases':len(db_unmatched),
+            'initial_status_counts':dict(status),
+            'safe_pair_rows':safe_pairs,
+            'conflicted_pid_rows':conflicted_pids,
+            'official_unmatched_rows':official_unmatched,
+            'db_unmatched_rows':db_unmatched,
+          }
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_rows')},indent=2,ensure_ascii=False,default=str))
+          print('safe_sample',json.dumps(safe_pairs[:20],indent=2,ensure_ascii=False,default=str))
+          print('db_unmatched_sample',json.dumps(db_unmatched[:30],indent=2,ensure_ascii=False,default=str))
+          print('official_unmatched_sample',json.dumps(official_unmatched[:30],indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/yugioh-konami-product-release-crosswalk.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-konami-product-release-crosswalk-${{ github.run_id }}
+          path: /tmp/yugioh-konami-product-release-crosswalk.json
+          retention-days: 90
+          if-no-files-found: warn

@@ -1,0 +1,35 @@
+name: Runtime Startup Guard
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/scripts/start.sh'
+      - '.github/workflows/runtime-startup-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Verify production startup is database-read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=backend/scripts/start.sh
+          grep -F 'exec gunicorn' "$file"
+          commands="$(grep -Ev '^[[:space:]]*(#|$)' "$file")"
+          if printf '%s\n' "$commands" | grep -E 'alembic|seed_catalog|app\.scripts\.seed|bootstrap|rebuild'; then
+            echo 'Production startup must not mutate the database.' >&2
+            exit 1
+          fi
+          bash -n "$file"

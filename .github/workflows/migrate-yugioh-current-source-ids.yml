@@ -1,0 +1,202 @@
+name: Migrate Yu-Gi-Oh Current Source IDs
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/migrate-yugioh-current-source-ids.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-source-id-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+
+      - name: Build and certify current canonical Yu-Gi-Oh source
+        run: python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+
+      - name: Transactionally migrate only the eight proven source-ID replacements
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import Json
+
+          EXPECTED = [
+              (73741, 'Ancient Secrets', '100457001', '30752324'),
+              (73742, 'Mind Mirror Force', '100457102', '66247039'),
+              (73743, 'Emissaries from Darkness', '100457103', '3635138'),
+              (73744, 'Dark Armed Dragon Punisher', '100457104', '39030883'),
+              (73745, 'Ekhajar, Descendant Dragon of the Ice Barrier', '100457105', '65424481'),
+              (73746, 'Number 101: Silent Honor ARK - Soul Asylum', '100457106', '2419596'),
+              (73747, 'Ultimate Sky', '100457107', '38817295'),
+              (73748, 'Dominusteer Rosepamela', '100457108', '65302903'),
+          ]
+          source_cards = {}
+          for raw in Path('/tmp/ygo-current/cards.jsonl').read_text().splitlines():
+              row=json.loads(raw); source_cards[str(row['source_card_id'])]=row
+          source_attrs = {}
+          for raw in Path('/tmp/ygo-current/card_attributes.jsonl').read_text().splitlines():
+              row=json.loads(raw); source_attrs[str(row['source_card_id'])]=row
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          report={'mode':'transactional_in_place','updates':[]}
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")
+                  game_id=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM cards WHERE game_id=%s",(game_id,)); cards_before=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(game_id,)); prints_before=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM sets WHERE game_id=%s",(game_id,)); sets_before=int(cur.fetchone()[0])
+
+                  for card_id, expected_name, old_id, new_id in EXPECTED:
+                      incoming=source_cards.get(new_id)
+                      attr=source_attrs.get(new_id)
+                      if incoming is None or attr is None:
+                          raise AssertionError(f'Current certified source missing target {new_id}')
+                      if incoming['name'] != expected_name:
+                          raise AssertionError(f'Current source name changed for {new_id}: {incoming["name"]!r}')
+                      expected_old_key=f'yugioh:ygoprodeck:card-id:{old_id}'
+                      expected_new_key=f'yugioh:ygoprodeck:card-id:{new_id}'
+                      if incoming['card_key'] != expected_new_key:
+                          raise AssertionError(f'Unexpected target card_key for {new_id}: {incoming["card_key"]}')
+
+                      cur.execute('''
+                        SELECT id,name,card_key,yugoprodeck_id
+                        FROM cards WHERE id=%s AND game_id=%s FOR UPDATE
+                      ''',(card_id,game_id))
+                      row=cur.fetchone()
+                      if row is None:
+                          raise AssertionError(f'Expected stable DB Card id missing: {card_id}')
+                      _, name, card_key, ygo_id=row
+                      # Idempotency: already migrated is a valid no-op provided identity is exact.
+                      if str(ygo_id)==new_id and str(card_key)==expected_new_key and name==expected_name:
+                          report['updates'].append({'card_id':card_id,'old_id':old_id,'new_id':new_id,'status':'already_migrated'})
+                          continue
+                      if (name,str(card_key),str(ygo_id)) != (expected_name,expected_old_key,old_id):
+                          raise AssertionError(f'Precondition changed for Card {card_id}: {(name,card_key,ygo_id)}')
+
+                      cur.execute('''
+                        SELECT id,name FROM cards
+                        WHERE game_id=%s AND id<>%s AND (yugoprodeck_id=%s OR card_key=%s)
+                      ''',(game_id,card_id,new_id,expected_new_key))
+                      conflict=cur.fetchone()
+                      if conflict:
+                          raise AssertionError(f'Target identity already owned: {new_id} -> {conflict}')
+
+                      cur.execute('''
+                        UPDATE cards SET yugoprodeck_id=%s, card_key=%s WHERE id=%s
+                      ''',(new_id,expected_new_key,card_id))
+                      if cur.rowcount != 1:
+                          raise AssertionError(f'Card update count != 1 for {card_id}')
+
+                      # Refresh source-derived card attributes from the same certified snapshot.
+                      cur.execute('''
+                        UPDATE card_attributes
+                        SET attributes_json=%s, source=%s, source_version=%s
+                        WHERE card_id=%s
+                      ''',(Json(attr['attributes']),attr['source'],attr.get('source_version'),card_id))
+                      if cur.rowcount != 1:
+                          raise AssertionError(f'Expected exactly one card_attributes row for {card_id}, got {cur.rowcount}')
+                      report['updates'].append({'card_id':card_id,'old_id':old_id,'new_id':new_id,'status':'migrated'})
+
+                  cur.execute("SELECT COUNT(*) FROM cards WHERE game_id=%s",(game_id,)); cards_after=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(game_id,)); prints_after=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM sets WHERE game_id=%s",(game_id,)); sets_after=int(cur.fetchone()[0])
+                  if (cards_before,prints_before,sets_before)!=(cards_after,prints_after,sets_after):
+                      raise AssertionError('Canonical counts changed during ID-only migration')
+                  if (cards_after,prints_after,sets_after)!=(14479,44226,646):
+                      raise AssertionError(f'Unexpected YGO canonical counts: {(cards_after,prints_after,sets_after)}')
+
+                  old_ids=[x[2] for x in EXPECTED]; new_ids=[x[3] for x in EXPECTED]
+                  cur.execute("SELECT COUNT(*) FROM cards WHERE game_id=%s AND yugoprodeck_id=ANY(%s)",(game_id,old_ids)); old_remaining=int(cur.fetchone()[0])
+                  cur.execute("SELECT COUNT(*) FROM cards WHERE game_id=%s AND yugoprodeck_id=ANY(%s)",(game_id,new_ids)); new_present=int(cur.fetchone()[0])
+                  if old_remaining != 0 or new_present != 8:
+                      raise AssertionError(f'ID postcondition failed old={old_remaining} new={new_present}')
+                  report['postconditions']={
+                    'cards':cards_after,'prints':prints_after,'sets':sets_after,
+                    'old_ids_remaining':old_remaining,'new_ids_present':new_present,
+                  }
+              conn.commit()
+          except Exception:
+              conn.rollback(); raise
+          finally:
+              conn.close()
+          Path('/tmp/ygo-id-migration.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Prove current canonical source is now exactly covered
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          root=Path('/tmp/ygo-current')
+          def vals(name,key):
+              out=set()
+              with (root/name).open() as f:
+                  for line in f: out.add(str(json.loads(line)[key]))
+              return out
+          source_cards=vals('cards.jsonl','card_key')
+          source_sets={v.lower() for v in vals('sets.jsonl','code')}
+          source_prints=vals('prints.jsonl','print_key')
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              gid=conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_cards={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
+              db_sets={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
+              db_prints={str(v) for v in conn.execute(text('''SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=:g AND p.print_key IS NOT NULL'''),{'g':gid}).scalars()}
+          proof={
+              'cards_exact':source_cards==db_cards,
+              'sets_exact':source_sets==db_sets,
+              'prints_exact':source_prints==db_prints,
+              'cards':len(db_cards),'sets':len(db_sets),'prints':len(db_prints),
+              'source_cards_missing':len(source_cards-db_cards),
+              'source_sets_missing':len(source_sets-db_sets),
+              'source_prints_missing':len(source_prints-db_prints),
+              'db_cards_stale':len(db_cards-source_cards),
+              'db_sets_stale':len(db_sets-source_sets),
+              'db_prints_stale':len(db_prints-source_prints),
+          }
+          if not (proof['cards_exact'] and proof['sets_exact'] and proof['prints_exact']):
+              raise AssertionError(proof)
+          Path('/tmp/ygo-current-proof.json').write_text(json.dumps(proof,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(proof,indent=2,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-source-id-migration-${{ github.run_id }}
+          path: |
+            /tmp/ygo-id-migration.json
+            /tmp/ygo-current-proof.json
+          retention-days: 90
+          if-no-files-found: warn

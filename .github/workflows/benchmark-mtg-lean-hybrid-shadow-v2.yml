@@ -1,0 +1,87 @@
+name: Benchmark MTG Lean Hybrid Shadow V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/benchmark-mtg-lean-hybrid-shadow-v2.yml'
+      - 'backend/app/scripts/benchmark_mtg_lean_hybrid_shadow_v2.py'
+      - 'backend/app/scripts/benchmark_mtg_hybrid_shadow_v2.py'
+      - 'backend/app/scripts/benchmark_mtg_shadow_storage_v2.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtg_shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mtg_shadow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile MTG lean hybrid benchmark stack
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/scripts/benchmark_mtg_shadow_storage_v2.py \
+            app/scripts/benchmark_mtg_hybrid_shadow_v2.py \
+            app/scripts/benchmark_mtg_lean_hybrid_shadow_v2.py
+
+      - name: Verify ephemeral PostgreSQL
+        run: |
+          python - <<'PY'
+          import psycopg2
+          conn = psycopg2.connect('postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow')
+          with conn.cursor() as cur:
+              cur.execute('select version()')
+              print(cur.fetchone()[0])
+          conn.close()
+          PY
+
+      - name: Build and benchmark complete MTG lean hybrid model
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_mtg_lean_hybrid_shadow_v2 \
+            --report-path /tmp/mtg-lean-hybrid-shadow-v2.json \
+            | tee /tmp/mtg-lean-hybrid-shadow-v2.log
+
+      - name: Upload lean hybrid evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-lean-hybrid-shadow-v2-${{ github.sha }}
+          path: |
+            /tmp/mtg-lean-hybrid-shadow-v2.json
+            /tmp/mtg-lean-hybrid-shadow-v2.log
+          retention-days: 90
+          if-no-files-found: warn

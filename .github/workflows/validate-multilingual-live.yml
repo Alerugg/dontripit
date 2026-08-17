@@ -1,0 +1,72 @@
+name: Live multilingual TCGdex sandbox
+
+on:
+  push:
+    branches:
+      - multilingual-v1
+    paths:
+      - "backend/app/scripts/diagnose_tcgdex_language_overlap.py"
+      - "backend/app/scripts/validate_tcgdex_multilingual_live.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
+      - "backend/app/multilingual_models.py"
+      - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - ".github/workflows/validate-multilingual-live.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-multilingual-tcgdex-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-sandbox:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: multilingual_live
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d multilingual_live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Diagnose live TCGdex language identity overlap
+        env:
+          PYTHONPATH: .
+        run: python -m app.scripts.diagnose_tcgdex_language_overlap
+
+      - name: Create isolated schema
+        env:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_live
+          PYTHONPATH: .
+        run: alembic upgrade head
+
+      - name: Validate live TCGdex EN ES JA
+        env:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_live
+          PYTHONPATH: .
+        run: python -m app.scripts.validate_tcgdex_multilingual_live --limit 2

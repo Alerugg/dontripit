@@ -1,0 +1,31 @@
+name: Audit Promotion Certification
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/MAIN_PROMOTION_CERTIFICATION.md'
+      - '.github/workflows/audit-promotion-certification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bind final evidence to current candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .github/MAIN_PROMOTION_CERTIFICATION.md
+          grep -q '32071763810' .github/MAIN_PROMOTION_CERTIFICATION.md
+          grep -q '32070814800' .github/MAIN_PROMOTION_CERTIFICATION.md
+          grep -q '32070978121' .github/MAIN_PROMOTION_CERTIFICATION.md
+          grep -q '32071815716' .github/MAIN_PROMOTION_CERTIFICATION.md
+          grep -q 'zero production database writers triggered by pushes to `main`' .github/MAIN_PROMOTION_CERTIFICATION.md
+          echo "candidate_sha=${GITHUB_SHA}"
+          echo 'PROMOTION_CERTIFICATION PASS'

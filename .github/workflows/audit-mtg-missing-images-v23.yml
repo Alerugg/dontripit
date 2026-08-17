@@ -1,0 +1,49 @@
+name: Audit MTG V2.3 Missing Images
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-mtg-missing-images-v23.yml'
+      - 'backend/app/scripts/audit_mtg_missing_images_v23.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-mtg-missing-images-v23
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PostgreSQL driver only
+        run: pip install psycopg2-binary==2.9.9
+      - name: Run read-only missing-image audit
+        run: python -u app/scripts/audit_mtg_missing_images_v23.py --output /tmp/mtg-v23-missing-images.json
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-v23-missing-images-${{ github.sha }}
+          path: /tmp/mtg-v23-missing-images.json
+          retention-days: 90
+          if-no-files-found: warn

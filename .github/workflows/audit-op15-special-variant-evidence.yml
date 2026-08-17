@@ -1,0 +1,124 @@
+name: Audit OP15 Special Variant Evidence
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-op15-special-variant-evidence.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9 pillow
+      - name: Compare canonical images with explicit Cardmarket special variants
+        run: |
+          python - <<'PY'
+          import hashlib,io,json,os,re
+          from pathlib import Path
+          from urllib.parse import quote,urljoin
+          import psycopg2,requests
+          from bs4 import BeautifulSoup
+          from PIL import Image,ImageChops
+          from psycopg2.extras import RealDictCursor
+
+          targets={
+            42532:'en:OP15-036_cm883418',
+            42579:'en:OP15-075_cm883395',
+            42618:'en:OP15-108_cm883935',
+          }
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 exact-variant-verifier'})
+          feed=http.get('https://one-piece.cards/api/cards',params={'set':'OP15-EB04','limit':500},timeout=25); feed.raise_for_status()
+          cards=feed.json().get('cards',[])
+          by_id={str(c.get('id') or '').removesuffix('.jpg'):c for c in cards}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+              SELECT p.id AS print_id,c.name AS card_name,p.collector_number,p.variant,p.rarity,p.language,p.print_key,
+                     (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id ORDER BY pi.is_primary DESC,pi.id LIMIT 1) AS image_url
+              FROM prints p JOIN cards c ON c.id=p.card_id
+              WHERE p.id=ANY(%s)
+              ORDER BY p.id
+            ''',(list(targets),))
+            canon={int(r['print_id']):dict(r) for r in cur.fetchall()}
+            cm_ids=[sid.rsplit('cm',1)[-1] for sid in targets.values()]
+            cur.execute('''
+              SELECT e.id AS external_product_id,e.external_id,e.name,e.expansion_external_id,e.last_seen_at,e.website_path,
+                     (SELECT max(as_of) FROM external_market_price_snapshots mp WHERE mp.external_product_id=e.id AND mp.currency='EUR') AS latest_price_as_of
+              FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+              WHERE e.source='cardmarket' AND e.product_group='single' AND g.slug='onepiece' AND e.external_id=ANY(%s)
+              ORDER BY e.external_id
+            ''',(cm_ids,))
+            products={str(r['external_id']):dict(r) for r in cur.fetchall()}
+          conn.close()
+
+          def image_signature(url):
+            if not url: return None
+            r=http.get(url,timeout=20); r.raise_for_status()
+            raw=r.content
+            img=Image.open(io.BytesIO(raw)).convert('RGB')
+            thumb=img.resize((32,44))
+            pixels=list(thumb.getdata())
+            avg=tuple(sum(p[i] for p in pixels)//len(pixels) for i in range(3))
+            phash=''.join('1' if sum(p)>=sum(avg) else '0' for p in pixels)
+            return {'url':url,'sha256':hashlib.sha256(raw).hexdigest(),'size':img.size,'content_type':r.headers.get('content-type'),'brightness_bits_sha256':hashlib.sha256(phash.encode()).hexdigest()}
+
+          out=[]
+          cm_re=re.compile(r'https://www\.cardmarket\.com/OnePiece/Products\?idProduct=(\d+)',re.I)
+          for print_id,source_id in targets.items():
+            source=by_id.get(source_id)
+            page_url=f'https://one-piece.cards/cards/{quote(source_id,safe="")}'
+            page=http.get(page_url,timeout=20); page.raise_for_status()
+            cm=sorted(set(cm_re.findall(page.text)))
+            soup=BeautifulSoup(page.text,'html.parser')
+            imgs=[]
+            for img in soup.find_all('img'):
+              src=img.get('src') or img.get('data-src')
+              if src:
+                imgs.append(urljoin(page_url,src))
+            imgs=list(dict.fromkeys(imgs))
+            source_image_fields={k:v for k,v in (source or {}).items() if any(token in k.lower() for token in ('image','img','art','variant','id','name','set'))}
+            candidate_urls=[]
+            for value in source_image_fields.values():
+              if isinstance(value,str) and (value.startswith('http') or value.startswith('/')):
+                candidate_urls.append(urljoin('https://one-piece.cards',value))
+            candidate_urls.extend([u for u in imgs if 'logo' not in u.lower() and 'avatar' not in u.lower()])
+            candidate_urls=list(dict.fromkeys(candidate_urls))[:10]
+            canonical_sig=None; source_sigs=[]
+            try: canonical_sig=image_signature(canon[print_id].get('image_url'))
+            except Exception as exc: canonical_sig={'error':repr(exc),'url':canon[print_id].get('image_url')}
+            for url in candidate_urls:
+              try: source_sigs.append(image_signature(url))
+              except Exception as exc: source_sigs.append({'url':url,'error':repr(exc)})
+            out.append({
+              'canonical':canon[print_id],
+              'source_id':source_id,
+              'source_record':source,
+              'source_image_fields':source_image_fields,
+              'detail_url':page_url,
+              'explicit_cardmarket_ids':cm,
+              'expected_cardmarket_id':source_id.rsplit('cm',1)[-1],
+              'mirror_product':products.get(source_id.rsplit('cm',1)[-1]),
+              'canonical_image_signature':canonical_sig,
+              'source_image_signatures':source_sigs,
+            })
+          report={'targets':out}
+          print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/op15-special-variant-evidence.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op15-special-variant-evidence-${{ github.run_id }}
+          path: /tmp/op15-special-variant-evidence.json
+          retention-days: 90

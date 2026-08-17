@@ -1,0 +1,44 @@
+name: Audit Pokemon Neon Physical Gap V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-pokemon-neon-physical-gap-v2.yml'
+      - 'backend/app/pokemon_source_inventory.py'
+      - 'backend/app/scripts/audit_pokemon_neon_physical_gap_v2.py'
+      - 'backend/app/scripts/audit_pokemon_neon_gap.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Audit physical Pokémon gap
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_pokemon_neon_physical_gap_v2 | tee /tmp/pokemon-neon-physical-gap-v2.json
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-neon-physical-gap-v2-${{ github.sha }}
+          path: /tmp/pokemon-neon-physical-gap-v2.json
+          retention-days: 90
+          if-no-files-found: warn

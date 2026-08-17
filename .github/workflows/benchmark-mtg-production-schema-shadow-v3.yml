@@ -1,0 +1,95 @@
+name: Benchmark MTG Production Schema Shadow V3
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/benchmark-mtg-production-schema-shadow-v3.yml'
+      - 'backend/app/scripts/benchmark_mtg_production_schema_shadow_v3.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/alembic/versions/20260808_25_allow_mtg_scryfall_finish_variants.py'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtg_shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mtg_shadow"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile candidate stack
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/mtg_identity_v2.py \
+            app/scripts/benchmark_mtg_production_schema_shadow_v3.py
+
+      - name: Build current shared schema through revision 25
+        working-directory: backend
+        run: alembic upgrade 20260808_25
+
+      - name: Verify revision and empty catalog
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import psycopg2
+          conn = psycopg2.connect('postgresql://postgres:postgres@127.0.0.1:5432/mtg_shadow')
+          with conn.cursor() as cur:
+              cur.execute('select version_num from alembic_version')
+              assert cur.fetchone()[0] == '20260808_25'
+              cur.execute('select count(*) from cards')
+              assert cur.fetchone()[0] == 0
+          conn.close()
+          print('revision25-empty-schema=pass')
+          PY
+
+      - name: Load full Scryfall paper corpus into candidate Model D production schema
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_mtg_production_schema_shadow_v3 \
+            --report-path /tmp/mtg-production-schema-shadow-v3.json \
+            2>&1 | tee /tmp/mtg-production-schema-shadow-v3.log
+
+      - name: Upload production-schema shadow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-production-schema-shadow-v3-${{ github.sha }}
+          path: |
+            /tmp/mtg-production-schema-shadow-v3.json
+            /tmp/mtg-production-schema-shadow-v3.log
+          retention-days: 90
+          if-no-files-found: warn

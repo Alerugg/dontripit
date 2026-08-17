@@ -1,0 +1,61 @@
+name: Optimize Pokemon Search V2 Storage and Latency
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/optimize-pokemon-search-v2-storage-latency.yml'
+      - 'backend/alembic/versions/20260808_23_compact_search_indexes_and_index_finish.py'
+      - 'backend/app/scripts/audit_database_storage_v2.py'
+      - 'backend/app/scripts/profile_pokemon_search_v2_latency.py'
+  workflow_dispatch:
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Apply index compaction and finish index
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Audit storage after index changes
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_database_storage_v2 \
+            --report-path /tmp/neon-storage-after-index-compaction.json \
+            | tee /tmp/neon-storage-after-index-compaction.log
+      - name: Profile Search V2 after index changes
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.profile_pokemon_search_v2_latency \
+            | tee /tmp/pokemon-search-after-index-compaction.log
+      - name: Upload optimization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-search-index-optimization-${{ github.sha }}
+          path: |
+            /tmp/neon-storage-after-index-compaction.json
+            /tmp/neon-storage-after-index-compaction.log
+            /tmp/pokemon-search-after-index-compaction.log
+          retention-days: 90
+          if-no-files-found: warn

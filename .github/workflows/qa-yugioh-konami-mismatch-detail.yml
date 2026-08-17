@@ -1,0 +1,132 @@
+name: QA YuGiOh Konami Mismatch Detail
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-mismatch-detail.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4 psycopg2-binary==2.9.9
+      - name: Extract official Neuron context for the quarantined sample mismatches
+        run: |
+          python - <<'PY'
+          import json, os, re, time, unicodedata
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2, requests
+          from bs4 import BeautifulSoup
+          from psycopg2.extras import RealDictCursor
+
+          PRINT_IDS=[115163,111962,119789,132125,116918,115469,115470,114759,118110,104078,144321,104079,116169,132006,117026,112941,119785,119790,132122,119792,140276,119045,112699,146064,133852,146530,132131,147005,112811,116429,116343,138212,138213,125473,142830,139605,137864,115265,125510,111213,125479,119077,119078,119079,119080,119081,119082,119040,119041,119042,119043,119044,119046,125505,125506,119795,105483,148083,118240,119916,143799,146842,141416,143297,146847,119047,119048,119049,119052,119053,119054,119055,119056,119057,119058,131485,145166,131067,119803,119050,119051,147452,119060,119061,119062,119063,119064,119065,119066,119067,119068,119069,119070,119059,113318,146989,146975,146987,115427,111968,146052,130105,130104,114861,147335,114962,115062,125832,115186,115215,115316,112050,115315,115367,115418,133519,132500,132309,147358,132400,140708,104072,130945,104074,131005,130094,147455,131128,112039,131188,116550,139530,131243,132005,119804,131303,131546,139425,131362,139426,131423,139428,139427,131606,131670,145818,120646,120647,120648,120649,120650,120645,146818,125269,125323,116261]
+          YGO='https://db.ygoprodeck.com/api/v7/cardinfo.php'
+          KONAMI='https://www.db.yugioh-card.com/yugiohdb/card_search.action'
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'").replace('–','-').replace('—','-')
+              return re.sub(r'\s+',' ',s).strip()
+          def fold(v): return norm(v).casefold()
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT p.id print_id,p.collector_number,p.rarity,p.variant,p.language,
+                       c.yugoprodeck_id,c.name card_name,s.code set_code,s.name set_name,
+                       cr.id release_id,cr.name release_name,cr.code release_code
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_releases pr ON pr.print_id=p.id
+                LEFT JOIN catalog_releases cr ON cr.id=pr.release_id
+                WHERE p.id = ANY(%s)
+                ORDER BY p.id
+              ''',(PRINT_IDS,))
+              db=[dict(x) for x in c.fetchall()]
+          conn.close()
+          # A print has exactly one YGO release membership in the current canonical layer.
+          dedup={r['print_id']:r for r in db}
+          rows=list(dedup.values())
+
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 ygo-konami-mismatch-detail','Accept':'application/json'})
+          konami_by_passcode={};offset=0;page_size=500
+          while True:
+              rr=http.get(YGO,params={'num':page_size,'offset':offset,'misc':'yes'},timeout=60);rr.raise_for_status()
+              cards=(rr.json() or {}).get('data') or []
+              if not cards:break
+              for card in cards:
+                  misc=card.get('misc_info') or []
+                  kid=misc[0].get('konami_id') if misc and isinstance(misc[0],dict) else None
+                  if kid:konami_by_passcode[str(card.get('id'))]=str(kid)
+              if len(cards)<page_size:break
+              offset+=page_size; time.sleep(.05)
+
+          grouped=defaultdict(list); missing_id=[]
+          for row in rows:
+              kid=konami_by_passcode.get(str(row.get('yugoprodeck_id') or ''))
+              if kid: grouped[kid].append(row)
+              else: missing_id.append(row)
+
+          kh=requests.Session();kh.headers.update({'User-Agent':'DontRipIt/1.0 official-konami-detail','Accept':'text/html'})
+          out=[];status=Counter()
+          rarity_words=('common','rare','super rare','ultra rare','secret rare','ultimate rare','ghost rare','starlight rare','collector','quarter century','platinum','gold rare','parallel rare','starfoil','mosaic','shatterfoil','prismatic')
+          for n,(kid,krows) in enumerate(grouped.items(),1):
+              resp=kh.get(KONAMI,params={'cid':kid,'ope':'2','request_locale':'en'},timeout=30)
+              if resp.status_code!=200:
+                  for row in krows: out.append({**row,'konami_id':kid,'status':f'http_{resp.status_code}'})
+                  status[f'http_{resp.status_code}']+=len(krows);continue
+              soup=BeautifulSoup(resp.text,'html.parser')
+              text=norm(' '.join(soup.stripped_strings)); low=text.casefold()
+              for row in krows:
+                  code=norm(row['collector_number']); code_fold=code.casefold(); pos=low.find(code_fold)
+                  if pos>=0:
+                      snippet=text[max(0,pos-220):min(len(text),pos+len(code)+500)]
+                      rarity_hits=sorted({term for term in rarity_words if term in snippet.casefold()},key=lambda x:(len(x),x))
+                      status_name='code_found'
+                  else:
+                      # Search a relaxed collector form without optional EN region marker.
+                      relaxed=re.sub(r'-EN(?=\d)', '-', code, flags=re.I)
+                      rpos=low.find(relaxed.casefold()) if relaxed!=code else -1
+                      if rpos>=0:
+                          snippet=text[max(0,rpos-220):min(len(text),rpos+len(relaxed)+500)]
+                          rarity_hits=sorted({term for term in rarity_words if term in snippet.casefold()},key=lambda x:(len(x),x))
+                          status_name='relaxed_code_found'
+                      else:
+                          snippet='';rarity_hits=[];status_name='code_absent'
+                  status[status_name]+=1
+                  out.append({**row,'konami_id':kid,'status':status_name,'official_context':snippet,'official_rarity_terms':rarity_hits})
+              if n%50==0: print('progress',n,'/',len(grouped),dict(status),flush=True)
+              time.sleep(.08)
+
+          report={
+            'quarantined_print_ids':len(PRINT_IDS),
+            'db_rows_found':len(rows),
+            'cards_missing_konami_id':len(missing_id),
+            'unique_konami_pages':len(grouped),
+            'status_counts':dict(status),
+            'rows':out,
+            'missing_konami_id_rows':missing_id,
+          }
+          print(json.dumps({k:v for k,v in report.items() if k not in ('rows','missing_konami_id_rows')},indent=2,ensure_ascii=False,default=str))
+          print('sample',json.dumps(out[:8],indent=2,ensure_ascii=False,default=str))
+          Path('/tmp/yugioh-konami-mismatch-detail.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-konami-mismatch-detail-${{ github.run_id }}
+          path: /tmp/yugioh-konami-mismatch-detail.json
+          retention-days: 90
+          if-no-files-found: warn

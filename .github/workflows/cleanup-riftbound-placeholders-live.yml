@@ -1,0 +1,125 @@
+name: Cleanup Riftbound Placeholder Catalog Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/cleanup-riftbound-placeholders-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cleanup-riftbound-placeholder-catalog
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Delete only certified fictional Riftbound rows
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url); conn.autocommit=False
+          report={'mode':'guarded_apply','status':'started'}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='riftbound' FOR UPDATE")
+              row=cur.fetchone()
+              if not row: raise AssertionError('riftbound game missing')
+              gid=int(row['id'])
+              cur.execute('''
+                SELECT p.id print_id,c.id card_id,c.name card_name,s.id set_id,s.code set_code,
+                       p.collector_number,p.print_key,pi.url image_url
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_images pi ON pi.print_id=p.id
+                WHERE c.game_id=%s ORDER BY p.id,pi.id
+              ''',(gid,))
+              rows=[dict(r) for r in cur.fetchall()]
+              print_ids=sorted({int(r['print_id']) for r in rows})
+              card_ids=sorted({int(r['card_id']) for r in rows})
+              set_ids=sorted({int(r['set_id']) for r in rows})
+              names=sorted({str(r['card_name']) for r in rows})
+              set_codes=sorted({str(r['set_code']).lower() for r in rows})
+              image_urls=[str(r.get('image_url') or '') for r in rows]
+              expected_names=['Shardbreaker Titan','Skywarden Adept']
+              if len(print_ids)!=2 or len(card_ids)!=2 or len(set_ids)!=1:
+                raise AssertionError({'unexpected_catalog_shape':{'prints':print_ids,'cards':card_ids,'sets':set_ids}})
+              if names!=expected_names or set_codes!=['rb1']:
+                raise AssertionError({'unexpected_placeholder_identity':{'names':names,'sets':set_codes}})
+              if len(image_urls)!=2 or not all(u.startswith('https://example.com/riftbound/') for u in image_urls):
+                raise AssertionError({'unexpected_images':image_urls})
+
+              # Hard safety gates: never remove data referenced by users, prices,
+              # Cardmarket/external links, releases, products, or canonical attributes.
+              checks={
+                'user_collection_items':("print_id",print_ids),
+                'user_wishlist_items':("print_id",print_ids),
+                'prices':("print_id",print_ids),
+                'print_identifiers':("print_id",print_ids),
+                'print_attributes':("print_id",print_ids),
+                'print_releases':("print_id",print_ids),
+                'external_catalog_print_links':("print_id",print_ids),
+              }
+              dependency_counts={}
+              for table,(col,ids) in checks.items():
+                cur.execute("SELECT to_regclass(%s) t",(f'public.{table}',)); exists=cur.fetchone()['t'] is not None
+                if not exists: dependency_counts[table]=0; continue
+                cur.execute(f'SELECT count(*) n FROM {table} WHERE {col}=ANY(%s)',(ids,))
+                dependency_counts[table]=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM products WHERE game_id=%s",(gid,)); dependency_counts['products']=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM catalog_releases WHERE game_id=%s",(gid,)); dependency_counts['catalog_releases']=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM price_snapshots WHERE (lower(entity_type)='print' AND entity_id=ANY(%s)) OR (lower(entity_type)='card' AND entity_id=ANY(%s)) OR (lower(entity_type)='set' AND entity_id=ANY(%s))",(print_ids,card_ids,set_ids)); dependency_counts['price_snapshots']=int(cur.fetchone()['n'])
+              if any(dependency_counts.values()):
+                raise AssertionError({'unsafe_dependencies':dependency_counts})
+
+              deleted={}
+              cur.execute("DELETE FROM search_documents WHERE game_id=%s",(gid,)); deleted['search_documents']=cur.rowcount
+              cur.execute("DELETE FROM print_images WHERE print_id=ANY(%s)",(print_ids,)); deleted['print_images']=cur.rowcount
+              cur.execute("DELETE FROM prints WHERE id=ANY(%s)",(print_ids,)); deleted['prints']=cur.rowcount
+              cur.execute("DELETE FROM cards WHERE id=ANY(%s)",(card_ids,)); deleted['cards']=cur.rowcount
+              cur.execute("DELETE FROM sets WHERE id=ANY(%s)",(set_ids,)); deleted['sets']=cur.rowcount
+
+              # Remove only the two legacy source records that generated the fake seed;
+              # keep the source definition/game so a future authorized ingest can reuse it.
+              cur.execute("SELECT id FROM sources WHERE lower(name)='riftbound'")
+              source_ids=[int(r['id']) for r in cur.fetchall()]
+              if source_ids:
+                cur.execute("SELECT count(*) n FROM source_records WHERE source_id=ANY(%s)",(source_ids,)); src_count=int(cur.fetchone()['n'])
+                if src_count not in (0,2): raise AssertionError({'unexpected_riftbound_source_record_count':src_count})
+                cur.execute("DELETE FROM source_records WHERE source_id=ANY(%s)",(source_ids,)); deleted['source_records']=cur.rowcount
+              else: deleted['source_records']=0
+
+              cur.execute("SELECT count(*) n FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(gid,)); remaining_prints=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM cards WHERE game_id=%s",(gid,)); remaining_cards=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM sets WHERE game_id=%s",(gid,)); remaining_sets=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM search_documents WHERE game_id=%s",(gid,)); remaining_search=int(cur.fetchone()['n'])
+              if any((remaining_prints,remaining_cards,remaining_sets,remaining_search)):
+                raise AssertionError({'cleanup_incomplete':{'prints':remaining_prints,'cards':remaining_cards,'sets':remaining_sets,'search_documents':remaining_search}})
+              report.update({'status':'applied','game_id':gid,'certified_placeholders':{'names':names,'print_ids':print_ids,'card_ids':card_ids,'set_ids':set_ids},'dependency_counts':dependency_counts,'deleted':deleted,'remaining':{'prints':0,'cards':0,'sets':0,'search_documents':0}})
+            conn.commit()
+          except Exception as exc:
+            conn.rollback(); report.update({'status':'failed','error':repr(exc)}); raise
+          finally:
+            conn.close(); Path('/tmp/riftbound-placeholder-cleanup.json').write_text(json.dumps(report,indent=2,default=str)+'\n'); print(json.dumps(report,indent=2,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: riftbound-placeholder-cleanup-${{ github.run_id }}
+          path: /tmp/riftbound-placeholder-cleanup.json
+          retention-days: 90
+          if-no-files-found: error

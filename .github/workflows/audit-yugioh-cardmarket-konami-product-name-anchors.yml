@@ -1,0 +1,121 @@
+name: Audit YGO Cardmarket Konami Product Name Anchors
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-yugioh-cardmarket-konami-product-name-anchors.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: catalog-v2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit exact normalized product-name anchors
+        run: |
+          python - <<'PY'
+          import json,os,re,unicodedata
+          from collections import defaultdict,Counter
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+            t=unicodedata.normalize('NFKD',str(v or '')).casefold();t=''.join(c for c in t if not unicodedata.combining(c))
+            t=t.replace('&',' and ')
+            return re.sub(r'\s+',' ',re.sub(r'[^a-z0-9]+',' ',t)).strip()
+
+          # Only packaging/container words are removed. No fuzzy token matching.
+          SUFFIXES=(
+            ' booster box case',' booster case',' booster display',' booster box',' display',' booster',
+            ' structure deck',' starter deck',' speed duel box',' speed duel starter deck',
+            ' special edition',' tin',' mega tin',' box',' case'
+          )
+          PREFIXES=('yugioh ','yu gi oh ')
+          def bases(name):
+            raw=norm(name);out={raw}
+            changed=True
+            while changed:
+              changed=False
+              for p in PREFIXES:
+                if raw.startswith(p) and len(raw)>len(p):
+                  raw=raw[len(p):].strip();out.add(raw);changed=True
+              for s in SUFFIXES:
+                if raw.endswith(s) and len(raw)>len(s):
+                  raw=raw[:-len(s)].strip();out.add(raw);changed=True
+            return {x for x in out if x}
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1");gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'");latest=cur.fetchone()['latest']
+              cur.execute("SELECT id,external_id,name FROM catalog_releases WHERE game_id=%s AND source='konami_neuron'",(gid,))
+              rels=[dict(r) for r in cur.fetchall()]
+              idx=defaultdict(list)
+              for r in rels:
+                idx[norm(r['name'])].append(r)
+              cur.execute('''SELECT external_id id_product,expansion_external_id,name,category,website_path
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s AND product_group='non_single' AND last_seen_at=%s''',(gid,latest))
+              sealed=[dict(r) for r in cur.fetchall()]
+
+              cat=Counter(str(r['category'] or '') for r in sealed)
+              byexp=defaultdict(list)
+              for r in sealed:byexp[str(r['expansion_external_id'] or '')].append(r)
+              anchors={};conflicts=[];evidence={};status=Counter();samples=[]
+              for exp,items in byexp.items():
+                votes=defaultdict(list)
+                for item in items:
+                  matched=False
+                  for b in bases(item['name']):
+                    ms=idx.get(b,[])
+                    if len(ms)==1:
+                      rid=int(ms[0]['id']);votes[rid].append({'idProduct':str(item['id_product']),'name':item['name'],'category':item['category'],'matched_base':b,'konami_pid':str(ms[0]['external_id']),'konami_name':ms[0]['name']});matched=True
+                  if matched:status['sealed_items_with_unique_exact_name_match']+=1
+                if len(votes)==1:
+                  rid=next(iter(votes));anchors[exp]=rid;evidence[exp]=votes[rid];status['anchored_expansions']+=1
+                elif len(votes)>1:
+                  conflicts.append({'expansion':exp,'release_ids':sorted(votes),'items':items[:5]});status['conflicting_expansions']+=1
+                else:status['unanchored_expansions']+=1
+              # Existing exact-link bridge coverage for comparison.
+              cur.execute('''SELECT e.expansion_external_id,l.print_id FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status IN ('accepted','mapped','exact') AND l.confidence='exact' ''',(gid,))
+              existing_exp={str(r['expansion_external_id'] or '') for r in cur.fetchall()}
+              novel=[exp for exp in anchors if exp not in existing_exp]
+              report={'mode':'dry_run','game':'yugioh','latest_cardmarket_snapshot':str(latest),'konami_products':len(rels),'cardmarket_non_single_products':len(sealed),
+                'cardmarket_non_single_expansions':len(byexp),'category_counts':dict(cat),'status_counts':dict(status),'unique_exact_name_anchors':len(anchors),'anchor_conflicts':len(conflicts),
+                'anchored_expansions_without_any_existing_exact_single_link':len(novel),'novel_expansion_ids':novel[:200],
+                'anchor_sample':[{'expansion':e,'release_id':rid,'evidence':evidence[e][:5]} for e,rid in list(anchors.items())[:100]],
+                'conflict_sample':conflicts[:50],'sealed_sample':sealed[:150]}
+              summary={k:v for k,v in report.items() if not k.endswith('_sample') and k!='novel_expansion_ids'}
+              Path('/tmp/ygo-product-name-anchors.json').write_text(json.dumps(report,indent=2,default=str)+'\n');Path('/tmp/ygo-product-name-anchors-summary.json').write_text(json.dumps(summary,indent=2,default=str)+'\n')
+              print(json.dumps(summary,indent=2,default=str))
+          finally:conn.close()
+          PY
+      - name: Persist summary
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/ygo-product-name-anchors-summary.json audit-reports/yugioh-cardmarket-konami-product-name-anchors-summary.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/yugioh-cardmarket-konami-product-name-anchors-summary.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update YGO Cardmarket Konami product name anchor audit"
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-konami-product-name-anchors-${{ github.run_id }}
+          path: /tmp/ygo-product-name-anchors.json
+          retention-days: 90

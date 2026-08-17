@@ -1,0 +1,137 @@
+name: Audit Point 8 Regional Daily
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-point8-regional-daily.yml'
+      - '.github/workflows/daily-catalog-v2-orchestrator.yml'
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
+      - '.github/workflows/sync-cardmarket-master-production-v2.yml'
+      - '.github/workflows/sync-cardmarket-website-paths.yml'
+      - '.github/workflows/sync-regional-tcg-content.yml'
+      - 'backend/app/jobs/regional_content.py'
+      - 'backend/scripts/dedupe_regional_content.py'
+      - 'backend/scripts/verify_ingest.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Certify single-scheduler architecture
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('.github/workflows')
+          files = {
+              'orchestrator': root / 'daily-catalog-v2-orchestrator.yml',
+              'canonical': root / 'refresh-onepiece-yugioh-canonical-v2.yml',
+              'cardmarket': root / 'sync-cardmarket-master-production-v2.yml',
+              'paths': root / 'sync-cardmarket-website-paths.yml',
+              'regional': root / 'sync-regional-tcg-content.yml',
+          }
+          text = {name: path.read_text(encoding='utf-8') for name, path in files.items()}
+          failures = []
+
+          if 'schedule:' not in text['orchestrator']:
+              failures.append('orchestrator_missing_schedule')
+          if 'workflow_dispatch:' not in text['orchestrator']:
+              failures.append('orchestrator_missing_manual_dispatch')
+          if '\n  push:' in text['orchestrator']:
+              failures.append('orchestrator_has_push_trigger')
+          if text['orchestrator'].count('cron:') != 1:
+              failures.append('orchestrator_cron_count_not_one')
+          if "cron: '20 4 * * *'" not in text['orchestrator']:
+              failures.append('unexpected_daily_cron')
+
+          children = (
+              'refresh-onepiece-yugioh-canonical-v2.yml',
+              'sync-cardmarket-master-production-v2.yml',
+              'sync-cardmarket-website-paths.yml',
+              'sync-regional-tcg-content.yml',
+          )
+          for child in children:
+              if text['orchestrator'].count(child) != 1:
+                  failures.append(f'orchestrator_child_reference_invalid:{child}')
+
+          for child_name in ('canonical', 'cardmarket', 'paths', 'regional'):
+              body = text[child_name]
+              if 'workflow_dispatch:' not in body:
+                  failures.append(f'{child_name}_missing_manual_dispatch')
+              if 'schedule:' in body:
+                  failures.append(f'{child_name}_has_independent_schedule')
+              if '\n  push:' in body:
+                  failures.append(f'{child_name}_has_push_trigger')
+              if 'cron:' in body:
+                  failures.append(f'{child_name}_has_cron')
+
+          regional = text['regional']
+          for token in (
+              'scripts/dedupe_regional_content.py',
+              'scripts/verify_ingest.py',
+              'ingest_official_regional_content(session, strict=True)',
+          ):
+              if token not in regional:
+                  failures.append(f'regional_missing_gate:{token}')
+
+          if 'riftbound' in text['orchestrator'].lower() and 'excluded' not in text['orchestrator'].lower():
+              failures.append('orchestrator_riftbound_not_explicitly_excluded')
+
+          report = {
+              'gate': 'PASS' if not failures else 'FAIL',
+              'daily_cron_utc': '20 4 * * *',
+              'scheduled_workflow_count': sum(body.count('cron:') for body in text.values()),
+              'children': list(children),
+              'child_push_triggers': {
+                  name: '\n  push:' in text[name]
+                  for name in ('canonical', 'cardmarket', 'paths', 'regional')
+              },
+              'child_schedules': {
+                  name: 'schedule:' in text[name]
+                  for name in ('canonical', 'cardmarket', 'paths', 'regional')
+              },
+              'failures': failures,
+          }
+          Path('/tmp/point8-scheduler-proof.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print('POINT8_SCHEDULER ' + json.dumps(report, sort_keys=True))
+          if failures:
+              raise SystemExit(json.dumps(failures))
+          PY
+      - name: Compile regional certification scripts
+        working-directory: backend
+        run: python -m py_compile app/jobs/regional_content.py scripts/dedupe_regional_content.py scripts/verify_ingest.py
+      - name: Certify current regional production state read-only
+        working-directory: backend
+        run: python scripts/verify_ingest.py --window-hours 24 --report /tmp/point8-regional-proof.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: point8-regional-daily-${{ github.run_id }}
+          path: |
+            /tmp/point8-scheduler-proof.json
+            /tmp/point8-regional-proof.json
+          retention-days: 90
+          if-no-files-found: warn

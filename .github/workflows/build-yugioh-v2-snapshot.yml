@@ -1,0 +1,63 @@
+name: Build Yu-Gi-Oh V2 Snapshot
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/build-yugioh-v2-snapshot.yml'
+      - 'backend/app/scripts/build_yugioh_v2_snapshot.py'
+      - 'backend/app/scripts/build_yugioh_v2_snapshot_canonical.py'
+      - 'backend/app/scripts/verify_yugioh_v2_snapshot_manifest.py'
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile canonical snapshot builder and frozen verifier
+        working-directory: backend
+        run: python -m compileall -q app/scripts/build_yugioh_v2_snapshot.py app/scripts/build_yugioh_v2_snapshot_canonical.py app/scripts/verify_yugioh_v2_snapshot_manifest.py app/ingest/connectors/ygoprodeck_yugioh.py
+      - name: Build and validate canonical snapshot outside Neon
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yugioh-v2-snapshot
+          python -u -m app.scripts.build_yugioh_v2_snapshot_canonical \
+            --output-dir /tmp/yugioh-v2-snapshot \
+            | tee /tmp/yugioh-v2-snapshot.log
+      - name: Verify frozen canonical counts
+        working-directory: backend
+        run: |
+          python -u -m app.scripts.verify_yugioh_v2_snapshot_manifest \
+            /tmp/yugioh-v2-snapshot/manifest.json \
+            | tee /tmp/yugioh-v2-snapshot-frozen-verification.log
+      - name: Show artifact sizes
+        if: always()
+        run: |
+          if [ -d /tmp/yugioh-v2-snapshot ]; then
+            du -h /tmp/yugioh-v2-snapshot/* 2>/dev/null | sort -h || true
+          fi
+      - name: Upload canonical snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-v2-snapshot-${{ github.sha }}
+          path: |
+            /tmp/yugioh-v2-snapshot
+            /tmp/yugioh-v2-snapshot.log
+            /tmp/yugioh-v2-snapshot-frozen-verification.log
+          retention-days: 90
+          if-no-files-found: warn

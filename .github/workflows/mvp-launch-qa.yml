@@ -1,0 +1,97 @@
+name: MVP Launch QA
+
+on:
+  push:
+    branches:
+      - mvp-launch-2026-08-09
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mvp-launch-qa
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout MVP branch
+        uses: actions/checkout@v4
+        with:
+          ref: mvp-launch-2026-08-09
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile backend
+        working-directory: backend
+        run: python -m compileall -q app
+
+      - name: Verify backend app imports
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from app.main import create_app
+          app = create_app('sqlite:////tmp/dontripit-mvp-import.db')
+          rules = {rule.rule for rule in app.url_map.iter_rules()}
+          required = {
+              '/api/v2/auth/register',
+              '/api/v2/auth/login',
+              '/api/v2/auth/me',
+              '/api/v2/me/collection',
+              '/api/v2/me/wishlist',
+              '/api/v2/search',
+          }
+          missing = required - rules
+          if missing:
+              raise SystemExit(f'Missing MVP backend routes: {sorted(missing)}')
+          print(f'Backend routes PASS ({len(rules)} routes)')
+          PY
+
+      - name: Verify single Alembic head
+        working-directory: backend
+        run: |
+          alembic heads
+          test "$(alembic heads | grep -c '(head)')" -eq 1
+          alembic heads | grep '20260809_26'
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run frontend contract tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Audit production dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify MVP UX contracts
+        run: |
+          grep -q "Mi colección" frontend/components/dashboard/DashboardPage.js
+          grep -q "Mi wishlist" frontend/components/library/LibraryPage.js
+          grep -q "dri_session" frontend/proxy.js
+          grep -q "Ediciones exactas" frontend/components/searchV2/SearchV2Results.js
+          grep -q "marketing_consent" frontend/components/auth/AuthShell.js
+          ! grep -q "Vista previa del flujo" frontend/components/auth/AuthShell.js

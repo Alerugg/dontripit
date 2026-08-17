@@ -1,0 +1,89 @@
+name: Cleanup Pokemon Legacy Scope Anomalies V2
+
+# This workflow is intentionally narrow: it can delete only the four proven
+# legacy Pokémon identity rows and their own identifier/image dependants.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/cleanup-pokemon-legacy-scope-anomalies-v2.yml'
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile guarded cleanup
+        working-directory: backend
+        run: python -m py_compile app/scripts/cleanup_pokemon_legacy_scope_anomalies_v2.py
+
+      - name: Remove only proven legacy Pokémon residues transactionally
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.cleanup_pokemon_legacy_scope_anomalies_v2 \
+            --report-path /tmp/pokemon-legacy-scope-cleanup-v2.json \
+            | tee /tmp/pokemon-legacy-scope-cleanup-v2.log
+
+      - name: Re-audit Pokémon scope after cleanup
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_pokemon_scope_anomalies_v2 \
+            --report-path /tmp/pokemon-scope-anomalies-postcleanup-v2.json \
+            | tee /tmp/pokemon-scope-anomalies-postcleanup-v2.log
+          python - <<'PY'
+          import json
+          p = json.load(open('/tmp/pokemon-scope-anomalies-postcleanup-v2.json', encoding='utf-8'))
+          expected = {
+              'cards': 21065,
+              'prints': 33757,
+              'card_attributes': 21065,
+              'print_attributes': 33757,
+              'card_search_profiles': 21065,
+              'print_search_profiles': 33757,
+          }
+          if p['totals'] != expected:
+              raise SystemExit(f"Unexpected post-cleanup totals: {p['totals']}")
+          if p['counts']['cards_outside_certified_projection'] != 0:
+              raise SystemExit(f"Cards remain outside certified projection: {p['cards_outside_certified_projection']}")
+          if p['counts']['prints_outside_certified_projection'] != 0:
+              raise SystemExit(f"Prints remain outside certified projection: {p['prints_outside_certified_projection']}")
+          print('Pokemon base tables now exactly match the certified V2 projection.')
+          PY
+
+      - name: Upload cleanup and post-cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-legacy-scope-cleanup-v2-${{ github.sha }}
+          path: |
+            /tmp/pokemon-legacy-scope-cleanup-v2.json
+            /tmp/pokemon-legacy-scope-cleanup-v2.log
+            /tmp/pokemon-scope-anomalies-postcleanup-v2.json
+            /tmp/pokemon-scope-anomalies-postcleanup-v2.log
+          retention-days: 90
+          if-no-files-found: warn

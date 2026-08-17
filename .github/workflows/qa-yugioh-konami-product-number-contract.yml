@@ -1,0 +1,40 @@
+name: QA YuGiOh Konami Product Number Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-product-number-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Probe official product page for collector-number data and alternate views
+        run: |
+          python - <<'PY'
+          import json,re,requests
+          from bs4 import BeautifulSoup
+          BASE='https://www.db.yugioh-card.com/yugiohdb/card_search.action'
+          h={'User-Agent':'DontRipIt/1.0 konami-number-contract','Accept':'text/html'}
+          out=[]
+          for extra in ({},{'mode':'1'},{'mode':'2'},{'mode':'3'},{'sort':'1'}):
+            params={'ope':'1','sess':'1','pid':'11101000','rp':'99999','request_locale':'en',**extra}
+            r=requests.get(BASE,params=params,headers=h,timeout=30);r.raise_for_status();html=r.text;s=BeautifulSoup(html,'html.parser')
+            item={'params':extra,'url':r.url,'length':len(html),'lob001':('LOB-001' in html),'lob_en001':('LOB-EN001' in html),'card_number_count':len(s.select('.card_number'))}
+            patterns=sorted(set(re.findall(r'\b(?:LOB|LOB-EN)[-A-Z0-9]{2,12}\b',html,re.I)))
+            item['collector_like_patterns']=patterns[:100]
+            item['view_links']=[{'text':' '.join(a.stripped_strings)[:120],'href':a.get('href')} for a in s.find_all('a',href=True) if any(k in (' '.join(a.stripped_strings)).casefold() for k in ('gallery','list','view','sort'))][:80]
+            item['interesting_inputs']=[{'name':x.get('name'),'value':x.get('value'),'class':x.get('class'),'type':x.get('type')} for x in s.find_all('input') if (x.get('name') or '') in ('mode','sort','ope','pid','rp','sess') or 'mode' in ' '.join(x.get('class') or [])][:80]
+            item['scripts_with_number']=[str(sc)[:3000] for sc in s.find_all('script') if 'LOB-001' in str(sc) or 'card_number' in str(sc)][:10]
+            out.append(item)
+          print(json.dumps(out,indent=2,ensure_ascii=False))
+          PY

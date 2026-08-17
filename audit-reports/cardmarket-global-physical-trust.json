@@ -1,0 +1,3774 @@
+{
+  "mtg": {
+    "accepted_methods": [
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 147851,
+        "mapping_method": "scryfall_cardmarket_id",
+        "prints": 147851,
+        "products": 97794,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Forest",
+            "collector_number": "280",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "blb",
+                "280",
+                137795
+              ],
+              "cardmarket_id": "777725",
+              "finish": "foil",
+              "language": "en",
+              "scryfall_id": "0000419b-0bba-4488-8f7a-6194544ce91e",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "5658",
+            "id_product": "777725",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Forest",
+            "print_id": 159317,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "blb",
+            "set_name": "Bloomburrow",
+            "variant": "foil"
+          },
+          {
+            "card_name": "Forest",
+            "collector_number": "280",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "blb",
+                "280",
+                137795
+              ],
+              "cardmarket_id": "777725",
+              "finish": "nonfoil",
+              "language": "en",
+              "scryfall_id": "0000419b-0bba-4488-8f7a-6194544ce91e",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "5658",
+            "id_product": "777725",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Forest",
+            "print_id": 159318,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "blb",
+            "set_name": "Bloomburrow",
+            "variant": "nonfoil"
+          },
+          {
+            "card_name": "Fury Sliver",
+            "collector_number": "157",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "tsp",
+                "157",
+                121561
+              ],
+              "cardmarket_id": "13850",
+              "finish": "foil",
+              "language": "en",
+              "scryfall_id": "0000579f-7b35-4ed3-b44c-db2a538066fe",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "56",
+            "id_product": "13850",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Fury Sliver",
+            "print_id": 159319,
+            "rarity": "uncommon",
+            "reviewed": false,
+            "set_code": "tsp",
+            "set_name": "Time Spiral",
+            "variant": "foil"
+          },
+          {
+            "card_name": "Fury Sliver",
+            "collector_number": "157",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "tsp",
+                "157",
+                121561
+              ],
+              "cardmarket_id": "13850",
+              "finish": "nonfoil",
+              "language": "en",
+              "scryfall_id": "0000579f-7b35-4ed3-b44c-db2a538066fe",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "56",
+            "id_product": "13850",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Fury Sliver",
+            "print_id": 159320,
+            "rarity": "uncommon",
+            "reviewed": false,
+            "set_code": "tsp",
+            "set_name": "Time Spiral",
+            "variant": "nonfoil"
+          },
+          {
+            "card_name": "Kor Outfitter",
+            "collector_number": "21",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "zen",
+                "21",
+                131888
+              ],
+              "cardmarket_id": "21851",
+              "finish": "foil",
+              "language": "en",
+              "scryfall_id": "00006596-1166-4a79-8443-ca9f82e6db4e",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "114",
+            "id_product": "21851",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Kor Outfitter",
+            "print_id": 159321,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "zen",
+            "set_name": "Zendikar",
+            "variant": "foil"
+          },
+          {
+            "card_name": "Kor Outfitter",
+            "collector_number": "21",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "zen",
+                "21",
+                131888
+              ],
+              "cardmarket_id": "21851",
+              "finish": "nonfoil",
+              "language": "en",
+              "scryfall_id": "00006596-1166-4a79-8443-ca9f82e6db4e",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "114",
+            "id_product": "21851",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Kor Outfitter",
+            "print_id": 159322,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "zen",
+            "set_name": "Zendikar",
+            "variant": "nonfoil"
+          },
+          {
+            "card_name": "Spirit",
+            "collector_number": "5",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "tmm2",
+                "5",
+                143825
+              ],
+              "cardmarket_id": "282862",
+              "finish": "nonfoil",
+              "language": "en",
+              "scryfall_id": "0000a54c-a511-4925-92dc-01b937f9afad",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "1641",
+            "id_product": "282862",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Spirit Token (White 1/1)",
+            "print_id": 159323,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "tmm2",
+            "set_name": "Modern Masters 2015 Tokens",
+            "variant": "nonfoil"
+          },
+          {
+            "card_name": "Siren Lookout",
+            "collector_number": "78",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "xln",
+                "78",
+                134860
+              ],
+              "cardmarket_id": "301766",
+              "finish": "foil",
+              "language": "en",
+              "scryfall_id": "0000cd57-91fe-411f-b798-646e965eec37",
+              "source": "scryfall",
+              "source_field": "cardmarket_id"
+            },
+            "expansion_external_id": "1812",
+            "id_product": "301766",
+            "language": "en",
+            "mapping_method": "scryfall_cardmarket_id",
+            "market_name": "Siren Lookout",
+            "print_id": 159324,
+            "rarity": "common",
+            "reviewed": false,
+            "set_code": "xln",
+            "set_name": "Ixalan",
+            "variant": "foil"
+          }
+        ]
+      }
+    ],
+    "accepted_prints": 147851,
+    "ambiguous_accepted_prints_count": 0,
+    "ambiguous_accepted_prints_sample": [],
+    "game_id": 2,
+    "name": "Magic: The Gathering",
+    "stale_or_mismatched_latest_snapshot_count": 0,
+    "stale_or_mismatched_snapshot_sample": []
+  },
+  "onepiece": {
+    "accepted_methods": [
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 2104,
+        "mapping_method": "op_variant_cm_global_exact",
+        "prints": 2104,
+        "products": 2104,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Cavendish",
+            "collector_number": "EB01-012",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "default",
+              "cardmarket_id_product": "767968",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-012",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-012",
+              "source_variant_id": "en:EB01-012",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "767968",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Cavendish (EB01-012)",
+            "print_id": 40762,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Cavendish",
+            "collector_number": "EB01-012",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "767969",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-012",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-012_p1",
+              "source_variant_id": "en:EB01-012_p1",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "767969",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Cavendish (EB01-012)",
+            "print_id": 40763,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Brook",
+            "collector_number": "EB01-046",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "default",
+              "cardmarket_id_product": "768010",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-046",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-046",
+              "source_variant_id": "en:EB01-046",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768010",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Brook (EB01-046)",
+            "print_id": 40779,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Brook",
+            "collector_number": "EB01-046",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "768011",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-046",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-046_p1",
+              "source_variant_id": "en:EB01-046_p1",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768011",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Brook (EB01-046)",
+            "print_id": 40780,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Laboon",
+            "collector_number": "EB01-048",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "default",
+              "cardmarket_id_product": "768013",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-048",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-048",
+              "source_variant_id": "en:EB01-048",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768013",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Laboon (EB01-048)",
+            "print_id": 40782,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Laboon",
+            "collector_number": "EB01-048",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "768014",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-048",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-048_p1",
+              "source_variant_id": "en:EB01-048_p1",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768014",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Laboon (EB01-048)",
+            "print_id": 40783,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Shirahoshi",
+            "collector_number": "EB01-057",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "default",
+              "cardmarket_id_product": "768026",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-057",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-057",
+              "source_variant_id": "en:EB01-057",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768026",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Shirahoshi (EB01-057)",
+            "print_id": 40789,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Shirahoshi",
+            "collector_number": "EB01-057",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "768027",
+              "certified_audit_run_id": 31424881435,
+              "collector_number": "EB01-057",
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB01-057_p1",
+              "source_variant_id": "en:EB01-057_p1",
+              "validation": [
+                "semantic_variant_id_exact",
+                "collector_exact",
+                "canonical_variant_exact",
+                "current_cardmarket_product",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768027",
+            "language": "en",
+            "mapping_method": "op_variant_cm_global_exact",
+            "market_name": "Shirahoshi (EB01-057)",
+            "print_id": 40790,
+            "rarity": "SR",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p1"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 315,
+        "mapping_method": "bandai_release_exact",
+        "prints": 315,
+        "products": 315,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Just Shut Up and Come with Us!!!!",
+            "collector_number": "EB01-009",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-009",
+              "idExpansion": "5585",
+              "idMetacard": "430419",
+              "idProduct": "767965",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "767965",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Just Shut Up and Come with Us!!!! (EB01-009)",
+            "print_id": 40760,
+            "rarity": "C",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Scratchmen Apoo",
+            "collector_number": "EB01-015",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-015",
+              "idExpansion": "5585",
+              "idMetacard": "430425",
+              "idProduct": "767973",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "767973",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Scratchmen Apoo (EB01-015)",
+            "print_id": 40767,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Scratchmen Apoo",
+            "collector_number": "EB01-015",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-015",
+              "idExpansion": "6151",
+              "idMetacard": "430425",
+              "idProduct": "829112",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 93,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Preconstructed Decks",
+                  "idProduct": "826847",
+                  "matched_core": "green jewelry bonney",
+                  "name": "Starter Deck: Green Jewelry Bonney",
+                  "official_release": "STARTER DECK -GREEN Jewelry Bonney- [ST-24]",
+                  "release_external_id": "569024"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "p3"
+            },
+            "expansion_external_id": "6151",
+            "id_product": "829112",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Scratchmen Apoo (EB01-015)",
+            "print_id": 40768,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p3"
+          },
+          {
+            "card_name": "Mountain God",
+            "collector_number": "EB01-018",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-018",
+              "idExpansion": "5585",
+              "idMetacard": "430428",
+              "idProduct": "767976",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "767976",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Mountain God (EB01-018)",
+            "print_id": 40774,
+            "rarity": "C",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Oh Come My Way",
+            "collector_number": "EB01-038",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-038",
+              "idExpansion": "5585",
+              "idMetacard": "430448",
+              "idProduct": "768001",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768001",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Oh Come My Way (EB01-038)",
+            "print_id": 40777,
+            "rarity": "C",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Finger Pistol",
+            "collector_number": "EB01-051",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-051",
+              "idExpansion": "5585",
+              "idMetacard": "430466",
+              "idProduct": "768018",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768018",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Finger Pistol (EB01-051)",
+            "print_id": 40787,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Did Someone Say...Kami?",
+            "collector_number": "EB01-060",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "EB01-060",
+              "idExpansion": "5585",
+              "idMetacard": "430476",
+              "idProduct": "768030",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 64,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750063",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster",
+                  "idProduct": "750064",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                },
+                {
+                  "category": "One Piece Booster Boxes",
+                  "idProduct": "750065",
+                  "matched_core": "memorial collection",
+                  "name": "Memorial Collection Booster Box Case (12x Booster Box)",
+                  "official_release": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+                  "release_external_id": "569201"
+                }
+              ],
+              "set_code": "eb-01",
+              "source": "cardmarket+onepiece_official",
+              "variant": "default"
+            },
+            "expansion_external_id": "5585",
+            "id_product": "768030",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Did Someone Say...Kami? (EB01-060)",
+            "print_id": 40794,
+            "rarity": "C",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Urouge",
+            "collector_number": "OP07-021",
+            "confidence": "exact",
+            "evidence": {
+              "collector_number": "OP07-021",
+              "idExpansion": "6151",
+              "idMetacard": "431962",
+              "idProduct": "829114",
+              "mapping_basis": [
+                "sealed_product_release_match",
+                "official_PrintRelease",
+                "unique_name_collector",
+                "global_one_to_one"
+              ],
+              "release_id": 93,
+              "sealed_evidence": [
+                {
+                  "category": "One Piece Preconstructed Decks",
+                  "idProduct": "826847",
+                  "matched_core": "green jewelry bonney",
+                  "name": "Starter Deck: Green Jewelry Bonney",
+                  "official_release": "STARTER DECK -GREEN Jewelry Bonney- [ST-24]",
+                  "release_external_id": "569024"
+                }
+              ],
+              "set_code": "op-07",
+              "source": "cardmarket+onepiece_official",
+              "variant": "r1"
+            },
+            "expansion_external_id": "6151",
+            "id_product": "829114",
+            "language": "en",
+            "mapping_method": "bandai_release_exact",
+            "market_name": "Urouge (OP07-021)",
+            "print_id": 40960,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "op-07",
+            "set_name": "BOOSTER PACK -500 YEARS IN THE FUTURE- [OP-07]",
+            "variant": "r1"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 195,
+        "mapping_method": "op_variant_cm_exact",
+        "prints": 195,
+        "products": 195,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Sabo",
+            "collector_number": "PRB02-014",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "p2",
+              "cardmarket_id_product": "880060",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "PRB02-014",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3APRB02-014_p2",
+              "source_variant_id": "en:PRB02-014_p2",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "880060",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Sabo (PRB02-014)",
+            "print_id": 41278,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "prb-02",
+            "set_name": "PREMIUM BOOSTER -ONE PIECE CARD THE BEST vol.2- [PRB-02]",
+            "variant": "p2"
+          },
+          {
+            "card_name": "Bartholomew Kuma",
+            "collector_number": "EB04-054",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "default",
+              "cardmarket_id_product": "879533",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-054",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-054",
+              "source_variant_id": "en:EB04-054",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879533",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Bartholomew Kuma (EB04-054)",
+            "print_id": 42425,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Jewelry Bonney",
+            "collector_number": "EB04-001",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "default",
+              "cardmarket_id_product": "879502",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-001",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-001",
+              "source_variant_id": "en:EB04-001",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879502",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Jewelry Bonney (EB04-001)",
+            "print_id": 42445,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Jewelry Bonney",
+            "collector_number": "EB04-001",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "879503",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-001",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-001_p1",
+              "source_variant_id": "en:EB04-001_p1",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879503",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Jewelry Bonney (EB04-001)",
+            "print_id": 42446,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Jewelry Bonney",
+            "collector_number": "EB04-002",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "default",
+              "cardmarket_id_product": "879504",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-002",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-002",
+              "source_variant_id": "en:EB04-002",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879504",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Jewelry Bonney (EB04-002)",
+            "print_id": 42447,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Jewelry Bonney",
+            "collector_number": "EB04-002",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "879505",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-002",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-002_p1",
+              "source_variant_id": "en:EB04-002_p1",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879505",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Jewelry Bonney (EB04-002)",
+            "print_id": 42448,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Smoker & Tashigi",
+            "collector_number": "EB04-003",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "default",
+              "cardmarket_id_product": "879506",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-003",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-003",
+              "source_variant_id": "en:EB04-003",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879506",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Smoker & Tashigi (EB04-003)",
+            "print_id": 42449,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "default"
+          },
+          {
+            "card_name": "Smoker & Tashigi",
+            "collector_number": "EB04-003",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_variant": "p1",
+              "cardmarket_id_product": "879507",
+              "certified_audit_run_id": 31421975728,
+              "certified_mapping_sha256": "8c4aa5eb3d60019f9b1de07a75ab0d357ee7ab721acbb40444d50fc9124373e1",
+              "collector_number": "EB04-003",
+              "official_release_id": 66,
+              "source": "one-piece.cards",
+              "source_kind": "secondary_explicit_crosswalk",
+              "source_url": "https://one-piece.cards/cards/en%3AEB04-003_p1",
+              "source_variant_id": "en:EB04-003_p1",
+              "validation": [
+                "explicit_cardmarket_id",
+                "official_release_print",
+                "collector_exact",
+                "variant_exact",
+                "cardmarket_mirror_current",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ]
+            },
+            "expansion_external_id": "6456",
+            "id_product": "879507",
+            "language": "en",
+            "mapping_method": "op_variant_cm_exact",
+            "market_name": "Smoker & Tashigi (EB04-003)",
+            "print_id": 42450,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "eb-04",
+            "set_name": "Extra Booster Series [EB-04]",
+            "variant": "p1"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 18,
+        "mapping_method": "bandai_trusted_expansion_exact",
+        "prints": 18,
+        "products": 18,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Shirahoshi",
+            "collector_number": "EB01-057",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "EB01-057",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p2",
+              "exact_anchor_prints": 143,
+              "idExpansion": "6033",
+              "idProduct": "827262",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 70,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "6033",
+            "id_product": "827262",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Shirahoshi (EB01-057)",
+            "print_id": 40791,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p2"
+          },
+          {
+            "card_name": "Shanks",
+            "collector_number": "OP09-004",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "OP09-004",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "op-09",
+              "canonical_variant": "p5",
+              "exact_anchor_prints": 173,
+              "idExpansion": "6187",
+              "idProduct": "857356",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 68,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "6187",
+            "id_product": "857356",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Shanks (OP09-004)",
+            "print_id": 41044,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "op-09",
+            "set_name": "BOOSTER PACK -EMPERORS IN THE NEW WORLD- [OP-09]",
+            "variant": "p5"
+          },
+          {
+            "card_name": "Jewelry Bonney",
+            "collector_number": "ST02-007",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "ST02-007",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "st-02",
+              "canonical_variant": "p2",
+              "exact_anchor_prints": 143,
+              "idExpansion": "5610",
+              "idProduct": "788033",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 73,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "5610",
+            "id_product": "788033",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Jewelry Bonney (ST02-007)",
+            "print_id": 41296,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "st-02",
+            "set_name": "STARTER DECK -Worst Generation- [ST-02]",
+            "variant": "p2"
+          },
+          {
+            "card_name": "Edward.Newgate",
+            "collector_number": "ST15-002",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "ST15-002",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "st-15",
+              "canonical_variant": "p1",
+              "exact_anchor_prints": 148,
+              "idExpansion": "5974",
+              "idProduct": "817149",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 71,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "5974",
+            "id_product": "817149",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Edward.Newgate (ST15-002)",
+            "print_id": 41354,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "st-15",
+            "set_name": "STARTER DECK -Red Edward.Newgate- [ST-15]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Uso-Hachi",
+            "collector_number": "ST18-001",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "ST18-001",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "st-18",
+              "canonical_variant": "p1",
+              "exact_anchor_prints": 148,
+              "idExpansion": "5974",
+              "idProduct": "817150",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 71,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "5974",
+            "id_product": "817150",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Uso-Hachi (ST18-001)",
+            "print_id": 41382,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "st-18",
+            "set_name": "STARTER DECK -Purple Monkey.D.Luffy- [ST-18]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Sakazuki",
+            "collector_number": "OP02-099",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "OP02-099",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "op-02",
+              "canonical_variant": "p2",
+              "exact_anchor_prints": 140,
+              "idExpansion": "5365",
+              "idProduct": "732889",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 77,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "5365",
+            "id_product": "732889",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Sakazuki (OP02-099)",
+            "print_id": 41517,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "op-02",
+            "set_name": "BOOSTER PACK -PARAMOUNT WAR- [OP-02]",
+            "variant": "p2"
+          },
+          {
+            "card_name": "Queen",
+            "collector_number": "ST04-005",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "ST04-005",
+              "canonical_rarity": "SP CARD",
+              "canonical_set_code": "st-04",
+              "canonical_variant": "p1",
+              "exact_anchor_prints": 143,
+              "idExpansion": "5610",
+              "idProduct": "788035",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 73,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "5610",
+            "id_product": "788035",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Queen (ST04-005)",
+            "print_id": 41912,
+            "rarity": "SP CARD",
+            "reviewed": false,
+            "set_code": "st-04",
+            "set_name": "STARTER DECK -Animal Kingdom Pirates- [ST-04]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Kouzuki Oden",
+            "collector_number": "EB01-001",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_collector_number": "EB01-001",
+              "canonical_rarity": "L",
+              "canonical_set_code": "eb-01",
+              "canonical_variant": "p2",
+              "exact_anchor_prints": 100,
+              "idExpansion": "6028",
+              "idProduct": "823420",
+              "identity_basis": [
+                "trusted_expansion_from_existing_exact_links",
+                "single_common_official_release_across_all_anchor_prints",
+                "at_least_two_exact_anchor_prints",
+                "exact_normalized_card_name",
+                "exact_collector_number",
+                "unique_unlinked_print_inside_official_release",
+                "global_one_to_one",
+                "no_existing_conflict"
+              ],
+              "release_id": 63,
+              "source": "onepiece_official+cardmarket"
+            },
+            "expansion_external_id": "6028",
+            "id_product": "823420",
+            "language": "en",
+            "mapping_method": "bandai_trusted_expansion_exact",
+            "market_name": "Kouzuki Oden (EB01-001)",
+            "print_id": 42036,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "eb-01",
+            "set_name": "EXTRA BOOSTER -MEMORIAL COLLECTION- [EB-01]",
+            "variant": "p2"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 8,
+        "mapping_method": "bandai_sealed_residual_exact",
+        "prints": 8,
+        "products": 8,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Gedatsu",
+            "collector_number": "OP05-102",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP05-102",
+              "group_size": 2,
+              "idExpansion": "5426",
+              "idProduct": "747825",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "R",
+              "release_id": 76,
+              "set_code": "op-05",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5426",
+            "id_product": "747825",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Gedatsu (OP05-102)",
+            "print_id": 40886,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "op-05",
+            "set_name": "BOOSTER PACK -AWAKENING OF THE NEW ERA- [OP-05]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Yamato",
+            "collector_number": "OP06-022",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP06-022",
+              "group_size": 2,
+              "idExpansion": "5524",
+              "idProduct": "760513",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "L",
+              "release_id": 75,
+              "set_code": "op-06",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5524",
+            "id_product": "760513",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Yamato (OP06-022)",
+            "print_id": 42160,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "op-06",
+            "set_name": "BOOSTER PACK -WINGS OF THE CAPTAIN- [OP-06]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Buggy",
+            "collector_number": "OP09-042",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP09-042",
+              "group_size": 2,
+              "idExpansion": "5755",
+              "idProduct": "802910",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "L",
+              "release_id": 72,
+              "set_code": "op-09",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5755",
+            "id_product": "802910",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Buggy (OP09-042)",
+            "print_id": 43634,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "op-09",
+            "set_name": "BOOSTER PACK -EMPERORS IN THE NEW WORLD- [OP-09]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Marshall.D.Teach",
+            "collector_number": "OP09-081",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP09-081",
+              "group_size": 2,
+              "idExpansion": "5755",
+              "idProduct": "802961",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "L",
+              "release_id": 72,
+              "set_code": "op-09",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5755",
+            "id_product": "802961",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Marshall.D.Teach (OP09-081)",
+            "print_id": 43679,
+            "rarity": "L",
+            "reviewed": false,
+            "set_code": "op-09",
+            "set_name": "BOOSTER PACK -EMPERORS IN THE NEW WORLD- [OP-09]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "O-Nami",
+            "collector_number": "OP06-101",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP06-101",
+              "group_size": 2,
+              "idExpansion": "5524",
+              "idProduct": "760605",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "R",
+              "release_id": 75,
+              "set_code": "op-06",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5524",
+            "id_product": "760605",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "O-Nami (OP06-101)",
+            "print_id": 44036,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "op-06",
+            "set_name": "BOOSTER PACK -WINGS OF THE CAPTAIN- [OP-06]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Camie",
+            "collector_number": "OP06-025",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP06-025",
+              "group_size": 2,
+              "idExpansion": "5524",
+              "idProduct": "760517",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "R",
+              "release_id": 75,
+              "set_code": "op-06",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5524",
+            "id_product": "760517",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Camie (OP06-025)",
+            "print_id": 44061,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "op-06",
+            "set_name": "BOOSTER PACK -WINGS OF THE CAPTAIN- [OP-06]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Spandam",
+            "collector_number": "OP03-086",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP03-086",
+              "group_size": 2,
+              "idExpansion": "5364",
+              "idProduct": "719419",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "R",
+              "release_id": 78,
+              "set_code": "op-03",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5364",
+            "id_product": "719419",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Spandam (OP03-086)",
+            "print_id": 44491,
+            "rarity": "R",
+            "reviewed": false,
+            "set_code": "op-03",
+            "set_name": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+            "variant": "p1"
+          },
+          {
+            "card_name": "Perona",
+            "collector_number": "OP01-077",
+            "confidence": "exact",
+            "evidence": {
+              "already_linked_in_group": 1,
+              "collector_number": "OP01-077",
+              "group_size": 2,
+              "idExpansion": "5229",
+              "idProduct": "690906",
+              "identity_basis": [
+                "sealed_product_exact_release_anchor",
+                "official_print_release",
+                "equal_group_cardinality",
+                "existing_group_links_one_to_one",
+                "single_remaining_canonical_print",
+                "single_remaining_cardmarket_product",
+                "global_candidate_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "rarity": "UC",
+              "release_id": 80,
+              "set_code": "op-01",
+              "source": "onepiece_official+cardmarket",
+              "variant": "p1"
+            },
+            "expansion_external_id": "5229",
+            "id_product": "690906",
+            "language": "en",
+            "mapping_method": "bandai_sealed_residual_exact",
+            "market_name": "Perona (OP01-077)",
+            "print_id": 44784,
+            "rarity": "UC",
+            "reviewed": false,
+            "set_code": "op-01",
+            "set_name": "BOOSTER PACK -ROMANCE DAWN- [OP-01]",
+            "variant": "p1"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 1,
+        "mapping_method": "bandai_physical_release_unique_exact",
+        "prints": 1,
+        "products": 1,
+        "reviewed": true,
+        "sample": [
+          {
+            "card_name": "Monkey.D.Luffy",
+            "collector_number": "ST01-012",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_rarity": "SP CARD",
+              "canonical_variant": "p1",
+              "collector_number": "ST01-012",
+              "idExpansion": "5364",
+              "idProduct": "720061",
+              "identity_basis": [
+                "standard_english_sealed_product_release_match",
+                "official_PrintRelease",
+                "exact_collector_number",
+                "unique_product_inside_cardmarket_release",
+                "unique_print_inside_official_release",
+                "global_one_to_one"
+              ],
+              "official_release": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+              "release_external_id": "569103",
+              "release_id": 78,
+              "source": "onepiece_official+cardmarket",
+              "supersedes_wrong_idProduct": "749435"
+            },
+            "expansion_external_id": "5364",
+            "id_product": "720061",
+            "language": "en",
+            "mapping_method": "bandai_physical_release_unique_exact",
+            "market_name": "Monkey.D.Luffy (ST01-012)",
+            "print_id": 44257,
+            "rarity": "SP CARD",
+            "reviewed": true,
+            "set_code": "st-01",
+            "set_name": "STARTER DECK -Straw Hat Crew- [ST-01]",
+            "variant": "p1"
+          }
+        ]
+      }
+    ],
+    "accepted_prints": 2641,
+    "ambiguous_accepted_prints_count": 0,
+    "ambiguous_accepted_prints_sample": [],
+    "game_id": 9,
+    "name": "ONE PIECE Card Game",
+    "stale_or_mismatched_latest_snapshot_count": 0,
+    "stale_or_mismatched_snapshot_sample": []
+  },
+  "pokemon": {
+    "accepted_methods": [
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 24337,
+        "mapping_method": "tcgdex_cardmarket_id",
+        "prints": 24337,
+        "products": 17657,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Butterfree",
+            "collector_number": "33",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "33",
+                38802
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273830",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-33",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273830",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Butterfree [Whirlwind | Mega Drain]",
+            "print_id": 648,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Dodrio",
+            "collector_number": "34",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "34",
+                38803
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273831",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-34",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273831",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Dodrio [Retreat Aid | Rage]",
+            "print_id": 649,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Exeggutor",
+            "collector_number": "35",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "35",
+                38804
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273832",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-35",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273832",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Exeggutor [Teleport | Big Eggsplosion]",
+            "print_id": 650,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Fearow",
+            "collector_number": "36",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "36",
+                38805
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273833",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-36",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273833",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Fearow [Agility | Drill Peck]",
+            "print_id": 651,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Gloom",
+            "collector_number": "37",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "37",
+                487
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273834",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-37",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273834",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Gloom [Poisonpowder | Foul Odor]",
+            "print_id": 652,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Lickitung",
+            "collector_number": "38",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "38",
+                38806
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273835",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-38",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273835",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Lickitung [Tongue Wrap | Supersonic]",
+            "print_id": 653,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Marowak",
+            "collector_number": "39",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "39",
+                38807
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273836",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-39",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273836",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Marowak [Bonemerang | Call for Friend]",
+            "print_id": 654,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Nidorina",
+            "collector_number": "40",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_signature": [
+                "ju",
+                "40",
+                38809
+              ],
+              "card_level_cardmarket_id": null,
+              "cardmarket_id": "273837",
+              "evidence_kind": "physical_variant",
+              "release_context": null,
+              "source": "tcgdex/cards-database",
+              "source_field": "physical_variant.third_party.cardmarket",
+              "tcgdex_id": "base2-40",
+              "variant_hash": "4794c364245529b3"
+            },
+            "expansion_external_id": "1525",
+            "id_product": "273837",
+            "language": "en",
+            "mapping_method": "tcgdex_cardmarket_id",
+            "market_name": "Nidorina [Supersonic | Double Kick]",
+            "print_id": 655,
+            "rarity": "Uncommon",
+            "reviewed": false,
+            "set_code": "ju",
+            "set_name": "Jungle",
+            "variant": "v2-4794c364245529b3"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 4,
+        "mapping_method": "pokemon_cardmarket_identity_certified",
+        "prints": 4,
+        "products": 4,
+        "reviewed": true,
+        "sample": [
+          {
+            "card_name": "Charon's Choice",
+            "collector_number": "RT6",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Charon's Choice",
+              "cardmarket_product_name": "Charon's Choice",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "278574",
+              "collector_number": "RT6",
+              "legacy_print_identifier": "278574",
+              "source_conflict": null,
+              "tcgdex_declared_id": "278574"
+            },
+            "expansion_external_id": "1563",
+            "id_product": "278574",
+            "language": "en",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
+            "market_name": "Charon's Choice",
+            "print_id": 53078,
+            "rarity": "Rare",
+            "reviewed": true,
+            "set_code": "RR",
+            "set_name": "Rising Rivals",
+            "variant": "v2-ad016762ee2df38d"
+          },
+          {
+            "card_name": "Mr. Briney\u2019s Compassion",
+            "collector_number": "8",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Mr. Briney\u2019s Compassion",
+              "cardmarket_product_name": "Mr. Briney's Compassion",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "277439",
+              "collector_number": "8",
+              "legacy_print_identifier": "277439",
+              "source_conflict": null,
+              "tcgdex_declared_id": null
+            },
+            "expansion_external_id": "1614",
+            "id_product": "277439",
+            "language": "en",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
+            "market_name": "Mr. Briney's Compassion",
+            "print_id": 53375,
+            "rarity": "Uncommon",
+            "reviewed": true,
+            "set_code": "P2",
+            "set_name": "POP Series 2",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Bill\u2019s Maintenance",
+            "collector_number": "6",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Bill\u2019s Maintenance",
+              "cardmarket_product_name": "Bill's Maintenance",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "277488",
+              "collector_number": "6",
+              "legacy_print_identifier": "277488",
+              "source_conflict": null,
+              "tcgdex_declared_id": null
+            },
+            "expansion_external_id": "1617",
+            "id_product": "277488",
+            "language": "en",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
+            "market_name": "Bill's Maintenance",
+            "print_id": 53424,
+            "rarity": "Uncommon",
+            "reviewed": true,
+            "set_code": "P5",
+            "set_name": "POP Series 5",
+            "variant": "v2-4794c364245529b3"
+          },
+          {
+            "card_name": "Potion",
+            "collector_number": "15",
+            "confidence": "exact",
+            "evidence": {
+              "canonical_card_name": "Potion",
+              "cardmarket_product_name": "Potion",
+              "certification": "cardmarket_semantic_identity_exact",
+              "certified_cardmarket_idProduct": "297277",
+              "collector_number": "15",
+              "legacy_print_identifier": "297277",
+              "source_conflict": {
+                "declared_expansion": "1758",
+                "declared_id": "297246",
+                "declared_product_name": "Pikipek [Rock Smash]",
+                "resolution": "source_id_rejected_because_it_resolves_to_different_card_name"
+              },
+              "tcgdex_declared_id": "297246"
+            },
+            "expansion_external_id": "1758",
+            "id_product": "297277",
+            "language": "en",
+            "mapping_method": "pokemon_cardmarket_identity_certified",
+            "market_name": "Potion",
+            "print_id": 63858,
+            "rarity": "Uncommon",
+            "reviewed": true,
+            "set_code": "TK10A",
+            "set_name": "SM trainer Kit (Alolan Raichu)",
+            "variant": "v2-4794c364245529b3"
+          }
+        ]
+      }
+    ],
+    "accepted_prints": 24341,
+    "ambiguous_accepted_prints_count": 0,
+    "ambiguous_accepted_prints_sample": [],
+    "game_id": 1,
+    "name": "Pok\u00e9mon",
+    "stale_or_mismatched_latest_snapshot_count": 0,
+    "stale_or_mismatched_snapshot_sample": []
+  },
+  "yugioh": {
+    "accepted_methods": [
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 22253,
+        "mapping_method": "sealed_expansion_exact_name",
+        "prints": 22253,
+        "products": 22253,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Battle Footballer",
+            "collector_number": "5DS3-EN001",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 66461,
+              "collector_number": "5DS3-EN001",
+              "idExpansion": "1291",
+              "idMetacard": "101984",
+              "idProduct": "249065",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249065",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Battle Footballer",
+            "print_id": 104225,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Blazing Inpachi",
+            "collector_number": "5DS3-EN002",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 60240,
+              "collector_number": "5DS3-EN002",
+              "idExpansion": "1291",
+              "idMetacard": "102048",
+              "idProduct": "249066",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249066",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Blazing Inpachi",
+            "print_id": 104226,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Tune Warrior",
+            "collector_number": "5DS3-EN003",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 70153,
+              "collector_number": "5DS3-EN003",
+              "idExpansion": "1291",
+              "idMetacard": "105022",
+              "idProduct": "249098",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249098",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Tune Warrior",
+            "print_id": 104227,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Rapid Warrior",
+            "collector_number": "5DS3-EN004",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59459,
+              "collector_number": "5DS3-EN004",
+              "idExpansion": "1291",
+              "idMetacard": "203899",
+              "idProduct": "249086",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249086",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Rapid Warrior",
+            "print_id": 104228,
+            "rarity": "Super Rare",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Synchron Explorer",
+            "collector_number": "5DS3-EN005",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 64783,
+              "collector_number": "5DS3-EN005",
+              "idExpansion": "1291",
+              "idMetacard": "203900",
+              "idProduct": "249094",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249094",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Synchron Explorer",
+            "print_id": 104229,
+            "rarity": "Super Rare",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Man-Eater Bug",
+            "collector_number": "5DS3-EN006",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 67399,
+              "collector_number": "5DS3-EN006",
+              "idExpansion": "1291",
+              "idMetacard": "103370",
+              "idProduct": "249081",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249081",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Man-Eater Bug",
+            "print_id": 104230,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Hayabusa Knight",
+            "collector_number": "5DS3-EN007",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 62494,
+              "collector_number": "5DS3-EN007",
+              "idExpansion": "1291",
+              "idMetacard": "103038",
+              "idProduct": "249078",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249078",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Hayabusa Knight",
+            "print_id": 104231,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Chainsaw Insect",
+            "collector_number": "5DS3-EN008",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 70592,
+              "collector_number": "5DS3-EN008",
+              "idExpansion": "1291",
+              "idMetacard": "102149",
+              "idProduct": "249068",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "sealed_evidence": [
+                {
+                  "alias": "starter deck duelist toolbox",
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "249106",
+                  "name": "Starter Deck: Duelist Toolbox"
+                }
+              ],
+              "set_code": "5DS3",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1291",
+            "id_product": "249068",
+            "language": "en",
+            "mapping_method": "sealed_expansion_exact_name",
+            "market_name": "Chainsaw Insect",
+            "print_id": 104232,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS3",
+            "set_name": "Starter Deck: Duelist Toolbox",
+            "variant": "rarity-common"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 1864,
+        "mapping_method": "ygo_konami_product_name_exact",
+        "prints": 1864,
+        "products": 1864,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Dark Magician",
+            "collector_number": "25TH-EN001",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "4397",
+              "cardmarket_idProduct": "607537",
+              "cardmarket_metacard_id": "102390",
+              "collector_number": "25TH-EN001",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "2000001152000",
+              "rarity": "Ultra Rare",
+              "release_id": 1868,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Booster",
+                  "idProduct": "577251",
+                  "konami_name": "BATTLE OF CHAOS",
+                  "konami_pid": "2000001152000",
+                  "matched_base": "battle of chaos",
+                  "name": "Battle of Chaos Booster"
+                },
+                {
+                  "category": "Yugioh Display",
+                  "idProduct": "577252",
+                  "konami_name": "BATTLE OF CHAOS",
+                  "konami_pid": "2000001152000",
+                  "matched_base": "battle of chaos",
+                  "name": "Battle of Chaos Booster Box"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-ultra-rare"
+            },
+            "expansion_external_id": "4397",
+            "id_product": "607537",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Dark Magician",
+            "print_id": 104124,
+            "rarity": "Ultra Rare",
+            "reviewed": false,
+            "set_code": "25TH",
+            "set_name": "Battle of Chaos",
+            "variant": "rarity-ultra-rare"
+          },
+          {
+            "card_name": "Tune Warrior",
+            "collector_number": "5DS1-EN001",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109414",
+              "cardmarket_metacard_id": "105022",
+              "collector_number": "5DS1-EN001",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109414",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Tune Warrior",
+            "print_id": 104139,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Water Spirit",
+            "collector_number": "5DS1-EN002",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109415",
+              "cardmarket_metacard_id": "105023",
+              "collector_number": "5DS1-EN002",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109415",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Water Spirit",
+            "print_id": 104140,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Axe Raider",
+            "collector_number": "5DS1-EN003",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109416",
+              "cardmarket_metacard_id": "101947",
+              "collector_number": "5DS1-EN003",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109416",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Axe Raider",
+            "print_id": 104141,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Dark Blade",
+            "collector_number": "5DS1-EN004",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109417",
+              "cardmarket_metacard_id": "102355",
+              "collector_number": "5DS1-EN004",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109417",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Dark Blade",
+            "print_id": 104142,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Charcoal Inpachi",
+            "collector_number": "5DS1-EN005",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109418",
+              "cardmarket_metacard_id": "102161",
+              "collector_number": "5DS1-EN005",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109418",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Charcoal Inpachi",
+            "print_id": 104143,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Woodborg Inpachi",
+            "collector_number": "5DS1-EN006",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109419",
+              "cardmarket_metacard_id": "104511",
+              "collector_number": "5DS1-EN006",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109419",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Woodborg Inpachi",
+            "print_id": 104144,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Spiral Serpent",
+            "collector_number": "5DS1-EN007",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1173",
+              "cardmarket_idProduct": "109420",
+              "cardmarket_metacard_id": "104076",
+              "collector_number": "5DS1-EN007",
+              "existing_exact_anchor_count": 0,
+              "identity_basis": [
+                "exact_normalized_non_single_product_name_after_generic_packaging_removal",
+                "unique_konami_product_name",
+                "anchor_consistent_with_all_existing_exact_links_in_expansion",
+                "exact_normalized_card_name",
+                "unique_cardmarket_name_inside_expansion",
+                "unique_official_print_name_inside_konami_product",
+                "global_one_to_one",
+                "globally_unlinked_targets"
+              ],
+              "konami_pid": "13306000",
+              "rarity": "Common",
+              "release_id": 1668,
+              "sealed_product_evidence": [
+                {
+                  "category": "Yugioh Starter Deck",
+                  "idProduct": "248162",
+                  "konami_name": "5D's STARTER DECK 2008",
+                  "konami_pid": "13306000",
+                  "matched_base": "5d s starter deck 2008",
+                  "name": "5D's Starter Deck 2008"
+                }
+              ],
+              "source": "konami_neuron+cardmarket",
+              "variant": "rarity-common"
+            },
+            "expansion_external_id": "1173",
+            "id_product": "109420",
+            "language": "en",
+            "mapping_method": "ygo_konami_product_name_exact",
+            "market_name": "Spiral Serpent",
+            "print_id": 104145,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "5DS1",
+            "set_name": "Starter Deck: Yu-Gi-Oh! 5D's",
+            "variant": "rarity-common"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 93,
+        "mapping_method": "ygo_konami_release_exact",
+        "prints": 93,
+        "products": 93,
+        "reviewed": false,
+        "sample": [
+          {
+            "card_name": "Evil\u2605Twin Ki-sikil Deal",
+            "collector_number": "ALIN-EN052",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "6008",
+              "cardmarket_idProduct": "821831",
+              "collector_number": "ALIN-EN052",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001460000",
+              "rarity": "Super Rare",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "6008",
+            "id_product": "821831",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "EvilTwin Ki-sikil Deal",
+            "print_id": 104740,
+            "rarity": "Super Rare",
+            "reviewed": false,
+            "set_code": "ALIN",
+            "set_name": "Alliance Insight",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Evil\u2605Twin Ki-sikil",
+            "collector_number": "BLCR-EN096",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "5066",
+              "cardmarket_idProduct": "684340",
+              "collector_number": "BLCR-EN096",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001206000",
+              "rarity": "Secret Rare",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "5066",
+            "id_product": "684340",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "EvilTwin Ki-sikil",
+            "print_id": 105853,
+            "rarity": "Secret Rare",
+            "reviewed": false,
+            "set_code": "BLCR",
+            "set_name": "Battles of Legend: Crystal Revenge",
+            "variant": "rarity-secret-rare"
+          },
+          {
+            "card_name": "Evil\u2605Twin Lil-la",
+            "collector_number": "BLCR-EN097",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "5066",
+              "cardmarket_idProduct": "684341",
+              "collector_number": "BLCR-EN097",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001206000",
+              "rarity": "Secret Rare",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "5066",
+            "id_product": "684341",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "EvilTwin Lil-la",
+            "print_id": 105854,
+            "rarity": "Secret Rare",
+            "reviewed": false,
+            "set_code": "BLCR",
+            "set_name": "Battles of Legend: Crystal Revenge",
+            "variant": "rarity-secret-rare"
+          },
+          {
+            "card_name": "Elemental HERO Stratos",
+            "collector_number": "BLHR-EN061",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "2463",
+              "cardmarket_idProduct": "381027",
+              "collector_number": "BLHR-EN061",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "11118005",
+              "rarity": "Ultra Rare",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "2463",
+            "id_product": "381027",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "Elemental HERO Stratos",
+            "print_id": 106106,
+            "rarity": "Ultra Rare",
+            "reviewed": false,
+            "set_code": "BLHR",
+            "set_name": "Battles of Legend: Hero's Revenge",
+            "variant": "rarity-ultra-rare"
+          },
+          {
+            "card_name": "Ace\u2605Spades Speculation",
+            "collector_number": "BLTR-EN039",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "5670",
+              "cardmarket_idProduct": "774181",
+              "collector_number": "BLTR-EN039",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001360000",
+              "rarity": "Secret Rare",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "5670",
+            "id_product": "774181",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "AceSpades Speculation",
+            "print_id": 106696,
+            "rarity": "Secret Rare",
+            "reviewed": false,
+            "set_code": "BLTR",
+            "set_name": "Battles of Legend: Terminal Revenge",
+            "variant": "rarity-secret-rare"
+          },
+          {
+            "card_name": "H.E.R.O. Flash!",
+            "collector_number": "BLZD-EN068",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "6450",
+              "cardmarket_idProduct": "885474",
+              "collector_number": "BLZD-EN068",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001614000",
+              "rarity": "Common",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "6450",
+            "id_product": "885474",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "Hero Flash!!",
+            "print_id": 106981,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "BLZD",
+            "set_name": "Blazing Dominion",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Assist\u2605Yummy!",
+            "collector_number": "BPRO-EN076",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "6431",
+              "cardmarket_idProduct": "868379",
+              "collector_number": "BPRO-EN076",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "2000001574000",
+              "rarity": "Common",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "6431",
+            "id_product": "868379",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "AssistYummy!",
+            "print_id": 108652,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "BPRO",
+            "set_name": "Burst Protocol",
+            "variant": "rarity-common"
+          },
+          {
+            "card_name": "Dragon's Mirror",
+            "collector_number": "CRV-EN040",
+            "confidence": "exact",
+            "evidence": {
+              "cardmarket_expansion_id": "1031",
+              "cardmarket_idProduct": "103079",
+              "collector_number": "CRV-EN040",
+              "identity_basis": [
+                "existing_exact_links_release_intersection",
+                "official_konami_release_membership",
+                "exact_normalized_card_name_inside_official_konami_product",
+                "unique_canonical_print_inside_release",
+                "target_has_no_existing_exact_cardmarket_link"
+              ],
+              "konami_pid": "11104004",
+              "rarity": "Common",
+              "source": "cardmarket"
+            },
+            "expansion_external_id": "1031",
+            "id_product": "103079",
+            "language": "en",
+            "mapping_method": "ygo_konami_release_exact",
+            "market_name": "Dragon's Mirror",
+            "print_id": 110312,
+            "rarity": "Common",
+            "reviewed": false,
+            "set_code": "CRV",
+            "set_name": "Cybernetic Revolution",
+            "variant": "rarity-common"
+          }
+        ]
+      },
+      {
+        "confidence": "exact",
+        "link_status": "accepted",
+        "links": 43,
+        "mapping_method": "ygo_konami_subrelease_exact",
+        "prints": 43,
+        "products": 43,
+        "reviewed": true,
+        "sample": [
+          {
+            "card_name": "Ultimaya Tzolkin",
+            "collector_number": "CORE-ENSE1",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59671,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286938",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE1",
+              "idExpansion": "1657",
+              "idMetacard": "220154",
+              "idProduct": "286938",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286938",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Ultimaya Tzolkin",
+            "print_id": 109529,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Frightfur Tiger",
+            "collector_number": "CORE-ENSE2",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59496,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286939",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE2",
+              "idExpansion": "1657",
+              "idMetacard": "220499",
+              "idProduct": "286939",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286939",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Frightfur Tiger",
+            "print_id": 109530,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Engraver of the Mark",
+            "collector_number": "CORE-ENSE3",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 66724,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286940",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE3",
+              "idExpansion": "1657",
+              "idMetacard": "221316",
+              "idProduct": "286940",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286940",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Engraver of the Mark",
+            "print_id": 109531,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Destruction Sword Flash",
+            "collector_number": "CORE-ENSE4",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 61637,
+              "cardmarket_expansion_id": "1657",
+              "cardmarket_idProduct": "286941",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "CORE-ENSE4",
+              "idExpansion": "1657",
+              "idMetacard": "221317",
+              "idProduct": "286941",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211003",
+              "official_konami_release_id": 1640,
+              "official_konami_release_name": "CLASH OF REBELLIONS SPECIAL EDITION (US)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Booster",
+                  "idProduct": "283524",
+                  "name": "Clash of Rebellions Booster"
+                },
+                {
+                  "alias": "clash of rebellions",
+                  "category": "Yugioh Display",
+                  "idProduct": "283525",
+                  "name": "Clash of Rebellions Booster Box"
+                }
+              ],
+              "set_code": "CORE",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1657",
+            "id_product": "286941",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Destruction Sword Flash",
+            "print_id": 109532,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "CORE",
+            "set_name": "Clash of Rebellions",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Ultimaya Tzolkin",
+            "collector_number": "DOCS-ENSE1",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59671,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286933",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE1",
+              "idExpansion": "1677",
+              "idMetacard": "220154",
+              "idProduct": "286933",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286933",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Ultimaya Tzolkin",
+            "print_id": 112806,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Frightfur Tiger",
+            "collector_number": "DOCS-ENSE2",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 59496,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286934",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE2",
+              "idExpansion": "1677",
+              "idMetacard": "220499",
+              "idProduct": "286934",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286934",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Frightfur Tiger",
+            "print_id": 112807,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Engraver of the Mark",
+            "collector_number": "DOCS-ENSE3",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 66724,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286935",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE3",
+              "idExpansion": "1677",
+              "idMetacard": "221316",
+              "idProduct": "286935",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286935",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Engraver of the Mark",
+            "print_id": 112808,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          },
+          {
+            "card_name": "Destruction Sword Flash",
+            "collector_number": "DOCS-ENSE4",
+            "confidence": "exact",
+            "evidence": {
+              "card_id": 61637,
+              "cardmarket_expansion_id": "1677",
+              "cardmarket_idProduct": "286936",
+              "certification": "konami_official_subrelease_exact",
+              "certification_reason": "Cardmarket expansion groups the official subrelease inside its broader commercial expansion; exact unique card identity remains one-to-one",
+              "collector_number": "DOCS-ENSE4",
+              "idExpansion": "1677",
+              "idMetacard": "221317",
+              "idProduct": "286936",
+              "mapping_basis": [
+                "sealed_expansion_unique_match",
+                "exact_unique_card_name_within_set"
+              ],
+              "official_konami_pid": "12211002",
+              "official_konami_release_id": 1639,
+              "official_konami_release_name": "DIMENSION OF CHAOS SPECIAL EDITION (UK)",
+              "rarity": "Super Rare",
+              "sealed_evidence": [
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Booster",
+                  "idProduct": "285572",
+                  "name": "Dimension of Chaos Booster"
+                },
+                {
+                  "alias": "dimension of chaos",
+                  "category": "Yugioh Display",
+                  "idProduct": "285573",
+                  "name": "Dimension of Chaos Booster Box"
+                }
+              ],
+              "set_code": "DOCS",
+              "source": "cardmarket",
+              "variant": "rarity-super-rare"
+            },
+            "expansion_external_id": "1677",
+            "id_product": "286936",
+            "language": "en",
+            "mapping_method": "ygo_konami_subrelease_exact",
+            "market_name": "Destruction Sword Flash",
+            "print_id": 112809,
+            "rarity": "Super Rare",
+            "reviewed": true,
+            "set_code": "DOCS",
+            "set_name": "Dimension of Chaos",
+            "variant": "rarity-super-rare"
+          }
+        ]
+      }
+    ],
+    "accepted_prints": 24253,
+    "ambiguous_accepted_prints_count": 0,
+    "ambiguous_accepted_prints_sample": [],
+    "game_id": 5,
+    "name": "Yu-Gi-Oh!",
+    "stale_or_mismatched_latest_snapshot_count": 0,
+    "stale_or_mismatched_snapshot_sample": []
+  }
+}

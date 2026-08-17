@@ -1,0 +1,5 @@
+.state-panel-v2.is-loading { display:flex; align-items:center; gap:14px; }
+.state-panel-v2.is-loading h3, .state-panel-v2.is-loading p { margin-top:0; }
+.dri-loading-spinner { flex:0 0 auto; width:28px; height:28px; border-radius:50%; border:3px solid rgba(255,255,255,.14); border-top-color:var(--game-accent,#7c6cff); animation:dri-loading-spin .72s linear infinite; }
+@keyframes dri-loading-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dri-loading-spinner { animation-duration:1.6s; } }

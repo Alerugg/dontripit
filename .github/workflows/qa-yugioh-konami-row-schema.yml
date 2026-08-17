@@ -1,0 +1,35 @@
+name: QA YuGiOh Konami Row Schema
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-row-schema.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Dump representative exact print rows
+        run: |
+          python - <<'PY'
+          import requests
+          from bs4 import BeautifulSoup
+          h={'User-Agent':'DontRipIt/1.0 konami-row-schema','Accept':'text/html'}
+          for cid,code in [('5432','RA02-EN050'),('12371','YS16-EN001')]:
+            r=requests.get('https://www.db.yugioh-card.com/yugiohdb/card_search.action',params={'cid':cid,'ope':'2','request_locale':'en'},headers=h,timeout=30);r.raise_for_status()
+            s=BeautifulSoup(r.text,'html.parser')
+            print('\n###',cid,code)
+            for row in s.select('div.t_row'):
+              num=row.select_one('.card_number')
+              if num and num.get_text(' ',strip=True)==code:
+                print(row.prettify()[:6000])
+          PY

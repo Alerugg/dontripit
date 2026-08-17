@@ -1,0 +1,78 @@
+name: QA Pricing Portfolio Semantics
+
+on:
+  pull_request:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/routes/prices.py'
+      - 'backend/app/routes/user_library.py'
+      - 'backend/tests/test_portfolio_pricing_semantics.py'
+      - 'backend/app/jobs/cardmarket_prices.py'
+      - 'backend/tests/test_cardmarket_prices.py'
+      - 'frontend/app/api/prices/**'
+      - 'frontend/app/prints/**'
+      - 'frontend/components/library/**'
+      - 'frontend/components/dashboard/**'
+      - 'frontend/tests/pricing-portfolio-contract.test.js'
+      - '.github/workflows/qa-pricing-portfolio-semantics.yml'
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/routes/prices.py'
+      - 'backend/app/routes/user_library.py'
+      - 'backend/tests/test_portfolio_pricing_semantics.py'
+      - 'backend/app/jobs/cardmarket_prices.py'
+      - 'backend/tests/test_cardmarket_prices.py'
+      - 'frontend/app/api/prices/**'
+      - 'frontend/app/prints/**'
+      - 'frontend/components/library/**'
+      - 'frontend/components/dashboard/**'
+      - 'frontend/tests/pricing-portfolio-contract.test.js'
+      - '.github/workflows/qa-pricing-portfolio-semantics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-pricing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Compile pricing routes
+        working-directory: backend
+        run: python -m compileall -q app/routes/prices.py app/routes/user_library.py app/jobs/cardmarket_prices.py
+      - name: Run pricing semantics tests
+        working-directory: backend
+        env:
+          API_KEY_REQUIRED: 'false'
+        run: pytest -q tests/test_portfolio_pricing_semantics.py tests/test_cardmarket_prices.py --tb=short
+
+  frontend-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run pricing contract
+        run: node --test tests/pricing-portfolio-contract.test.js

@@ -1,0 +1,123 @@
+name: Audit MTG Scryfall Gatherer Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-scryfall-gatherer-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests psycopg2-binary==2.9.9
+      - name: Compare representative print from every MTG set
+        run: |
+          python - <<'PY'
+          import json, os, time, unicodedata, re
+          from collections import Counter
+          from pathlib import Path
+          import psycopg2, requests
+          from psycopg2.extras import RealDictCursor
+
+          def norm(v):
+              s=unicodedata.normalize('NFKC',str(v or '')).replace('’',"'")
+              return re.sub(r'\s+',' ',s).strip().casefold()
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+                SELECT s.id set_pk,s.code,s.name set_name,s.release_date,
+                       count(*) print_count,count(*) FILTER (WHERE p.scryfall_id IS NOT NULL) scryfall_prints,
+                       count(*) FILTER (WHERE pi.id IS NOT NULL) primary_images
+                FROM sets s JOIN games g ON g.id=s.game_id
+                JOIN prints p ON p.set_id=s.id
+                LEFT JOIN print_images pi ON pi.print_id=p.id AND pi.is_primary=true
+                WHERE g.slug='mtg'
+                GROUP BY s.id,s.code,s.name,s.release_date
+                ORDER BY coalesce(s.release_date, DATE '1900-01-01'),s.id
+              ''')
+              sets=[dict(x) for x in c.fetchall()]
+              samples=[]
+              for s in sets:
+                  c.execute('''
+                    SELECT p.id print_id,p.scryfall_id,p.collector_number,p.rarity,p.language,p.variant,p.is_foil,
+                           c.name,c.oracle_id
+                    FROM prints p JOIN cards c ON c.id=p.card_id
+                    WHERE p.set_id=%s AND p.scryfall_id IS NOT NULL
+                    ORDER BY (p.language='en') DESC,p.id LIMIT 1
+                  ''',(s['set_pk'],))
+                  r=c.fetchone()
+                  if r:
+                      x=dict(r);x.update({k:s[k] for k in ('set_pk','code','set_name')});samples.append(x)
+          conn.close()
+
+          http=requests.Session();http.headers.update({'User-Agent':'DontRipIt/1.0 mtg-parity (+https://dontripit.com)','Accept':'application/json'})
+          counts=Counter(); details=[]; gatherer=Counter()
+          for i,r in enumerate(samples,1):
+              sid=str(r['scryfall_id'])
+              try:
+                  sr=http.get(f'https://api.scryfall.com/cards/{sid}',timeout=30)
+              except Exception as exc:
+                  counts['scryfall_request_error']+=1;details.append({**r,'status':'scryfall_request_error','error':str(exc)[:160]});continue
+              if sr.status_code!=200:
+                  counts[f'scryfall_http_{sr.status_code}']+=1;details.append({**r,'status':f'scryfall_http_{sr.status_code}'});continue
+              card=sr.json()
+              checks={
+                'name':norm(card.get('name'))==norm(r.get('name')),
+                'set_code':norm(card.get('set'))==norm(r.get('code')),
+                'collector':str(card.get('collector_number') or '').strip()==str(r.get('collector_number') or '').strip(),
+                'oracle_id':not r.get('oracle_id') or str(card.get('oracle_id') or '').lower()==str(r.get('oracle_id') or '').lower(),
+              }
+              status='scryfall_matched' if all(checks.values()) else 'scryfall_mismatch'
+              counts[status]+=1
+              mids=card.get('multiverse_ids') or []
+              gstatus='no_multiverse_id'
+              if mids:
+                  mid=str(mids[0])
+                  try:
+                      gr=requests.get(f'https://gatherer.wizards.com/Handlers/Image.ashx?type=card&multiverseid={mid}',timeout=30,headers={'User-Agent':'DontRipIt/1.0 official-gatherer-check'})
+                      ctype=(gr.headers.get('content-type') or '').lower()
+                      if gr.status_code==200 and ctype.startswith('image/') and len(gr.content)>1000:
+                          gstatus='gatherer_image_ok'
+                      else:
+                          gstatus=f'gatherer_http_{gr.status_code}'
+                  except Exception:
+                      gstatus='gatherer_request_error'
+              gatherer[gstatus]+=1
+              if status!='scryfall_matched' or gstatus not in ('gatherer_image_ok','no_multiverse_id'):
+                  details.append({**r,'status':status,'checks':checks,'multiverse_ids':mids[:3],'gatherer_status':gstatus})
+              if i%100==0: print('progress',i,'/',len(samples),dict(counts),dict(gatherer),flush=True)
+              time.sleep(0.08)
+
+          report={
+            'source_physical':'Scryfall',
+            'official_verifier':'Wizards Gatherer where multiverse_id exists',
+            'db_sets':len(sets),'db_prints':sum(int(x['print_count']) for x in sets),
+            'sets_sampled':len(samples),'scryfall_status':dict(counts),'gatherer_status':dict(gatherer),
+            'sets_without_any_scryfall_id':sum(1 for x in sets if int(x['scryfall_prints'])==0),
+            'prints_without_primary_image':sum(int(x['print_count'])-int(x['primary_images']) for x in sets),
+            'catalog_release_candidates_from_scryfall_sets':len(sets),
+            'details':details[:300],
+          }
+          print(json.dumps({k:v for k,v in report.items() if k!='details'},indent=2,ensure_ascii=False))
+          Path('/tmp/mtg-scryfall-gatherer-parity.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-scryfall-gatherer-parity-${{ github.run_id }}
+          path: /tmp/mtg-scryfall-gatherer-parity.json
+          retention-days: 90
+          if-no-files-found: warn

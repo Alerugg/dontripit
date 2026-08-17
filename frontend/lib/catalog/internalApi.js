@@ -1,8 +1,19 @@
 const DEFAULT_TIMEOUT_MS = 12000
+const MAX_TIMEOUT_MS = 30000
+const PRODUCTION_API_BASE_URL = 'https://api.dontripit.com'
+
+function normalizeInternalBaseUrl(value) {
+  return String(value || '').trim().replace(/\/$/, '')
+}
 
 function getInternalConfig() {
-  const baseUrl = (process.env.INTERNAL_API_BASE_URL || '').replace(/\/$/, '')
+  // Production is intentionally pinned to the first-party API hostname so an
+  // obsolete or stale environment value cannot redirect public traffic.
+  const baseUrl = process.env.VERCEL_ENV === 'production'
+    ? PRODUCTION_API_BASE_URL
+    : normalizeInternalBaseUrl(process.env.INTERNAL_API_BASE_URL)
   const apiKey = (process.env.INTERNAL_API_KEY || '').trim()
+  const allowPublic = String(process.env.INTERNAL_API_ALLOW_PUBLIC || '').trim().toLowerCase() === 'true'
 
   if (!baseUrl) {
     return {
@@ -12,7 +23,7 @@ function getInternalConfig() {
     }
   }
 
-  if (!apiKey) {
+  if (!apiKey && !allowPublic) {
     return {
       ok: false,
       reason: 'missing_internal_api_key',
@@ -20,14 +31,15 @@ function getInternalConfig() {
     }
   }
 
-  return { ok: true, baseUrl, apiKey }
+  return { ok: true, baseUrl, apiKey, allowPublic }
 }
 
-async function _fetchInternal(url, { method, body, apiKey, signal }) {
+async function _fetchInternal(url, { method, body, apiKey, signal, headers = {} }) {
   const response = await fetch(url.toString(), {
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...headers,
       ...(apiKey ? { 'X-API-Key': apiKey } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -39,7 +51,13 @@ async function _fetchInternal(url, { method, body, apiKey, signal }) {
   return { response, payload }
 }
 
-export async function callInternalApi(path, { method = 'GET', params = {}, body } = {}) {
+export async function callInternalApi(path, {
+  method = 'GET',
+  params = {},
+  body,
+  headers = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
   const config = getInternalConfig()
   if (!config.ok) {
     return {
@@ -60,8 +78,12 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
     url.searchParams.set(key, String(value))
   })
 
+  const requestedTimeout = Number(timeoutMs)
+  const resolvedTimeout = Number.isFinite(requestedTimeout)
+    ? Math.min(MAX_TIMEOUT_MS, Math.max(1000, requestedTimeout))
+    : DEFAULT_TIMEOUT_MS
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), resolvedTimeout)
 
   try {
     const { response, payload } = await _fetchInternal(url, {
@@ -69,6 +91,7 @@ export async function callInternalApi(path, { method = 'GET', params = {}, body 
       body,
       apiKey: config.apiKey,
       signal: controller.signal,
+      headers,
     })
 
     if (!response.ok) {
@@ -109,7 +132,7 @@ export function getDeveloperErrorHint(upstreamPayload = {}, status) {
   }
 
   if (status === 502) {
-    return 'No hay conexión al backend. Verifica red Docker y que backend esté saludable.'
+    return 'No hay conexión al backend. Verifica red y que el backend esté saludable.'
   }
 
   if (status === 401 || status === 403) {

@@ -7,6 +7,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import db
+from app import catalog_release_models  # noqa: F401 - register release tables on Base.metadata
+from app import external_catalog_models  # noqa: F401 - register external market tables on Base.metadata
+from app import search_v2_models  # noqa: F401 - register Search V2 tables on Base.metadata
 from app.main import create_app
 from app.auth import middleware
 from app.models import Base
@@ -24,6 +27,11 @@ def client(tmp_path):
     db.init_engine(database_url)
 
     os.environ["PUBLIC_API_ENABLED"] = "false"
+    os.environ.pop("PUBLIC_HUB_CATALOG_ENABLED", None)
+    os.environ.pop("VERCEL", None)
+    os.environ.pop("USER_AUTH_IP_RATE_LIMIT_RPM", None)
+    os.environ.pop("USER_SESSION_IP_RATE_LIMIT_RPM", None)
+    os.environ.pop("PUBLIC_IP_RATE_LIMIT_RPM", None)
     app = create_app(database_url=database_url)
     app.config["RATE_LIMIT_PER_MINUTE"] = 5
     app.config["CACHE_TTL_SECONDS"] = 60

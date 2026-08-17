@@ -1,0 +1,220 @@
+name: Apply Pokemon Direct Cardmarket Links
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-pokemon-cardmarket-direct-links.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-pokemon-cardmarket-direct-links
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Apply only direct TCGdex mappings with exact canonical identity
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import execute_values, Json
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url); conn.autocommit=False
+          report={}
+          try:
+            with conn.cursor() as cur:
+              cur.execute("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")
+              game_id=int(cur.fetchone()[0])
+              cur.execute("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'")
+              latest_seen=cur.fetchone()[0]
+              cur.execute('''
+                SELECT
+                  p.id,p.card_id,p.print_key,p.variant,p.is_foil,p.language,p.collector_number,s.code,c.name,c.tcgdex_id,
+                  pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_cardmarket_id,
+                  pa.attributes_json #>> '{third_party,cardmarket}' card_level_cardmarket_id,
+                  pa.attributes_json #>> '{physical_variant,variant_hash}' variant_hash,
+                  pa.attributes_json #>> '{physical_variant,release_context}' release_context,
+                  cm_physical.id physical_external_product_id,
+                  cm_card.id card_external_product_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id AND c.game_id=%s
+                JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                LEFT JOIN external_catalog_products cm_physical
+                  ON cm_physical.source='cardmarket' AND cm_physical.game_id=%s
+                 AND cm_physical.product_group='single' AND cm_physical.last_seen_at=%s
+                 AND cm_physical.external_id=pa.attributes_json #>> '{physical_variant,third_party,cardmarket}'
+                LEFT JOIN external_catalog_products cm_card
+                  ON cm_card.source='cardmarket' AND cm_card.game_id=%s
+                 AND cm_card.product_group='single' AND cm_card.last_seen_at=%s
+                 AND cm_card.external_id=pa.attributes_json #>> '{third_party,cardmarket}'
+                WHERE NULLIF(pa.attributes_json #>> '{physical_variant,third_party,cardmarket}','') IS NOT NULL
+                   OR NULLIF(pa.attributes_json #>> '{third_party,cardmarket}','') IS NOT NULL
+              ''',(game_id,game_id,latest_seen,game_id,latest_seen))
+              declared=[]
+              for row in cur.fetchall():
+                (print_id,card_id,print_key,variant,is_foil,language,collector,set_code,card_name,tcgdex_id,
+                 physical,card_level,variant_hash,release_context,physical_ext,card_ext)=row
+                physical=str(physical or '').strip() or None
+                card_level=str(card_level or '').strip() or None
+                cmid=physical or card_level
+                ext_id=physical_ext if physical else card_ext
+                if not cmid or ext_id is None:
+                  continue
+                evidence_kind='physical_variant' if physical else 'card_level'
+                if physical and card_level and physical != card_level:
+                  evidence_kind='physical_overrides_card_level'
+                declared.append({
+                  'print_id':int(print_id),'card_id':int(card_id),'print_key':str(print_key),
+                  'variant':str(variant),'is_foil':bool(is_foil),'language':str(language or ''),
+                  'collector_number':str(collector),'set_code':str(set_code),'card_name':str(card_name),
+                  'tcgdex_id':str(tcgdex_id),'cardmarket_id':cmid,'external_product_id':int(ext_id),
+                  'evidence_kind':evidence_kind,'variant_hash':variant_hash,'release_context':release_context,
+                  'card_level_cardmarket_id':card_level,
+                })
+
+              by_product=defaultdict(list)
+              for item in declared: by_product[item['cardmarket_id']].append(item)
+              safe=[]; quarantined=[]
+              for cmid,items in by_product.items():
+                external_ids={x['external_product_id'] for x in items}
+                signatures={(x['set_code'],x['collector_number'],x['card_id']) for x in items}
+                all_variant_explicit=all(x['evidence_kind'] in ('physical_variant','physical_overrides_card_level') for x in items)
+                if len(external_ids)!=1 or len(signatures)!=1:
+                  quarantined.append((cmid,'canonical_identity_conflict')); continue
+                if len(items)>1 and not all_variant_explicit:
+                  quarantined.append((cmid,'shared_card_level_id_without_variant_evidence')); continue
+                safe.append((cmid,next(iter(external_ids)),items))
+
+              # Legacy PrintIdentifier mappings are useful corroboration, but any
+              # disagreement is quarantined instead of being silently overwritten.
+              candidate_ids=[cmid for cmid,_,_ in safe]
+              legacy_by_external=defaultdict(set)
+              if candidate_ids:
+                cur.execute('''
+                  SELECT pi.external_id,pi.print_id
+                  FROM print_identifiers pi
+                  JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id
+                  WHERE pi.source='cardmarket' AND c.game_id=%s AND pi.external_id=ANY(%s)
+                ''',(game_id,candidate_ids))
+                for external_id,print_id in cur.fetchall():
+                  legacy_by_external[str(external_id)].add(int(print_id))
+
+              certified=[]; legacy_conflicts=[]
+              for cmid,ext_id,items in safe:
+                expected={x['print_id'] for x in items}
+                legacy=legacy_by_external.get(cmid,set())
+                if legacy and not legacy.issubset(expected):
+                  legacy_conflicts.append({'cardmarket_id':cmid,'expected_print_ids':sorted(expected),'legacy_print_ids':sorted(legacy)})
+                  continue
+                certified.append((cmid,ext_id,items))
+
+              expected_by_external={ext:{x['print_id'] for x in items} for _,ext,items in certified}
+              if expected_by_external:
+                cur.execute('''
+                  SELECT l.external_product_id,l.print_id
+                  FROM external_catalog_print_links l
+                  WHERE l.external_product_id=ANY(%s)
+                    AND l.link_status IN ('accepted','mapped','exact')
+                ''',(list(expected_by_external),))
+                bad=[]
+                for ext,pid in cur.fetchall():
+                  if int(pid) not in expected_by_external.get(int(ext),set()):
+                    bad.append((int(ext),int(pid)))
+                if bad:
+                  raise AssertionError(f'Unexpected existing accepted Pokemon links: {bad[:20]}')
+
+              rows=[]
+              for cmid,ext_id,items in certified:
+                signature=[items[0]['set_code'],items[0]['collector_number'],items[0]['card_id']]
+                for item in items:
+                  evidence={
+                    'source':'tcgdex/cards-database',
+                    'source_field':'physical_variant.third_party.cardmarket' if item['evidence_kind']!='card_level' else 'third_party.cardmarket',
+                    'cardmarket_id':cmid,
+                    'tcgdex_id':item['tcgdex_id'],
+                    'variant_hash':item['variant_hash'],
+                    'release_context':item['release_context'],
+                    'card_level_cardmarket_id':item['card_level_cardmarket_id'],
+                    'evidence_kind':item['evidence_kind'],
+                    'canonical_signature':signature,
+                  }
+                  rows.append((ext_id,item['print_id'],'tcgdex_cardmarket_id','exact','accepted',False,Json(evidence)))
+
+              execute_values(cur,'''
+                INSERT INTO external_catalog_print_links
+                  (external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence)
+                VALUES %s
+                ON CONFLICT (external_product_id,print_id) DO UPDATE SET
+                  mapping_method=EXCLUDED.mapping_method,
+                  confidence=EXCLUDED.confidence,
+                  link_status=EXCLUDED.link_status,
+                  evidence=EXCLUDED.evidence,
+                  updated_at=now()
+              ''',rows,page_size=2000)
+
+              expected_links=sum(len(items) for _,_,items in certified)
+              cur.execute('''
+                SELECT count(*),count(DISTINCT l.external_product_id)
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
+                  AND l.mapping_method='tcgdex_cardmarket_id' AND l.link_status='accepted'
+              ''',(game_id,))
+              applied_links,applied_products=map(int,cur.fetchone())
+              if applied_links!=expected_links or applied_products!=len(certified):
+                raise AssertionError(f'Postcondition mismatch links={applied_links}/{expected_links} products={applied_products}/{len(certified)}')
+              if applied_products < 15000 or applied_links < 20000:
+                raise AssertionError(f'Unexpected certified Pokemon mapping regression: {applied_products} products / {applied_links} links')
+
+              report={
+                'mode':'apply','game':'pokemon','mapping_method':'tcgdex_cardmarket_id',
+                'source_declared_current_products':len(by_product),
+                'structurally_safe_products':len(safe),
+                'certified_products':len(certified),'certified_print_links':expected_links,
+                'quarantined_identity_products':len(quarantined),
+                'legacy_mapping_conflicts_quarantined':len(legacy_conflicts),
+                'applied_products':applied_products,'applied_print_links':applied_links,
+                'legacy_conflict_samples':legacy_conflicts[:50],
+                'quarantine_samples':[list(x) for x in quarantined[:50]],
+              }
+            conn.commit()
+          except Exception:
+            conn.rollback(); raise
+          finally:
+            conn.close()
+          Path('/tmp/pokemon-cardmarket-links-apply.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-cardmarket-links-apply-${{ github.run_id }}
+          path: /tmp/pokemon-cardmarket-links-apply.json
+          retention-days: 90
+          if-no-files-found: warn

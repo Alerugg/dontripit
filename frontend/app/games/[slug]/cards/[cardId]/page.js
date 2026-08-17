@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import TopNav from '../../../../../components/layout/TopNav'
@@ -11,6 +11,7 @@ import { normalizeGameSlug } from '../../../../../lib/catalog/games'
 import { getGameExplorerHref } from '../../../../../lib/catalog/routes'
 
 export default function GameCardDetailPage({ params }) {
+  const { slug, cardId } = use(params)
   const searchParams = useSearchParams()
   const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -23,12 +24,12 @@ export default function GameCardDetailPage({ params }) {
       setLoading(true)
       setError('')
 
-      const resolvedCardId = String(params.cardId || '').trim()
+      const resolvedCardId = String(cardId || '').trim()
 
       try {
         if (!resolvedCardId) throw new Error('No se recibió cardId en la ruta.')
         const payload = await fetchCardById(resolvedCardId)
-        const resolvedRouteSlug = normalizeGameSlug(params.slug || '')
+        const resolvedRouteSlug = normalizeGameSlug(slug || '')
         const payloadGameSlug = normalizeGameSlug(payload?.game || payload?.game_slug || '')
 
         if (resolvedRouteSlug && payloadGameSlug && resolvedRouteSlug !== payloadGameSlug) {
@@ -50,7 +51,7 @@ export default function GameCardDetailPage({ params }) {
     return () => {
       cancelled = true
     }
-  }, [params.cardId])
+  }, [cardId, slug])
 
   const fallbackHref = useMemo(() => {
     const target = new URLSearchParams()
@@ -59,8 +60,8 @@ export default function GameCardDetailPage({ params }) {
     if (q) target.set('q', q)
     if (type) target.set('type', type)
     const query = target.toString()
-    return `${getGameExplorerHref(params.slug)}${query ? `?${query}` : ''}`
-  }, [params.slug, searchParams])
+    return `${getGameExplorerHref(slug)}${query ? `?${query}` : ''}`
+  }, [slug, searchParams])
 
   return (
     <main>
@@ -83,7 +84,7 @@ export default function GameCardDetailPage({ params }) {
         {!loading && !error && card && (
           <CardDetailLayout
             card={card}
-            routeGameSlug={params.slug}
+            routeGameSlug={slug}
             searchState={{ q: searchParams.get('q') || '', type: searchParams.get('type') || '' }}
           />
         )}

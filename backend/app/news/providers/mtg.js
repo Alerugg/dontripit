@@ -1,13 +1,13 @@
-import { fetchRssFeed } from '../core/rss_fetcher.js'
+import { fetchScrapedNews } from '../core/scrape_fetcher.js'
 import { normalizeNewsItem, sortByPublishedDateDesc } from './utils.js'
 
-const FEED_URL = 'https://mtggoldfish.com/feed'
+const NEWS_URL = 'https://magic.wizards.com/en/news'
 
 export async function getMtgNews() {
-  const entries = await fetchRssFeed(FEED_URL)
+  const entries = await fetchScrapedNews(NEWS_URL)
   return sortByPublishedDateDesc(
     entries
-      .map((item) => normalizeNewsItem(item, { source: 'MTGGoldfish', tag: 'Comunidad' }))
+      .map((item) => normalizeNewsItem(item, { source: 'Magic: The Gathering / Wizards', tag: 'Oficial' }))
       .filter(Boolean),
   )
 }

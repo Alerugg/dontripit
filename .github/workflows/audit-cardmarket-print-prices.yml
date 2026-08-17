@@ -1,0 +1,187 @@
+name: Audit Cardmarket Print Prices
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-cardmarket-print-prices.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit canonical prints against exact Cardmarket links and Price Guide
+        run: |
+          python - <<'PY'
+          import csv, json, os
+          from collections import Counter
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn, conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''
+              WITH cm_source AS (
+                SELECT id FROM price_sources WHERE name='cardmarket' LIMIT 1
+              ), accepted AS (
+                SELECT l.print_id,
+                       count(DISTINCT e.id) accepted_products,
+                       min(e.id) external_product_id,
+                       min(e.external_id) id_product,
+                       min(e.website_path) website_path,
+                       min(e.name) cardmarket_name,
+                       min(e.expansion_external_id) expansion_external_id,
+                       min(e.metacard_external_id) metacard_external_id,
+                       min(l.mapping_method) mapping_method,
+                       min(l.confidence) mapping_confidence
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.product_group='single'
+                  AND l.link_status IN ('accepted','mapped','exact')
+                GROUP BY l.print_id
+              ), pending AS (
+                SELECT l.print_id,
+                       count(*) FILTER (WHERE l.link_status NOT IN ('accepted','mapped','exact')) pending_links,
+                       count(*) FILTER (WHERE l.link_status IN ('conflict','rejected','quarantined')) conflict_links
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.product_group='single'
+                GROUP BY l.print_id
+              ), latest_ext AS (
+                SELECT DISTINCT ON (external_product_id, price_variant)
+                       external_product_id, price_variant, currency,
+                       price_low,price_mid,price_market,price_last,avg1,avg7,avg30,as_of
+                FROM external_market_price_snapshots
+                WHERE currency='EUR' AND price_variant IN ('nonfoil','foil')
+                ORDER BY external_product_id,price_variant,as_of DESC,id DESC
+              ), latest_projected AS (
+                SELECT DISTINCT ON (ps.entity_id)
+                       ps.entity_id AS print_id, ps.price_low,ps.price_mid,ps.price_market,ps.price_last,ps.as_of
+                FROM price_snapshots ps
+                JOIN cm_source cs ON cs.id=ps.source_id
+                WHERE ps.entity_type='print' AND ps.currency='EUR'
+                ORDER BY ps.entity_id,ps.as_of DESC,ps.id DESC
+              )
+              SELECT g.slug game,s.code set_code,s.name set_name,p.id print_id,c.name card_name,
+                     p.collector_number,p.language,p.rarity,p.is_foil,p.variant,
+                     a.accepted_products,a.external_product_id,a.id_product,a.website_path,a.cardmarket_name,
+                     a.expansion_external_id,a.metacard_external_id,a.mapping_method,a.mapping_confidence,
+                     COALESCE(pd.pending_links,0) pending_links,COALESCE(pd.conflict_links,0) conflict_links,
+                     ex.price_variant external_price_variant,ex.price_low external_low,ex.price_mid external_mid,
+                     ex.price_market external_market,ex.price_last external_last,ex.avg1 external_avg1,
+                     ex.avg7 external_avg7,ex.avg30 external_avg30,ex.as_of external_as_of,
+                     pr.price_low projected_low,pr.price_mid projected_mid,pr.price_market projected_market,
+                     pr.price_last projected_last,pr.as_of projected_as_of
+              FROM prints p
+              JOIN cards c ON c.id=p.card_id
+              JOIN games g ON g.id=c.game_id
+              JOIN sets s ON s.id=p.set_id
+              LEFT JOIN accepted a ON a.print_id=p.id
+              LEFT JOIN pending pd ON pd.print_id=p.id
+              LEFT JOIN latest_ext ex ON ex.external_product_id=a.external_product_id
+                                     AND ex.price_variant=CASE WHEN p.is_foil THEN 'foil' ELSE 'nonfoil' END
+              LEFT JOIN latest_projected pr ON pr.print_id=p.id
+              WHERE g.slug IN ('pokemon','onepiece','mtg','yugioh')
+              ORDER BY g.slug,s.code,p.collector_number,p.id
+              ''')
+              rows=[dict(r) for r in c.fetchall()]
+
+              c.execute('''
+                SELECT e.id,e.external_id id_product,e.name,e.expansion_external_id,e.metacard_external_id,
+                       e.website_path,e.raw_json
+                FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                WHERE e.source='cardmarket' AND e.product_group='single' AND g.slug='onepiece'
+                  AND (e.name ILIKE '%%(OP15-001)' OR e.name ILIKE '%%(OP15-002)' OR e.name ILIKE '%%(OP15-007)')
+                ORDER BY e.name,e.expansion_external_id,e.external_id
+              ''')
+              op15=[dict(r) for r in c.fetchall()]
+
+              c.execute('''
+                SELECT p.id print_id,c.name,p.collector_number,p.variant,p.rarity,p.language,p.is_foil,
+                       array_agg(DISTINCT cr.external_id ORDER BY cr.external_id) release_ids,
+                       array_agg(DISTINCT cr.name ORDER BY cr.name) release_names
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_releases pr ON pr.print_id=p.id
+                LEFT JOIN catalog_releases cr ON cr.id=pr.release_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='onepiece' AND lower(s.code)='op-15'
+                  AND p.collector_number IN ('OP15-001','OP15-002','OP15-007')
+                GROUP BY p.id,c.name,p.collector_number,p.variant,p.rarity,p.language,p.is_foil
+                ORDER BY p.collector_number,p.id
+              ''')
+              op15_canonical=[dict(r) for r in c.fetchall()]
+          conn.close()
+
+          def usable(r,prefix):
+              return any(r.get(prefix+k) is not None for k in ('low','mid','market','last','avg1','avg7','avg30'))
+
+          for r in rows:
+              variant=(r.get('variant') or '').lower()
+              accepted=int(r.get('accepted_products') or 0)
+              ext_ok=usable(r,'external_')
+              projected_ok=any(r.get(k) is not None for k in ('projected_low','projected_mid','projected_market','projected_last'))
+              if 'etched' in variant or 'glossy' in variant:
+                  reason='unsupported_finish'
+              elif accepted > 1:
+                  reason='ambiguous_accepted_mapping'
+              elif accepted == 1 and ext_ok and projected_ok:
+                  reason='mapped_price_ok'
+              elif accepted == 1 and ext_ok and not projected_ok:
+                  reason='external_price_not_projected'
+              elif accepted == 1 and not ext_ok:
+                  reason='mapped_no_priceguide'
+              elif int(r.get('conflict_links') or 0)>0:
+                  reason='conflict_quarantined'
+              elif int(r.get('pending_links') or 0)>0:
+                  reason='mapping_pending'
+              else:
+                  reason='unmapped_source_not_provable'
+              r['reason']=reason
+              website_path=str(r.get('website_path') or '')
+              r['cardmarket_url']=('https://www.cardmarket.com'+website_path) if website_path.startswith('/') else (website_path or None)
+
+          counts=Counter((r['game'],r['reason']) for r in rows)
+          totals=Counter(r['game'] for r in rows)
+          summary={
+            'total_prints':len(rows),
+            'by_game_total':dict(sorted(totals.items())),
+            'by_game_reason':{f'{g}:{reason}':n for (g,reason),n in sorted(counts.items())},
+            'exact_mapped':sum(1 for r in rows if int(r.get('accepted_products') or 0)==1),
+            'exact_mapped_with_external_price':sum(1 for r in rows if int(r.get('accepted_products') or 0)==1 and usable(r,'external_')),
+            'external_price_not_projected':sum(1 for r in rows if r['reason']=='external_price_not_projected'),
+            'accepted_missing_website_path':sum(1 for r in rows if int(r.get('accepted_products') or 0)==1 and not r.get('website_path')),
+          }
+
+          fields=[k for k in rows[0].keys() if k!='external_product_id'] + ['external_product_id']
+          with open('/tmp/cardmarket-print-price-audit.csv','w',newline='',encoding='utf-8') as f:
+              w=csv.DictWriter(f,fieldnames=fields,extrasaction='ignore'); w.writeheader(); w.writerows(rows)
+          with open('/tmp/cardmarket-print-price-summary.json','w',encoding='utf-8') as f:
+              json.dump(summary,f,indent=2,ensure_ascii=False,default=str,sort_keys=True)
+          with open('/tmp/op15-cardmarket-diagnostics.json','w',encoding='utf-8') as f:
+              json.dump({'external_products':op15,'canonical_prints':op15_canonical},f,indent=2,ensure_ascii=False,default=str,sort_keys=True)
+
+          print(json.dumps(summary,indent=2,ensure_ascii=False,sort_keys=True))
+          print('OP15_DIAGNOSTICS_BEGIN')
+          print(json.dumps({'external_products':op15,'canonical_prints':op15_canonical},indent=2,ensure_ascii=False,default=str,sort_keys=True))
+          print('OP15_DIAGNOSTICS_END')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-print-price-audit-${{ github.run_id }}
+          path: |
+            /tmp/cardmarket-print-price-audit.csv
+            /tmp/cardmarket-print-price-summary.json
+            /tmp/op15-cardmarket-diagnostics.json
+          retention-days: 90
+          if-no-files-found: error

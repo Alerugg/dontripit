@@ -1,0 +1,115 @@
+name: Project MTG Cardmarket Prices
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/cardmarket_link_price_projection.py'
+      - '.github/workflows/project-mtg-cardmarket-prices.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-mtg-cardmarket-prices
+  cancel-in-progress: false
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Preflight and apply accepted MTG Cardmarket price projection
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from app import db
+          from app.jobs.cardmarket_link_price_projection import (
+              build_link_price_projection_plan,
+              apply_link_price_projection_plan,
+          )
+
+          db.init_engine()
+          with db.SessionLocal() as session:
+              plan = build_link_price_projection_plan(session, game_slug='mtg')
+              preflight = plan.summary()
+              if not preflight['write_ready']:
+                  raise AssertionError(preflight)
+              if preflight['accepted_links'] < 140000:
+                  raise AssertionError(f"Unexpected accepted MTG link regression: {preflight}")
+              # Cardmarket does not publish a finish-specific price block for every
+              # mapped foil/variant. Those Prints must remain unpriced rather than
+              # borrowing a nonfoil/other-finish price. Current certified floor is
+              # intentionally below observed coverage and acts only as a regression gate.
+              if preflight['priceable_prints'] < 80000:
+                  raise AssertionError(f"Unexpected MTG finish-specific price regression: {preflight}")
+              result = apply_link_price_projection_plan(session, plan)
+              session.commit()
+
+          Path('/tmp/mtg-cardmarket-price-projection.json').write_text(
+              json.dumps({'preflight': preflight, 'apply': result}, indent=2, sort_keys=True, default=str) + '\n'
+          )
+          print(json.dumps({'preflight': preflight, 'apply': result}, indent=2, sort_keys=True, default=str))
+          PY
+      - name: Prove latest canonical MTG Cardmarket price coverage
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              row=conn.execute(text('''
+                WITH src AS (SELECT id FROM price_sources WHERE name='cardmarket'),
+                mtg AS (SELECT id FROM games WHERE slug='mtg'),
+                latest AS (
+                  SELECT max(ps.as_of) as as_of
+                  FROM price_snapshots ps JOIN src ON src.id=ps.source_id
+                  JOIN prints p ON p.id=ps.entity_id AND ps.entity_type='print'
+                  JOIN cards c ON c.id=p.card_id JOIN mtg ON mtg.id=c.game_id
+                )
+                SELECT latest.as_of,
+                       count(*) AS snapshots,
+                       count(*) FILTER (WHERE ps.price_low IS NOT NULL OR ps.price_mid IS NOT NULL OR ps.price_market IS NOT NULL OR ps.price_last IS NOT NULL) AS valued,
+                       count(DISTINCT ps.entity_id) AS prints
+                FROM latest
+                JOIN price_snapshots ps ON ps.as_of=latest.as_of
+                JOIN src ON src.id=ps.source_id
+                JOIN prints p ON p.id=ps.entity_id AND ps.entity_type='print'
+                JOIN cards c ON c.id=p.card_id
+                JOIN mtg ON mtg.id=c.game_id
+                GROUP BY latest.as_of
+              ''')).mappings().one()
+          proof={k:(v.isoformat() if hasattr(v,'isoformat') else int(v)) for k,v in dict(row).items()}
+          if proof['prints'] < 80000 or proof['valued'] != proof['prints']:
+              raise AssertionError(proof)
+          Path('/tmp/mtg-cardmarket-price-proof.json').write_text(json.dumps(proof,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(proof,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-cardmarket-price-projection-${{ github.run_id }}
+          path: |
+            /tmp/mtg-cardmarket-price-projection.json
+            /tmp/mtg-cardmarket-price-proof.json
+          retention-days: 90
+          if-no-files-found: warn

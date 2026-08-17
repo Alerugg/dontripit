@@ -1,0 +1,44 @@
+name: Audit Sealed Catalog Live V2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-catalog-live-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet psycopg2-binary
+      - name: Inspect sealed source coverage
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with conn,conn.cursor(cursor_factory=RealDictCursor) as c:
+            c.execute("SET LOCAL statement_timeout='120s'")
+            wanted=['products','product_variants','product_identifiers','product_images','external_catalog_products','external_catalog_product_variant_links','external_market_price_snapshots','price_snapshots','price_sources']
+            for t in wanted:
+              c.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",(t,))
+              print('SCHEMA',t,json.dumps([dict(r) for r in c.fetchall()]))
+            c.execute("SELECT max(last_seen_at) m FROM external_catalog_products WHERE source='cardmarket'"); latest=c.fetchone()['m']; print('LATEST',latest)
+            c.execute("SELECT e.id,e.external_id,g.slug,e.name,e.raw_json FROM external_catalog_products e JOIN games g ON g.id=e.game_id WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.last_seen_at=%s ORDER BY random() LIMIT 5",(latest,)); print('EXT',json.dumps([dict(r) for r in c.fetchall()],default=str))
+            c.execute("SELECT * FROM external_market_price_snapshots ORDER BY as_of DESC LIMIT 5"); print('EPS',json.dumps([dict(r) for r in c.fetchall()],default=str))
+            c.execute("SELECT * FROM product_images LIMIT 5"); print('IMG',json.dumps([dict(r) for r in c.fetchall()],default=str))
+            c.execute("""WITH s AS (SELECT e.id,e.external_id,g.slug,pv.id variant_id,p.name,p.product_type FROM external_catalog_products e JOIN games g ON g.id=e.game_id JOIN product_identifiers pi ON pi.source='cardmarket' AND pi.external_id=e.external_id JOIN product_variants pv ON pv.id=pi.product_variant_id JOIN products p ON p.id=pv.product_id JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.product_variant_id=pv.id AND l.link_status='accepted' WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.last_seen_at=%s AND p.product_type IN ('intro_pack','booster_pack','booster_box','deck_display','tournament_pack','fatpack','starter_deck','promo_product','preconstructed_deck','box_set','tin','theme_deck','blister','elite_trainer_box','trainer_kit','structure_deck','special_edition','collector_tin')), x AS (SELECT external_product_id,max(as_of) as_of FROM external_market_price_snapshots GROUP BY external_product_id) SELECT s.* FROM s LEFT JOIN x ON x.external_product_id=s.id WHERE x.external_product_id IS NULL ORDER BY slug,external_id LIMIT 40""",(latest,)); print('MISSING',json.dumps([dict(r) for r in c.fetchall()],default=str))
+          conn.close()
+          PY

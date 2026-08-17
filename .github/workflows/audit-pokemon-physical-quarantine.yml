@@ -1,0 +1,208 @@
+name: Audit Pokemon Physical Quarantine
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-pokemon-physical-quarantine.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Classify quarantined physical identities and missing images
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url)
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='pokemon' LIMIT 1")
+              game_id=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) AS seen FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(game_id,))
+              latest=cur.fetchone()['seen']
+              cur.execute('''
+                SELECT p.id print_id,p.card_id,p.print_key,p.variant,p.is_foil,p.language,p.collector_number,
+                       s.code set_code,c.name card_name,c.tcgdex_id,
+                       pa.attributes_json,
+                       pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_cardmarket_id,
+                       pa.attributes_json #>> '{third_party,cardmarket}' card_level_cardmarket_id,
+                       pa.attributes_json #>> '{physical_variant,variant_hash}' variant_hash,
+                       pa.attributes_json #>> '{physical_variant,release_context}' release_context,
+                       cm_physical.id physical_external_product_id,
+                       cm_card.id card_external_product_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id AND c.game_id=%s
+                JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                LEFT JOIN external_catalog_products cm_physical
+                  ON cm_physical.source='cardmarket' AND cm_physical.game_id=%s AND cm_physical.product_group='single'
+                 AND cm_physical.last_seen_at=%s
+                 AND cm_physical.external_id=pa.attributes_json #>> '{physical_variant,third_party,cardmarket}'
+                LEFT JOIN external_catalog_products cm_card
+                  ON cm_card.source='cardmarket' AND cm_card.game_id=%s AND cm_card.product_group='single'
+                 AND cm_card.last_seen_at=%s
+                 AND cm_card.external_id=pa.attributes_json #>> '{third_party,cardmarket}'
+                WHERE NULLIF(pa.attributes_json #>> '{physical_variant,third_party,cardmarket}','') IS NOT NULL
+                   OR NULLIF(pa.attributes_json #>> '{third_party,cardmarket}','') IS NOT NULL
+              ''',(game_id,game_id,latest,game_id,latest))
+              declared=[]
+              for r in cur.fetchall():
+                physical=str(r['physical_cardmarket_id'] or '').strip() or None
+                card_level=str(r['card_level_cardmarket_id'] or '').strip() or None
+                cmid=physical or card_level
+                ext_id=r['physical_external_product_id'] if physical else r['card_external_product_id']
+                if not cmid or ext_id is None: continue
+                evidence_kind='physical_variant' if physical else 'card_level'
+                if physical and card_level and physical!=card_level: evidence_kind='physical_overrides_card_level'
+                declared.append({**dict(r),'cardmarket_id':cmid,'external_product_id':int(ext_id),'evidence_kind':evidence_kind})
+
+              by_product=defaultdict(list)
+              for x in declared: by_product[x['cardmarket_id']].append(x)
+              quarantine=[]
+              for cmid,items in by_product.items():
+                external_ids={x['external_product_id'] for x in items}
+                signatures={(x['set_code'],x['collector_number'],x['card_id']) for x in items}
+                explicit=all(x['evidence_kind'] in ('physical_variant','physical_overrides_card_level') for x in items)
+                if len(external_ids)!=1 or len(signatures)!=1:
+                  reason='canonical_identity_conflict'
+                elif len(items)>1 and not explicit:
+                  reason='shared_card_level_id_without_variant_evidence'
+                else:
+                  continue
+                quarantine.append((cmid,reason,items))
+
+              buckets=Counter()
+              detail=[]
+              physical_key_counts=Counter()
+              top_key_counts=Counter()
+              for cmid,reason,items in quarantine:
+                variants=sorted({str(x['variant']) for x in items})
+                foils=sorted({bool(x['is_foil']) for x in items})
+                variant_hashes=sorted({str(x['variant_hash']) for x in items if x['variant_hash']})
+                release_contexts=sorted({str(x['release_context']) for x in items if x['release_context']})
+                cards=sorted({int(x['card_id']) for x in items})
+                collectors=sorted({str(x['collector_number']) for x in items})
+                sets=sorted({str(x['set_code']) for x in items})
+                physical_ids=sorted({str(x['physical_cardmarket_id']) for x in items if x['physical_cardmarket_id']})
+                for x in items:
+                  attrs=x['attributes_json'] if isinstance(x['attributes_json'],dict) else {}
+                  top_key_counts.update(attrs.keys())
+                  pv=attrs.get('physical_variant') if isinstance(attrs.get('physical_variant'),dict) else {}
+                  physical_key_counts.update(pv.keys())
+
+                if reason=='canonical_identity_conflict':
+                  bucket='source_identity_conflict_requires_review'
+                elif len(cards)==1 and len(sets)==1 and len(collectors)==1 and len(items)>1:
+                  if len(variant_hashes)==len(items) and len(set(variant_hashes))==len(items):
+                    bucket='multiple_physical_variants_distinct_hash_no_cm_variant_signal'
+                  elif len(variants)>1 or len(foils)>1:
+                    bucket='multiple_physical_variants_no_cm_variant_signal'
+                  else:
+                    bucket='duplicate_physical_rows_need_source_review'
+                else:
+                  bucket='other_quarantine'
+                buckets[bucket]+=1
+                if len(detail)<250:
+                  detail.append({
+                    'cardmarket_id':cmid,'reason':reason,'bucket':bucket,'print_count':len(items),
+                    'print_ids':sorted(int(x['print_id']) for x in items),'card_ids':cards,'sets':sets,
+                    'collectors':collectors,'variants':variants,'foils':foils,'variant_hashes':variant_hashes,
+                    'release_contexts':release_contexts,'physical_cardmarket_ids':physical_ids,
+                    'tcgdex_ids':sorted({str(x['tcgdex_id']) for x in items}),
+                  })
+
+              cur.execute('''
+                SELECT p.id print_id,p.card_id,p.print_key,p.variant,p.is_foil,p.language,p.collector_number,
+                       s.code set_code,c.name card_name,c.tcgdex_id,pa.attributes_json
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id AND c.game_id=%s
+                JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                WHERE NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.id
+              ''',(game_id,))
+              missing=cur.fetchall()
+              missing_buckets=Counter(); missing_samples=[]
+              missing_physical_keys=Counter(); missing_top_keys=Counter()
+              for r in missing:
+                attrs=r['attributes_json'] if isinstance(r['attributes_json'],dict) else {}
+                missing_top_keys.update(attrs.keys())
+                pv=attrs.get('physical_variant') if isinstance(attrs.get('physical_variant'),dict) else {}
+                missing_physical_keys.update(pv.keys())
+                # Discover candidate URLs without assuming field names. Only classify here.
+                urls=[]
+                def walk(obj,path=''):
+                  if isinstance(obj,dict):
+                    for k,v in obj.items(): walk(v,f'{path}.{k}' if path else str(k))
+                  elif isinstance(obj,list):
+                    for i,v in enumerate(obj): walk(v,f'{path}[{i}]')
+                  elif isinstance(obj,str) and obj.startswith(('http://','https://')):
+                    urls.append((path,obj))
+                walk(attrs)
+                unique_urls=sorted(set(urls))
+                if not attrs: bucket='no_tcgdex_print_attributes'
+                elif unique_urls: bucket='source_attributes_contain_url_candidate'
+                else: bucket='source_attributes_no_url_candidate'
+                missing_buckets[bucket]+=1
+                if len(missing_samples)<250:
+                  missing_samples.append({
+                    'print_id':int(r['print_id']),'card_id':int(r['card_id']),'print_key':r['print_key'],
+                    'set_code':r['set_code'],'collector_number':r['collector_number'],'variant':r['variant'],
+                    'is_foil':bool(r['is_foil']),'tcgdex_id':r['tcgdex_id'],'bucket':bucket,
+                    'url_candidates':unique_urls[:10],
+                    'physical_variant':pv,
+                  })
+
+              report={
+                'game':'pokemon','mode':'read_only','latest_cardmarket_seen':latest.isoformat() if latest else None,
+                'declared_cardmarket_products':len(by_product),
+                'quarantined_products':len(quarantine),
+                'quarantine_reason_counts':dict(Counter(reason for _,reason,_ in quarantine)),
+                'quarantine_bucket_counts':dict(buckets),
+                'quarantine_samples':detail,
+                'attribute_top_keys':top_key_counts.most_common(),
+                'physical_variant_keys':physical_key_counts.most_common(),
+                'missing_image_prints':len(missing),
+                'missing_image_bucket_counts':dict(missing_buckets),
+                'missing_image_samples':missing_samples,
+                'missing_image_attribute_top_keys':missing_top_keys.most_common(),
+                'missing_image_physical_variant_keys':missing_physical_keys.most_common(),
+              }
+              Path('/tmp/pokemon-physical-quarantine.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+              Path('/tmp/pokemon-physical-summary.json').write_text(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,sort_keys=True,default=str)+'\n')
+              print(Path('/tmp/pokemon-physical-summary.json').read_text())
+          finally:
+            conn.close()
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-physical-quarantine-${{ github.run_id }}
+          path: |
+            /tmp/pokemon-physical-quarantine.json
+            /tmp/pokemon-physical-summary.json
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,134 @@
+name: Apply One Piece OP15 Explicit Cardmarket Map
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/apply-onepiece-op15-explicit-cardmarket-map.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests psycopg2-binary
+      - name: Rebuild, certify and apply only exact one-to-one mappings
+        run: |
+          python - <<'PY'
+          import concurrent.futures,json,os,re,time
+          from collections import Counter,defaultdict
+          from urllib.parse import quote
+          import psycopg2,requests
+          from psycopg2.extras import RealDictCursor,Json,execute_values
+
+          SOURCE='https://one-piece.cards'; SOURCE_SET='OP15-EB04'
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 exact-cardmarket-crosswalk'})
+          response=http.get(f'{SOURCE}/api/cards',params={'set':SOURCE_SET,'limit':500},timeout=25); response.raise_for_status()
+          payload=response.json(); raw=payload.get('cards',[])
+          source=[]; seen=set()
+          for c in raw:
+            if str(c.get('lang') or '').lower()!='en': continue
+            sid=str(c.get('id') or '').removesuffix('.jpg'); vid=str(c.get('variant_id') or '').removesuffix('.jpg'); collector=str(c.get('card_id') or '').upper().removesuffix('.JPG')
+            if not sid or not collector or sid in seen: continue
+            seen.add(sid); variant='default'
+            if vid.upper().startswith(collector+'_'): variant=vid[len(collector)+1:].lower()
+            source.append({'source_id':sid,'variant_id':vid,'collector':collector,'variant':variant,'name':c.get('name')})
+          if len(source)<270: raise AssertionError(f'source variant regression: {len(source)}')
+
+          cm_url_re=re.compile(r'https://www\.cardmarket\.com/OnePiece/Products\?idProduct=(\d+)',re.I); cm_text_re=re.compile(r'CM:\s*(\d+)')
+          def fetch(c):
+            url=f"{SOURCE}/cards/{quote(c['source_id'],safe='')}"
+            for attempt in range(3):
+              try:
+                r=http.get(url,timeout=15)
+                if r.status_code==200:
+                  ids=sorted(set(cm_url_re.findall(r.text) or cm_text_re.findall(r.text)))
+                  return {**c,'source_url':url,'http_status':200,'cm_ids':ids}
+                if r.status_code in (429,500,502,503,504) and attempt<2: time.sleep(.8*(attempt+1)); continue
+                return {**c,'source_url':url,'http_status':r.status_code,'cm_ids':[]}
+              except Exception as exc:
+                if attempt<2: time.sleep(.8*(attempt+1)); continue
+                return {**c,'source_url':url,'http_status':'error','error':repr(exc),'cm_ids':[]}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool: fetched=list(pool.map(fetch,source))
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.autocommit=False
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece'"); gid=int(cur.fetchone()['id'])
+              cur.execute('''SELECT r.id,r.external_id,r.name,count(DISTINCT pr.print_id) print_count FROM catalog_releases r LEFT JOIN print_releases pr ON pr.release_id=r.id
+                WHERE r.game_id=%s AND r.source='onepiece_official' AND upper(r.name) LIKE '%%OP15%%' GROUP BY r.id,r.external_id,r.name ORDER BY print_count DESC,r.id''',(gid,)); releases=[dict(x) for x in cur.fetchall()]
+              if not releases: raise AssertionError('No official OP15 release')
+              rid=int(releases[0]['id'])
+              cur.execute('''SELECT p.id print_id,p.collector_number,p.variant,p.language,c.name card_name,s.code set_code FROM print_releases pr JOIN prints p ON p.id=pr.print_id
+                JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE pr.release_id=%s AND c.game_id=%s''',(rid,gid)); prints=[dict(x) for x in cur.fetchall()]
+              cur.execute("SELECT max(last_seen_at) latest FROM external_catalog_products WHERE source='cardmarket'"); latest=cur.fetchone()['latest']
+              cur.execute('''SELECT id external_product_id,external_id,name,expansion_external_id,last_seen_at FROM external_catalog_products
+                WHERE source='cardmarket' AND game_id=%s AND product_group='single' ''',(gid,)); products=[dict(x) for x in cur.fetchall()]
+              cur.execute('''SELECT l.external_product_id,l.print_id,l.link_status,l.mapping_method FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id=%s AND l.link_status IN ('accepted','mapped','exact')''',(gid,)); links=[dict(x) for x in cur.fetchall()]
+
+              pi=defaultdict(list)
+              for p in prints: pi[(str(p['collector_number']).upper(),str(p.get('variant') or 'default').lower())].append(p)
+              pe=defaultdict(list)
+              for p in products: pe[str(p['external_id'])].append(p)
+              by_print=defaultdict(set); by_product=defaultdict(set)
+              for l in links: by_print[int(l['print_id'])].add(int(l['external_product_id'])); by_product[int(l['external_product_id'])].add(int(l['print_id']))
+              collector_re=re.compile(r'\(((?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+
+              status=Counter(); candidates=[]
+              for x in fetched:
+                ids=x.get('cm_ids') or []; ps=pi.get((x['collector'],x['variant']),[])
+                if x.get('http_status')!=200: status['source_http_failure']+=1; continue
+                if len(ids)==0: status['source_has_no_cardmarket_id']+=1; continue
+                if len(ids)!=1: status['source_multiple_cardmarket_ids']+=1; continue
+                if len(ps)==0: status['canonical_print_not_found']+=1; continue
+                if len(ps)!=1: status['canonical_print_ambiguous']+=1; continue
+                ext=pe.get(ids[0],[])
+                if len(ext)==0: status['cardmarket_product_not_in_mirror']+=1; continue
+                if len(ext)!=1: status['cardmarket_product_ambiguous']+=1; continue
+                e=ext[0]; m=collector_re.search(str(e.get('name') or '')); ec=m.group(1).upper() if m else None
+                if ec!=x['collector']: status['collector_mismatch']+=1; continue
+                pid=int(ps[0]['print_id']); eid=int(e['external_product_id'])
+                if e.get('last_seen_at')!=latest: status['cardmarket_product_not_current']+=1; continue
+                if by_print[pid] and eid not in by_print[pid]: status['existing_print_conflict']+=1; continue
+                if by_product[eid] and pid not in by_product[eid]: status['existing_product_conflict']+=1; continue
+                candidates.append({'source_id':x['source_id'],'source_url':x['source_url'],'collector':x['collector'],'variant':x['variant'],'print_id':pid,'external_product_id':eid,'cardmarket_id':ids[0],'cardmarket_name':e.get('name')}); status['candidate']+=1
+
+              pc=Counter((c['print_id'],c['external_product_id']) for c in candidates); prc=Counter(c['print_id'] for c in candidates); epc=Counter(c['external_product_id'] for c in candidates)
+              safe=[c for c in candidates if pc[(c['print_id'],c['external_product_id'])]==1 and prc[c['print_id']]==1 and epc[c['external_product_id']]==1]
+              safe_op15=[c for c in safe if c['collector'].startswith('OP15-')]; safe_eb04=[c for c in safe if c['collector'].startswith('EB04-')]
+              if len(safe)<190 or len(safe_op15)<140: raise AssertionError({'safe':len(safe),'op15':len(safe_op15),'status':dict(status)})
+              conflicts={k:v for k,v in status.items() if 'conflict' in k or 'ambiguous' in k or 'mismatch' in k}
+              if any(conflicts.values()): raise AssertionError({'unsafe_statuses':conflicts})
+
+              values=[]
+              for c in safe:
+                evidence={'source':'one-piece.cards','source_kind':'secondary_explicit_crosswalk','source_url':c['source_url'],'source_variant_id':c['source_id'],'cardmarket_id_product':c['cardmarket_id'],'collector_number':c['collector'],'canonical_variant':c['variant'],'official_release_id':rid,'validation':['explicit_cardmarket_id','official_release_print','collector_exact','variant_exact','cardmarket_mirror_current','global_one_to_one','no_existing_conflict']}
+                values.append((c['external_product_id'],c['print_id'],'explicit_variant_cardmarket_crosswalk','exact','accepted',False,Json(evidence)))
+              execute_values(cur,'''INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES %s
+                ON CONFLICT(external_product_id,print_id) DO UPDATE SET mapping_method=EXCLUDED.mapping_method,confidence=EXCLUDED.confidence,link_status=EXCLUDED.link_status,evidence=EXCLUDED.evidence,updated_at=now()''',values,page_size=500)
+              cur.execute('''SELECT count(*),count(DISTINCT l.external_product_id),count(DISTINCT l.print_id) FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.game_id=%s AND e.source='cardmarket' AND l.mapping_method='explicit_variant_cardmarket_crosswalk' AND l.link_status='accepted' ''',(gid,)); applied=tuple(map(int,cur.fetchone().values()))
+              if applied[0]<len(safe): raise AssertionError({'expected_at_least':len(safe),'applied':applied})
+              report={'mode':'apply','source_total':payload.get('total'),'release_id':rid,'canonical_release_prints':len(prints),'status_counts':dict(status),'safe_pairs_this_run':len(safe),'safe_op15_this_run':len(safe_op15),'safe_eb04_this_run':len(safe_eb04),'stored_method_links':applied[0],'stored_method_products':applied[1],'stored_method_prints':applied[2]}
+            conn.commit()
+          except Exception:
+            conn.rollback(); raise
+          finally: conn.close()
+          print(json.dumps(report,indent=2,sort_keys=True))
+          open('/tmp/op15-explicit-cardmarket-map-apply.json','w').write(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: op15-explicit-cardmarket-map-apply-${{ github.run_id }}
+          path: /tmp/op15-explicit-cardmarket-map-apply.json
+          retention-days: 90

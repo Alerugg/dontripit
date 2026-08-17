@@ -1,0 +1,172 @@
+name: Audit Pokemon Direct Cardmarket Links Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-pokemon-cardmarket-direct-links-live.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit TCGdex-declared Cardmarket IDs against current catalog
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              rows=conn.execute(text('''
+                WITH latest AS (
+                  SELECT max(last_seen_at) seen_at FROM external_catalog_products WHERE source='cardmarket'
+                ),
+                current_cm AS (
+                  SELECT e.id,e.external_id
+                  FROM external_catalog_products e
+                  JOIN games g ON g.id=e.game_id CROSS JOIN latest l
+                  WHERE e.source='cardmarket' AND e.last_seen_at=l.seen_at
+                    AND g.slug='pokemon' AND e.product_group='single'
+                )
+                SELECT
+                  p.id print_id,p.card_id,p.print_key,p.tcgdex_id,p.variant,p.is_foil,p.language,
+                  p.collector_number,s.code set_code,c.name card_name,c.tcgdex_id card_tcgdex_id,
+                  pa.attributes_json #>> '{physical_variant,third_party,cardmarket}' physical_cardmarket_id,
+                  pa.attributes_json #>> '{third_party,cardmarket}' card_level_cardmarket_id,
+                  pa.attributes_json #>> '{physical_variant,variant_hash}' variant_hash,
+                  pa.attributes_json #>> '{physical_variant,release_context}' release_context,
+                  cm_physical.id physical_external_product_id,
+                  cm_card.id card_external_product_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id AND g.slug='pokemon'
+                JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id AND pa.source='tcgdex/cards-database'
+                LEFT JOIN current_cm cm_physical
+                  ON cm_physical.external_id=pa.attributes_json #>> '{physical_variant,third_party,cardmarket}'
+                LEFT JOIN current_cm cm_card
+                  ON cm_card.external_id=pa.attributes_json #>> '{third_party,cardmarket}'
+                WHERE (
+                  NULLIF(pa.attributes_json #>> '{physical_variant,third_party,cardmarket}','') IS NOT NULL
+                  OR NULLIF(pa.attributes_json #>> '{third_party,cardmarket}','') IS NOT NULL
+                )
+              ''')).mappings().all()
+
+              legacy=conn.execute(text('''
+                SELECT count(*) FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND pi.source='cardmarket'
+              ''')).scalar_one()
+
+          declared=[]; disagree=[]; absent=[]
+          for raw in rows:
+              r=dict(raw)
+              physical=str(r['physical_cardmarket_id'] or '').strip() or None
+              card_level=str(r['card_level_cardmarket_id'] or '').strip() or None
+              if physical and card_level and physical != card_level:
+                  # Physical variant evidence is intentionally stronger than card-level evidence,
+                  # but retain the disagreement for review/provenance.
+                  evidence_kind='physical_overrides_card_level'
+                  disagree.append({
+                    'print_id':int(r['print_id']),'tcgdex_id':r['card_tcgdex_id'],
+                    'physical':physical,'card_level':card_level,
+                    'set_code':r['set_code'],'collector_number':r['collector_number'],
+                    'variant':r['variant'],'release_context':r['release_context'],
+                  })
+              elif physical:
+                  evidence_kind='physical_variant'
+              else:
+                  evidence_kind='card_level'
+              cmid=physical or card_level
+              external_id=r['physical_external_product_id'] if physical else r['card_external_product_id']
+              item={
+                'print_id':int(r['print_id']),'card_id':int(r['card_id']),'card_name':r['card_name'],
+                'tcgdex_id':r['card_tcgdex_id'],'print_key':r['print_key'],'set_code':r['set_code'],
+                'collector_number':r['collector_number'],'variant':r['variant'],'is_foil':bool(r['is_foil']),
+                'language':r['language'],'cardmarket_id':cmid,
+                'external_product_id':int(external_id) if external_id is not None else None,
+                'evidence_kind':evidence_kind,'variant_hash':r['variant_hash'],'release_context':r['release_context'],
+              }
+              declared.append(item)
+              if external_id is None:
+                  absent.append(item)
+
+          by_product=defaultdict(list)
+          for item in declared:
+              if item['external_product_id'] is not None:
+                  by_product[item['cardmarket_id']].append(item)
+
+          safe=[]; quarantined=[]
+          for cmid,items in by_product.items():
+              external_ids={x['external_product_id'] for x in items}
+              card_ids={x['card_id'] for x in items}
+              collector_sigs={(x['set_code'],x['collector_number'],x['card_id']) for x in items}
+              all_physical=all(x['evidence_kind'] in ('physical_variant','physical_overrides_card_level') for x in items)
+              # TCGdex may explicitly assign one Cardmarket idProduct to multiple
+              # physical subvariants (e.g. holo and 1st-edition holo). That is safe
+              # as a product link only when every row carries explicit variant-level evidence.
+              if len(external_ids)!=1 or len(card_ids)!=1 or len(collector_sigs)!=1:
+                  quarantined.append({'cardmarket_id':cmid,'reason':'canonical_identity_conflict','items':items[:10]})
+                  continue
+              if len(items)>1 and not all_physical:
+                  quarantined.append({'cardmarket_id':cmid,'reason':'shared_card_level_id_without_variant_evidence','items':items[:10]})
+                  continue
+              safe.append({
+                'cardmarket_id':cmid,'external_product_id':next(iter(external_ids)),
+                'prints':len(items),'print_ids':[x['print_id'] for x in items],
+                'card_id':next(iter(card_ids)),'card_name':items[0]['card_name'],
+                'set_code':items[0]['set_code'],'collector_number':items[0]['collector_number'],
+                'all_variant_explicit':all_physical,
+                'evidence_kinds':sorted({x['evidence_kind'] for x in items}),
+                'variants':sorted({str(x['variant']) for x in items}),
+              })
+
+          report={
+            'mode':'read_only','source':'tcgdex/cards-database','game':'pokemon',
+            'prints_with_declared_cardmarket_evidence':len(declared),
+            'distinct_declared_cardmarket_ids':len({x['cardmarket_id'] for x in declared}),
+            'legacy_print_identifiers':int(legacy),
+            'safe_current_cardmarket_products':len(safe),
+            'safe_print_links':sum(x['prints'] for x in safe),
+            'declared_ids_absent_from_current_cardmarket':len({x['cardmarket_id'] for x in absent}),
+            'quarantined_products':len(quarantined),
+            'physical_vs_card_level_disagreements':len(disagree),
+            'safe_samples':safe[:50],
+            'absent_samples':absent[:50],
+            'quarantine_samples':quarantined[:30],
+            'disagreement_samples':disagree[:50],
+            'policy':'variant-level TCGdex Cardmarket evidence outranks card-level evidence; shared idProduct is accepted only when every linked Print is explicitly variant-declared',
+          }
+          Path('/tmp/pokemon-cardmarket-direct-audit.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-cardmarket-direct-audit-${{ github.run_id }}
+          path: /tmp/pokemon-cardmarket-direct-audit.json
+          retention-days: 30
+          if-no-files-found: error

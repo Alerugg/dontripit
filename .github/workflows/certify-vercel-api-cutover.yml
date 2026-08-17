@@ -1,0 +1,68 @@
+name: Certify Vercel API Cutover
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/routes/health.py'
+      - 'backend/app/routes/games.py'
+      - '.github/workflows/certify-vercel-api-cutover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify Vercel runtime, Neon DB and catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, time, urllib.request
+
+          base='https://api.dontripit.com'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'User-Agent':'Dontripit-Cutover-Certifier/1.0'})
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  return response.status, json.load(response)
+
+          # Allow the Git-triggered Vercel deployment to become the active production deployment.
+          last=None
+          for _ in range(24):
+              try:
+                  status, health=get('/api/health')
+                  status_db, db=get('/api/db-check')
+                  last=(status,health,status_db,db)
+                  if (
+                      status==200
+                      and health.get('ok') is True
+                      and health.get('runtime')=='vercel'
+                      and status_db==200
+                      and db.get('db')=='ok'
+                      and db.get('provider')=='neon'
+                  ):
+                      break
+              except Exception as exc:
+                  last=repr(exc)
+              time.sleep(5)
+          else:
+              raise AssertionError(f'Vercel/Neon certification failed: {last!r}')
+
+          status, games=get('/api/games')
+          assert status==200 and isinstance(games,list) and len(games)>=4, (status,games)
+          slugs={str(row.get('slug')) for row in games}
+          assert {'pokemon','onepiece','mtg','yugioh'}.issubset(slugs), slugs
+
+          print(json.dumps({
+              'runtime': health.get('runtime'),
+              'revision_present': health.get('revision') not in (None,'','unknown'),
+              'database': db.get('db'),
+              'database_provider': db.get('provider'),
+              'catalog_games': sorted(slugs),
+              'railway_required_for_public_api': False,
+          },indent=2,sort_keys=True))
+          PY

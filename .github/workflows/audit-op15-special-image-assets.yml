@@ -1,0 +1,66 @@
+name: Audit OP15 Special Image Assets
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-op15-special-image-assets.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Extract page image metadata and asset URLs
+        run: |
+          python - <<'PY'
+          import json,re
+          from pathlib import Path
+          from urllib.parse import quote,urljoin
+          import requests
+          from bs4 import BeautifulSoup
+
+          ids=['en:OP15-036_cm883418','en:OP15-075_cm883395','en:OP15-108_cm883935']
+          http=requests.Session(); http.headers.update({'User-Agent':'DontRipIt/1.0 exact-image-verifier'})
+          out=[]
+          for sid in ids:
+            url=f'https://one-piece.cards/cards/{quote(sid,safe="")}'
+            r=http.get(url,timeout=20); r.raise_for_status()
+            soup=BeautifulSoup(r.text,'html.parser')
+            meta=[]
+            for tag in soup.find_all('meta'):
+              key=tag.get('property') or tag.get('name')
+              content=tag.get('content')
+              if key and content and ('image' in str(key).lower() or 'twitter' in str(key).lower() or 'og:' in str(key).lower()):
+                meta.append({'key':key,'content':content})
+            links=[]
+            for tag in soup.find_all(['link','source','img']):
+              for attr in ('href','src','srcset','data-src'):
+                value=tag.get(attr)
+                if value and any(token in str(value).lower() for token in ('image','card','png','jpg','jpeg','webp','avif')):
+                  links.append({'tag':tag.name,'attr':attr,'value':value})
+            quoted_urls=sorted(set(re.findall(r'https?://[^\"\'<>\s]+',r.text)))
+            asset_urls=[u for u in quoted_urls if any(ext in u.lower() for ext in ('.png','.jpg','.jpeg','.webp','.avif'))]
+            relative_assets=sorted(set(re.findall(r'[/A-Za-z0-9_:%?&=.-]+\.(?:png|jpg|jpeg|webp|avif)(?:\?[^\"\'<>\s]*)?',r.text,re.I)))
+            out.append({
+              'source_id':sid,'url':url,'status':r.status_code,'length':len(r.text),
+              'meta':meta,'links':links[:100],'absolute_assets':asset_urls[:100],
+              'relative_assets':relative_assets[:100],
+              'contains_official_r1':'OP15-036_r1' in r.text,
+              'contains_official_075_p1':'OP15-075_p1' in r.text,
+              'contains_official_108_p1':'OP15-108_p1' in r.text,
+            })
+          print(json.dumps(out,indent=2,ensure_ascii=False))
+          Path('/tmp/op15-special-image-assets.json').write_text(json.dumps(out,indent=2,ensure_ascii=False)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: op15-special-image-assets-${{ github.run_id }}
+          path: /tmp/op15-special-image-assets.json
+          retention-days: 30

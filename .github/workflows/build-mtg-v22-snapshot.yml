@@ -1,0 +1,136 @@
+name: Build MTG V2.2 Snapshot
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/build-mtg-v22-snapshot.yml'
+      - 'backend/app/scripts/build_mtg_v2_snapshot.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+      - 'backend/tests/test_mtg_identity_v2.py'
+      - 'backend/tests/test_mtg_snapshot_v22.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-v22-snapshot
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile MTG snapshot modules
+        run: python -m py_compile app/mtg_identity_v2.py app/scripts/build_mtg_v2_snapshot.py app/scripts/build_mtg_v2_snapshot_v22.py
+
+      - name: Run focused MTG identity and snapshot tests
+        run: pytest -q tests/test_mtg_identity_v2.py tests/test_mtg_snapshot_v22.py
+
+      - name: Build canonical V2.2 snapshot from one Scryfall bulk export
+        run: python -m app.scripts.build_mtg_v2_snapshot_v22 --output-dir /tmp/mtg-v22-snapshot
+
+      - name: Verify manifest, row counts and checksums
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path('/tmp/mtg-v22-snapshot')
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          if manifest.get('status') != 'pass':
+              raise SystemExit('MTG snapshot manifest is not PASS')
+          if manifest.get('snapshot_schema_version') != 'mtg-canonical-v2.2':
+              raise SystemExit(f"Unexpected snapshot schema: {manifest.get('snapshot_schema_version')}")
+
+          counts = manifest['counts']
+          finish_counts = manifest['finish_counts']
+          files = manifest['files']
+          gates = manifest['gates']
+
+          expected_rows = {
+              'cards.jsonl': counts['logical_cards'],
+              'card_attributes.jsonl': counts['logical_cards'],
+              'sets.jsonl': counts['sets'],
+              'prints.jsonl': counts['exact_prints'],
+              'print_attributes.jsonl': counts['exact_prints'],
+              'print_identifiers.jsonl': counts['exact_prints'],
+          }
+          for name, expected in expected_rows.items():
+              if files[name]['rows'] != expected:
+                  raise SystemExit(f'{name} row count mismatch: {files[name]["rows"]} != {expected}')
+
+          if counts['exact_prints'] != sum(int(v) for v in finish_counts.values()):
+              raise SystemExit('Finish counts do not reconcile')
+
+          for key in (
+              'duplicate_paper_scryfall_ids',
+              'exact_print_key_collisions',
+              'natural_exact_print_collisions',
+              'unknown_finishes',
+              'missing_scryfall_ids',
+          ):
+              if gates.get(key) != 0:
+                  raise SystemExit(f'Gate {key} is not zero: {gates.get(key)!r}')
+          if gates.get('raw_source_payload_persisted') is not False:
+              raise SystemExit('Raw Scryfall payload persistence must remain disabled')
+          if gates.get('pricing_payload_persisted') is not False:
+              raise SystemExit('Pricing persistence must remain disabled')
+
+          for name, expected in files.items():
+              path = root / name
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != expected['sha256']:
+                  raise SystemExit(f'SHA256 mismatch for {name}')
+              with path.open('r', encoding='utf-8') as handle:
+                  row_count = sum(1 for _ in handle)
+              if row_count != expected['rows']:
+                  raise SystemExit(f'Row recount mismatch for {name}')
+
+          summary = {
+              'status': 'pass',
+              'snapshot_schema_version': manifest['snapshot_schema_version'],
+              'identity_policy_version': manifest['identity_policy_version'],
+              'source': manifest['source'],
+              'counts': counts,
+              'finish_counts': finish_counts,
+              'snapshot_bytes': sum(int(item['bytes']) for item in files.values()),
+              'database_writes': 0,
+          }
+          (root / 'certification-summary.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload certified MTG V2.2 snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-v22-snapshot-${{ github.sha }}
+          path: /tmp/mtg-v22-snapshot
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6

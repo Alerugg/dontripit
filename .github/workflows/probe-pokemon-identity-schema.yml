@@ -1,0 +1,49 @@
+name: Probe Pokemon Neon Identity
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/probe-pokemon-identity-schema.yml'
+      - 'backend/app/scripts/probe_pokemon_identity_schema.py'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Probe Pokémon identity schema and counts
+        run: |
+          set -o pipefail
+          python -m app.scripts.probe_pokemon_identity_schema | tee /tmp/pokemon-neon-identity-probe.json
+
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-neon-identity-probe-${{ github.sha }}
+          path: /tmp/pokemon-neon-identity-probe.json
+          if-no-files-found: warn
+          retention-days: 90

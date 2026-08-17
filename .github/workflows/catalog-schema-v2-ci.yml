@@ -1,0 +1,68 @@
+name: Catalog Schema V2 CI
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/catalog_release_models.py'
+      - 'backend/app/search_v2_models.py'
+      - 'backend/app/search_v2/**'
+      - 'backend/alembic/env.py'
+      - 'backend/alembic/versions/20260807_18_add_catalog_releases.py'
+      - 'backend/alembic/versions/20260807_19_add_search_facets_v2.py'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/app/ingest/connectors/onepiece_v2.py'
+      - 'backend/app/ingest/connectors/onepiece_canonical.py'
+      - 'backend/tests/conftest.py'
+      - 'backend/tests/test_catalog_release_models.py'
+      - 'backend/tests/test_onepiece_v2_identity.py'
+      - 'backend/tests/test_onepiece_canonical_connector.py'
+      - 'backend/tests/test_search_v2_models.py'
+      - 'backend/tests/test_search_v2_normalization.py'
+      - 'backend/tests/test_onepiece_search_source.py'
+      - 'backend/tests/test_search_v2_indexer.py'
+      - '.github/workflows/catalog-schema-v2-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run catalog, identity and Search V2 tests
+        run: >-
+          pytest -q
+          tests/test_catalog_release_models.py
+          tests/test_onepiece_v2_identity.py
+          tests/test_onepiece_canonical_connector.py
+          tests/test_search_v2_models.py
+          tests/test_search_v2_normalization.py
+          tests/test_onepiece_search_source.py
+          tests/test_search_v2_indexer.py
+      - name: Validate Alembic head
+        run: |
+          HEADS="$(alembic heads)"
+          echo "${HEADS}"
+          test "$(printf '%s\n' "${HEADS}" | grep -c '(head)')" -eq 1
+      - name: Render V2 migrations offline
+        run: |
+          alembic upgrade 20260323_17:20260807_19 --sql > /tmp/catalog-v2-schema.sql
+          test -s /tmp/catalog-v2-schema.sql
+          grep -q 'catalog_releases' /tmp/catalog-v2-schema.sql
+          grep -q 'print_releases' /tmp/catalog-v2-schema.sql
+          grep -q 'card_search_profiles' /tmp/catalog-v2-schema.sql
+          grep -q 'print_search_profiles' /tmp/catalog-v2-schema.sql
+          grep -q 'facet_definitions' /tmp/catalog-v2-schema.sql
+          grep -q 'pg_trgm' /tmp/catalog-v2-schema.sql
+          cat /tmp/catalog-v2-schema.sql

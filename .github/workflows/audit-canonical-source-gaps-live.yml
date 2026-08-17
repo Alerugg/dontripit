@@ -1,0 +1,299 @@
+name: Audit Canonical Current-Source Gaps
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-canonical-source-gaps-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-canonical-current-source-gaps
+  cancel-in-progress: true
+
+jobs:
+  pokemon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit current physical TCGdex source vs Neon
+        run: python -m app.scripts.audit_pokemon_neon_physical_gap_v2 > /tmp/pokemon-current-source-gap.json
+      - name: Upload Pokémon evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-gap-pokemon-${{ github.run_id }}
+          path: /tmp/pokemon-current-source-gap.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  onepiece:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compare current official Bandai surface with exact Neon identities
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from app.ingest.connectors.onepiece_v2 import OnePieceV2Connector
+
+          payload = OnePieceV2Connector()._load_official_cardlist_remote(limit=None)
+          source_cards = {str(card['id']) for card in payload.get('cards') or []}
+          source_prints = {
+              (
+                  str(row.get('set_code') or '').strip().lower(),
+                  str(row.get('collector_number') or '').strip().upper(),
+                  'en',
+                  str(row.get('variant') or 'default').strip().lower(),
+              )
+              for card in payload.get('cards') or []
+              for row in card.get('prints') or []
+          }
+          source_sets = {str(row.get('code') or '').strip().lower() for row in payload.get('sets') or []}
+          releases = payload.get('releases') or []
+          diagnostics = payload.get('diagnostics') or {}
+
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          engine = create_engine(url)
+          with engine.connect() as conn:
+              game_id = conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
+              db_cards = {
+                  str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"), {'g': game_id}).scalars()
+              }
+              db_sets = {
+                  str(v).strip().lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"), {'g': game_id}).scalars()
+              }
+              db_prints = {
+                  (str(code).strip().lower(), str(number).strip().upper(), str(language or '').strip().lower(), str(variant or 'default').strip().lower())
+                  for code, number, language, variant in conn.execute(text('''
+                      SELECT s.code, p.collector_number, p.language, p.variant
+                      FROM prints p
+                      JOIN cards c ON c.id=p.card_id
+                      JOIN sets s ON s.id=p.set_id
+                      WHERE c.game_id=:g
+                  '''), {'g': game_id}).all()
+              }
+
+          missing_cards = sorted(source_cards - db_cards)
+          stale_cards = sorted(db_cards - source_cards)
+          missing_sets = sorted(source_sets - db_sets)
+          stale_sets = sorted(db_sets - source_sets)
+          missing_prints = sorted(source_prints - db_prints)
+          stale_prints = sorted(db_prints - source_prints)
+          report = {
+              'mode': 'read_only',
+              'source': 'Bandai official One Piece card list via OnePieceV2Connector',
+              'source_counts': {
+                  'sets': len(source_sets),
+                  'logical_cards': len(source_cards),
+                  'exact_prints': len(source_prints),
+                  'commercial_releases': len(releases),
+                  'release_appearances': int(diagnostics.get('release_link_count') or 0),
+                  'physical_identity_conflicts': len(diagnostics.get('physical_identity_conflicts') or []),
+              },
+              'neon_counts': {'sets': len(db_sets), 'logical_cards': len(db_cards), 'exact_prints': len(db_prints)},
+              'gaps': {
+                  'source_cards_missing_in_neon': len(missing_cards),
+                  'source_sets_missing_in_neon': len(missing_sets),
+                  'source_exact_prints_missing_in_neon': len(missing_prints),
+                  'neon_cards_not_in_current_source': len(stale_cards),
+                  'neon_sets_not_in_current_source': len(stale_sets),
+                  'neon_exact_prints_not_in_current_source': len(stale_prints),
+              },
+              'samples': {
+                  'missing_cards': missing_cards[:100],
+                  'missing_sets': missing_sets[:100],
+                  'missing_prints': [list(x) for x in missing_prints[:100]],
+                  'stale_cards': stale_cards[:100],
+                  'stale_sets': stale_sets[:100],
+                  'stale_prints': [list(x) for x in stale_prints[:100]],
+              },
+          }
+          report['current_source_exactly_covered'] = (
+              not missing_cards and not missing_sets and not missing_prints
+              and report['source_counts']['physical_identity_conflicts'] == 0
+          )
+          Path('/tmp/onepiece-current-source-gap.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+      - name: Upload One Piece evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-gap-onepiece-${{ github.run_id }}
+          path: /tmp/onepiece-current-source-gap.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  yugioh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit current YGOPRODeck source vs Neon
+        run: python -m app.scripts.audit_yugioh_catalog_v2 --report-path /tmp/yugioh-current-source-gap.json
+      - name: Upload Yu-Gi-Oh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-gap-yugioh-${{ github.run_id }}
+          path: /tmp/yugioh-current-source-gap.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  mtg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build fresh exact physical snapshot from current Scryfall bulk
+        run: python -m app.scripts.build_mtg_v2_snapshot_v22 --output-dir /tmp/mtg-current-source
+      - name: Compare current exact Scryfall identities with Neon
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root = Path('/tmp/mtg-current-source')
+          manifest = json.loads((root/'manifest.json').read_text())
+          source_cards = set()
+          with (root/'cards.jsonl').open() as f:
+              for line in f:
+                  row=json.loads(line); source_cards.add(str(row['card_key']))
+          source_sets = set()
+          with (root/'sets.jsonl').open() as f:
+              for line in f:
+                  row=json.loads(line); source_sets.add(str(row['code']).lower())
+          source_identifiers = set()
+          with (root/'print_identifiers.jsonl').open() as f:
+              for line in f:
+                  row=json.loads(line); source_identifiers.add((str(row['source']), str(row['external_id'])))
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          engine=create_engine(url)
+          with engine.connect() as conn:
+              game_id=conn.execute(text("SELECT id FROM games WHERE slug='mtg' LIMIT 1")).scalar_one()
+              db_cards={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':game_id}).scalars()}
+              db_sets={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':game_id}).scalars()}
+              db_identifiers={
+                  (str(source),str(external_id))
+                  for source,external_id in conn.execute(text('''
+                    SELECT pi.source,pi.external_id
+                    FROM print_identifiers pi
+                    JOIN prints p ON p.id=pi.print_id
+                    JOIN cards c ON c.id=p.card_id
+                    WHERE c.game_id=:g AND pi.source='scryfall_finish'
+                  '''),{'g':game_id}).all()
+              }
+
+          missing_cards=sorted(source_cards-db_cards)
+          missing_sets=sorted(source_sets-db_sets)
+          missing_identifiers=sorted(source_identifiers-db_identifiers)
+          stale_cards=sorted(db_cards-source_cards)
+          stale_sets=sorted(db_sets-source_sets)
+          stale_identifiers=sorted(db_identifiers-source_identifiers)
+          report={
+            'mode':'read_only',
+            'source':manifest.get('source'),
+            'snapshot_status':manifest.get('status'),
+            'source_counts':manifest.get('counts'),
+            'source_finish_counts':manifest.get('finish_counts'),
+            'neon_counts':{'sets':len(db_sets),'logical_cards':len(db_cards),'exact_identifiers':len(db_identifiers)},
+            'gaps':{
+              'source_cards_missing_in_neon':len(missing_cards),
+              'source_sets_missing_in_neon':len(missing_sets),
+              'source_exact_print_identifiers_missing_in_neon':len(missing_identifiers),
+              'neon_cards_not_in_current_source':len(stale_cards),
+              'neon_sets_not_in_current_source':len(stale_sets),
+              'neon_exact_print_identifiers_not_in_current_source':len(stale_identifiers),
+            },
+            'samples':{
+              'missing_cards':missing_cards[:100],
+              'missing_sets':missing_sets[:100],
+              'missing_identifiers':[list(x) for x in missing_identifiers[:100]],
+              'stale_cards':stale_cards[:100],
+              'stale_sets':stale_sets[:100],
+              'stale_identifiers':[list(x) for x in stale_identifiers[:100]],
+            }
+          }
+          report['current_source_exactly_covered']=not missing_cards and not missing_sets and not missing_identifiers
+          Path('/tmp/mtg-current-source-gap.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - name: Upload MTG evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-gap-mtg-${{ github.run_id }}
+          path: /tmp/mtg-current-source-gap.json
+          retention-days: 30
+          if-no-files-found: warn

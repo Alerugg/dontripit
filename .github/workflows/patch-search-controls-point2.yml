@@ -1,0 +1,79 @@
+name: Patch Search Controls Point 2
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-search-controls-point2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Connect sort, price filter and active-tab pagination
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('frontend/components/searchV2/OnePieceSearchV2Experience.js'); s=p.read_text()
+          marker="const NORMAL_PAGE_SIZE = 24\n"
+          repl="const NORMAL_PAGE_SIZE = 24\nconst RESULT_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'number_asc', 'number_desc', 'name_asc', 'name_desc'])\n\nfunction initialSort(searchParams) {\n  const value = searchParams.get('sort') || 'relevance'\n  return RESULT_SORTS.has(value) ? value : 'relevance'\n}\n"
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker="  const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')\n"
+          repl="  const [normalCategory, setNormalCategory] = useState(searchParams.get('category') || '')\n  const [resultSort, setResultSort] = useState(initialSort(searchParams))\n  const [onlyWithPrice, setOnlyWithPrice] = useState(searchParams.get('priced') === '1')\n"
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker="""          page: normalPage,\n          limit: NORMAL_PAGE_SIZE,\n          category: normalCategory,\n"""
+          repl="""          page: normalPage,\n          limit: NORMAL_PAGE_SIZE,\n          kind: normalType,\n          category: normalCategory,\n          sort: resultSort,\n          hasPrice: onlyWithPrice,\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          s=s.replace('  }, [game.slug, normalCategory, normalPage, submittedQuery])', '  }, [game.slug, normalCategory, normalPage, normalType, onlyWithPrice, resultSort, submittedQuery])',1)
+          marker="""    const next = params.toString()\n"""
+          repl="""    if (resultSort !== 'relevance') params.set('sort', resultSort)\n    if (onlyWithPrice) params.set('priced', '1')\n    const next = params.toString()\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          old='  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, pathname, router, submittedQuery])'
+          new='  }, [advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, submittedQuery])'
+          assert old in s; s=s.replace(old,new,1)
+          s=s.replace('async function runAdvanced(nextPage = 1, { reuseApplied = false } = {}) {', 'async function runAdvanced(nextPage = 1, { reuseApplied = false, sortOverride = null, hasPriceOverride = null } = {}) {',1)
+          marker="""    const searchQuery = reuseApplied ? advancedQuery : query.trim()\n\n    if (!reuseApplied) {\n"""
+          repl="""    const searchQuery = reuseApplied ? advancedQuery : query.trim()\n    const activeSort = sortOverride ?? resultSort\n    const activeHasPrice = hasPriceOverride ?? onlyWithPrice\n\n    if (!reuseApplied) {\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker="""        filters,\n        limit: ADVANCED_PAGE_SIZE,\n"""
+          repl="""        filters,\n        sort: activeSort,\n        hasPrice: activeHasPrice,\n        limit: ADVANCED_PAGE_SIZE,\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker="""  function updateAdvancedFilter(key, value) {\n"""
+          repl="""  function changeResultSort(value) {\n    setResultSort(value)\n    setNormalPage(1)\n    if (advancedRan) runAdvanced(1, { reuseApplied: true, sortOverride: value })\n  }\n\n  function changeOnlyWithPrice(value) {\n    setOnlyWithPrice(value)\n    setNormalPage(1)\n    if (advancedRan) runAdvanced(1, { reuseApplied: true, hasPriceOverride: value })\n  }\n\n  function updateAdvancedFilter(key, value) {\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          marker="""        {facetError ? <p className=\"sv2-inline-error\">{facetError}</p> : null}\n\n        <AdvancedSearchPanel\n"""
+          repl="""        <div className=\"sv2-global-controls\">\n          <label>\n            <span>Ordenar versiones</span>\n            <select value={resultSort} onChange={(event) => changeResultSort(event.target.value)}>\n              <option value=\"relevance\">Relevancia / catálogo</option>\n              <option value=\"price_desc\">Precio: mayor a menor</option>\n              <option value=\"price_asc\">Precio: menor a mayor</option>\n              <option value=\"number_asc\">Número: menor a mayor</option>\n              <option value=\"number_desc\">Número: mayor a menor</option>\n              <option value=\"name_asc\">Nombre A–Z</option>\n              <option value=\"name_desc\">Nombre Z–A</option>\n            </select>\n          </label>\n          <label className=\"sv2-price-toggle\">\n            <input type=\"checkbox\" checked={onlyWithPrice} onChange={(event) => changeOnlyWithPrice(event.target.checked)} />\n            <span>Solo con precio Cardmarket exacto y actual</span>\n          </label>\n        </div>\n\n        {facetError ? <p className=\"sv2-inline-error\">{facetError}</p> : null}\n\n        <AdvancedSearchPanel\n"""
+          assert marker in s; s=s.replace(marker,repl,1)
+          p.write_text(s)
+
+          p=Path('frontend/components/searchV2/FederatedSearchResults.js'); s=p.read_text()
+          old="else if (activeType === 'all') paginationTotal = Math.max(Number(singles.total || 0), Number(sealed.total || 0))"
+          new="else if (activeType === 'all') paginationTotal = Number(singles.total || 0)"
+          assert old in s; p.write_text(s.replace(old,new,1))
+
+          p=Path('frontend/components/searchV2/SearchV2.css'); s=p.read_text()
+          marker='.sv2-inline-error {\n'
+          css=""".sv2-global-controls {\n  display: flex;\n  align-items: end;\n  flex-wrap: wrap;\n  gap: .75rem 1rem;\n  margin-top: .9rem;\n}\n.sv2-global-controls > label:first-child { display: grid; gap: .38rem; min-width: min(100%, 260px); }\n.sv2-global-controls label > span { color: var(--muted, #9ca3af); font-size: .7rem; font-weight: 700; }\n.sv2-global-controls select { min-height: 42px; padding: 0 .75rem; border: 1px solid rgba(255,255,255,.1); border-radius: 11px; color: inherit; background: rgba(0,0,0,.18); }\n.sv2-price-toggle { display: inline-flex; align-items: center; gap: .5rem; min-height: 42px; cursor: pointer; }\n.sv2-price-toggle input { width: 17px; height: 17px; accent-color: var(--game-accent, #8b7cff); }\n\n"""
+          assert marker in s; p.write_text(s.replace(marker,css+marker,1))
+          PY
+      - name: Static verification
+        run: |
+          grep -q "kind: normalType" frontend/components/searchV2/OnePieceSearchV2Experience.js
+          grep -q "hasPrice: onlyWithPrice" frontend/components/searchV2/OnePieceSearchV2Experience.js
+          grep -q "paginationTotal = Number(singles.total" frontend/components/searchV2/FederatedSearchResults.js
+          grep -q "Solo con precio Cardmarket exacto" frontend/components/searchV2/OnePieceSearchV2Experience.js
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add frontend/components/searchV2
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Connect global search sorting and active-tab pagination'
+          git push origin HEAD:catalog-v2

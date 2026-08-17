@@ -1,0 +1,72 @@
+name: Compact Search V2 Trigram Indexes
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/compact-search-v2-trgm-indexes.yml'
+      - 'backend/app/scripts/compact_search_v2_trgm_indexes.py'
+  workflow_dispatch:
+
+concurrency:
+  group: yugioh-search-v2-write
+  cancel-in-progress: false
+
+jobs:
+  compact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile maintenance script
+        working-directory: backend
+        run: python -m py_compile app/scripts/compact_search_v2_trgm_indexes.py
+
+      - name: Compact bloated Search V2 trigram indexes concurrently
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.compact_search_v2_trgm_indexes \
+            --report-path /tmp/search-v2-trgm-compaction.json \
+            | tee /tmp/search-v2-trgm-compaction.log
+
+      - name: Run post-maintenance storage audit
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_database_storage_v2 \
+            --report-path /tmp/search-v2-storage-after.json \
+            | tee /tmp/search-v2-storage-after.log
+
+      - name: Upload maintenance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-v2-trgm-compaction-${{ github.sha }}
+          path: |
+            /tmp/search-v2-trgm-compaction.json
+            /tmp/search-v2-trgm-compaction.log
+            /tmp/search-v2-storage-after.json
+            /tmp/search-v2-storage-after.log
+          retention-days: 90
+          if-no-files-found: warn

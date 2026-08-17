@@ -1,0 +1,21 @@
+{
+  "mode": "dry_run",
+  "game": "onepiece",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "sealed_release_anchors": 63,
+  "sealed_anchor_conflicts": 1,
+  "status_counts": {
+    "cross_group_existing_link": 2333,
+    "fully_linked_group": 2064,
+    "cardinality_mismatch": 79,
+    "safe_residual": 224,
+    "no_official_group": 52,
+    "residual_ambiguous": 71,
+    "global_collision_removed": 215,
+    "global_target_already_linked_removed": 0,
+    "final_safe": 9
+  },
+  "safe_candidates": 9,
+  "safe_candidate_prints": 9,
+  "safe_candidate_products": 9
+}

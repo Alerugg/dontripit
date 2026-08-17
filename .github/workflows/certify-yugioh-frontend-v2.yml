@@ -1,0 +1,120 @@
+name: Certify Yu-Gi-Oh Search V2 Frontend and HTTP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/certify-yugioh-frontend-v2.yml'
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/scripts/benchmark_yugioh_search_v2.py'
+      - 'backend/app/scripts/smoke_yugioh_search_v2_http.py'
+      - 'backend/app/search_v2/yugioh_query.py'
+      - 'backend/app/search_v2/yugioh_advanced.py'
+      - 'backend/app/search_v2/yugioh_facet_values.py'
+      - 'frontend/app/games/**'
+      - 'frontend/components/games/YugiohExplorerV2Page.js'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/tests/search-v2-yugioh-contract.test.js'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PUBLIC_API_ENABLED: 'true'
+      PUBLIC_IP_RATE_LIMIT_RPM: '500'
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile Yu-Gi-Oh API integration and benchmark
+        working-directory: backend
+        run: |
+          python -m py_compile \
+            app/routes/search_v2.py \
+            app/search_v2/yugioh_query.py \
+            app/search_v2/yugioh_advanced.py \
+            app/search_v2/yugioh_facet_values.py \
+            app/scripts/benchmark_yugioh_search_v2.py \
+            app/scripts/smoke_yugioh_search_v2_http.py
+
+      - name: Run strict Yu-Gi-Oh Search V2 benchmark
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_yugioh_search_v2 \
+            --report-path /tmp/yugioh-search-v2-benchmark.json \
+            | tee /tmp/yugioh-search-v2-benchmark.log
+
+      - name: Create temporary catalog API key
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          KEY="$(python -m app.auth.create_key --plan enterprise --label "cert-yugioh-${GITHUB_RUN_ID}" --scopes read:catalog | tail -n 1)"
+          PREFIX="${KEY:0:8}"
+          echo "::add-mask::$KEY"
+          echo "SEARCH_V2_API_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TEMP_API_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+
+      - name: Run Yu-Gi-Oh Search V2 HTTP contract smoke
+        working-directory: backend
+        run: python -m app.scripts.smoke_yugioh_search_v2_http
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Enforce committed frontend security baseline
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
+
+      - name: Run frontend contract tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Build Next.js frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload Yu-Gi-Oh read-only certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-frontend-http-benchmark-${{ github.sha }}
+          path: |
+            /tmp/yugioh-search-v2-benchmark.json
+            /tmp/yugioh-search-v2-benchmark.log
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Disable temporary API key
+        if: always() && env.TEMP_API_PREFIX != ''
+        working-directory: backend
+        run: python -m app.auth.disable_key --prefix "$TEMP_API_PREFIX" || true

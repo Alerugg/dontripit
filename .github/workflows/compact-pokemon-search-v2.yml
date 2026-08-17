@@ -1,0 +1,75 @@
+name: Compact Pokemon Search V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/compact-pokemon-search-v2.yml'
+      - 'backend/alembic/versions/20260808_24_remove_redundant_search_indexes.py'
+      - 'backend/app/scripts/compact_pokemon_search_v2_profiles.py'
+  workflow_dispatch:
+
+concurrency:
+  group: pokemon-search-v2-compaction
+  cancel-in-progress: false
+
+jobs:
+  compact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+      - name: Apply redundant-index cleanup
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Compact derived Pokémon Search V2 profiles
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.compact_pokemon_search_v2_profiles \
+            --report-path /tmp/pokemon-search-compaction.json \
+            | tee /tmp/pokemon-search-compaction.log
+      - name: Re-run functional and latency gates
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.benchmark_pokemon_search_v2_fast \
+            --report-path /tmp/pokemon-search-after-compaction-benchmark.json \
+            | tee /tmp/pokemon-search-after-compaction-benchmark.log
+      - name: Audit Neon storage after compaction
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_database_storage_v2 \
+            --report-path /tmp/neon-storage-after-search-compaction.json \
+            | tee /tmp/neon-storage-after-search-compaction.log
+      - name: Upload compaction evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-search-v2-compaction-${{ github.sha }}
+          path: |
+            /tmp/pokemon-search-compaction.json
+            /tmp/pokemon-search-compaction.log
+            /tmp/pokemon-search-after-compaction-benchmark.json
+            /tmp/pokemon-search-after-compaction-benchmark.log
+            /tmp/neon-storage-after-search-compaction.json
+            /tmp/neon-storage-after-search-compaction.log
+          retention-days: 90
+          if-no-files-found: warn

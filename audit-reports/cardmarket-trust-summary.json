@@ -1,0 +1,247 @@
+{
+  "mtg": {
+    "accepted": {
+      "links": 147851,
+      "prints": 147851
+    },
+    "ambiguous_prints": 0,
+    "methods": [
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "scryfall"
+        ],
+        "links": 147851,
+        "mapping_method": "scryfall_cardmarket_id",
+        "prints": 147851,
+        "products": 97794,
+        "reviewed": false,
+        "source_fields": [
+          "cardmarket_id"
+        ],
+        "source_kinds": [
+          ""
+        ]
+      }
+    ],
+    "stale_or_mismatched_latest_snapshots": 0
+  },
+  "onepiece": {
+    "accepted": {
+      "links": 2641,
+      "prints": 2641
+    },
+    "ambiguous_prints": 0,
+    "methods": [
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "one-piece.cards"
+        ],
+        "links": 2104,
+        "mapping_method": "op_variant_cm_global_exact",
+        "prints": 2104,
+        "products": 2104,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          "secondary_explicit_crosswalk"
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "cardmarket+onepiece_official"
+        ],
+        "links": 315,
+        "mapping_method": "bandai_release_exact",
+        "prints": 315,
+        "products": 315,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "one-piece.cards"
+        ],
+        "links": 195,
+        "mapping_method": "op_variant_cm_exact",
+        "prints": 195,
+        "products": 195,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          "secondary_explicit_crosswalk"
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "onepiece_official+cardmarket"
+        ],
+        "links": 18,
+        "mapping_method": "bandai_trusted_expansion_exact",
+        "prints": 18,
+        "products": 18,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "onepiece_official+cardmarket"
+        ],
+        "links": 8,
+        "mapping_method": "bandai_sealed_residual_exact",
+        "prints": 8,
+        "products": 8,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "onepiece_official+cardmarket"
+        ],
+        "links": 1,
+        "mapping_method": "bandai_physical_release_unique_exact",
+        "prints": 1,
+        "products": 1,
+        "reviewed": true,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      }
+    ],
+    "stale_or_mismatched_latest_snapshots": 0
+  },
+  "pokemon": {
+    "accepted": {
+      "links": 24341,
+      "prints": 24341
+    },
+    "ambiguous_prints": 0,
+    "methods": [
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "tcgdex/cards-database"
+        ],
+        "links": 24337,
+        "mapping_method": "tcgdex_cardmarket_id",
+        "prints": 24337,
+        "products": 17657,
+        "reviewed": false,
+        "source_fields": [
+          "physical_variant.third_party.cardmarket",
+          "third_party.cardmarket"
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "1.0",
+        "evidence_sources": [
+          ""
+        ],
+        "links": 4,
+        "mapping_method": "direct_print_identifier",
+        "prints": 4,
+        "products": 4,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      }
+    ],
+    "stale_or_mismatched_latest_snapshots": 0
+  },
+  "yugioh": {
+    "accepted": {
+      "links": 24253,
+      "prints": 24253
+    },
+    "ambiguous_prints": 0,
+    "methods": [
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "cardmarket"
+        ],
+        "links": 22296,
+        "mapping_method": "sealed_expansion_exact_name",
+        "prints": 22296,
+        "products": 22296,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "konami_neuron+cardmarket"
+        ],
+        "links": 1864,
+        "mapping_method": "ygo_konami_product_name_exact",
+        "prints": 1864,
+        "products": 1864,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      },
+      {
+        "confidence": "exact",
+        "evidence_sources": [
+          "cardmarket"
+        ],
+        "links": 93,
+        "mapping_method": "ygo_konami_release_exact",
+        "prints": 93,
+        "products": 93,
+        "reviewed": false,
+        "source_fields": [
+          ""
+        ],
+        "source_kinds": [
+          ""
+        ]
+      }
+    ],
+    "stale_or_mismatched_latest_snapshots": 0
+  }
+}

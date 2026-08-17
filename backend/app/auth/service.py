@@ -18,6 +18,12 @@ class GeneratedApiKey:
     key_hash: str
 
 
+@dataclass(frozen=True)
+class QuotaState:
+    used: int
+    blocked: bool
+
+
 def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
@@ -86,6 +92,62 @@ def get_or_create_usage(session: Session, api_key_id: int, period_ym: str) -> Ap
     session.add(usage)
     session.flush()
     return usage
+
+
+def consume_request_quota(
+    session: Session,
+    api_key_id: int,
+    period_ym: str,
+    monthly_limit: int | None,
+) -> QuotaState:
+    """Atomically increment the monthly counter across all API workers."""
+
+    if monthly_limit is not None and monthly_limit <= 0:
+        return QuotaState(used=0, blocked=True)
+
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        usage = get_or_create_usage(session, api_key_id, period_ym)
+        if monthly_limit is not None and usage.request_count >= monthly_limit:
+            return QuotaState(used=usage.request_count, blocked=True)
+        usage.request_count += 1
+        usage.last_request_at = datetime.now(timezone.utc)
+        session.flush()
+        return QuotaState(used=usage.request_count, blocked=False)
+
+    now = datetime.now(timezone.utc)
+    statement = insert(ApiUsage).values(
+        api_key_id=api_key_id,
+        period_ym=period_ym,
+        request_count=1,
+        last_request_at=now,
+    )
+    update_kwargs = {
+        "set_": {
+            "request_count": ApiUsage.request_count + 1,
+            "last_request_at": now,
+        }
+    }
+    if monthly_limit is not None:
+        update_kwargs["where"] = ApiUsage.request_count < monthly_limit
+    statement = statement.on_conflict_do_update(
+        index_elements=[ApiUsage.api_key_id, ApiUsage.period_ym],
+        **update_kwargs,
+    ).returning(ApiUsage.request_count)
+    used = session.execute(statement).scalar_one_or_none()
+    if used is None:
+        used = session.execute(
+            select(ApiUsage.request_count).where(
+                ApiUsage.api_key_id == api_key_id,
+                ApiUsage.period_ym == period_ym,
+            )
+        ).scalar_one()
+        return QuotaState(used=int(used), blocked=True)
+    return QuotaState(used=int(used), blocked=False)
 
 
 def current_period_ym() -> str:

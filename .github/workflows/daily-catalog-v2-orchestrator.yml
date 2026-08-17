@@ -2,11 +2,8 @@ name: Daily Catalog V2 Orchestrator
 
 on:
   schedule:
-    - cron: '20 2 * * *'
+    - cron: '20 4 * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/daily-catalog-v2-orchestrator.yml']
 
 permissions:
   actions: write
@@ -14,17 +11,17 @@ permissions:
 
 concurrency:
   group: daily-catalog-v2-orchestrator
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 180
+    env:
+      TARGET_REF: ${{ github.ref_name }}
     steps:
-      - name: Dispatch certified catalog-v2 pipeline sequentially
+      - name: Dispatch the production children sequentially
         uses: actions/github-script@v7
-        env:
-          TARGET_REF: catalog-v2
         with:
           github-token: ${{ github.token }}
           script: |
@@ -33,25 +30,14 @@ jobs:
             const targetRef = process.env.TARGET_REF;
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-            // This workflow owns the production schedule. catalog-v2 children are
-            // dispatched sequentially here and do not own daily production crons.
-            // Production scope is intentionally limited to MTG, Pokemon,
-            // Yu-Gi-Oh and One Piece. Riftbound is excluded from automation.
+            // This workflow is the only owner of the daily production schedule.
+            // Every production child below is workflow_dispatch-only and executes
+            // the exact ref dispatched by this orchestrator. Riftbound remains excluded.
             const pipeline = [
-              ['sync-cardmarket-mvp-daily.yml', 'Cardmarket mirror and price guide'],
-              ['apply-mtg-cardmarket-direct-links.yml', 'MTG exact mapping'],
-              ['apply-pokemon-cardmarket-direct-links.yml', 'Pokemon exact mapping'],
-              ['apply-yugioh-cardmarket-exact-singles.yml', 'Yu-Gi-Oh exact mapping'],
-              ['apply-onepiece-cardmarket-release-exact-singles.yml', 'One Piece exact mapping'],
-              ['project-mtg-cardmarket-prices.yml', 'MTG prices'],
-              ['project-pokemon-cardmarket-prices.yml', 'Pokemon prices'],
-              ['project-yugioh-cardmarket-prices.yml', 'Yu-Gi-Oh prices'],
-              ['project-onepiece-cardmarket-prices.yml', 'One Piece prices'],
-              ['apply-cardmarket-product-catalog-bulk.yml', 'Non-single catalog and prices'],
-              ['sync-regional-tcg-content-v4.yml', 'Regional official content'],
-              ['repair-canonical-images.yml', 'Exact-source image repair'],
-              ['audit-roadmap-1-8-live.yml', 'Roadmap 1-8 audit'],
-              ['verify-catalog-v2-physical-truth-gates.yml', 'Final physical truth and current price integrity gate'],
+              ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
+              ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
+              ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
+              ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
             ];
 
             async function api(label, fn, attempts = 6) {
@@ -65,7 +51,7 @@ jobs:
                   const retryable = !status || status === 409 || status === 429 || status >= 500;
                   if (!retryable || attempt === attempts) throw error;
                   const waitMs = Math.min(30000, 1500 * (2 ** (attempt - 1)));
-                  core.warning(`${label} failed (attempt ${attempt}/${attempts}, status ${status || 'transport'}); retrying in ${waitMs}ms: ${error.message}`);
+                  core.warning(`${label} failed (${attempt}/${attempts}, status ${status || 'transport'}); retrying in ${waitMs}ms`);
                   await sleep(waitMs);
                 }
               }
@@ -74,7 +60,9 @@ jobs:
 
             async function branchSha() {
               const response = await api('resolve target branch', () => github.rest.repos.getBranch({
-                owner, repo, branch: targetRef,
+                owner,
+                repo,
+                branch: targetRef,
               }));
               return response.data.commit.sha;
             }
@@ -87,7 +75,7 @@ jobs:
                   workflow_id: workflowId,
                   branch: targetRef,
                   event: 'workflow_dispatch',
-                  per_page: 50,
+                  per_page: 30,
                 }));
                 const lowerBound = dispatchedAt - 15000;
                 const candidates = response.data.workflow_runs
@@ -102,23 +90,24 @@ jobs:
             }
 
             async function waitForRun(workflowId, runId) {
-              const deadline = Date.now() + 55 * 60 * 1000;
+              const deadline = Date.now() + 60 * 60 * 1000;
               while (Date.now() < deadline) {
                 const response = await api(`get run ${runId}`, () => github.rest.actions.getWorkflowRun({
-                  owner, repo, run_id: runId,
+                  owner,
+                  repo,
+                  run_id: runId,
                 }));
-                const run = response.data;
-                if (run.status === 'completed') return run;
+                if (response.data.status === 'completed') return response.data;
                 await sleep(10000);
               }
-              throw new Error(`${workflowId} run ${runId} exceeded 55 minute wait window`);
+              throw new Error(`${workflowId} run ${runId} exceeded the wait window`);
             }
 
             const summary = [];
             for (const [workflowId, label] of pipeline) {
-              core.startGroup(`${label} (${workflowId})`);
               const expectedSha = await branchSha();
               const dispatchedAt = Date.now();
+              core.startGroup(`${label} (${workflowId})`);
               await api(`dispatch ${workflowId}`, () => github.rest.actions.createWorkflowDispatch({
                 owner,
                 repo,
@@ -126,33 +115,30 @@ jobs:
                 ref: targetRef,
               }));
               const resolved = await resolveRun(workflowId, expectedSha, dispatchedAt);
-              core.info(`Resolved child run ${resolved.id}: ${resolved.html_url}`);
               const completed = await waitForRun(workflowId, resolved.id);
               const row = {
                 workflow: workflowId,
-                label,
                 run_id: completed.id,
                 conclusion: completed.conclusion,
                 head_sha: completed.head_sha,
-                url: completed.html_url,
               };
               summary.push(row);
               core.info(JSON.stringify(row));
               core.endGroup();
               if (completed.conclusion !== 'success') {
-                core.setFailed(`${label} failed: child run ${completed.id} concluded ${completed.conclusion}`);
+                core.setFailed(`${label} failed in run ${completed.id}: ${completed.conclusion}`);
                 break;
               }
             }
 
             await core.summary
-              .addHeading('Daily Catalog V2 pipeline')
+              .addHeading('Daily Catalog V2')
               .addTable([
                 [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}],
                 ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion)]),
               ])
               .write();
 
-            if (summary.length === pipeline.length && summary.every(row => row.conclusion === 'success')) {
-              core.info('Certified daily catalog-v2 pipeline completed successfully.');
+            if (summary.length !== pipeline.length || summary.some(row => row.conclusion !== 'success')) {
+              throw new Error('Daily catalog pipeline did not complete successfully');
             }

@@ -1,0 +1,63 @@
+name: Smoke MVP Live Contracts
+
+on:
+  push:
+    branches:
+      - mvp-launch-2026-08-09
+    paths:
+      - '.github/workflows/smoke-mvp-live-contracts.yml'
+      - 'backend/app/scripts/smoke_mvp_live_contracts.py'
+      - 'backend/app/search_v2/onepiece_exact_collector.py'
+      - 'backend/app/user_auth_service.py'
+      - 'backend/app/user_models.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-mvp-live-contracts
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout MVP branch
+        uses: actions/checkout@v4
+        with:
+          ref: mvp-launch-2026-08-09
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify live schema revision
+        run: |
+          test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          with create_engine(url, pool_pre_ping=True).connect() as conn:
+              version = str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one())
+          if version != '20260809_26':
+              raise SystemExit(f'Expected live revision 20260809_26, got {version}')
+          print('Live schema revision PASS:', version)
+          PY
+
+      - name: Run rollback-only One Piece and user-library smoke
+        run: python -m app.scripts.smoke_mvp_live_contracts

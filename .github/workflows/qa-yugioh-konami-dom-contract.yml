@@ -1,0 +1,43 @@
+name: QA YuGiOh Konami DOM Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-yugioh-konami-dom-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests beautifulsoup4
+      - name: Inspect exact print row structure on representative official pages
+        run: |
+          python - <<'PY'
+          import json,requests
+          from bs4 import BeautifulSoup
+          cases=[('12371','YS16-EN001'),('5432','RA02-EN050'),('6960','STON-EN001')]
+          out=[]
+          h={'User-Agent':'DontRipIt/1.0 konami-dom-contract','Accept':'text/html'}
+          for cid,code in cases:
+            r=requests.get('https://www.db.yugioh-card.com/yugiohdb/card_search.action',params={'cid':cid,'ope':'2','request_locale':'en'},headers=h,timeout=30)
+            r.raise_for_status();s=BeautifulSoup(r.text,'html.parser')
+            matches=[]
+            for node in s.find_all(string=lambda x: x and code in x):
+              anc=node.parent
+              chain=[]
+              for _ in range(7):
+                if anc is None:break
+                chain.append({'tag':anc.name,'class':anc.get('class'),'id':anc.get('id'),'text':' '.join(anc.stripped_strings)[:800]})
+                anc=anc.parent
+              matches.append(chain)
+            out.append({'cid':cid,'code':code,'matches':matches})
+          print(json.dumps(out,indent=2,ensure_ascii=False))
+          PY

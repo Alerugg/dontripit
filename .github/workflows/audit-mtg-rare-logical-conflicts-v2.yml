@@ -1,0 +1,57 @@
+name: Audit MTG Rare Logical Conflicts V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-mtg-rare-logical-conflicts-v2.yml'
+      - 'backend/app/scripts/audit_mtg_rare_logical_conflicts_v2.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtg-rare-logical-conflicts-v2
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile focused audit modules
+        run: python -m py_compile app/scripts/audit_mtg_rare_logical_conflicts_v2.py app/scripts/build_mtg_v2_snapshot.py app/mtg_identity_v2.py
+
+      - name: Audit rare logical field conflicts
+        run: python -m app.scripts.audit_mtg_rare_logical_conflicts_v2 --output /tmp/mtg-rare-logical-conflicts-v2.json
+
+      - name: Upload focused read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-rare-logical-conflicts-v2-${{ github.sha }}
+          path: /tmp/mtg-rare-logical-conflicts-v2.json
+          retention-days: 90
+          if-no-files-found: warn

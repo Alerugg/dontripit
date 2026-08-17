@@ -1,0 +1,19 @@
+{
+  "mode": "apply",
+  "game": "onepiece",
+  "mapping_method": "bandai_trusted_expansion_exact",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "trusted_expansion_anchors": 49,
+  "applied_links": 110,
+  "total_onepiece_en_mapped_after_apply": 3748,
+  "canonical_en_prints": 4672,
+  "status_counts": {
+    "unanchored_expansion": 7772,
+    "no_unlinked_release_match": 289,
+    "release_match_ambiguous": 27,
+    "raw_candidate": 110,
+    "collector_not_parseable": 28,
+    "multiple_products_claim_print": 0,
+    "safe_candidate": 110
+  }
+}

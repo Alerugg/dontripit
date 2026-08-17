@@ -1,0 +1,17 @@
+{
+  "mode": "apply",
+  "game": "yugioh",
+  "mapping_method": "ygo_konami_product_name_exact",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "validated_product_name_anchors": 256,
+  "applied_links": 1864,
+  "accepted_exact_prints_after": 24253,
+  "accepted_exact_products_after": 24253,
+  "status_counts": {
+    "product_already_exactly_linked": 22389,
+    "expansion_not_validated_anchor": 51629,
+    "cardmarket_name_not_unique_in_expansion": 9957,
+    "raw_candidate": 1864,
+    "no_exact_official_name_match": 453
+  }
+}

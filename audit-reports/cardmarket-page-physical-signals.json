@@ -1,0 +1,46 @@
+{
+  "generic_749435": {
+    "bytes": 5730,
+    "canonical": null,
+    "final_url": "https://www.cardmarket.com/en/OnePiece/Products?idProduct=749435",
+    "ids": [
+      "749435"
+    ],
+    "meta": {},
+    "physical_text_hits": [],
+    "requested": "https://www.cardmarket.com/en/OnePiece/Products?idProduct=749435",
+    "status": 403
+  },
+  "generic_873863": {
+    "bytes": 5730,
+    "canonical": null,
+    "final_url": "https://www.cardmarket.com/en/OnePiece/Products?idProduct=873863",
+    "ids": [
+      "873863"
+    ],
+    "meta": {},
+    "physical_text_hits": [],
+    "requested": "https://www.cardmarket.com/en/OnePiece/Products?idProduct=873863",
+    "status": 403
+  },
+  "pillars": {
+    "bytes": 5857,
+    "canonical": null,
+    "final_url": "https://www.cardmarket.com/en/OnePiece/Products/Singles/Pillars-of-Strength/MonkeyDLuffy-ST01-012",
+    "ids": [],
+    "meta": {},
+    "physical_text_hits": [],
+    "requested": "https://www.cardmarket.com/en/OnePiece/Products/Singles/Pillars-of-Strength/MonkeyDLuffy-ST01-012",
+    "status": 403
+  },
+  "winner_v1": {
+    "bytes": 5845,
+    "canonical": null,
+    "final_url": "https://www.cardmarket.com/en/OnePiece/Products/Singles/Winner-Cards/MonkeyDLuffy-ST01-012-V1",
+    "ids": [],
+    "meta": {},
+    "physical_text_hits": [],
+    "requested": "https://www.cardmarket.com/en/OnePiece/Products/Singles/Winner-Cards/MonkeyDLuffy-ST01-012-V1",
+    "status": 403
+  }
+}

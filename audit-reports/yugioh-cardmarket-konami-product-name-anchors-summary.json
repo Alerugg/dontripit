@@ -1,0 +1,28 @@
+{
+  "mode": "dry_run",
+  "game": "yugioh",
+  "latest_cardmarket_snapshot": "2026-08-11 09:02:40.181597+00:00",
+  "konami_products": 836,
+  "cardmarket_non_single_products": 2385,
+  "cardmarket_non_single_expansions": 1108,
+  "category_counts": {
+    "Yugioh Booster": 854,
+    "Yugioh Starter Deck": 108,
+    "Yugioh Special Edition": 155,
+    "Yugioh Collector Tins": 111,
+    "Yugioh Structure Deck": 232,
+    "Yugioh Promo Products": 141,
+    "Yugioh Display": 758,
+    "Yugioh Lot": 18,
+    "Yugioh Event Tickets": 8
+  },
+  "status_counts": {
+    "sealed_items_with_unique_exact_name_match": 648,
+    "conflicting_expansions": 48,
+    "unanchored_expansions": 735,
+    "anchored_expansions": 325
+  },
+  "unique_exact_name_anchors": 325,
+  "anchor_conflicts": 48,
+  "anchored_expansions_without_any_existing_exact_single_link": 53
+}

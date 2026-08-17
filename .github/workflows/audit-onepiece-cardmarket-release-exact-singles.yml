@@ -1,0 +1,196 @@
+name: Audit One Piece Cardmarket Release Exact Singles
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-onepiece-cardmarket-release-exact-singles.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit exact products using sealed release identity plus Bandai PrintRelease provenance
+        run: |
+          python - <<'PY'
+          import json, os, re, unicodedata
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+
+          def norm(value):
+              value=unicodedata.normalize('NFKD',str(value or ''))
+              value=''.join(ch for ch in value if not unicodedata.combining(ch)).casefold()
+              value=value.replace('’',"'").replace('&',' and ')
+              value=re.sub(r'[^a-z0-9]+',' ',value)
+              return re.sub(r'\s+',' ',value).strip()
+
+          def official_release_core(name):
+              raw=str(name or '').strip()
+              raw=re.sub(r'\s*\[[^\]]+\]\s*$','',raw).strip()
+              m=re.match(r'^(?:BOOSTER PACK|STARTER DECK|EXTRA BOOSTER|PREMIUM BOOSTER|ULTIMATE DECK)\s*-(.+)-\s*$',raw,flags=re.I)
+              if m: return norm(m.group(1))
+              return norm(raw)
+
+          def sealed_bases(name,category):
+              raw=str(name or '').strip(); values={norm(raw)}
+              prefixes=('Starter Deck: ','Ultimate Deck: ')
+              for prefix in prefixes:
+                  if raw.casefold().startswith(prefix.casefold()): values.add(norm(raw[len(prefix):]))
+              # Product shells only: these are independent commercial release-name evidence.
+              patterns=[
+                r'\s+Booster Box Case\s*\(.*\)$',r'\s+Booster Box$',r'\s+Sleeved Booster$',
+                r'\s+Booster Display$',r'\s+Booster$',r'\s*:\s*Pre-Release Pack$',
+              ]
+              current=raw
+              for pat in patterns:
+                  stripped=re.sub(pat,'',current,flags=re.I).strip()
+                  if stripped!=current: values.add(norm(stripped))
+              return {x for x in values if x}
+
+          COLLECTOR_RE=re.compile(r'^(?P<name>.+)\s+\((?P<collector>(?:OP|ST|EB|PRB)\d{1,2}-\d{3}|P-\d{3})\)\s*$',re.I)
+          def parse_single(name):
+              m=COLLECTOR_RE.match(str(name or '').strip())
+              if not m: return None
+              collector=m.group('collector').upper()
+              # canonical DB uses the collector card number without hyphen in family code, e.g. OP01-001
+              collector=re.sub(r'^(OP|ST|EB|PRB)0?(\d{1,2})-',lambda x:f'{x.group(1).upper()}{int(x.group(2)):02d}-',collector)
+              return norm(m.group('name')),collector
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              gid=conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
+              latest=conn.execute(text("SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket'" )).scalar_one()
+              releases=[dict(x) for x in conn.execute(text('''
+                SELECT id,external_id,name FROM catalog_releases
+                WHERE game_id=:g AND source='onepiece_official'
+              '''),{'g':gid}).mappings()]
+              release_alias=defaultdict(list)
+              for r in releases: release_alias[official_release_core(r['name'])].append(r)
+
+              sealed=[dict(x) for x in conn.execute(text('''
+                SELECT external_id,expansion_external_id,name,category
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=:g
+                  AND product_group='non_single' AND last_seen_at=:latest
+              '''),{'g':gid,'latest':latest}).mappings()]
+              by_exp=defaultdict(list)
+              for p in sealed: by_exp[str(p['expansion_external_id'] or '')].append(p)
+
+              expansion_release={}; expansion_conflicts=[]; expansion_evidence={}
+              for exp,items in by_exp.items():
+                  votes=defaultdict(list)
+                  for item in items:
+                      for base in sealed_bases(item['name'],item['category']):
+                          matches=release_alias.get(base,[])
+                          if len(matches)==1:
+                              rel=matches[0]
+                              votes[int(rel['id'])].append({'idProduct':str(item['external_id']),'name':item['name'],'category':item['category'],'matched_core':base,'official_release':rel['name'],'release_external_id':rel['external_id']})
+                  if len(votes)==1:
+                      rid=next(iter(votes)); expansion_release[exp]=rid; expansion_evidence[exp]=votes[rid]
+                  elif len(votes)>1:
+                      expansion_conflicts.append({'idExpansion':exp,'release_ids':sorted(votes),'evidence':{str(k):v[:5] for k,v in votes.items()}})
+
+              # Canonical exact Prints that officially appear in each release.
+              print_rows=conn.execute(text('''
+                SELECT pr.release_id,p.id print_id,p.collector_number,p.variant,p.rarity,p.language,
+                       c.id card_id,c.name card_name,s.code set_code
+                FROM print_releases pr JOIN prints p ON p.id=pr.print_id
+                JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                WHERE c.game_id=:g
+              '''),{'g':gid}).mappings().all()
+              canon=defaultdict(list)
+              for r in print_rows:
+                  key=(int(r['release_id']),norm(r['card_name']),str(r['collector_number']).upper())
+                  canon[key].append(dict(r))
+
+              singles=[dict(x) for x in conn.execute(text('''
+                SELECT id external_product_id,external_id,expansion_external_id,name,metacard_external_id
+                FROM external_catalog_products WHERE source='cardmarket' AND game_id=:g
+                  AND product_group='single' AND last_seen_at=:latest
+              '''),{'g':gid,'latest':latest}).mappings()]
+
+          parsed_counts=Counter()
+          for p in singles:
+              parsed=parse_single(p['name'])
+              if parsed: parsed_counts[(str(p['expansion_external_id'] or ''),parsed[0],parsed[1])]+=1
+          statuses=Counter(); decisions=[]; claims=defaultdict(list)
+          for p in singles:
+              exp=str(p['expansion_external_id'] or '')
+              rid=expansion_release.get(exp)
+              parsed=parse_single(p['name'])
+              candidates=[]
+              if rid is None: status='unconfirmed_release_expansion'
+              elif parsed is None: status='collector_not_parseable'
+              else:
+                  card_name,collector=parsed
+                  candidates=canon.get((rid,card_name,collector),[])
+                  if parsed_counts[(exp,card_name,collector)]>1: status='duplicate_cardmarket_identity'
+                  elif len(candidates)==0: status='release_print_no_match'
+                  elif len(candidates)>1: status='official_release_print_ambiguity'
+                  else: status='exact_candidate'
+              statuses[status]+=1
+              d={
+                'idProduct':str(p['external_id']),'external_product_id':int(p['external_product_id']),
+                'idExpansion':exp,'name':p['name'],'idMetacard':p['metacard_external_id'],
+                'release_id':rid,'status':status,
+                'release_evidence':expansion_evidence.get(exp,[])[:10],
+                'candidate_prints':[
+                  {'print_id':int(x['print_id']),'card_id':int(x['card_id']),'set_code':x['set_code'],'collector_number':x['collector_number'],'variant':x['variant'],'rarity':x['rarity'],'language':x['language']}
+                  for x in candidates[:20]
+                ],
+              }
+              decisions.append(d)
+              if status=='exact_candidate': claims[int(candidates[0]['print_id'])].append(str(p['external_id']))
+          multi={pid:ids for pid,ids in claims.items() if len(ids)>1}
+          safe=[]
+          for d in decisions:
+              if d['status']!='exact_candidate': continue
+              pid=d['candidate_prints'][0]['print_id']
+              if pid in multi:
+                  d['status']='multiple_products_claim_print'; statuses['exact_candidate']-=1; statuses['multiple_products_claim_print']+=1
+              else: safe.append(d)
+
+          report={
+            'mode':'read_only','game':'onepiece','source':'Cardmarket + Bandai canonical release provenance',
+            'current_singles':len(singles),'cardmarket_expansions_with_sealed':len(by_exp),
+            'confirmed_release_expansions':len(expansion_release),'conflicting_release_expansions':len(expansion_conflicts),
+            'status_counts':dict(sorted(statuses.items())),'safe_exact_products':len(safe),
+            'safe_exact_prints':len({x['candidate_prints'][0]['print_id'] for x in safe}),
+            'multiple_product_print_claims':len(multi),
+            'confirmed_expansions':{
+              exp:{'release_id':rid,'evidence':expansion_evidence[exp][:20]}
+              for exp,rid in sorted(expansion_release.items())
+            },
+            'expansion_conflicts':expansion_conflicts,
+            'safe_samples':safe[:100],
+            'problem_samples':[x for x in decisions if x['status']!='exact_candidate'][:250],
+          }
+          Path('/tmp/onepiece-cardmarket-release-exact-audit.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('confirmed_expansions','expansion_conflicts','safe_samples','problem_samples')},indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onepiece-cardmarket-release-exact-audit-${{ github.run_id }}
+          path: /tmp/onepiece-cardmarket-release-exact-audit.json
+          retention-days: 30
+          if-no-files-found: error

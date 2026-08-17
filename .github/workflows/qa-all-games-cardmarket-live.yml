@@ -1,0 +1,210 @@
+name: QA All Games Cardmarket Live
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/qa-all-games-cardmarket-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Audit live Cardmarket coverage for every game
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACCEPTED=('accepted','mapped','exact')
+          UNSUPPORTED=('etched','glossy')
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          report={}
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('''
+                      SELECT p.id AS print_id,p.collector_number,p.language,p.variant,p.is_foil,p.rarity,
+                             c.name AS card_name,s.code AS set_code,s.name AS set_name,
+                             g.slug AS game_slug,g.name AS game_name
+                      FROM prints p
+                      JOIN cards c ON c.id=p.card_id
+                      JOIN sets s ON s.id=p.set_id
+                      JOIN games g ON g.id=c.game_id
+                      ORDER BY g.slug,lower(coalesce(p.language,'')),lower(coalesce(s.code,'')),p.collector_number,p.id
+                  ''')
+                  prints=[dict(r) for r in cur.fetchall()]
+                  if not prints: raise AssertionError('Catalog prints table is empty')
+                  ids=[int(r['print_id']) for r in prints]
+
+                  cur.execute('''
+                    SELECT g.slug,e.product_group,count(*) products,max(e.last_seen_at) last_seen_at,
+                           max(p.as_of) latest_price_as_of,
+                           count(DISTINCT p.external_product_id) FILTER (WHERE p.as_of IS NOT NULL) products_with_any_snapshot
+                    FROM games g
+                    LEFT JOIN external_catalog_products e ON e.game_id=g.id AND e.source='cardmarket'
+                    LEFT JOIN external_market_price_snapshots p ON p.external_product_id=e.id
+                    WHERE g.slug IN ('mtg','yugioh','pokemon','onepiece','riftbound')
+                    GROUP BY g.slug,e.product_group
+                    ORDER BY g.slug,e.product_group
+                  ''')
+                  external_catalog=[dict(r) for r in cur.fetchall()]
+
+                  cur.execute('''
+                      WITH latest_prices AS (
+                          SELECT external_product_id,currency,price_variant,price_low,price_mid,price_market,price_last,as_of AS price_as_of,
+                                 ROW_NUMBER() OVER(PARTITION BY external_product_id,currency,price_variant ORDER BY as_of DESC,id DESC) rn
+                          FROM external_market_price_snapshots
+                          WHERE currency='EUR' AND price_variant IN ('nonfoil','foil')
+                      )
+                      SELECT l.print_id,e.id AS external_product_id,e.external_id AS cardmarket_id,e.name AS product_name,
+                             e.website_path,l.mapping_method,l.confidence,l.link_status,
+                             lp.price_low,lp.price_mid,lp.price_market,lp.price_last,lp.price_as_of,lp.price_variant
+                      FROM external_catalog_print_links l
+                      JOIN external_catalog_products e ON e.id=l.external_product_id
+                      JOIN prints p ON p.id=l.print_id
+                      LEFT JOIN latest_prices lp ON lp.external_product_id=e.id AND lp.rn=1
+                           AND lp.price_variant=CASE WHEN p.is_foil IS TRUE THEN 'foil' ELSE 'nonfoil' END
+                      WHERE l.print_id=ANY(%s) AND e.source='cardmarket' AND e.product_group='single'
+                        AND l.link_status=ANY(%s)
+                      ORDER BY l.print_id,e.id
+                  ''',(ids,list(ACCEPTED)))
+                  links=defaultdict(list)
+                  for r in cur.fetchall(): links[int(r['print_id'])].append(dict(r))
+
+                  totals=Counter(); by_game=defaultdict(Counter); by_game_lang=defaultdict(Counter); by_game_set=defaultdict(Counter)
+                  gaps=[]
+                  for p in prints:
+                      pid=int(p['print_id']); rows=links.get(pid,[])
+                      product_ids={int(r['external_product_id']) for r in rows if r.get('external_product_id') is not None}
+                      market=None; reason=None
+                      if not rows:
+                          status='unmapped'; reason='no_accepted_exact_cardmarket_mapping'
+                      elif len(product_ids)!=1:
+                          status='ambiguous'; reason='multiple_accepted_cardmarket_products'
+                      else:
+                          market=rows[0]
+                          vals=(market.get('price_mid'),market.get('price_market'),market.get('price_last'),market.get('price_low'))
+                          has_price=market.get('price_as_of') is not None and any(v is not None for v in vals)
+                          variant=str(p.get('variant') or '').lower()
+                          if any(t in variant for t in UNSUPPORTED):
+                              status='mapped_unpriced'; reason='cardmarket_priceguide_cannot_separate_finish'
+                          elif not has_price:
+                              status='mapped_unpriced'; reason='no_current_cardmarket_priceguide_row'
+                          else:
+                              status='priced'
+
+                      game=str(p.get('game_slug') or '')
+                      lang=str(p.get('language') or '').lower() or 'unknown'
+                      set_code=str(p.get('set_code') or '').upper() or 'UNKNOWN'
+                      totals[status]+=1
+                      for c in (by_game[game],by_game_lang[(game,lang)],by_game_set[(game,lang,set_code)]):
+                          c['total']+=1; c[status]+=1
+                      if status!='priced':
+                          gaps.append({
+                              'game':game,'language':lang,'print_id':pid,'set_code':set_code,
+                              'collector_number':p.get('collector_number'),'card_name':p.get('card_name'),
+                              'variant':p.get('variant'),'foil':p.get('is_foil'),'rarity':p.get('rarity'),
+                              'status':status,'reason':reason,
+                              'cardmarket':None if market is None else {
+                                  'id_product':str(market.get('cardmarket_id') or ''),
+                                  'product_name':market.get('product_name'),'website_path':market.get('website_path'),
+                                  'mapping_method':market.get('mapping_method')
+                              }
+                          })
+
+                  def row(label,c,**extra):
+                      total=int(c['total']); priced=int(c['priced'])
+                      return {label:extra.pop(label),**extra,'total':total,'priced':priced,
+                              'mapped_unpriced':int(c['mapped_unpriced']),'unmapped':int(c['unmapped']),
+                              'ambiguous':int(c['ambiguous']),
+                              'coverage_percent':round(priced/total*100,2) if total else 0}
+
+                  games=[]
+                  supported=('mtg','yugioh','pokemon','onepiece','riftbound')
+                  for game in supported:
+                      games.append(row('game',by_game[game],game=game))
+                  games.sort(key=lambda x:(x['coverage_percent'],x['game']))
+
+                  languages=[]
+                  for (game,lang),c in by_game_lang.items(): languages.append(row('game',c,game=game,language=lang))
+                  languages.sort(key=lambda x:(x['game'],x['coverage_percent'],x['language']))
+
+                  sets=[]
+                  for (game,lang,set_code),c in by_game_set.items(): sets.append(row('game',c,game=game,language=lang,set_code=set_code))
+                  sets.sort(key=lambda x:(-(x['unmapped']+x['mapped_unpriced']+x['ambiguous']),x['coverage_percent'],x['game'],x['set_code']))
+
+                  total=len(prints); priced=int(totals['priced'])
+                  report={
+                      'status':'completed','total_prints':total,'priced_prints':priced,
+                      'mapped_unpriced_prints':int(totals['mapped_unpriced']),
+                      'unmapped_prints':int(totals['unmapped']),'ambiguous_prints':int(totals['ambiguous']),
+                      'priced_coverage_percent':round(priced/total*100,2),
+                      'external_catalog':external_catalog,
+                      'games':games,'languages':languages,'sets':sets,'gaps':gaps
+                  }
+          finally:
+              conn.close()
+
+          out=Path('/tmp/all-games-cardmarket-live-audit.json')
+          out.write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          compact={k:v for k,v in report.items() if k not in ('languages','sets','gaps')}
+          print(json.dumps(compact,indent=2,ensure_ascii=False,default=str))
+          print('\nTOP 60 SET GAPS:')
+          print(json.dumps(report['sets'][:60],indent=2,ensure_ascii=False))
+          print('\nFIRST 200 GAPS:')
+          print(json.dumps(report['gaps'][:200],indent=2,ensure_ascii=False,default=str))
+          PY
+      - name: Publish audit summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          p=Path('/tmp/all-games-cardmarket-live-audit.json')
+          if not p.exists(): print('## All-games Cardmarket audit\nNo report produced.'); raise SystemExit(0)
+          r=json.loads(p.read_text())
+          print('## Cardmarket live coverage — all games')
+          print(f"- Prints: **{r['total_prints']}**")
+          print(f"- Priced: **{r['priced_prints']}** ({r['priced_coverage_percent']}%)")
+          print(f"- Mapped but unpriced: **{r['mapped_unpriced_prints']}**")
+          print(f"- Unmapped: **{r['unmapped_prints']}**")
+          print(f"- Ambiguous: **{r['ambiguous_prints']}**")
+          print('\n### By game')
+          for g in r['games']:
+              print(f"- `{g['game']}`: {g['priced']}/{g['total']} priced ({g['coverage_percent']}%); unmapped={g['unmapped']}; mapped_unpriced={g['mapped_unpriced']}; ambiguous={g['ambiguous']}")
+          print('\n### Cardmarket external catalog freshness')
+          for x in r['external_catalog']:
+              print(f"- `{x['slug']} {x.get('product_group')}`: products={x['products']}; last_seen={x.get('last_seen_at')}; latest_price={x.get('latest_price_as_of')}")
+          print('\n### Largest set/language gaps')
+          shown=0
+          for s in r['sets']:
+              gap=s['total']-s['priced']
+              if not gap: continue
+              print(f"- `{s['game']} {s['set_code']} {s['language']}`: {s['priced']}/{s['total']} priced; {gap} gaps")
+              shown+=1
+              if shown>=30: break
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: all-games-cardmarket-live-audit-${{ github.run_id }}
+          path: /tmp/all-games-cardmarket-live-audit.json

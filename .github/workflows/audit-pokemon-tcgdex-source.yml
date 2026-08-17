@@ -1,0 +1,43 @@
+name: Audit Pokemon TCGdex Source
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-source.yml'
+      - 'backend/app/scripts/audit_pokemon_tcgdex_source.py'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Audit complete English TCGdex source
+        run: |
+          set -o pipefail
+          python -m app.scripts.audit_pokemon_tcgdex_source | tee /tmp/pokemon-tcgdex-source-audit.json
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-tcgdex-source-audit-${{ github.sha }}
+          path: /tmp/pokemon-tcgdex-source-audit.json
+          if-no-files-found: warn
+          retention-days: 90

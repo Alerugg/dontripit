@@ -1,0 +1,83 @@
+name: Apply Pokemon Legacy sv1 Cleanup Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/apply-pokemon-legacy-sv1-cleanup-live.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Guarded migration of two sealed products to canonical sv01 then delete empty sv1
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.autocommit=False
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute('''SELECT s.* FROM sets s JOIN games g ON g.id=s.game_id
+                           WHERE g.slug='pokemon' AND s.tcgdex_id IN ('sv1','sv01')
+                           ORDER BY s.tcgdex_id FOR UPDATE''')
+              sets=[dict(x) for x in c.fetchall()]
+              assert len(sets)==2, f'expected exactly sv1 and sv01, got {sets}'
+              by={x['tcgdex_id']:x for x in sets}; legacy=by['sv1']; canonical=by['sv01']
+              assert legacy['code']=='svi' and canonical['code']=='sv01', (legacy,canonical)
+              assert legacy['name']==canonical['name']=='Scarlet & Violet', (legacy,canonical)
+              assert str(legacy['release_date'])==str(canonical['release_date'])=='2023-03-31', (legacy,canonical)
+              assert legacy['game_id']==canonical['game_id'], (legacy,canonical)
+
+              c.execute('SELECT count(*) n FROM prints WHERE set_id=%s',(legacy['id'],)); assert int(c.fetchone()['n'])==0
+              c.execute('SELECT * FROM products WHERE set_id=%s ORDER BY id FOR UPDATE',(legacy['id'],)); products=[dict(x) for x in c.fetchall()]
+              expected=[('booster_box','Scarlet & Violet Booster Box'),('etb','Scarlet & Violet Elite Trainer Box')]
+              assert [(x['product_type'],x['name']) for x in products]==expected, products
+              assert all(x['game_id']==legacy['game_id'] and str(x['release_date'])=='2023-03-31' for x in products), products
+              c.execute('SELECT count(*) n FROM products WHERE set_id=%s',(canonical['id'],)); assert int(c.fetchone()['n'])==0
+
+              # Ensure products are the only remaining FK references to the legacy set.
+              c.execute('''
+                SELECT tc.table_name,kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu ON kcu.constraint_name=tc.constraint_name AND kcu.table_schema=tc.table_schema
+                JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema
+                WHERE tc.constraint_type='FOREIGN KEY' AND ccu.table_schema='public' AND ccu.table_name='sets' AND ccu.column_name='id'
+                ORDER BY tc.table_name,kcu.column_name
+              ''')
+              refs=[]
+              for fk in c.fetchall():
+                table=fk['table_name'];col=fk['column_name']
+                c.execute(f'SELECT count(*) n FROM "{table}" WHERE "{col}"=%s',(legacy['id'],));n=int(c.fetchone()['n'])
+                if n:refs.append((table,col,n))
+              assert refs==[('products','set_id',2)], refs
+
+              c.execute('UPDATE products SET set_id=%s WHERE set_id=%s RETURNING id,name,product_type,set_id',(canonical['id'],legacy['id']))
+              moved=[dict(x) for x in c.fetchall()]; assert len(moved)==2,moved
+              c.execute('DELETE FROM sets WHERE id=%s RETURNING id,tcgdex_id,code,name',(legacy['id'],)); deleted=dict(c.fetchone() or {})
+              assert deleted.get('tcgdex_id')=='sv1', deleted
+
+              c.execute("SELECT count(*) n FROM sets s JOIN games g ON g.id=s.game_id WHERE g.slug='pokemon'"); pokemon_sets=int(c.fetchone()['n'])
+              c.execute("SELECT count(*) n FROM sets s JOIN games g ON g.id=s.game_id WHERE g.slug='pokemon' AND s.tcgdex_id='sv1'"); assert int(c.fetchone()['n'])==0
+              c.execute('SELECT count(*) n FROM products WHERE set_id=%s',(canonical['id'],)); assert int(c.fetchone()['n'])==2
+              assert pokemon_sets==203, f'expected 203 canonical Pokemon sets after cleanup, got {pokemon_sets}'
+            conn.commit()
+            print(json.dumps({'status':'applied','moved_products':moved,'deleted_set':deleted,'pokemon_sets_after':pokemon_sets},indent=2,ensure_ascii=False,default=str))
+          except Exception:
+            conn.rollback();raise
+          finally:
+            conn.close()
+          PY

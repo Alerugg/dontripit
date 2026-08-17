@@ -1,0 +1,177 @@
+name: Verify Vercel Production Neon
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/verify-vercel-production-neon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-vercel-production-neon
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      VERCEL_API_URL: https://api-project-black.vercel.app
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install probe dependencies
+        run: pip install psycopg2-binary requests
+
+      - name: Prove Vercel Production reads Neon
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import secrets
+          import time
+          from pathlib import Path
+
+          import psycopg2
+          import requests
+
+          db_url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not db_url:
+              raise SystemExit('No Neon DATABASE_URL secret configured')
+          db_url = db_url.replace('postgresql+psycopg2://', 'postgresql://', 1)
+          db_url = db_url.replace('postgres+psycopg2://', 'postgresql://', 1)
+          db_url = db_url.replace('postgres://', 'postgresql://', 1)
+
+          api_url = os.environ['VERCEL_API_URL'].rstrip('/')
+          raw_key = 'ak_' + secrets.token_urlsafe(32)
+          prefix = raw_key[:8]
+          key_hash = hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
+          key_id = None
+          report = {
+              'status': 'blocked',
+              'target': api_url,
+              'temporary_key_prefix': prefix,
+              'temporary_key_plaintext_persisted': False,
+          }
+
+          def connect():
+              return psycopg2.connect(db_url, connect_timeout=15)
+
+          try:
+              with connect() as conn:
+                  with conn.cursor() as cur:
+                      cur.execute("SELECT id FROM api_plans WHERE name='free'")
+                      row = cur.fetchone()
+                      if not row:
+                          raise RuntimeError('free API plan not found in Neon')
+                      plan_id = row[0]
+                      cur.execute(
+                          """
+                          INSERT INTO api_keys
+                            (key_hash, prefix, plan_id, is_active, label, scopes)
+                          VALUES (%s, %s, %s, true, %s, %s::jsonb)
+                          RETURNING id
+                          """,
+                          (key_hash, prefix, plan_id, 'vercel-production-neon-proof', json.dumps(['read:catalog'])),
+                      )
+                      key_id = cur.fetchone()[0]
+
+              response = requests.get(
+                  f'{api_url}/api/v1/games',
+                  headers={'X-API-Key': raw_key, 'Accept': 'application/json'},
+                  timeout=45,
+              )
+              report['http_status'] = response.status_code
+              report['response_content_type'] = response.headers.get('content-type')
+              if response.status_code != 200:
+                  report['response_excerpt'] = response.text[:500]
+                  raise RuntimeError(f'Vercel API returned HTTP {response.status_code}')
+
+              games = response.json()
+              if not isinstance(games, list):
+                  raise RuntimeError('Unexpected /api/v1/games response shape')
+              slugs = sorted({str(item.get('slug')) for item in games if isinstance(item, dict) and item.get('slug')})
+              required = {'mtg', 'pokemon', 'onepiece', 'yugioh'}
+              missing = sorted(required - set(slugs))
+              if missing:
+                  raise RuntimeError(f'Canonical games missing from Vercel response: {missing}')
+
+              # Give the request metric transaction a brief moment to commit.
+              time.sleep(1)
+              with connect() as conn:
+                  with conn.cursor() as cur:
+                      cur.execute(
+                          "SELECT COALESCE(SUM(request_count), 0) FROM api_usage WHERE api_key_id=%s",
+                          (key_id,),
+                      )
+                      usage_count = int(cur.fetchone()[0])
+                      cur.execute(
+                          """
+                          SELECT COUNT(*)
+                          FROM api_request_metrics
+                          WHERE api_key_prefix=%s
+                            AND endpoint='/api/v1/games'
+                            AND status_code=200
+                          """,
+                          (prefix,),
+                      )
+                      metric_count = int(cur.fetchone()[0])
+                      cur.execute("SELECT current_database(), current_user")
+                      database_name, database_user = cur.fetchone()
+
+              if usage_count < 1:
+                  raise RuntimeError('Vercel request did not increment Neon api_usage')
+              if metric_count < 1:
+                  raise RuntimeError('Vercel request did not create Neon api_request_metrics evidence')
+
+              report.update(
+                  {
+                      'status': 'pass',
+                      'games': slugs,
+                      'usage_count_seen_in_neon': usage_count,
+                      'metric_count_seen_in_neon': metric_count,
+                      'database_name': database_name,
+                      'database_user': database_user,
+                      'proof': 'A temporary API key created only in Neon authenticated successfully on Vercel Production, returned the canonical game catalog, and its usage/metric were observed back in Neon.',
+                  }
+              )
+          finally:
+              if key_id is not None:
+                  try:
+                      with connect() as conn:
+                          with conn.cursor() as cur:
+                              cur.execute("DELETE FROM api_request_metrics WHERE api_key_prefix=%s", (prefix,))
+                              cur.execute("DELETE FROM api_usage WHERE api_key_id=%s", (key_id,))
+                              cur.execute("DELETE FROM api_keys WHERE id=%s", (key_id,))
+                  except Exception as cleanup_error:
+                      report['cleanup_error'] = str(cleanup_error)
+                      report['status'] = 'blocked'
+              report['temporary_rows_cleaned'] = 'cleanup_error' not in report
+              Path('/tmp/vercel-production-neon-proof.json').write_text(
+                  json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+              )
+              print(json.dumps(report, indent=2, sort_keys=True))
+
+          if report['status'] != 'pass':
+              raise SystemExit('Vercel Production -> Neon proof did not pass')
+          PY
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vercel-production-neon-proof-${{ github.sha }}
+          path: /tmp/vercel-production-neon-proof.json
+          retention-days: 90
+          if-no-files-found: warn

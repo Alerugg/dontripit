@@ -1,0 +1,1970 @@
+{
+  "games": {
+    "mtg": {
+      "accepted_links_to_noncurrent_products": 0,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "latest_cardmarket_seen": "2026-08-11 13:31:16.850811+00:00",
+      "links": 147851,
+      "methods": {
+        "scryfall_cardmarket_id": 147851
+      },
+      "prints": 147851,
+      "products": 97794,
+      "stale_or_mismatched_latest_snapshots": 0
+    },
+    "onepiece": {
+      "accepted_links_to_noncurrent_products": 0,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "latest_cardmarket_seen": "2026-08-11 13:31:16.850811+00:00",
+      "links": 2641,
+      "methods": {
+        "bandai_physical_release_unique_exact": 1,
+        "bandai_release_exact": 315,
+        "bandai_sealed_residual_exact": 8,
+        "bandai_trusted_expansion_exact": 18,
+        "op_variant_cm_exact": 195,
+        "op_variant_cm_global_exact": 2104
+      },
+      "prints": 2641,
+      "products": 2641,
+      "stale_or_mismatched_latest_snapshots": 0
+    },
+    "pokemon": {
+      "accepted_links_to_noncurrent_products": 0,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "latest_cardmarket_seen": "2026-08-11 13:31:16.850811+00:00",
+      "links": 24341,
+      "methods": {
+        "direct_print_identifier": 4,
+        "tcgdex_cardmarket_id": 24337
+      },
+      "prints": 24341,
+      "products": 17661,
+      "stale_or_mismatched_latest_snapshots": 0
+    },
+    "yugioh": {
+      "accepted_links_to_noncurrent_products": 0,
+      "ambiguous_prints": 0,
+      "cross_game_links": 0,
+      "latest_cardmarket_seen": "2026-08-11 13:31:16.850811+00:00",
+      "links": 24253,
+      "methods": {
+        "sealed_expansion_exact_name": 22296,
+        "ygo_konami_product_name_exact": 1864,
+        "ygo_konami_release_exact": 93
+      },
+      "prints": 24253,
+      "products": 24253,
+      "stale_or_mismatched_latest_snapshots": 0
+    }
+  },
+  "gate_version": 1,
+  "hard_failures": [
+    "yugioh:official_product_membership_contradictions=510",
+    "sealed:mtg:missing_current_mappings=2"
+  ],
+  "pass": false,
+  "pokemon_legacy": {
+    "direct_print_identifier_details": [
+      {
+        "card_id": null,
+        "card_name": "Charon's Choice",
+        "collector_number": "RT6",
+        "corroborated": true,
+        "id_product": "278574",
+        "legacy_id": "278574",
+        "legacy_matches": true,
+        "mapping_method": "direct_print_identifier",
+        "physical_id": "278574",
+        "print_id": 53078,
+        "set_code": "RR",
+        "tcgdex_declared": "278574"
+      },
+      {
+        "card_id": null,
+        "card_name": "Mr. Briney\u2019s Compassion",
+        "collector_number": "8",
+        "corroborated": true,
+        "id_product": "277439",
+        "legacy_id": "277439",
+        "legacy_matches": true,
+        "mapping_method": "direct_print_identifier",
+        "physical_id": null,
+        "print_id": 53375,
+        "set_code": "P2",
+        "tcgdex_declared": null
+      },
+      {
+        "card_id": null,
+        "card_name": "Bill\u2019s Maintenance",
+        "collector_number": "6",
+        "corroborated": true,
+        "id_product": "277488",
+        "legacy_id": "277488",
+        "legacy_matches": true,
+        "mapping_method": "direct_print_identifier",
+        "physical_id": null,
+        "print_id": 53424,
+        "set_code": "P5",
+        "tcgdex_declared": null
+      },
+      {
+        "card_id": null,
+        "card_name": "Potion",
+        "collector_number": "15",
+        "corroborated": false,
+        "id_product": "297277",
+        "legacy_id": "297277",
+        "legacy_matches": true,
+        "mapping_method": "direct_print_identifier",
+        "physical_id": "297246",
+        "print_id": 63858,
+        "set_code": "TK10A",
+        "tcgdex_declared": "297246"
+      }
+    ],
+    "direct_print_identifier_rows": 4,
+    "tcgdex_direct_rows": 24337,
+    "tcgdex_mismatch_sample": [],
+    "tcgdex_source_mismatches": 0
+  },
+  "regressions": {
+    "onepiece_print_44257": {
+      "accepted_links": [
+        {
+          "expansion_external_id": "5364",
+          "id_product": "720061",
+          "mapping_method": "bandai_physical_release_unique_exact",
+          "name": "Monkey.D.Luffy (ST01-012)",
+          "print_id": 44257,
+          "website_path": "/OnePiece/Products?idProduct=720061"
+        }
+      ],
+      "latest_snapshots": [
+        {
+          "as_of": "2026-08-11 00:46:06+00:00",
+          "price_last": "389.44",
+          "price_low": "275.00",
+          "price_market": "426.59",
+          "raw_json": {
+            "external_avg1": "384.50",
+            "external_avg30": "342.20",
+            "external_avg7": "383.78",
+            "external_product_id": 292876,
+            "finish": "p1",
+            "idProduct": "720061",
+            "mapping_confidence": "exact",
+            "mapping_evidence": {
+              "canonical_rarity": "SP CARD",
+              "canonical_variant": "p1",
+              "collector_number": "ST01-012",
+              "idExpansion": "5364",
+              "idProduct": "720061",
+              "identity_basis": [
+                "standard_english_sealed_product_release_match",
+                "official_PrintRelease",
+                "exact_collector_number",
+                "unique_product_inside_cardmarket_release",
+                "unique_print_inside_official_release",
+                "global_one_to_one"
+              ],
+              "official_release": "BOOSTER PACK -PILLARS OF STRENGTH- [OP-03]",
+              "release_external_id": "569103",
+              "release_id": 78,
+              "source": "onepiece_official+cardmarket",
+              "supersedes_wrong_idProduct": "749435"
+            },
+            "mapping_method": "bandai_physical_release_unique_exact",
+            "price_variant": "nonfoil",
+            "website_path": "/OnePiece/Products?idProduct=720061"
+          }
+        }
+      ]
+    }
+  },
+  "sealed": {
+    "mtg": {
+      "cross_game_links": 0,
+      "current_cardmarket_products": 5031,
+      "exact_unique_name_category_contradictions": 0,
+      "legacy_identifier_contradictions": 0,
+      "mapped_exactly_one": 5029,
+      "method_counts": {
+        "cardmarket_product_identity": 5029
+      },
+      "missing_current_mappings": 2,
+      "multiple_accepted_variants": 0,
+      "samples": {
+        "cross": [],
+        "exact_name_bad": [],
+        "legacy_bad": [],
+        "missing": [
+          {
+            "external_id": "902208",
+            "external_product_id": 3788280,
+            "name": "Secret Lair Commander Deck: Hatsune Miku"
+          },
+          {
+            "external_id": "902217",
+            "external_product_id": 3788281,
+            "name": "Ikoria: Lair of Behemoths Ancillary Collector Booster"
+          }
+        ],
+        "multiple": []
+      }
+    },
+    "onepiece": {
+      "cross_game_links": 0,
+      "current_cardmarket_products": 753,
+      "exact_unique_name_category_contradictions": 0,
+      "legacy_identifier_contradictions": 0,
+      "mapped_exactly_one": 753,
+      "method_counts": {
+        "cardmarket_product_identity": 753
+      },
+      "missing_current_mappings": 0,
+      "multiple_accepted_variants": 0,
+      "samples": {
+        "cross": [],
+        "exact_name_bad": [],
+        "legacy_bad": [],
+        "missing": [],
+        "multiple": []
+      }
+    },
+    "pokemon": {
+      "cross_game_links": 0,
+      "current_cardmarket_products": 5006,
+      "exact_unique_name_category_contradictions": 0,
+      "legacy_identifier_contradictions": 0,
+      "mapped_exactly_one": 5006,
+      "method_counts": {
+        "cardmarket_product_identity": 5006
+      },
+      "missing_current_mappings": 0,
+      "multiple_accepted_variants": 0,
+      "samples": {
+        "cross": [],
+        "exact_name_bad": [],
+        "legacy_bad": [],
+        "missing": [],
+        "multiple": []
+      }
+    },
+    "yugioh": {
+      "cross_game_links": 0,
+      "current_cardmarket_products": 2385,
+      "exact_unique_name_category_contradictions": 0,
+      "legacy_identifier_contradictions": 0,
+      "mapped_exactly_one": 2385,
+      "method_counts": {
+        "cardmarket_product_identity": 2385
+      },
+      "missing_current_mappings": 0,
+      "multiple_accepted_variants": 0,
+      "samples": {
+        "cross": [],
+        "exact_name_bad": [],
+        "legacy_bad": [],
+        "missing": [],
+        "multiple": []
+      }
+    }
+  },
+  "yugioh_official_membership": {
+    "anchored_contradiction_sample": [
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "7",
+        "collector_number": "AST-091",
+        "expansion": "1012",
+        "idProduct": "101793",
+        "print_id": 105357,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Amazoness Fighter",
+        "collector_number": "MFC-060",
+        "expansion": "1042",
+        "idProduct": "101875",
+        "print_id": 125581,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Armor Break",
+        "collector_number": "AST-055",
+        "expansion": "1012",
+        "idProduct": "102003",
+        "print_id": 105321,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Book of Taiyou",
+        "collector_number": "PGD-034",
+        "expansion": "1019",
+        "idProduct": "102268",
+        "print_id": 132235,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Dark Coffin",
+        "collector_number": "PGD-047",
+        "expansion": "1019",
+        "idProduct": "102749",
+        "print_id": 132248,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Dark Dust Spirit",
+        "collector_number": "PGD-017",
+        "expansion": "1019",
+        "idProduct": "102763",
+        "print_id": 132218,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Dark Scorpion Burglars",
+        "collector_number": "PGD-028",
+        "expansion": "1019",
+        "idProduct": "102845",
+        "print_id": 132229,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Demotion",
+        "collector_number": "MFC-029",
+        "expansion": "1042",
+        "idProduct": "102906",
+        "print_id": 125550,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Desertapir",
+        "collector_number": "AST-068",
+        "expansion": "1012",
+        "idProduct": "102925",
+        "print_id": 105334,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Elephant Statue of Blessing",
+        "collector_number": "AST-073",
+        "expansion": "1012",
+        "idProduct": "103234",
+        "print_id": 105339,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Elephant Statue of Disaster",
+        "collector_number": "AST-074",
+        "expansion": "1012",
+        "idProduct": "103236",
+        "print_id": 105340,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Dice Jar",
+        "collector_number": "PGD-027",
+        "expansion": "1019",
+        "idProduct": "102981",
+        "print_id": 132228,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Dimension Jar",
+        "collector_number": "MFC-023",
+        "expansion": "1042",
+        "idProduct": "103002",
+        "print_id": 125544,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Gigobyte",
+        "collector_number": "AST-056",
+        "expansion": "1012",
+        "idProduct": "103602",
+        "print_id": 105322,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [
+          1601
+        ],
+        "anchor_name": "STRUCTURE DECK DINOSAUR'S RAGE",
+        "anchor_pid": "14402003",
+        "anchor_release_id": 1695,
+        "card_name": "Five-Headed Dragon",
+        "collector_number": "SD09-ENSS1",
+        "expansion": "1078",
+        "idProduct": "103406",
+        "print_id": 139576,
+        "set_code": "SD09"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "SOUL OF THE DUELIST",
+        "anchor_pid": "11103003",
+        "anchor_release_id": 1163,
+        "card_name": "Fusion Weapon",
+        "collector_number": "SOD-EN047",
+        "expansion": "1034",
+        "idProduct": "103493",
+        "print_id": 142957,
+        "set_code": "SOD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Night Assailant",
+        "collector_number": "AST-080",
+        "expansion": "1012",
+        "idProduct": "104800",
+        "print_id": 105346,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Maiden of the Aqua",
+        "collector_number": "PGD-008",
+        "expansion": "1019",
+        "idProduct": "104411",
+        "print_id": 132209,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Man-Thro' Tro'",
+        "collector_number": "AST-081",
+        "expansion": "1012",
+        "idProduct": "104441",
+        "print_id": 105347,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Mokey Mokey",
+        "collector_number": "AST-057",
+        "expansion": "1012",
+        "idProduct": "104622",
+        "print_id": 105323,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Opti-Camouflage Armor",
+        "collector_number": "AST-035",
+        "expansion": "1012",
+        "idProduct": "104901",
+        "print_id": 105301,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHARAONIC GUARDIAN",
+        "anchor_pid": "11102002",
+        "anchor_release_id": 1157,
+        "card_name": "Ordeal of a Traveler",
+        "collector_number": "PGD-042",
+        "expansion": "1019",
+        "idProduct": "104910",
+        "print_id": 132243,
+        "set_code": "PGD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Order to Charge",
+        "collector_number": "AST-085",
+        "expansion": "1012",
+        "idProduct": "104912",
+        "print_id": 105351,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Pharaoh's Servant",
+        "collector_number": "AST-060",
+        "expansion": "1012",
+        "idProduct": "104984",
+        "print_id": 105326,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Pharaonic Protector",
+        "collector_number": "AST-061",
+        "expansion": "1012",
+        "idProduct": "104988",
+        "print_id": 105327,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Pitch-Black Power Stone",
+        "collector_number": "MFC-095",
+        "expansion": "1042",
+        "idProduct": "105008",
+        "print_id": 125616,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Secret Barrel",
+        "collector_number": "MFC-046",
+        "expansion": "1042",
+        "idProduct": "105430",
+        "print_id": 125567,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "KA-2 Des Scissors",
+        "collector_number": "AST-019",
+        "expansion": "1012",
+        "idProduct": "104094",
+        "print_id": 105285,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Koitsu",
+        "collector_number": "MFC-080",
+        "expansion": "1042",
+        "idProduct": "104151",
+        "print_id": 125601,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Kozaky",
+        "collector_number": "AST-058",
+        "expansion": "1012",
+        "idProduct": "104160",
+        "print_id": 105324,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Lady Ninja Yae",
+        "collector_number": "AST-030",
+        "expansion": "1012",
+        "idProduct": "104189",
+        "print_id": 105296,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Level Limit - Area B",
+        "collector_number": "AST-092",
+        "expansion": "1012",
+        "idProduct": "104240",
+        "print_id": 105358,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "The Second Sarcophagus",
+        "collector_number": "AST-100",
+        "expansion": "1012",
+        "idProduct": "105977",
+        "print_id": 105366,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "The Third Sarcophagus",
+        "collector_number": "AST-099",
+        "expansion": "1012",
+        "idProduct": "105997",
+        "print_id": 105365,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "The Unhappy Girl",
+        "collector_number": "AST-010",
+        "expansion": "1012",
+        "idProduct": "106003",
+        "print_id": 105276,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "MAGICIAN'S FORCE",
+        "anchor_pid": "11102003",
+        "anchor_release_id": 1158,
+        "card_name": "Ultimate Obedient Fiend",
+        "collector_number": "MFC-082",
+        "expansion": "1042",
+        "idProduct": "106227",
+        "print_id": 125603,
+        "set_code": "MFC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "Warrior of Zera",
+        "collector_number": "AST-002",
+        "expansion": "1012",
+        "idProduct": "106352",
+        "print_id": 105268,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ANCIENT SANCTUARY",
+        "anchor_pid": "11103001",
+        "anchor_release_id": 1161,
+        "card_name": "White Magician Pikeru",
+        "collector_number": "AST-033",
+        "expansion": "1012",
+        "idProduct": "106380",
+        "print_id": 105299,
+        "set_code": "AST"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STRIKE OF NEOS",
+        "anchor_pid": "11106000",
+        "anchor_release_id": 1178,
+        "card_name": "Cyber End Dragon",
+        "collector_number": "STON-ENSE1",
+        "expansion": "1022",
+        "idProduct": "110088",
+        "print_id": 145166,
+        "set_code": "STON"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STRIKE OF NEOS",
+        "anchor_pid": "11106000",
+        "anchor_release_id": 1178,
+        "card_name": "Shrink",
+        "collector_number": "STON-ENSE2",
+        "expansion": "1022",
+        "idProduct": "110089",
+        "print_id": 145167,
+        "set_code": "STON"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "THE SHINING DARKNESS",
+        "anchor_pid": "11109001",
+        "anchor_release_id": 1200,
+        "card_name": "Testudo erat Numen",
+        "collector_number": "TSHD-EN032",
+        "expansion": "1196",
+        "idProduct": "240972",
+        "print_id": 146569,
+        "set_code": "TSHD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "THE SHINING DARKNESS",
+        "anchor_pid": "11109001",
+        "anchor_release_id": 1200,
+        "card_name": "Hunter of Black Feathers",
+        "collector_number": "TSHD-EN038",
+        "expansion": "1196",
+        "idProduct": "240978",
+        "print_id": 146575,
+        "set_code": "TSHD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "THE SHINING DARKNESS",
+        "anchor_pid": "11109001",
+        "anchor_release_id": 1200,
+        "card_name": "Corridor of Agony",
+        "collector_number": "TSHD-EN062",
+        "expansion": "1196",
+        "idProduct": "241002",
+        "print_id": 146608,
+        "set_code": "TSHD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "THE SHINING DARKNESS",
+        "anchor_pid": "11109001",
+        "anchor_release_id": 1200,
+        "card_name": "Chaos Trap Hole",
+        "collector_number": "TSHD-EN080",
+        "expansion": "1196",
+        "idProduct": "241020",
+        "print_id": 146626,
+        "set_code": "TSHD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STARSTRIKE BLAST",
+        "anchor_pid": "11109004",
+        "anchor_release_id": 1203,
+        "card_name": "Wightmare",
+        "collector_number": "STBL-EN035",
+        "expansion": "1224",
+        "idProduct": "244288",
+        "print_id": 144997,
+        "set_code": "STBL"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STARSTRIKE BLAST",
+        "anchor_pid": "11109004",
+        "anchor_release_id": 1203,
+        "card_name": "White Elephant's Gift",
+        "collector_number": "STBL-EN062",
+        "expansion": "1224",
+        "idProduct": "244321",
+        "print_id": 145032,
+        "set_code": "STBL"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STARSTRIKE BLAST",
+        "anchor_pid": "11109004",
+        "anchor_release_id": 1203,
+        "card_name": "Vanity's Emptiness",
+        "collector_number": "STBL-EN076",
+        "expansion": "1224",
+        "idProduct": "244335",
+        "print_id": 145046,
+        "set_code": "STBL"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "STARSTRIKE BLAST",
+        "anchor_pid": "11109004",
+        "anchor_release_id": 1203,
+        "card_name": "Darkfall",
+        "collector_number": "STBL-EN080",
+        "expansion": "1224",
+        "idProduct": "244339",
+        "print_id": 145050,
+        "set_code": "STBL"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "RISE OF DESTINY",
+        "anchor_pid": "11103005",
+        "anchor_release_id": 1165,
+        "card_name": "Diffusion Wave-Motion",
+        "collector_number": "RDS-ENSE1",
+        "expansion": "1032",
+        "idProduct": "245520",
+        "print_id": 137864,
+        "set_code": "RDS"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "RISE OF DESTINY",
+        "anchor_pid": "11103005",
+        "anchor_release_id": 1165,
+        "card_name": "Dark Magician Girl",
+        "collector_number": "RDS-ENSE2",
+        "expansion": "1032",
+        "idProduct": "245521",
+        "print_id": 137865,
+        "set_code": "RDS"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "RISE OF DESTINY",
+        "anchor_pid": "11103005",
+        "anchor_release_id": 1165,
+        "card_name": "Judgment of Anubis",
+        "collector_number": "RDS-ENSE3",
+        "expansion": "1032",
+        "idProduct": "245522",
+        "print_id": 137866,
+        "set_code": "RDS"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "RISE OF DESTINY",
+        "anchor_pid": "11103005",
+        "anchor_release_id": 1165,
+        "card_name": "Vampire Lord",
+        "collector_number": "RDS-ENSE4",
+        "expansion": "1032",
+        "idProduct": "245523",
+        "print_id": 137867,
+        "set_code": "RDS"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHOTON SHOCKWAVE",
+        "anchor_pid": "11110006",
+        "anchor_release_id": 1210,
+        "card_name": "Goblin Pothole Squad",
+        "collector_number": "PHSW-EN035",
+        "expansion": "1338",
+        "idProduct": "251872",
+        "print_id": 133069,
+        "set_code": "PHSW"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHOTON SHOCKWAVE",
+        "anchor_pid": "11110006",
+        "anchor_release_id": 1210,
+        "card_name": "Rodenut",
+        "collector_number": "PHSW-EN032",
+        "expansion": "1338",
+        "idProduct": "251906",
+        "print_id": 133066,
+        "set_code": "PHSW"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHOTON SHOCKWAVE",
+        "anchor_pid": "11110006",
+        "anchor_release_id": 1210,
+        "card_name": "Sound the Retreat!",
+        "collector_number": "PHSW-EN077",
+        "expansion": "1338",
+        "idProduct": "251912",
+        "print_id": 133116,
+        "set_code": "PHSW"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PHOTON SHOCKWAVE",
+        "anchor_pid": "11110006",
+        "anchor_release_id": 1210,
+        "card_name": "Tri-Wight",
+        "collector_number": "PHSW-EN059",
+        "expansion": "1338",
+        "idProduct": "251916",
+        "print_id": 133098,
+        "set_code": "PHSW"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "INVASION OF CHAOS",
+        "anchor_pid": "11103000",
+        "anchor_release_id": 1160,
+        "card_name": "Lava Golem",
+        "collector_number": "IOC-SE4",
+        "expansion": "1028",
+        "idProduct": "251963",
+        "print_id": 119788,
+        "set_code": "IOC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "GALACTIC OVERLORD",
+        "anchor_pid": "11111002",
+        "anchor_release_id": 1214,
+        "card_name": "Flame Tiger",
+        "collector_number": "GAOV-EN039",
+        "expansion": "1364",
+        "idProduct": "254814",
+        "print_id": 117226,
+        "set_code": "GAOV"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "GALACTIC OVERLORD",
+        "anchor_pid": "11111002",
+        "anchor_release_id": 1214,
+        "card_name": "Nomadic Force",
+        "collector_number": "GAOV-EN040",
+        "expansion": "1364",
+        "idProduct": "254815",
+        "print_id": 117227,
+        "set_code": "GAOV"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "GALACTIC OVERLORD",
+        "anchor_pid": "11111002",
+        "anchor_release_id": 1214,
+        "card_name": "Storm",
+        "collector_number": "GAOV-EN065",
+        "expansion": "1364",
+        "idProduct": "254840",
+        "print_id": 117259,
+        "set_code": "GAOV"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "GALACTIC OVERLORD",
+        "anchor_pid": "11111002",
+        "anchor_release_id": 1214,
+        "card_name": "Double Payback",
+        "collector_number": "GAOV-EN080",
+        "expansion": "1364",
+        "idProduct": "254855",
+        "print_id": 117275,
+        "set_code": "GAOV"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "INVASION OF CHAOS",
+        "anchor_pid": "11103000",
+        "anchor_release_id": 1160,
+        "card_name": "Gemini Elf",
+        "collector_number": "IOC-SE1",
+        "expansion": "1028",
+        "idProduct": "245552",
+        "print_id": 119785,
+        "set_code": "IOC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "INVASION OF CHAOS",
+        "anchor_pid": "11103000",
+        "anchor_release_id": 1160,
+        "card_name": "Magic Cylinder",
+        "collector_number": "IOC-SE2",
+        "expansion": "1028",
+        "idProduct": "245553",
+        "print_id": 119786,
+        "set_code": "IOC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "INVASION OF CHAOS",
+        "anchor_pid": "11103000",
+        "anchor_release_id": 1160,
+        "card_name": "Ring of Destruction",
+        "collector_number": "IOC-SE3",
+        "expansion": "1028",
+        "idProduct": "245554",
+        "print_id": 119787,
+        "set_code": "IOC"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ASTRAL PACK ONE",
+        "anchor_pid": "1121211010",
+        "anchor_release_id": 1500,
+        "card_name": "Mystical Sand",
+        "collector_number": "AP01-EN019",
+        "expansion": "1423",
+        "idProduct": "259661",
+        "print_id": 105074,
+        "set_code": "AP01"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ASTRAL PACK TWO",
+        "anchor_pid": "1121212001",
+        "anchor_release_id": 1503,
+        "card_name": "Sky Scout",
+        "collector_number": "AP02-EN014",
+        "expansion": "1440",
+        "idProduct": "261740",
+        "print_id": 105094,
+        "set_code": "AP02"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ASTRAL PACK TWO",
+        "anchor_pid": "1121212001",
+        "anchor_release_id": 1503,
+        "card_name": "Barox",
+        "collector_number": "AP02-EN018",
+        "expansion": "1440",
+        "idProduct": "261744",
+        "print_id": 105098,
+        "set_code": "AP02"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "LORD OF THE TACHYON GALAXY",
+        "anchor_pid": "11112003",
+        "anchor_release_id": 1338,
+        "card_name": "Risebell the Star Adjuster",
+        "collector_number": "LTGY-EN042",
+        "expansion": "1443",
+        "idProduct": "261799",
+        "print_id": 124705,
+        "set_code": "LTGY"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "LORD OF THE TACHYON GALAXY",
+        "anchor_pid": "11112003",
+        "anchor_release_id": 1338,
+        "card_name": "Green Duston",
+        "collector_number": "LTGY-EN043",
+        "expansion": "1443",
+        "idProduct": "261800",
+        "print_id": 124706,
+        "set_code": "LTGY"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "LORD OF THE TACHYON GALAXY",
+        "anchor_pid": "11112003",
+        "anchor_release_id": 1338,
+        "card_name": "Summon Breaker",
+        "collector_number": "LTGY-EN068",
+        "expansion": "1443",
+        "idProduct": "261825",
+        "print_id": 124737,
+        "set_code": "LTGY"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "LORD OF THE TACHYON GALAXY",
+        "anchor_pid": "11112003",
+        "anchor_release_id": 1338,
+        "card_name": "Dragoncarnation",
+        "collector_number": "LTGY-EN080",
+        "expansion": "1443",
+        "idProduct": "261837",
+        "print_id": 124749,
+        "set_code": "LTGY"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ASTRAL PACK FOUR",
+        "anchor_pid": "1121213001",
+        "anchor_release_id": 1512,
+        "card_name": "Wings of Wicked Flame",
+        "collector_number": "AP04-EN014",
+        "expansion": "1475",
+        "idProduct": "266165",
+        "print_id": 105145,
+        "set_code": "AP04"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "ASTRAL PACK FOUR",
+        "anchor_pid": "1121213001",
+        "anchor_release_id": 1512,
+        "card_name": "Mavelus",
+        "collector_number": "AP04-EN022",
+        "expansion": "1475",
+        "idProduct": "266173",
+        "print_id": 105153,
+        "set_code": "AP04"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Gimmick Puppet Dreary Doll",
+        "collector_number": "PGLD-EN001",
+        "expansion": "1478",
+        "idProduct": "266440",
+        "print_id": 132500,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Gimmick Puppet Magnet Doll",
+        "collector_number": "PGLD-EN002",
+        "expansion": "1478",
+        "idProduct": "266441",
+        "print_id": 132501,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Chronomaly Tula Guardian",
+        "collector_number": "PGLD-EN003",
+        "expansion": "1478",
+        "idProduct": "266442",
+        "print_id": 132502,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Big Belly Knight",
+        "collector_number": "PGLD-EN004",
+        "expansion": "1478",
+        "idProduct": "266443",
+        "print_id": 132503,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Power Tool Mecha Dragon",
+        "collector_number": "PGLD-EN005",
+        "expansion": "1478",
+        "idProduct": "266444",
+        "print_id": 132504,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Ancient Pixie Dragon",
+        "collector_number": "PGLD-EN006",
+        "expansion": "1478",
+        "idProduct": "266445",
+        "print_id": 132505,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Junk Puppet",
+        "collector_number": "PGLD-EN007",
+        "expansion": "1478",
+        "idProduct": "266446",
+        "print_id": 132506,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Chronomaly City Babylon",
+        "collector_number": "PGLD-EN008",
+        "expansion": "1478",
+        "idProduct": "266447",
+        "print_id": 132507,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Utopia Buster",
+        "collector_number": "PGLD-EN009",
+        "expansion": "1478",
+        "idProduct": "266448",
+        "print_id": 132508,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Chronomaly Gordian Knot",
+        "collector_number": "PGLD-EN010",
+        "expansion": "1478",
+        "idProduct": "266449",
+        "print_id": 132509,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Gimmick Puppet Humpty Dumpty",
+        "collector_number": "PGLD-EN011",
+        "expansion": "1478",
+        "idProduct": "266450",
+        "print_id": 132510,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Gimmick Puppet Shadow Feeler",
+        "collector_number": "PGLD-EN012",
+        "expansion": "1478",
+        "idProduct": "266451",
+        "print_id": 132511,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Silent Wobby",
+        "collector_number": "PGLD-EN013",
+        "expansion": "1478",
+        "idProduct": "266452",
+        "print_id": 132512,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Dynatherium",
+        "collector_number": "PGLD-EN014",
+        "expansion": "1478",
+        "idProduct": "266453",
+        "print_id": 132513,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Dragonecro Nethersoul Dragon",
+        "collector_number": "PGLD-EN015",
+        "expansion": "1478",
+        "idProduct": "266454",
+        "print_id": 132514,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Beelze of the Diabolic Dragons",
+        "collector_number": "PGLD-EN016",
+        "expansion": "1478",
+        "idProduct": "266455",
+        "print_id": 132515,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Blackfeather Darkrage Dragon",
+        "collector_number": "PGLD-EN017",
+        "expansion": "1478",
+        "idProduct": "266456",
+        "print_id": 132516,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number C6: Chronomaly Chaos Atlandis",
+        "collector_number": "PGLD-EN018",
+        "expansion": "1478",
+        "idProduct": "266457",
+        "print_id": 132517,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number C15: Gimmick Puppet Giant Hunter",
+        "collector_number": "PGLD-EN019",
+        "expansion": "1478",
+        "idProduct": "266458",
+        "print_id": 132518,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number C40: Gimmick Puppet of Dark Strings",
+        "collector_number": "PGLD-EN020",
+        "expansion": "1478",
+        "idProduct": "266459",
+        "print_id": 132519,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number C88: Gimmick Puppet Disaster Leo",
+        "collector_number": "PGLD-EN021",
+        "expansion": "1478",
+        "idProduct": "266460",
+        "print_id": 132520,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number C9: Chaos Dyson Sphere",
+        "collector_number": "PGLD-EN022",
+        "expansion": "1478",
+        "idProduct": "266461",
+        "print_id": 132521,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number 13: Embodiment of Crime",
+        "collector_number": "PGLD-EN023",
+        "expansion": "1478",
+        "idProduct": "266462",
+        "print_id": 132522,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number 31: Embodiment of Punishment",
+        "collector_number": "PGLD-EN024",
+        "expansion": "1478",
+        "idProduct": "266463",
+        "print_id": 132523,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Number 82: Heartlandraco",
+        "collector_number": "PGLD-EN025",
+        "expansion": "1478",
+        "idProduct": "266464",
+        "print_id": 132524,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Tri-Edge Levia",
+        "collector_number": "PGLD-EN026",
+        "expansion": "1478",
+        "idProduct": "266465",
+        "print_id": 132525,
+        "set_code": "PGLD"
+      },
+      {
+        "actual_official_release_ids": [],
+        "anchor_name": "PREMIUM GOLD",
+        "anchor_pid": "18808000",
+        "anchor_release_id": 1803,
+        "card_name": "Rank-Up-Magic Argent Chaos Force",
+        "collector_number": "PGLD-EN027",
+        "expansion": "1478",
+        "idProduct": "266466",
+        "print_id": 132526,
+        "set_code": "PGLD"
+      }
+    ],
+    "anchored_membership_contradictions": 510,
+    "anchored_membership_matches": 15772,
+    "expansions_with_common_official_product": 279,
+    "expansions_without_common_official_product": 52,
+    "konami_products": 836,
+    "no_common_release_sample": [
+      {
+        "accepted_links": 57,
+        "anchored_release_id": null,
+        "expansion": "1445"
+      },
+      {
+        "accepted_links": 45,
+        "anchored_release_id": null,
+        "expansion": "1011"
+      },
+      {
+        "accepted_links": 81,
+        "anchored_release_id": null,
+        "expansion": "1021"
+      },
+      {
+        "accepted_links": 76,
+        "anchored_release_id": null,
+        "expansion": "1037"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1041"
+      },
+      {
+        "accepted_links": 39,
+        "anchored_release_id": null,
+        "expansion": "1053"
+      },
+      {
+        "accepted_links": 37,
+        "anchored_release_id": 1695,
+        "expansion": "1078"
+      },
+      {
+        "accepted_links": 39,
+        "anchored_release_id": null,
+        "expansion": "1068"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1146"
+      },
+      {
+        "accepted_links": 91,
+        "anchored_release_id": null,
+        "expansion": "1161"
+      },
+      {
+        "accepted_links": 84,
+        "anchored_release_id": null,
+        "expansion": "1164"
+      },
+      {
+        "accepted_links": 92,
+        "anchored_release_id": null,
+        "expansion": "1156"
+      },
+      {
+        "accepted_links": 91,
+        "anchored_release_id": null,
+        "expansion": "1178"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1174"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1187"
+      },
+      {
+        "accepted_links": 91,
+        "anchored_release_id": null,
+        "expansion": "1205"
+      },
+      {
+        "accepted_links": 87,
+        "anchored_release_id": null,
+        "expansion": "1258"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1346"
+      },
+      {
+        "accepted_links": 112,
+        "anchored_release_id": null,
+        "expansion": "1351"
+      },
+      {
+        "accepted_links": 86,
+        "anchored_release_id": null,
+        "expansion": "1285"
+      },
+      {
+        "accepted_links": 90,
+        "anchored_release_id": null,
+        "expansion": "1405"
+      },
+      {
+        "accepted_links": 91,
+        "anchored_release_id": null,
+        "expansion": "1419"
+      },
+      {
+        "accepted_links": 91,
+        "anchored_release_id": null,
+        "expansion": "1426"
+      },
+      {
+        "accepted_links": 96,
+        "anchored_release_id": null,
+        "expansion": "1465"
+      },
+      {
+        "accepted_links": 93,
+        "anchored_release_id": null,
+        "expansion": "1470"
+      },
+      {
+        "accepted_links": 94,
+        "anchored_release_id": null,
+        "expansion": "1452"
+      },
+      {
+        "accepted_links": 94,
+        "anchored_release_id": null,
+        "expansion": "1482"
+      },
+      {
+        "accepted_links": 55,
+        "anchored_release_id": 1677,
+        "expansion": "1488"
+      },
+      {
+        "accepted_links": 97,
+        "anchored_release_id": null,
+        "expansion": "1493"
+      },
+      {
+        "accepted_links": 44,
+        "anchored_release_id": 1805,
+        "expansion": "1517"
+      },
+      {
+        "accepted_links": 94,
+        "anchored_release_id": null,
+        "expansion": "1647"
+      },
+      {
+        "accepted_links": 98,
+        "anchored_release_id": 1358,
+        "expansion": "1657"
+      },
+      {
+        "accepted_links": 98,
+        "anchored_release_id": 1360,
+        "expansion": "1677"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1685"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1701"
+      },
+      {
+        "accepted_links": 97,
+        "anchored_release_id": 1366,
+        "expansion": "1712"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1737"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1740"
+      },
+      {
+        "accepted_links": 102,
+        "anchored_release_id": null,
+        "expansion": "1760"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1806"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "1827"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2025"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2076"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2171"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2369"
+      },
+      {
+        "accepted_links": 106,
+        "anchored_release_id": 1818,
+        "expansion": "2429"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2405"
+      },
+      {
+        "accepted_links": 103,
+        "anchored_release_id": null,
+        "expansion": "2436"
+      },
+      {
+        "accepted_links": 99,
+        "anchored_release_id": null,
+        "expansion": "2466"
+      },
+      {
+        "accepted_links": 99,
+        "anchored_release_id": null,
+        "expansion": "2659"
+      },
+      {
+        "accepted_links": 53,
+        "anchored_release_id": 1595,
+        "expansion": "2844"
+      },
+      {
+        "accepted_links": 99,
+        "anchored_release_id": null,
+        "expansion": "2854"
+      }
+    ],
+    "no_official_membership_sample": [
+      {
+        "collector_number": "MAGO-EN070",
+        "expansion": "3339",
+        "idProduct": "515579",
+        "print_id": 125059,
+        "set_code": "MAGO"
+      },
+      {
+        "collector_number": "AST-091",
+        "expansion": "1012",
+        "idProduct": "101793",
+        "print_id": 105357,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "MFC-060",
+        "expansion": "1042",
+        "idProduct": "101875",
+        "print_id": 125581,
+        "set_code": "MFC"
+      },
+      {
+        "collector_number": "AST-055",
+        "expansion": "1012",
+        "idProduct": "102003",
+        "print_id": 105321,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "PTDN-EN067",
+        "expansion": "1041",
+        "idProduct": "102406",
+        "print_id": 133927,
+        "set_code": "PTDN"
+      },
+      {
+        "collector_number": "MC1-EN002",
+        "expansion": "1080",
+        "idProduct": "102090",
+        "print_id": 125474,
+        "set_code": "MC1"
+      },
+      {
+        "collector_number": "MC2-EN004",
+        "expansion": "1086",
+        "idProduct": "102176",
+        "print_id": 125482,
+        "set_code": "MC2"
+      },
+      {
+        "collector_number": "MC2-EN005",
+        "expansion": "1086",
+        "idProduct": "102233",
+        "print_id": 125483,
+        "set_code": "MC2"
+      },
+      {
+        "collector_number": "PGD-034",
+        "expansion": "1019",
+        "idProduct": "102268",
+        "print_id": 132235,
+        "set_code": "PGD"
+      },
+      {
+        "collector_number": "MC2-EN002",
+        "expansion": "1086",
+        "idProduct": "102287",
+        "print_id": 125480,
+        "set_code": "MC2"
+      },
+      {
+        "collector_number": "PGD-047",
+        "expansion": "1019",
+        "idProduct": "102749",
+        "print_id": 132248,
+        "set_code": "PGD"
+      },
+      {
+        "collector_number": "PGD-017",
+        "expansion": "1019",
+        "idProduct": "102763",
+        "print_id": 132218,
+        "set_code": "PGD"
+      },
+      {
+        "collector_number": "MC1-EN005",
+        "expansion": "1080",
+        "idProduct": "102824",
+        "print_id": 125477,
+        "set_code": "MC1"
+      },
+      {
+        "collector_number": "MC1-EN006",
+        "expansion": "1080",
+        "idProduct": "102835",
+        "print_id": 125478,
+        "set_code": "MC1"
+      },
+      {
+        "collector_number": "PGD-028",
+        "expansion": "1019",
+        "idProduct": "102845",
+        "print_id": 132229,
+        "set_code": "PGD"
+      },
+      {
+        "collector_number": "PTDN-EN062",
+        "expansion": "1041",
+        "idProduct": "102857",
+        "print_id": 133922,
+        "set_code": "PTDN"
+      },
+      {
+        "collector_number": "MFC-029",
+        "expansion": "1042",
+        "idProduct": "102906",
+        "print_id": 125550,
+        "set_code": "MFC"
+      },
+      {
+        "collector_number": "AST-068",
+        "expansion": "1012",
+        "idProduct": "102925",
+        "print_id": 105334,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "AST-073",
+        "expansion": "1012",
+        "idProduct": "103234",
+        "print_id": 105339,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "AST-074",
+        "expansion": "1012",
+        "idProduct": "103236",
+        "print_id": 105340,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "PGD-027",
+        "expansion": "1019",
+        "idProduct": "102981",
+        "print_id": 132228,
+        "set_code": "PGD"
+      },
+      {
+        "collector_number": "MFC-023",
+        "expansion": "1042",
+        "idProduct": "103002",
+        "print_id": 125544,
+        "set_code": "MFC"
+      },
+      {
+        "collector_number": "AST-056",
+        "expansion": "1012",
+        "idProduct": "103602",
+        "print_id": 105322,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "MC2-EN003",
+        "expansion": "1086",
+        "idProduct": "103308",
+        "print_id": 125481,
+        "set_code": "MC2"
+      },
+      {
+        "collector_number": "MC1-EN001",
+        "expansion": "1080",
+        "idProduct": "103312",
+        "print_id": 125473,
+        "set_code": "MC1"
+      },
+      {
+        "collector_number": "PTDN-EN080",
+        "expansion": "1041",
+        "idProduct": "103384",
+        "print_id": 133941,
+        "set_code": "PTDN"
+      },
+      {
+        "collector_number": "MC2-EN001",
+        "expansion": "1086",
+        "idProduct": "103797",
+        "print_id": 125479,
+        "set_code": "MC2"
+      },
+      {
+        "collector_number": "SOD-EN047",
+        "expansion": "1034",
+        "idProduct": "103493",
+        "print_id": 142957,
+        "set_code": "SOD"
+      },
+      {
+        "collector_number": "AST-080",
+        "expansion": "1012",
+        "idProduct": "104800",
+        "print_id": 105346,
+        "set_code": "AST"
+      },
+      {
+        "collector_number": "PGD-008",
+        "expansion": "1019",
+        "idProduct": "104411",
+        "print_id": 132209,
+        "set_code": "PGD"
+      }
+    ],
+    "official_membership_prints": 39250,
+    "old_links_in_uniquely_anchored_expansions": 16282,
+    "old_links_without_any_official_membership": 868,
+    "old_method_links": 22296,
+    "product_name_anchor_conflicts": 48,
+    "stored_evidence_mismatch_sample": [],
+    "stored_evidence_mismatches": 0,
+    "unique_product_name_anchors": 325
+  }
+}

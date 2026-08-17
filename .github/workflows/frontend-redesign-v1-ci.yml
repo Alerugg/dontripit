@@ -1,0 +1,81 @@
+name: Frontend Redesign V1 QA
+
+on:
+  push:
+    branches:
+      - frontend-redesign-v1
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-redesign-v1-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-redesign-v1-qa
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout redesign branch
+        uses: actions/checkout@v4
+        with:
+          ref: frontend-redesign-v1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Audit production dependency risk
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Verify redesign UX contracts
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const assert = require('node:assert/strict')
+
+          const read = (path) => fs.readFileSync(path, 'utf8')
+          const home = read('components/home/PublicHome.js')
+          const nav = read('components/layout/TopNav.js')
+          const auth = read('components/auth/AuthShell.js')
+          const hub = read('components/games/GameHubPage.js')
+          const advanced = read('components/searchV2/AdvancedSearchPanel.js')
+          const css = read('app/redesign.css')
+
+          assert.match(home, /Tu colección,[\s\S]*sin caos/)
+          assert.match(home, /Empezar gratis/)
+          assert.match(nav, /Crear cuenta/)
+          assert.match(nav, /Entrar/)
+          assert.match(auth, /name="marketing_consent"/)
+          assert.doesNotMatch(auth, /marketing_consent[^>]*checked/)
+          assert.match(auth, /type="password"/)
+          assert.match(hub, /Buscar cartas/)
+          assert.match(hub, /Próximos lanzamientos/)
+          assert.match(hub, /Noticias/)
+          assert.match(advanced, /Afina solo cuando lo necesitas/)
+          assert.match(css, /prefers-reduced-motion/)
+          assert.match(css, /@media \(max-width: 560px\)/)
+          assert.doesNotMatch(home, /canonical identity|Search V2|Dedicated explorers/i)
+          console.log('Frontend redesign UX contracts: PASS')
+          NODE

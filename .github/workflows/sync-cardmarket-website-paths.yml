@@ -1,0 +1,72 @@
+name: Sync Cardmarket Website Paths
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-cardmarket-website-paths
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Backfill stable official idProduct redirect paths
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          game_path={'mtg':'Magic','pokemon':'Pokemon','onepiece':'OnePiece','yugioh':'YuGiOh'}
+          report={'mode':'apply','source':'cardmarket','games':{}}
+          with engine.begin() as conn:
+              for slug,path in game_path.items():
+                  result=conn.execute(text('''
+                    UPDATE external_catalog_products e
+                    SET website_path=:prefix || e.external_id
+                    FROM games g
+                    WHERE e.game_id=g.id AND e.source='cardmarket' AND g.slug=:slug
+                      AND e.website_path IS DISTINCT FROM (:prefix || e.external_id)
+                  '''),{'slug':slug,'prefix':f'/{path}/Products?idProduct='})
+                  total=conn.execute(text('''
+                    SELECT count(*) FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                    WHERE e.source='cardmarket' AND g.slug=:slug
+                  '''),{'slug':slug}).scalar_one()
+                  exact=conn.execute(text('''
+                    SELECT count(*) FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                    WHERE e.source='cardmarket' AND g.slug=:slug
+                      AND e.website_path=(:prefix || e.external_id)
+                  '''),{'slug':slug,'prefix':f'/{path}/Products?idProduct='}).scalar_one()
+                  if int(total)!=int(exact):
+                      raise AssertionError(f'{slug}: website path coverage {exact}/{total}')
+                  report['games'][slug]={'updated':int(result.rowcount or 0),'total':int(total),'exact_paths':int(exact)}
+          report['base_url']='https://www.cardmarket.com'
+          report['complete']=all(v['total']==v['exact_paths'] for v in report['games'].values())
+          Path('/tmp/cardmarket-website-paths.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-website-paths-${{ github.run_id }}
+          path: /tmp/cardmarket-website-paths.json
+          retention-days: 30
+          if-no-files-found: error

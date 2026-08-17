@@ -1,0 +1,109 @@
+name: Multilingual catalog gates
+
+on:
+  push:
+    branches:
+      - multilingual-v1
+    paths:
+      - "backend/app/multilingual_models.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py"
+      - "backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py"
+      - "backend/app/ingest/registry.py"
+      - "backend/alembic/env.py"
+      - "backend/alembic/versions/20260814_33_add_print_localizations.py"
+      - "backend/alembic/versions/20260814_34_add_catalog_entity_identifiers.py"
+      - "backend/app/routes/catalog.py"
+      - "backend/app/routes/exact_print_output.py"
+      - "backend/app/scripts/validate_tcgdex_multilingual_live.py"
+      - "backend/tests/test_tcgdex_multilingual.py"
+      - "backend/tests/test_tcgdex_multilingual_api.py"
+      - "backend/tests/test_tcgdex_physical_scope.py"
+      - "backend/tests/test_tcgdex_reprint_alias.py"
+      - "backend/tests/test_validate_tcgdex_multilingual_live.py"
+      - "backend/tests/test_ingest_engine.py"
+      - "backend/tests/test_exact_print_output.py"
+      - ".github/workflows/test-multilingual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multilingual-catalog-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: multilingual_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d multilingual_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile multilingual modules
+        run: |
+          python -m py_compile \
+            app/multilingual_models.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/ingest/registry.py \
+            app/routes/exact_print_output.py \
+            app/scripts/validate_tcgdex_multilingual_live.py \
+            alembic/env.py \
+            alembic/versions/20260814_33_add_print_localizations.py \
+            alembic/versions/20260814_34_add_catalog_entity_identifiers.py
+
+      - name: Run migration 34 PostgreSQL smoke test
+        env:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/multilingual_test
+          PYTHONPATH: .
+        run: |
+          alembic upgrade head
+          alembic current | tee /tmp/alembic-current.txt
+          grep -q "20260814_34" /tmp/alembic-current.txt
+
+      - name: Run focused multilingual tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest -q \
+            tests/test_tcgdex_multilingual.py \
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_reprint_alias.py \
+            tests/test_validate_tcgdex_multilingual_live.py
+
+      - name: Run multilingual API and exact-output tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_tcgdex_multilingual_api.py tests/test_exact_print_output.py
+
+      - name: Run legacy TCGdex physical-scope regressions
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_ingest_engine.py -k tcgdex

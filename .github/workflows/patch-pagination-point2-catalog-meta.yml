@@ -1,0 +1,81 @@
+name: Patch Pagination Point 2 Catalog Meta
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/patch-pagination-point2-catalog-meta.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch catalog metadata and deep offsets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('backend/app/routes/catalog.py')
+          s = p.read_text()
+          assert 'max_offset = min(max_offset, 1_000)' in s
+          s = s.replace('max_offset = min(max_offset, 1_000)', 'max_offset = min(max_offset, 100_000)', 1)
+          needle = 'def list_sets():\n    q = request.args.get("q", "").strip()\n'
+          repl = 'def list_sets():\n    q = request.args.get("q", "").strip()\n    include_meta = str(request.args.get("meta", "")).strip().lower() in {"1", "true", "yes"}\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          needle = '    if q:\n        where.append("(LOWER(s.name) LIKE :q OR LOWER(s.code) LIKE :q)")\n        params["q"] = f"%{q.lower()}%"\n\n    where_sql = f"WHERE {\' AND \'.join(where)}" if where else ""\n'
+          repl = '    if q:\n        where.append("(LOWER(s.name) LIKE :q OR LOWER(s.code) LIKE :q)")\n        params["q"] = f"%{q.lower()}%"\n    if game == "onepiece" and not q and not include_legacy_ambiguous:\n        where.append("s.code ~* \'^(op|st|eb|prb|p)-[0-9]{1,3}$\'")\n\n    where_sql = f"WHERE {\' AND \'.join(where)}" if where else ""\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          needle = '    try:\n        with db.SessionLocal() as session:\n            rows = session.execute(sql, params).mappings().all()\n    except SQLAlchemyError as error:\n        return _json_error("sets_query_failed", str(error), 500)\n'
+          repl = '    count_sql = text(f"SELECT COUNT(*) FROM sets s JOIN games g ON g.id = s.game_id {where_sql}")\n    try:\n        with db.SessionLocal() as session:\n            rows = session.execute(sql, params).mappings().all()\n            total = int(session.execute(count_sql, params).scalar_one())\n    except SQLAlchemyError as error:\n        return _json_error("sets_query_failed", str(error), 500)\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          needle = '    return jsonify(payload)\n\n\n@catalog_bp.get("/api/prints")\n'
+          repl = '    if include_meta:\n        return jsonify({"items": payload, "total": total, "limit": limit, "offset": offset})\n    return jsonify(payload)\n\n\n@catalog_bp.get("/api/prints")\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          needle = 'def list_prints():\n    set_code = request.args.get("set_code", "").strip()\n    card_id = request.args.get("card_id", type=int)\n'
+          repl = 'def list_prints():\n    set_code = request.args.get("set_code", "").strip()\n    card_id = request.args.get("card_id", type=int)\n    include_meta = str(request.args.get("meta", "")).strip().lower() in {"1", "true", "yes"}\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          needle = '    with db.SessionLocal() as session:\n        rows = session.execute(sql, params).mappings().all()\n    return jsonify([dict(row) for row in rows])\n\n\n@catalog_bp.get("/api/products")\n'
+          repl = '    count_sql = text(f"SELECT COUNT(*) FROM prints p JOIN sets s ON s.id = p.set_id JOIN games g ON g.id = s.game_id {where_sql}")\n    with db.SessionLocal() as session:\n        rows = session.execute(sql, params).mappings().all()\n        total = int(session.execute(count_sql, params).scalar_one())\n    items = [dict(row) for row in rows]\n    if include_meta:\n        return jsonify({"items": items, "total": total, "limit": limit, "offset": offset})\n    return jsonify(items)\n\n\n@catalog_bp.get("/api/products")\n'
+          assert needle in s
+          s = s.replace(needle, repl, 1)
+          p.write_text(s)
+
+          p = Path('frontend/app/api/catalog/sets/route.js')
+          s = p.read_text()
+          assert 'params: { game, q, limit, offset }' in s
+          p.write_text(s.replace('params: { game, q, limit, offset }', 'params: { game, q, limit, offset, meta: 1 }', 1))
+
+          p = Path('frontend/app/api/search-v2/federated/route.js')
+          s = p.read_text()
+          assert 'params: { game, q, limit: 12, offset: 0 }' in s
+          p.write_text(s.replace('params: { game, q, limit: 12, offset: 0 }', 'params: { game, q, limit: 12, offset: 0, meta: 1 }', 1))
+          PY
+      - name: Static verification
+        run: |
+          python -m py_compile backend/app/routes/catalog.py backend/app/routes/set_ui.py backend/app/routes/search_v2.py
+          grep -q "max_offset = min(max_offset, 100_000)" backend/app/routes/catalog.py
+          grep -q "include_meta" backend/app/routes/catalog.py
+          grep -q "meta: 1" frontend/app/api/catalog/sets/route.js
+          grep -q "sets: setsTotal" frontend/app/api/search-v2/federated/route.js
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/app/routes/catalog.py frontend/app/api/catalog/sets/route.js frontend/app/api/search-v2/federated/route.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Expose catalog pagination totals and deep offsets'
+          git push origin HEAD:catalog-v2

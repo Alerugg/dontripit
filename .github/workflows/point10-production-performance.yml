@@ -1,0 +1,83 @@
+name: Point 10 Production Performance
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/point10-production-performance.yml'
+  schedule:
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: point10-production-performance
+  cancel-in-progress: true
+
+jobs:
+  production-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for current production contract and measure latency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import statistics
+          import time
+          import urllib.request
+
+          BASE='https://dontripit.com'
+          HEADERS={'User-Agent':'Dontripit-Point10-Performance/1.0'}
+          PATHS=[
+              '/',
+              '/api/catalog/sets?game=onepiece&limit=24&offset=0',
+              '/api/catalog/set-detail?game=onepiece&set_code=op-15&limit=36&offset=0',
+          ]
+
+          def fetch(path, timeout=30):
+              start=time.perf_counter()
+              request=urllib.request.Request(BASE+path, headers=HEADERS)
+              with urllib.request.urlopen(request, timeout=timeout) as response:
+                  body=response.read()
+                  elapsed=(time.perf_counter()-start)*1000
+                  return response.status, elapsed, body, dict(response.headers)
+
+          # Deployments are asynchronous. Do not benchmark stale registration HTML.
+          last=''
+          for _ in range(24):
+              try:
+                  status, _, body, _ = fetch('/register')
+                  text=body.decode('utf-8','replace')
+                  if status == 200 and 'marketing_consent' not in text:
+                      break
+                  last='stale registration deployment'
+              except Exception as exc:
+                  last=repr(exc)
+              time.sleep(5)
+          else:
+              raise SystemExit(f'production did not become ready: {last}')
+
+          summary={}
+          for path in PATHS:
+              samples=[]
+              for i in range(8):
+                  status, elapsed, body, headers = fetch(path)
+                  if status != 200 or not body:
+                      raise SystemExit(f'{path} failed status={status}')
+                  if i > 0:
+                      samples.append(elapsed)
+              ordered=sorted(samples)
+              p95=ordered[min(len(ordered)-1, int(round(0.95*(len(ordered)-1))))]
+              mean=statistics.mean(samples)
+              summary[path]={'samples':len(samples),'mean_ms':round(mean,1),'p95_ms':round(p95,1)}
+              if p95 > 3000:
+                  raise SystemExit(f'{path} p95 too slow: {p95:.1f}ms')
+
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY

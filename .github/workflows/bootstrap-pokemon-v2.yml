@@ -1,0 +1,104 @@
+name: Bootstrap Pokemon V2
+
+on:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/bootstrap-pokemon-v2.yml'
+      - 'backend/app/scripts/bootstrap_pokemon_v2.py'
+  workflow_dispatch:
+
+concurrency:
+  group: pokemon-v2-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout catalog-v2
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Compile bootstrap code
+        run: |
+          python -m py_compile \
+            app/pokemon_source_inventory.py \
+            app/scripts/preflight_pokemon_bootstrap_v2.py \
+            app/scripts/bootstrap_pokemon_v2.py
+
+      - name: Apply current schema
+        run: alembic upgrade head
+
+      - name: Bootstrap complete physical Pokémon catalog
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.bootstrap_pokemon_v2 \
+            --backup-path /tmp/pokemon-v2-before.json \
+            --report-path /tmp/pokemon-v2-bootstrap-report.json \
+            | tee /tmp/pokemon-v2-bootstrap.log
+
+      - name: Verify physical TCGdex gap is closed
+        run: |
+          set -euo pipefail
+          python -u -m app.scripts.audit_pokemon_neon_physical_gap_v2 \
+            | tee /tmp/pokemon-v2-post-gap.json
+          python - <<'PY'
+          import json
+          report = json.load(open('/tmp/pokemon-v2-post-gap.json', encoding='utf-8'))
+          gap = report['gap']
+          assert gap['matched_physical_source_cards'] == 20964, gap
+          assert gap['missing_physical_source_cards'] == 0, gap
+          assert gap['physical_source_coverage'] == 1.0, gap
+          assert gap['physical_sets_with_zero_matches'] == 0, gap
+          assert gap['physical_sets_partial'] == 0, gap
+          assert gap['pocket_ids_in_pokemon_neon'] == 0, gap
+          assert gap['duplicate_db_tcgdex_ids'] == 0, gap
+          print(json.dumps({'status':'pass','gap':gap}, indent=2))
+          PY
+
+      - name: Generate Catalog Health evidence
+        if: always()
+        run: python -m app.scripts.catalog_health --json > /tmp/pokemon-v2-catalog-health.json || true
+
+      - name: Print final Pokémon V2 evidence
+        if: always()
+        run: |
+          echo '--- bootstrap report ---'
+          cat /tmp/pokemon-v2-bootstrap-report.json 2>/dev/null || true
+          echo '--- post-bootstrap gap ---'
+          cat /tmp/pokemon-v2-post-gap.json 2>/dev/null || true
+
+      - name: Upload rollback and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-v2-bootstrap-${{ github.sha }}
+          path: |
+            /tmp/pokemon-v2-before.json
+            /tmp/pokemon-v2-bootstrap-report.json
+            /tmp/pokemon-v2-post-gap.json
+            /tmp/pokemon-v2-catalog-health.json
+            /tmp/pokemon-v2-bootstrap.log
+          retention-days: 180
+          if-no-files-found: warn

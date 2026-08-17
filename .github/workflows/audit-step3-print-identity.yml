@@ -1,0 +1,132 @@
+name: Audit Step 3 Exact Print Identity
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-step3-print-identity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - name: Audit production identity coverage
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'], pool_pre_ping=True)
+          report={'pass':True,'hard_failures':[],'games':{},'card_detail_cap':{},'onepiece_release_probe':{},'accepted_cardmarket':{}}
+          active=('mtg','onepiece','pokemon','yugioh')
+          with engine.connect() as conn:
+            for game in active:
+              row=conn.execute(text('''
+                SELECT COUNT(*) AS prints,
+                       COUNT(*) FILTER (WHERE trim(COALESCE(c.name,''))='') AS blank_card_names,
+                       COUNT(*) FILTER (WHERE lower(trim(COALESCE(c.name,''))) ~ '^(unknown|unnamed|card #[0-9]+|carta #[0-9]+)$') AS placeholder_card_names,
+                       COUNT(*) FILTER (WHERE trim(COALESCE(s.name,''))='') AS blank_set_names
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug=:game
+              '''),{'game':game}).mappings().one()
+              maxrow=conn.execute(text('''
+                SELECT c.id AS card_id,c.name,COUNT(*) AS print_count
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug=:game
+                GROUP BY c.id,c.name ORDER BY COUNT(*) DESC LIMIT 1
+              '''),{'game':game}).mappings().one_or_none()
+              over50=conn.execute(text('''
+                SELECT COUNT(*) FROM (
+                  SELECT p.card_id FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                  WHERE g.slug=:game GROUP BY p.card_id HAVING COUNT(*)>50
+                ) x
+              '''),{'game':game}).scalar_one()
+              report['games'][game]={**dict(row),'cards_over_50_prints':int(over50),'max_prints_card':dict(maxrow) if maxrow else None}
+              if row['blank_card_names'] or row['placeholder_card_names']:
+                report['hard_failures'].append(f'{game}:missing_real_card_names')
+
+            # The exact Luffy that exposed the physical-release/set confusion.
+            releases=[dict(r) for r in conn.execute(text('''
+              SELECT cr.id,cr.source,cr.external_id,cr.name,cr.code,cr.language,cr.region
+              FROM print_releases pr JOIN catalog_releases cr ON cr.id=pr.release_id
+              WHERE pr.print_id=44257 ORDER BY cr.id
+            ''')).mappings().all()]
+            base=dict(conn.execute(text('''
+              SELECT p.id,c.name AS card_name,s.name AS set_name,s.code AS set_code,p.collector_number,p.variant,p.rarity
+              FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE p.id=44257
+            ''')).mappings().one())
+            report['onepiece_release_probe']={'print':base,'physical_releases':releases}
+            if not any('PILLARS OF STRENGTH' in str(r.get('name') or '').upper() for r in releases):
+              report['hard_failures'].append('onepiece:44257_missing_pillars_physical_release')
+
+            # Accepted Cardmarket identity must remain one exact single per print.
+            stats=dict(conn.execute(text('''
+              WITH accepted AS (
+                SELECT l.print_id,e.id,e.external_id,e.game_id,e.product_group
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND l.link_status IN ('accepted','mapped','exact')
+              ), grouped AS (
+                SELECT print_id,COUNT(DISTINCT id) AS products FROM accepted GROUP BY print_id
+              )
+              SELECT COUNT(*) AS accepted_prints,
+                     COUNT(*) FILTER (WHERE products>1) AS ambiguous_accepted_prints
+              FROM grouped
+            ''')).mappings().one())
+            wrong=int(conn.execute(text('''
+              SELECT COUNT(*)
+              FROM external_catalog_print_links l
+              JOIN external_catalog_products e ON e.id=l.external_product_id
+              JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id
+              WHERE e.source='cardmarket' AND l.link_status IN ('accepted','mapped','exact')
+                AND (e.product_group<>'single' OR e.game_id<>c.game_id)
+            ''')).scalar_one())
+            report['accepted_cardmarket']={**stats,'wrong_game_or_group':wrong}
+            if stats['ambiguous_accepted_prints'] or wrong:
+              report['hard_failures'].append('cardmarket:accepted_identity_not_one_to_one')
+
+          src=Path('backend/app/routes/catalog.py').read_text()
+          report['card_detail_cap']={
+            'has_limit_50': bool(re.search(r'WHERE p\.card_id = :card_id[\s\S]{0,700}?LIMIT 50',src)),
+            'frontend_fallback_card_number': 'Carta #' in Path('frontend/app/api/catalog/set-detail/route.js').read_text(),
+          }
+          if report['card_detail_cap']['has_limit_50']:
+            report['hard_failures'].append('card_detail:silent_limit_50')
+
+          report['pass']=not report['hard_failures']
+          Path('/tmp/step3-print-identity.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          # Audit is diagnostic: persist even when it finds expected failures.
+          PY
+      - name: Persist audit
+        if: always()
+        run: |
+          mkdir -p audit-reports
+          cp /tmp/step3-print-identity.json audit-reports/step3-print-identity.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/step3-print-identity.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Record step 3 print identity audit'
+          git push origin HEAD:catalog-v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: step3-print-identity-${{ github.run_id }}
+          path: /tmp/step3-print-identity.json
+          retention-days: 90
