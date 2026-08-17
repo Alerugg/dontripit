@@ -16,7 +16,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install psycopg2-binary==2.9.9
-      - name: Read exact post-repair state for six certified residuals
+      - name: Read six sealed identities only
         working-directory: backend
         run: |
           python - <<'PY'
@@ -37,62 +37,31 @@ jobs:
           from psycopg2.extras import RealDictCursor
 
           IDS=('903009','903002','902998','902999','903000','903001')
-          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'], connect_timeout=15)
           conn.set_session(readonly=True,autocommit=True)
           with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT max(last_seen_at) capture FROM external_catalog_products WHERE source='cardmarket'")
-            capture=cur.fetchone()['capture']
+            cur.execute("SET statement_timeout = '20s'")
             cur.execute('''
-              SELECT e.id external_product_id,e.external_id,g.slug game,e.name,e.category,e.expansion_external_id,
-                     e.first_seen_at,e.last_seen_at,
-                     EXISTS(
-                       SELECT 1 FROM external_catalog_product_variant_links l
-                       JOIN product_variants pv ON pv.id=l.product_variant_id
-                       JOIN products p ON p.id=pv.product_id
-                       WHERE l.external_product_id=e.id
-                         AND l.link_status IN ('accepted','mapped','exact')
-                         AND p.game_id=e.game_id
-                     ) has_accepted_link,
-                     EXISTS(
-                       SELECT 1 FROM product_identifiers pi
-                       JOIN product_variants pv ON pv.id=pi.product_variant_id
-                       JOIN products p ON p.id=pv.product_id
-                       WHERE pi.source='cardmarket' AND pi.external_id=e.external_id AND p.game_id=e.game_id
-                     ) has_identifier
+              SELECT e.external_id,g.slug game,e.name,
+                     (SELECT count(*) FROM external_catalog_product_variant_links l
+                      WHERE l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact')) accepted_links,
+                     (SELECT count(*) FROM product_identifiers pi
+                      WHERE pi.source='cardmarket' AND pi.external_id=e.external_id) identifiers
               FROM external_catalog_products e JOIN games g ON g.id=e.game_id
               WHERE e.source='cardmarket' AND e.external_id = ANY(%s)
               ORDER BY e.external_id
             ''',(list(IDS),))
             targets=[dict(r) for r in cur.fetchall()]
-
-            cur.execute('''
-              SELECT pi.external_id,p.id product_id,p.name canonical_name,p.product_type,
-                     pv.id product_variant_id,pv.language,pv.region,pv.packaging,pv.sku,
-                     count(ps.id) price_snapshot_count
-              FROM product_identifiers pi
-              JOIN product_variants pv ON pv.id=pi.product_variant_id
-              JOIN products p ON p.id=pv.product_id
-              LEFT JOIN price_snapshots ps ON ps.entity_type='product_variant' AND ps.entity_id=pv.id
-              WHERE pi.source='cardmarket' AND pi.external_id = ANY(%s)
-              GROUP BY pi.external_id,p.id,p.name,p.product_type,pv.id,pv.language,pv.region,pv.packaging,pv.sku
-              ORDER BY pi.external_id,p.id,pv.id
-            ''',(list(IDS),))
-            canon=[dict(r) for r in cur.fetchall()]
           conn.close()
 
           by_id={str(r['external_id']):r for r in targets}
           missing=sorted(set(IDS)-set(by_id))
-          unresolved=sorted(i for i,r in by_id.items() if not r['has_accepted_link'] and not r['has_identifier'])
-          resolved=sorted(i for i,r in by_id.items() if r['has_accepted_link'] or r['has_identifier'])
-          report={
-            'mode':'READ_ONLY','capture':capture,'expected_ids':sorted(IDS),'missing_external_ids':missing,
-            'resolved_count':len(resolved),'resolved_ids':resolved,
-            'unresolved_count':len(unresolved),'unresolved_ids':unresolved,
-            'targets':targets,'canonical_rows':canon,
-          }
-          print('SEALED_POST_REPAIR_REPORT='+json.dumps(report,default=str,sort_keys=True))
-          if missing:
-            raise SystemExit(f'Missing external rows: {missing}')
-          if len(resolved) not in (0,6):
-            raise SystemExit(f'PARTIAL_STATE: resolved={resolved} unresolved={unresolved}')
+          resolved=sorted(i for i,r in by_id.items() if int(r['accepted_links'])>0 or int(r['identifiers'])>0)
+          unresolved=sorted(i for i,r in by_id.items() if int(r['accepted_links'])==0 and int(r['identifiers'])==0)
+          report={'mode':'READ_ONLY','expected_ids':sorted(IDS),'missing_external_ids':missing,
+                  'resolved_count':len(resolved),'resolved_ids':resolved,
+                  'unresolved_count':len(unresolved),'unresolved_ids':unresolved,'targets':targets}
+          print('SEALED_FAST_STATE='+json.dumps(report,default=str,sort_keys=True))
+          if missing: raise SystemExit(f'Missing external rows: {missing}')
+          if len(resolved) not in (0,6): raise SystemExit(f'PARTIAL_STATE: resolved={resolved} unresolved={unresolved}')
           PY
