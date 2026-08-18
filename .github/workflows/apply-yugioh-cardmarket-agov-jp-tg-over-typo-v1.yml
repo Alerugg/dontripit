@@ -1,0 +1,104 @@
+name: Apply Yu-Gi-Oh Cardmarket AGOV-JP T.G. Over Typo V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/data/yugioh_agov_jp_tg_over_typo_v1.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_agov_jp_tg_over_typo_v1.py'
+      - '.github/workflows/apply-yugioh-cardmarket-agov-jp-tg-over-typo-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/data/yugioh_agov_jp_tg_over_typo_v1.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_agov_jp_tg_over_typo_v1.py'
+      - '.github/workflows/apply-yugioh-cardmarket-agov-jp-tg-over-typo-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-cardmarket-agov-jp-tg-over-typo-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded mapper
+        run: python -m py_compile app/scripts/apply_yugioh_cardmarket_agov_jp_tg_over_typo_v1.py
+      - name: READ ONLY validate frozen three-pair typo manifest
+        run: |
+          mkdir -p /tmp/ygo-agov-jp-tg-over-typo-v1
+          python -m app.scripts.apply_yugioh_cardmarket_agov_jp_tg_over_typo_v1 \
+            --report /tmp/ygo-agov-jp-tg-over-typo-v1/proposal.json
+      - name: Apply three typo-image-certified exact links
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_agov_jp_tg_over_typo_v1 \
+            --apply \
+            --confirm APPLY_YUGIOH_CARDMARKET_AGOV_JP_TG_OVER_TYPO_V1 \
+            --report /tmp/ygo-agov-jp-tg-over-typo-v1/applied.json
+      - name: Project Cardmarket prices from accepted exact links
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-agov-jp-tg-over-typo-v1/projection.json
+      - name: Final production proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          from psycopg2.extras import RealDictCursor
+          expected_methods={
+            'cardmarket_ocg_certified_unique_physical_v1':59,
+            'cardmarket_ocg_certified_image_bijection_v1':30,
+            'cardmarket_ocg_certified_name_image_bijection_v1':3,
+            'cardmarket_ocg_certified_name_singleton_v1':3,
+            'cardmarket_ocg_certified_typo_image_bijection_v1':3,
+          }
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.set_session(readonly=True,autocommit=False)
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("""SELECT l.mapping_method,count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id WHERE e.source='cardmarket' AND e.game_id=(SELECT id FROM games WHERE slug='yugioh') AND e.product_group='single' AND e.expansion_external_id='5421' AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))='AGOV' GROUP BY l.mapping_method""")
+              methods={r['mapping_method']:int(r['n']) for r in cur.fetchall()}
+              total=sum(methods.values())
+              if total != 98: raise SystemExit(f'expected 98 AGOV-JP JA links, got {total}: {methods}')
+              for method,n in expected_methods.items():
+                if methods.get(method,0)!=n: raise SystemExit(f'expected {n} {method}, got {methods.get(method,0)}')
+              extra={k:v for k,v in methods.items() if k not in expected_methods}
+              if extra: raise SystemExit(f'unexpected mapping methods: {extra}')
+              cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id WHERE e.source='cardmarket' AND e.expansion_external_id='5421' AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))<>'ja'""")
+              bad=int(cur.fetchone()['n'])
+              if bad: raise SystemExit(f'wrong-language AGOV-JP links remain: {bad}')
+          finally: conn.close()
+          out={'accepted_agov_jp_ja_links':total,'mapping_methods':methods,'wrong_language_links':bad}
+          open('/tmp/ygo-agov-jp-tg-over-typo-v1/final.json','w').write(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-cardmarket-agov-jp-tg-over-typo-v1-${{ github.run_id }}
+          path: /tmp/ygo-agov-jp-tg-over-typo-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
