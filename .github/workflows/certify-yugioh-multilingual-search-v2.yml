@@ -19,6 +19,9 @@ jobs:
   certify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
     steps:
       - name: Checkout current revision
         uses: actions/checkout@v4
@@ -43,16 +46,31 @@ jobs:
           pip install -r requirements.txt
           pip install --disable-pip-version-check 'ijson==3.4.0.post0'
 
-      - name: Compile multilingual Search V2 backend and rebuild
+      - name: Compile multilingual Search V2 backend and Cardmarket version reader
         working-directory: backend
         run: |
           python -m py_compile \
             app/routes/search_v2.py \
+            app/routes/card_prints.py \
             app/search_v2/yugioh_query.py \
             app/search_v2/yugioh_advanced.py \
             app/search_v2/yugioh_profiles.py \
             app/scripts/rebuild_yugioh_search_v2_fast.py \
-            app/scripts/audit_yugioh_multilingual_search_live.py
+            app/scripts/audit_yugioh_multilingual_search_live.py \
+            app/scripts/audit_cardmarket_version_grouping_v1.py
+
+      - name: Audit Cardmarket product-language grouping READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_cardmarket_version_grouping_v1
+
+      - name: Upload Cardmarket grouping evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-version-grouping-v1-${{ github.run_id }}
+          path: /tmp/cardmarket-version-grouping-v1.json
+          retention-days: 90
+          if-no-files-found: warn
 
       - name: Run targeted backend multilingual contract tests
         working-directory: backend
