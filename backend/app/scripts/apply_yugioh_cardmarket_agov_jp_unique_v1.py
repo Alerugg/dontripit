@@ -16,7 +16,7 @@ GAME = "yugioh"
 EXPANSION_ID = "5421"
 EXPANSION_CODE = "AGOV-JP"
 CANONICAL_SET_CODE = "AGOV"
-EXPECTED_PROPOSALS = 62
+EXPECTED_PROPOSALS = 59
 ACCEPTED = ("accepted", "mapped", "exact")
 CONFIRM = "APPLY_YUGIOH_CARDMARKET_AGOV_JP_UNIQUE_V1"
 
@@ -253,7 +253,7 @@ def run(*, apply: bool, confirm: str = ""):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Apply only deterministic unique-print AGOV-JP Cardmarket links")
+    parser = argparse.ArgumentParser(description="Apply only deterministic metacard-certified unique-print AGOV-JP Cardmarket links")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm", default="")
     parser.add_argument("--report", type=Path, default=Path("/tmp/yugioh-cardmarket-agov-jp-unique-v1.json"))
