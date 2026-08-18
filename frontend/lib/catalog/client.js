@@ -81,8 +81,10 @@ export function fetchCardPrintsPage(id, options = {}) {
   }, { ttlMs: FIVE_MINUTES })
 }
 
-export function fetchPrintById(id) {
-  return request(`/api/catalog/prints/${id}`, {}, { ttlMs: FIVE_MINUTES })
+export function fetchPrintById(id, options = {}) {
+  return request(`/api/catalog/prints/${id}`, {
+    locale: options.locale ?? '',
+  }, { ttlMs: FIVE_MINUTES })
 }
 
 export function fetchPrintPhysicalReleases(id) {
