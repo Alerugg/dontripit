@@ -1,0 +1,186 @@
+name: Apply Yu-Gi-Oh Multilingual Search Index Live V1
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/triggers/run-yugioh-multilingual-search-index-live-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-multilingual-search-index-live-v1
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout current integration
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile rebuild and live certificates
+        run: |
+          python -m py_compile \
+            app/search_v2/yugioh_profiles.py \
+            app/search_v2/yugioh_query.py \
+            app/search_v2/yugioh_advanced.py \
+            app/scripts/rebuild_yugioh_search_v2_fast.py \
+            app/scripts/audit_yugioh_multilingual_search_live.py \
+            app/scripts/certify_yugioh_multilingual_search_live_queries_v1.py
+
+      - name: Capture read-only production preflight
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('DATABASE_URL missing')
+          conn = psycopg2.connect(url, connect_timeout=30, application_name='dontripit_ygo_search_rebuild_preflight')
+          conn.set_session(readonly=True, autocommit=False)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT version_num FROM alembic_version LIMIT 1')
+                  revision = str(cur.fetchone()[0])
+                  if revision != '20260815_36':
+                      raise SystemExit(f'Unexpected schema {revision}')
+                  cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")
+                  game_id = int(cur.fetchone()[0])
+                  cur.execute('''
+                    SELECT lower(coalesce(p.language,'')), count(*)
+                    FROM prints p JOIN cards c ON c.id=p.card_id
+                    WHERE c.game_id=%s AND lower(coalesce(p.language,'')) IN ('en','es','ja')
+                    GROUP BY 1 ORDER BY 1
+                  ''', (game_id,))
+                  physical = {str(k): int(v) for k,v in cur.fetchall()}
+                  expected = {'en':44226,'es':38249,'ja':36426}
+                  if physical != expected:
+                      raise SystemExit(f'Physical multilingual rollout not exact: {physical} != {expected}')
+                  cur.execute('''
+                    SELECT g.slug,
+                      (SELECT count(*) FROM card_search_profiles csp WHERE csp.game_id=g.id),
+                      (SELECT count(*) FROM print_search_profiles psp WHERE psp.game_id=g.id),
+                      (SELECT count(*) FROM facet_definitions fd WHERE fd.game_id=g.id)
+                    FROM games g WHERE g.id<>%s ORDER BY g.slug
+                  ''', (game_id,))
+                  other = {
+                    str(slug): {'cards':int(cards),'prints':int(prints),'facets':int(facets)}
+                    for slug,cards,prints,facets in cur.fetchall()
+                  }
+                  cur.execute('SELECT pg_database_size(current_database())')
+                  database_bytes = int(cur.fetchone()[0])
+                  cur.execute('''
+                    SELECT lower(coalesce(language,'')), count(*)
+                    FROM print_search_profiles WHERE game_id=%s
+                    GROUP BY 1 ORDER BY 1
+                  ''', (game_id,))
+                  profiles_before = {str(k):int(v) for k,v in cur.fetchall()}
+                  conn.rollback()
+          finally:
+              conn.close()
+          report = {
+            'status':'pass','production_writes':0,'revision':revision,'game_id':game_id,
+            'physical_prints':physical,'search_profiles_before':profiles_before,
+            'other_games_before':other,'database_bytes_before':database_bytes,
+            'database_mib_before':round(database_bytes/1024/1024,2),
+          }
+          Path('/tmp/yugioh-search-index-before.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Rebuild Yu-Gi-Oh Search V2 transactionally
+        run: |
+          python -m app.scripts.rebuild_yugioh_search_v2_fast \
+            --report-path /tmp/yugioh-search-index-rebuild.json
+
+      - name: Run exact read-only multilingual live audit
+        run: |
+          python -m app.scripts.audit_yugioh_multilingual_search_live \
+            | tee /tmp/yugioh-multilingual-search-live.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/yugioh-multilingual-search-live.json').read_text())
+          assert r['production_writes']==0, r
+          assert r['status']=='pass', r
+          assert all(r['gates'].values()), r
+          PY
+
+      - name: Certify real multilingual query behavior
+        run: |
+          python -m app.scripts.certify_yugioh_multilingual_search_live_queries_v1 \
+            | tee /tmp/yugioh-multilingual-search-query-smoke.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/yugioh-multilingual-search-query-smoke.json').read_text())
+          assert r['status']=='pass', r
+          assert r['production_writes']==0, r
+          assert r['profiles']=={'en':44226,'es':38249,'ja':36426}, r
+          PY
+
+      - name: Verify other games remained untouched
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          before=json.loads(Path('/tmp/yugioh-search-index-before.json').read_text())
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          conn=psycopg2.connect(url,connect_timeout=30,application_name='dontripit_ygo_search_rebuild_postcheck')
+          conn.set_session(readonly=True,autocommit=False)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('''
+                    SELECT g.slug,
+                      (SELECT count(*) FROM card_search_profiles csp WHERE csp.game_id=g.id),
+                      (SELECT count(*) FROM print_search_profiles psp WHERE psp.game_id=g.id),
+                      (SELECT count(*) FROM facet_definitions fd WHERE fd.game_id=g.id)
+                    FROM games g WHERE g.id<>%s ORDER BY g.slug
+                  ''',(before['game_id'],))
+                  after={str(slug):{'cards':int(cards),'prints':int(prints),'facets':int(facets)} for slug,cards,prints,facets in cur.fetchall()}
+                  conn.rollback()
+          finally:
+              conn.close()
+          if after != before['other_games_before']:
+              raise SystemExit(f'Non-YGO Search V2 state changed: {before["other_games_before"]} -> {after}')
+          Path('/tmp/yugioh-search-other-games-post.json').write_text(json.dumps({'status':'pass','other_games_after':after},indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload live rebuild evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-search-index-live-v1-${{ github.run_id }}
+          path: |
+            /tmp/yugioh-search-index-before.json
+            /tmp/yugioh-search-index-rebuild.json
+            /tmp/yugioh-multilingual-search-live.json
+            /tmp/yugioh-multilingual-search-query-smoke.json
+            /tmp/yugioh-search-other-games-post.json
+          retention-days: 180
+          if-no-files-found: warn

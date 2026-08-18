@@ -15,6 +15,7 @@ export async function GET(request) {
       q,
       game: searchParams.get('game') || '',
       limit: searchParams.get('limit') || 8,
+      language: searchParams.get('language') || '',
     },
   })
 

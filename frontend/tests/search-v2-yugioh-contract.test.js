@@ -30,12 +30,40 @@ test('Yu-Gi-Oh V2 explorer retains certified counts as non-user-facing evidence'
   assert.match(explorer, /20 facets · 19 activos/)
 })
 
-test('shared Search V2 experience exposes concise Yu-Gi-Oh-native examples', () => {
+test('shared Search V2 experience exposes localized Yu-Gi-Oh-native examples', () => {
   const experience = source('components/searchV2/OnePieceSearchV2Experience.js')
   assert.match(experience, /yugioh:/)
   assert.match(experience, /Dark Magician/)
-  assert.match(experience, /Blue-Eyes/)
-  assert.match(experience, /2017-EN001/)
+  assert.match(experience, /Mago Oscuro/)
+  assert.match(experience, /ブラック・マジシャン/)
+})
+
+test('Yu-Gi-Oh exposes prominent all EN ES JA multi-select language controls', () => {
+  const experience = source('components/searchV2/OnePieceSearchV2Experience.js')
+
+  assert.match(experience, /YUGIOH_LANGUAGE_CODES = \['en', 'es', 'ja'\]/)
+  assert.match(experience, /Todos/)
+  assert.match(experience, /English/)
+  assert.match(experience, /Español/)
+  assert.match(experience, /日本語/)
+  assert.match(experience, /searchLanguages\.join\(','\)/)
+  assert.match(experience, /aria-label="Filtrar Yu-Gi-Oh por idioma"/)
+  assert.match(experience, /aria-pressed=\{searchLanguages\.includes\(language\)\}/)
+})
+
+test('Yu-Gi-Oh localized language remains separate from physical print identity', () => {
+  const results = source('components/searchV2/SearchV2Results.js')
+  const backendNormal = source('../backend/app/search_v2/yugioh_query.py')
+  const backendAdvanced = source('../backend/app/search_v2/yugioh_advanced.py')
+
+  assert.match(results, /item\.display_language \|\| matched\.display_language \|\| matched\.language/)
+  assert.match(results, /item\.display_language \|\| item\.language/)
+  assert.match(backendNormal, /print_localizations/)
+  assert.match(backendNormal, /string_to_array\(:display_language, ','\)/)
+  assert.match(backendNormal, /"print_id": row\["print_id"\]/)
+  assert.match(backendAdvanced, /print_localizations/)
+  assert.match(backendAdvanced, /string_to_array\(:display_language, ','\)/)
+  assert.match(backendAdvanced, /"print_id": row\["print_id"\]/)
 })
 
 test('Yu-Gi-Oh quick filters match the certified backend contract', () => {
@@ -62,4 +90,5 @@ test('backend Search V2 dispatcher explicitly routes Yu-Gi-Oh alongside other ce
   assert.match(routes, /advanced_yugioh_search/)
   assert.match(routes, /yugioh_facet_values/)
   assert.match(routes, /SEARCH_V2_ADVANCED_GAMES\s*=\s*\{[^}]*"onepiece"[^}]*"pokemon"[^}]*"yugioh"[^}]*"mtg"[^}]*\}/)
+  assert.match(routes, /comma-separated selection of: en, es, ja/)
 })

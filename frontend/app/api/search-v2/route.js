@@ -8,6 +8,7 @@ export async function GET(request) {
       q: searchParams.get('q') || '',
       game: searchParams.get('game') || '',
       limit: searchParams.get('limit') || 24,
+      language: searchParams.get('language') || '',
     },
   })
 
