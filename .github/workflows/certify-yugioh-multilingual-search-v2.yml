@@ -46,7 +46,7 @@ jobs:
           pip install -r requirements.txt
           pip install --disable-pip-version-check 'ijson==3.4.0.post0'
 
-      - name: Compile multilingual Search V2 backend and Cardmarket version reader
+      - name: Compile multilingual Search V2 backend and Cardmarket readers
         working-directory: backend
         run: |
           python -m py_compile \
@@ -57,18 +57,25 @@ jobs:
             app/search_v2/yugioh_profiles.py \
             app/scripts/rebuild_yugioh_search_v2_fast.py \
             app/scripts/audit_yugioh_multilingual_search_live.py \
-            app/scripts/audit_cardmarket_version_grouping_v1.py
+            app/scripts/audit_cardmarket_version_grouping_v1.py \
+            app/scripts/audit_yugioh_cardmarket_es_bridge_v1.py
 
       - name: Audit Cardmarket product-language grouping READ ONLY
         working-directory: backend
         run: python -m app.scripts.audit_cardmarket_version_grouping_v1
+
+      - name: Audit deterministic Yu-Gi-Oh ES Cardmarket bridge READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_yugioh_cardmarket_es_bridge_v1
 
       - name: Upload Cardmarket grouping evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cardmarket-version-grouping-v1-${{ github.run_id }}
-          path: /tmp/cardmarket-version-grouping-v1.json
+          path: |
+            /tmp/cardmarket-version-grouping-v1.json
+            /tmp/yugioh-cardmarket-es-bridge-v1.json
           retention-days: 90
           if-no-files-found: warn
 
