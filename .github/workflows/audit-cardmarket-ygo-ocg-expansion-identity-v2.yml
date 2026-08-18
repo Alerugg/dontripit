@@ -1,0 +1,48 @@
+name: Audit Cardmarket YGO OCG Expansion Identity V2
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_cardmarket_ygo_ocg_expansion_identity_v2.py'
+      - '.github/workflows/audit-cardmarket-ygo-ocg-expansion-identity-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    strategy:
+      fail-fast: false
+      matrix:
+        key: [alin_jp, pote_jp]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile OCG certifier
+        run: python -m py_compile app/scripts/audit_cardmarket_ygo_ocg_expansion_identity_v2.py
+      - name: Certify first-party regional expansion identity
+        run: |
+          mkdir -p /tmp/ygo-ocg-v2
+          python -m app.scripts.audit_cardmarket_ygo_ocg_expansion_identity_v2 \
+            --key "${{ matrix.key }}" \
+            --require-certified \
+            --report "/tmp/ygo-ocg-v2/${{ matrix.key }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-ygo-ocg-${{ matrix.key }}-${{ github.run_id }}
+          path: /tmp/ygo-ocg-v2/${{ matrix.key }}.json
+          retention-days: 90
+          if-no-files-found: error
