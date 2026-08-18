@@ -71,18 +71,60 @@ def run() -> dict:
                     {"pid": int(pid), "locktype": locktype, "mode": mode, "granted": bool(granted), "count": int(count)}
                     for pid, locktype, mode, granted, count in cur.fetchall()
                 ]
+
+            cur.execute(
+                """
+                SELECT lower(coalesce(p.language,'')), count(*)
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='yugioh'
+                GROUP BY 1 ORDER BY 1
+                """
+            )
+            languages = {str(language): int(count) for language, count in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT count(*)
+                FROM print_localizations l
+                JOIN prints p ON p.id=l.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='yugioh' AND lower(l.language) IN ('es','ja')
+                """
+            )
+            localizations_es_ja = int(cur.fetchone()[0] or 0)
+
+            cur.execute("SELECT count(*) FROM cards c JOIN games g ON g.id=c.game_id WHERE g.slug='yugioh'")
+            cards = int(cur.fetchone()[0] or 0)
+            cur.execute("SELECT count(*) FROM sets s JOIN games g ON g.id=s.game_id WHERE g.slug='yugioh'")
+            sets = int(cur.fetchone()[0] or 0)
+
             cur.execute("SELECT pg_database_size(current_database())")
             database_bytes = int(cur.fetchone()[0] or 0)
             conn.rollback()
     finally:
         conn.close()
 
+    expected_languages = {"en": 44226, "es": 38249, "ja": 36426}
+    rollout_complete = (
+        languages == expected_languages
+        and localizations_es_ja == 74675
+        and cards == 14479
+        and sets == 1457
+    )
     report = {
         "status": "pass",
         "production_writes": 0,
         "writer_backends_visible": len(activity),
         "activity": activity,
         "locks": locks,
+        "languages": languages,
+        "print_localizations_es_ja": localizations_es_ja,
+        "cards": cards,
+        "sets": sets,
+        "rollout_complete": rollout_complete,
         "database_bytes": database_bytes,
         "database_mib": round(database_bytes / 1024 / 1024, 2),
     }
