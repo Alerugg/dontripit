@@ -101,12 +101,15 @@ jobs:
           test "$actual" = "$expected"
           cp evidence/preflight/yugioh-yaml-yugi-source-meta-preflight.json "$RUNNER_TEMP/yaml-yugi/source-meta.json"
 
-      - name: Compile production writer
-        run: python -m py_compile app/scripts/rollout_yugioh_multilingual_production_v1.py
+      - name: Compile production writers
+        run: |
+          python -m py_compile \
+            app/scripts/rollout_yugioh_multilingual_production_v1.py \
+            app/scripts/rollout_yugioh_multilingual_production_v2.py
 
       - name: Dry-run against live schema and live catalog
         run: |
-          python -m app.scripts.rollout_yugioh_multilingual_production_v1 \
+          python -m app.scripts.rollout_yugioh_multilingual_production_v2 \
             --input-dir "$RUNNER_TEMP/ygojson-fresh/extracted" \
             --yaml-yugi-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
             --yaml-yugi-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
@@ -116,7 +119,7 @@ jobs:
 
       - name: Apply atomic ES/JA materialization
         run: |
-          python -m app.scripts.rollout_yugioh_multilingual_production_v1 \
+          python -m app.scripts.rollout_yugioh_multilingual_production_v2 \
             --input-dir "$RUNNER_TEMP/ygojson-fresh/extracted" \
             --yaml-yugi-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
             --yaml-yugi-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
@@ -132,6 +135,8 @@ jobs:
           from pathlib import Path
           r = json.loads(Path('../evidence/yugioh-multilingual-production-v1.json').read_text())
           assert r['status'] == 'pass', r
+          assert r['runner_version'] == 2, r
+          assert r['commit_confirmed'] is True, r
           assert r['pass2_zero_writes'] is True, r
           assert r['logical_cards_created'] == 0, r
           assert r['economics_untouched'] is True, r
