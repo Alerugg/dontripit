@@ -33,7 +33,13 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile market readers and read-only auditors
         working-directory: backend
-        run: python -m py_compile app/routes/card_prints.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/audit_yugioh_cardmarket_ja_surface_v1.py app/scripts/audit_onepiece_cardmarket_language_surface_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
+        run: python -m py_compile app/routes/card_prints.py app/routes/exact_print_output.py app/scripts/audit_exact_print_detail_coverage_v1.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/audit_yugioh_cardmarket_ja_surface_v1.py app/scripts/audit_onepiece_cardmarket_language_surface_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
+      - name: Certify Exact Print Detail V2 on isolated DB
+        working-directory: backend
+        run: pytest -q tests/test_exact_print_detail_v2.py
+      - name: Audit Exact Print Detail V2 coverage READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_exact_print_detail_coverage_v1 > /tmp/exact-print-detail-coverage-v1.json
       - name: Audit Cardmarket grouping READ ONLY
         working-directory: backend
         run: python -m app.scripts.audit_cardmarket_version_grouping_v1
@@ -57,12 +63,14 @@ jobs:
           b=json.load(open('/tmp/ygo-es-v2-idempotent.json'))
           j=json.load(open('/tmp/yugioh-cardmarket-ja-surface-v1.json'))
           o=json.load(open('/tmp/onepiece-cardmarket-language-surface-v1.json'))
+          x=json.load(open('/tmp/exact-print-detail-coverage-v1.json'))
           assert a['production_writes']==0 and b['production_writes']==0, (a,b)
           assert j['production_writes']==0 and o['production_writes']==0, (j,o)
           assert a['before']['proposal_count']==0 and b['before']['proposal_count']==0, (a,b)
           assert a['before']['multilingual_products']==22055, a
           assert b['before']['multilingual_products']==22055, b
           assert j['status']=='pass' and o['status']=='pass', (j,o)
+          assert x['read_only'] is True and x['totals']['prints'] > 0, x
           PY
       - name: Upload read-only evidence
         if: always()
@@ -70,6 +78,7 @@ jobs:
         with:
           name: cardmarket-version-ui-readonly-${{ github.run_id }}
           path: |
+            /tmp/exact-print-detail-coverage-v1.json
             /tmp/cardmarket-version-grouping-v1.json
             /tmp/ygo-es-v1-idempotent.json
             /tmp/ygo-es-v2-idempotent.json
