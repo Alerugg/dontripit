@@ -1,0 +1,158 @@
+name: Apply Yu-Gi-Oh Multilingual Production V1
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/triggers/run-yugioh-multilingual-production-v1
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: yugioh-multilingual-production-v1
+  cancel-in-progress: false
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      YUGIOH_PRODUCTION_ROLLOUT_ACK: YGO_ES_JA_ROLLOUT_V1
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout promoted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
+
+      - name: Read pinned rollout evidence IDs
+        working-directory: .
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          cfg = json.loads(Path('.github/triggers/run-yugioh-multilingual-production-v1').read_text())
+          required = {'preflight_run_id', 'source_run_id'}
+          if set(cfg) != required:
+              raise SystemExit(f'Unexpected rollout trigger contract: {cfg}')
+          if int(cfg['source_run_id']) != 31915462442:
+              raise SystemExit(f'Unexpected source run: {cfg}')
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"PREFLIGHT_RUN_ID={int(cfg['preflight_run_id'])}\n")
+              f.write(f"SOURCE_RUN_ID={int(cfg['source_run_id'])}\n")
+          print(cfg)
+          PY
+
+      - name: Download successful preflight certificate and fresh source
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/preflight evidence/fresh "$RUNNER_TEMP/ygojson-fresh/extracted"
+          state="$(gh run view "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
+          test "$state" = 'completed:success:Certify Yu-Gi-Oh Multilingual Rollout Preflight V1'
+          gh run download "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "yugioh-multilingual-rollout-preflight-v1-${PREFLIGHT_RUN_ID}" \
+            --dir evidence/preflight
+          test -s evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
+          test -s evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
+          state="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
+          test "$state" = 'completed:success:Shadow YGOJSON Full Refresh V1'
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "ygojson-shadow-full-refresh-v1-${SOURCE_RUN_ID}" \
+            --dir evidence/fresh
+          unzip -q evidence/fresh/ygojson-shadow-fresh-aggregate-v1.zip -d "$RUNNER_TEMP/ygojson-fresh/extracted"
+          test -s "$RUNNER_TEMP/ygojson-fresh/extracted/cards.json"
+          test -s "$RUNNER_TEMP/ygojson-fresh/extracted/sets.json"
+
+      - name: Fetch YAML Yugi and require exact preflight hash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/yaml-yugi"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            https://dawnbrandbots.github.io/yaml-yugi/cards.json
+          actual="$(sha256sum "$RUNNER_TEMP/yaml-yugi/cards.json" | awk '{print $1}')"
+          expected="$(awk '{print $1}' evidence/preflight/yugioh-yaml-yugi-cards-sha256-preflight.txt)"
+          test "$actual" = "$expected"
+          cp evidence/preflight/yugioh-yaml-yugi-source-meta-preflight.json "$RUNNER_TEMP/yaml-yugi/source-meta.json"
+
+      - name: Compile production writers
+        run: |
+          python -m py_compile \
+            app/scripts/rollout_yugioh_multilingual_production_v1.py \
+            app/scripts/rollout_yugioh_multilingual_production_v2.py
+
+      - name: Dry-run against live schema and live catalog
+        run: |
+          python -m app.scripts.rollout_yugioh_multilingual_production_v2 \
+            --input-dir "$RUNNER_TEMP/ygojson-fresh/extracted" \
+            --yaml-yugi-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            --yaml-yugi-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
+            --fresh-certificate ../evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json \
+            --readiness ../evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json \
+            --output ../evidence/yugioh-multilingual-production-dry-run-v1.json
+
+      - name: Apply atomic ES/JA materialization
+        run: |
+          python -m app.scripts.rollout_yugioh_multilingual_production_v2 \
+            --input-dir "$RUNNER_TEMP/ygojson-fresh/extracted" \
+            --yaml-yugi-cards "$RUNNER_TEMP/yaml-yugi/cards.json" \
+            --yaml-yugi-meta "$RUNNER_TEMP/yaml-yugi/source-meta.json" \
+            --fresh-certificate ../evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json \
+            --readiness ../evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json \
+            --output ../evidence/yugioh-multilingual-production-v1.json \
+            --apply
+
+      - name: Enforce committed rollout evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path('../evidence/yugioh-multilingual-production-v1.json').read_text())
+          assert r['status'] == 'pass', r
+          assert r['runner_version'] == 2, r
+          assert r['commit_confirmed'] is True, r
+          assert r['pass2_zero_writes'] is True, r
+          assert r['logical_cards_created'] == 0, r
+          assert r['economics_untouched'] is True, r
+          assert r['invariants']['status'] == 'pass', r
+          assert r['validation']['status'] == 'pass' and all(r['validation']['gates'].values()), r
+          PY
+
+      - name: Upload production evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-production-v1-${{ github.run_id }}
+          path: |
+            evidence/yugioh-multilingual-production-dry-run-v1.json
+            evidence/yugioh-multilingual-production-v1.json
+            evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
+            evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
+          retention-days: 180
+          if-no-files-found: warn

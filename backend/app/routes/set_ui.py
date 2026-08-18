@@ -28,13 +28,22 @@ def _normalized_release_code(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
 
 
+def _normalized_region(value: object) -> str | None:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    if len(raw) > 16 or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", raw):
+        raise ValueError("invalid set_region")
+    return raw
+
+
 def _release_codes(row: dict) -> set[str]:
     candidates = [row.get("code")]
     candidates.extend(re.findall(r"\[([^\]]+)\]", str(row.get("name") or "")))
     return {value for raw in candidates if (value := _normalized_release_code(raw))}
 
 
-def _resolve_catalog_release(session, *, game: str, requested_code: str) -> dict | None:
+def _resolve_catalog_release(session, *, game: str, requested_code: str, requested_region: str | None = None) -> dict | None:
     compact = _normalized_release_code(requested_code)
     if not compact:
         return None
@@ -47,10 +56,11 @@ def _resolve_catalog_release(session, *, game: str, requested_code: str) -> dict
             FROM catalog_releases cr
             JOIN games g ON g.id = cr.game_id
             WHERE g.slug = :game
+              AND (:region IS NULL OR lower(COALESCE(cr.region, 'global')) = :region)
             ORDER BY cr.id ASC
             """
         ),
-        {"game": game},
+        {"game": game, "region": requested_region},
     ).mappings().all()
 
     matches = [dict(row) for row in rows if compact in _release_codes(dict(row))]
@@ -70,6 +80,40 @@ def _resolve_catalog_release(session, *, game: str, requested_code: str) -> dict
     return finalists[0]
 
 
+def _resolve_canonical_set(session, *, game: str, requested_code: str, requested_region: str | None = None) -> dict | None:
+    rows = session.execute(
+        text(
+            """
+            SELECT s.id, s.code, s.name, s.region
+            FROM sets s
+            JOIN games g ON g.id = s.game_id
+            WHERE g.slug = :game
+              AND lower(s.code) = :set_code
+              AND (:region IS NULL OR lower(s.region) = :region)
+            ORDER BY CASE WHEN lower(s.region) = 'global' THEN 0 ELSE 1 END, s.id ASC
+            """
+        ),
+        {"game": game, "set_code": requested_code.lower(), "region": requested_region},
+    ).mappings().all()
+    matches = [dict(row) for row in rows]
+    if not matches:
+        return None
+    if requested_region:
+        if len(matches) != 1:
+            return {"ambiguous": True, "matches": matches}
+        return matches[0]
+
+    # Backwards compatibility: historical callers without a region keep
+    # resolving the pre-existing global/TCG set. Never UNION its prints with a
+    # regional OCG set that happens to share the same real code.
+    global_matches = [row for row in matches if str(row.get("region") or "").lower() == "global"]
+    if len(global_matches) == 1:
+        return global_matches[0]
+    if len(matches) == 1:
+        return matches[0]
+    return {"ambiguous": True, "matches": matches}
+
+
 def _order_sql(sort: str) -> str:
     default = (
         "COALESCE(NULLIF(substring(p.collector_number from '([0-9]+)[^0-9]*$'), '')::bigint, 9223372036854775807) ASC, "
@@ -87,6 +131,10 @@ def list_set_ui_prints():
     set_code = str(request.args.get("set_code") or "").strip()
     if not game or not set_code:
         return jsonify({"error": "invalid_params", "detail": "game and set_code are required"}), 400
+    try:
+        set_region = _normalized_region(request.args.get("set_region"))
+    except ValueError:
+        return jsonify({"error": "invalid_params", "detail": "invalid set_region"}), 400
 
     limit = _bounded_int(request.args.get("limit"), default=36, minimum=1, maximum=50)
     offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=100_000)
@@ -112,22 +160,62 @@ def list_set_ui_prints():
 
     try:
         with db.SessionLocal() as session:
-            release = _resolve_catalog_release(session, game=game, requested_code=set_code)
+            release = _resolve_catalog_release(
+                session,
+                game=game,
+                requested_code=set_code,
+                requested_region=set_region,
+            )
             if release and release.get("ambiguous"):
                 return jsonify({
                     "error": "release_code_ambiguous",
                     "game": game,
                     "set_code": set_code,
+                    "set_region": set_region,
                     "matches": [
-                        {"id": row["id"], "source": row["source"], "external_id": row["external_id"], "name": row["name"], "code": row["code"]}
+                        {
+                            "id": row["id"],
+                            "source": row["source"],
+                            "external_id": row["external_id"],
+                            "name": row["name"],
+                            "code": row["code"],
+                            "region": row.get("region"),
+                        }
                         for row in release["matches"]
                     ],
                 }), 409
 
+            canonical_set = None
+            if not release:
+                canonical_set = _resolve_canonical_set(
+                    session,
+                    game=game,
+                    requested_code=set_code,
+                    requested_region=set_region,
+                )
+                if canonical_set and canonical_set.get("ambiguous"):
+                    return jsonify({
+                        "error": "set_code_ambiguous",
+                        "game": game,
+                        "set_code": set_code,
+                        "set_region": set_region,
+                        "matches": [
+                            {"id": row["id"], "name": row["name"], "code": row["code"], "region": row["region"]}
+                            for row in canonical_set["matches"]
+                        ],
+                    }), 409
+                if canonical_set is None:
+                    return jsonify({
+                        "error": "set_not_found",
+                        "game": game,
+                        "set_code": set_code,
+                        "set_region": set_region,
+                    }), 404
+
             common_select = """
                 SELECT p.id, p.id AS print_id, p.card_id,
                        c.name AS card_name, c.name AS name,
-                       s.code AS set_code, s.name AS set_name,
+                       s.code AS set_code, s.name AS set_name, s.region AS set_region,
                        p.collector_number, p.language, p.rarity, p.is_foil, p.variant,
                        cm.cardmarket_external_product_id, cm.cardmarket_id_product,
                        cm.cardmarket_product_name, cm.cardmarket_website_path,
@@ -164,20 +252,29 @@ def list_set_ui_prints():
                 """
                 params = {"release_id": release["id"], "q": f"%{q}%", "limit": limit, "offset": offset}
                 scope = {
-                    "type": "release", "release_id": release["id"], "release_source": release["source"],
-                    "release_external_id": release["external_id"], "release_name": release["name"], "release_code": release["code"],
+                    "type": "release",
+                    "release_id": release["id"],
+                    "release_source": release["source"],
+                    "release_external_id": release["external_id"],
+                    "release_name": release["name"],
+                    "release_code": release["code"],
+                    "release_region": release.get("region"),
                 }
             else:
                 base_from = f"""
                     FROM prints p
                     JOIN cards c ON c.id=p.card_id
                     JOIN sets s ON s.id=p.set_id
-                    JOIN games g ON g.id=c.game_id
                     {market_join}
-                    WHERE g.slug=:game AND lower(s.code)=:set_code
+                    WHERE p.set_id=:set_id
                 """
-                params = {"game": game, "set_code": set_code.lower(), "q": f"%{q}%", "limit": limit, "offset": offset}
-                scope = {"type": "set", "set_code": set_code}
+                params = {"set_id": canonical_set["id"], "q": f"%{q}%", "limit": limit, "offset": offset}
+                scope = {
+                    "type": "set",
+                    "set_id": canonical_set["id"],
+                    "set_code": canonical_set["code"],
+                    "set_region": canonical_set["region"],
+                }
 
             rows_sql = text(f"{common_select} {base_from} {q_clause} {price_clause} ORDER BY {order_sql} LIMIT :limit OFFSET :offset")
             count_sql = text(f"SELECT COUNT(*) {base_from} {q_clause} {price_clause}")
