@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,13 +39,28 @@ def _normalize_text(value: Any) -> str | None:
     return text_value or None
 
 
+def _normalize_repeated_visual_text(value: Any) -> str | None:
+    """Collapse icon-alt + visible-text duplicates emitted by Bandai's TEXT VIEW.
+
+    Attribute blocks can render as ``Slash Slash`` or
+    ``Slash/Special Slash/Special`` because the icon alt text and the visible
+    label carry the same semantic value. Keep one copy without touching
+    non-identical multi-word values.
+    """
+    text_value = _normalize_text(value)
+    if not text_value:
+        return None
+    match = re.fullmatch(r"(.+?)\s+\1", text_value, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else text_value
+
+
 def _canonical_details(source_print: dict) -> dict:
     raw = dict(source_print.get("details") or {})
     details = {
         "effect": _normalize_text(raw.get("effect")),
         "trigger": _normalize_text(raw.get("trigger")),
         "cost": _normalize_text(raw.get("cost")),
-        "attribute": _normalize_text(raw.get("attribute")),
+        "attribute": _normalize_repeated_visual_text(raw.get("attribute")),
         "power": _normalize_text(raw.get("power")),
         "counter": _normalize_text(raw.get("counter")),
         "color": _normalize_text(raw.get("color")),
