@@ -1,0 +1,116 @@
+name: Apply Cardmarket Certified Region Language Integrity V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/apply_cardmarket_certified_region_language_integrity_v1.py'
+      - '.github/workflows/apply-cardmarket-certified-region-language-integrity-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_cardmarket_certified_region_language_integrity_v1.py'
+      - '.github/workflows/apply-cardmarket-certified-region-language-integrity-v1.yml'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply quarantine + price cleanup'
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: 'Required for apply: APPLY_CARDMARKET_CERTIFIED_REGION_LANGUAGE_INTEGRITY_V1'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cardmarket-certified-region-language-integrity-v1
+  cancel-in-progress: false
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile integrity gate
+        run: python -m py_compile app/scripts/apply_cardmarket_certified_region_language_integrity_v1.py
+      - name: READ ONLY proposal
+        run: |
+          mkdir -p /tmp/cardmarket-certified-region-language-integrity-v1
+          python -m app.scripts.apply_cardmarket_certified_region_language_integrity_v1 \
+            --report /tmp/cardmarket-certified-region-language-integrity-v1/proposal.json
+      - name: Decide apply
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          COUNT=$(python -c "import json; print(json.load(open('/tmp/cardmarket-certified-region-language-integrity-v1/proposal.json'))['accepted_language_mismatches_before'])")
+          APPLY=false
+          if [ "${{ github.event_name }}" = "push" ] && [ "$COUNT" -gt 0 ]; then
+            APPLY=true
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.apply }}" = "true" ]; then
+            if [ "${{ inputs.confirm }}" != "APPLY_CARDMARKET_CERTIFIED_REGION_LANGUAGE_INTEGRITY_V1" ]; then
+              echo 'Missing exact apply confirmation' >&2
+              exit 2
+            fi
+            APPLY=true
+          fi
+          echo "apply=$APPLY" >> "$GITHUB_OUTPUT"
+      - name: Apply quarantine and clear contaminated Cardmarket print prices
+        if: steps.decision.outputs.apply == 'true'
+        run: |
+          python -m app.scripts.apply_cardmarket_certified_region_language_integrity_v1 \
+            --apply \
+            --confirm APPLY_CARDMARKET_CERTIFIED_REGION_LANGUAGE_INTEGRITY_V1 \
+            --report /tmp/cardmarket-certified-region-language-integrity-v1/applied.json
+      - name: Reproject One Piece from remaining accepted exact links
+        if: steps.decision.outputs.apply == 'true'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game onepiece \
+            --apply \
+            --report /tmp/cardmarket-certified-region-language-integrity-v1/onepiece-reprojection.json
+      - name: Reproject Yu-Gi-Oh from remaining accepted exact links
+        if: steps.decision.outputs.apply == 'true'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/cardmarket-certified-region-language-integrity-v1/yugioh-reprojection.json
+      - name: Final READ ONLY proof
+        run: |
+          python -m app.scripts.apply_cardmarket_certified_region_language_integrity_v1 \
+            --report /tmp/cardmarket-certified-region-language-integrity-v1/final.json
+          python - <<'PY'
+          import json
+          p='/tmp/cardmarket-certified-region-language-integrity-v1/final.json'
+          d=json.load(open(p))
+          if d['accepted_language_mismatches_before'] != 0 and '${{ steps.decision.outputs.apply }}' == 'true':
+              raise SystemExit(f"regional language integrity proof failed: {d}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-certified-region-language-integrity-v1-${{ github.run_id }}
+          path: /tmp/cardmarket-certified-region-language-integrity-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
