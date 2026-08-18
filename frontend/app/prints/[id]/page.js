@@ -11,15 +11,17 @@ import { getCardHref, getGameExplorerHref, getSetHref } from '../../../lib/catal
 import { getGameConfig, normalizeGameSlug } from '../../../lib/catalog/games'
 import './PrintDetailPage.css'
 
+const DEFAULT_DISPLAY_LOCALE = 'es-ES'
+
 function MetaLine({ label, value }) {
   if (!value && value !== false && value !== 0) return null
   return <div className="dri-version-fact"><span>{label}</span><strong>{String(value)}</strong></div>
 }
 
-function money(value, currency = 'EUR') {
+function money(value, currency = 'EUR', locale = DEFAULT_DISPLAY_LOCALE) {
   if (value === null || value === undefined) return '—'
   try {
-    return new Intl.NumberFormat('es-ES', {
+    return new Intl.NumberFormat(locale || DEFAULT_DISPLAY_LOCALE, {
       style: 'currency',
       currency,
       maximumFractionDigits: 2,
@@ -46,17 +48,17 @@ function friendlyVariant(value) {
   return raw.replace(/[-_]+/g, ' ')
 }
 
-function PriceMetric({ label, value, currency, featured = false }) {
+function PriceMetric({ label, value, currency, locale, featured = false }) {
   if (value === null || value === undefined) return null
   return (
     <div className={`ux-price-metric ${featured ? 'is-featured' : ''}`}>
       <span>{label}</span>
-      <strong>{money(value, currency)}</strong>
+      <strong>{money(value, currency, locale)}</strong>
     </div>
   )
 }
 
-function PriceBlock({ price, cardmarket }) {
+function PriceBlock({ price, cardmarket, locale }) {
   if (!price) {
     return (
       <section className="panel-soft identifiers ux-price-panel">
@@ -82,17 +84,17 @@ function PriceBlock({ price, cardmarket }) {
           <p className="eyebrow">Mercado</p>
           <h2>Cardmarket</h2>
         </div>
-        {hasConservative ? <strong className="ux-price-main">{money(price.conservative, currency)}</strong> : null}
+        {hasConservative ? <strong className="ux-price-main">{money(price.conservative, currency, locale)}</strong> : null}
       </div>
 
       <div className="ux-price-grid">
-        <PriceMetric label="Mínimo" value={price.minimum} currency={currency} />
-        <PriceMetric label="Conservador" value={price.conservative} currency={currency} featured />
-        <PriceMetric label="Tendencia" value={price.trend} currency={currency} />
-        <PriceMetric label="Media" value={price.average} currency={currency} />
+        <PriceMetric label="Mínimo" value={price.minimum} currency={currency} locale={locale} />
+        <PriceMetric label="Conservador" value={price.conservative} currency={currency} locale={locale} featured />
+        <PriceMetric label="Tendencia" value={price.trend} currency={currency} locale={locale} />
+        <PriceMetric label="Media" value={price.average} currency={currency} locale={locale} />
       </div>
 
-      <p className="detail-meta">{price.as_of ? `Actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : 'Precio de la versión comercial vinculada.'}</p>
+      <p className="detail-meta">{price.as_of ? `Actualizado ${new Date(price.as_of).toLocaleDateString(locale || DEFAULT_DISPLAY_LOCALE)}` : 'Precio de la versión comercial vinculada.'}</p>
       <details className="dri-technical dri-price-method">
         <summary>Cómo se calcula</summary>
         <p className="detail-meta">El valor conservador usa Low Price EX+ para versiones no foil y Foil Low para versiones foil cuando Cardmarket publica esa métrica. No reutilizamos el precio de otra edición.</p>
@@ -106,12 +108,18 @@ function PriceBlock({ price, cardmarket }) {
   )
 }
 
+function resolveBrowserLocale() {
+  if (typeof navigator === 'undefined') return DEFAULT_DISPLAY_LOCALE
+  return navigator.languages?.[0] || navigator.language || DEFAULT_DISPLAY_LOCALE
+}
+
 export default function PrintDetailPage({ params }) {
   const { id } = use(params)
   const [printDetail, setPrintDetail] = useState(null)
   const [physicalReleases, setPhysicalReleases] = useState([])
   const [price, setPrice] = useState(null)
   const [cardmarket, setCardmarket] = useState(null)
+  const [displayLocale, setDisplayLocale] = useState(DEFAULT_DISPLAY_LOCALE)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -121,9 +129,11 @@ export default function PrintDetailPage({ params }) {
     async function loadPrint() {
       setLoading(true)
       setError('')
+      const locale = resolveBrowserLocale()
+      setDisplayLocale(locale)
       try {
         const [payload, releaseResponse, priceResponse] = await Promise.all([
-          fetchPrintById(id),
+          fetchPrintById(id, { locale }),
           fetchPrintPhysicalReleases(id).catch(() => ({ physical_releases: [] })),
           fetch(`/api/prices/print/${id}`, { cache: 'no-store' }).then((response) => response.ok ? response.json() : { price: null, cardmarket: null }).catch(() => ({ price: null, cardmarket: null })),
         ])
@@ -164,6 +174,15 @@ export default function PrintDetailPage({ params }) {
   const originCode = printDetail?.set_code?.toUpperCase?.() || printDetail?.set_code || null
   const releaseDiffersFromOrigin = physicalReleaseCode && originCode && compactCode(physicalReleaseCode) !== compactCode(originCode)
   const versionCode = physicalReleaseCode || originCode
+  const displayName = printDetail?.display?.name || printDetail?.display_name || printDetail?.card?.name || printDetail?.title || 'Nombre no disponible'
+  const printedName = printDetail?.printed?.name || printDetail?.localized_card_name || null
+  const showPrintedName = printedName && String(printedName).trim().toLocaleLowerCase() !== String(displayName).trim().toLocaleLowerCase()
+  const displayEffect = printDetail?.display?.effect || printDetail?.display?.text || null
+  const displayPendulumEffect = printDetail?.display?.pendulum_effect || null
+  const displayFallback = Boolean(printDetail?.display?.fallback)
+  const resolvedDisplayLanguage = printDetail?.display?.resolved_language?.toUpperCase?.() || null
+  const requestedDisplayLanguage = printDetail?.display?.requested_language?.toUpperCase?.() || null
+  const hasExactImage = printDetail?.image?.has_exact_image ?? Boolean(printDetail?.primary_image_url)
 
   return (
     <main>
@@ -179,20 +198,23 @@ export default function PrintDetailPage({ params }) {
               <div className="detail-media detail-media-card dri-print-media">
                 <FallbackImage
                   src={printDetail.primary_image_url}
-                  alt={printDetail.card?.name || printDetail.title || 'Nombre no disponible'}
+                  alt={printedName || displayName}
                   className="detail-image"
                   placeholderClassName="catalog-placeholder image-fallback"
                   label={gameLabel}
                 />
               </div>
-              <PriceBlock price={price} cardmarket={cardmarket} />
+              {!hasExactImage ? (
+                <p className="detail-meta">Imagen exacta pendiente de certificación. No mostramos la imagen de otra impresión para rellenar este hueco.</p>
+              ) : null}
+              <PriceBlock price={price} cardmarket={cardmarket} locale={displayLocale} />
             </div>
 
             <div className="detail-content">
               <nav className="detail-breadcrumbs" aria-label="breadcrumb">
                 <Link href={getGameExplorerHref(gameSlug)}>{gameLabel}</Link>
                 <span>→</span>
-                <Link href={cardHref}>{printDetail.card?.name || printDetail.title || 'Carta'}</Link>
+                <Link href={cardHref}>{displayName}</Link>
                 <span>→</span>
                 <strong>{versionCode || printDetail.collector_number || 'Versión'}</strong>
               </nav>
@@ -200,7 +222,8 @@ export default function PrintDetailPage({ params }) {
               <div className="dri-exact-head">
                 <div className="dri-exact-head-copy detail-title-block">
                   <p className="eyebrow">Versión física</p>
-                  <h1>{printDetail.card?.name || printDetail.title || 'Nombre no disponible'}</h1>
+                  <h1>{displayName}</h1>
+                  {showPrintedName ? <p className="detail-meta">Nombre impreso: <strong>{printedName}</strong></p> : null}
                   <p className="detail-intro">
                     {[versionCode, printDetail.collector_number, printDetail.language?.toUpperCase(), printDetail.rarity, finishLabel].filter(Boolean).join(' · ')}
                   </p>
@@ -209,6 +232,32 @@ export default function PrintDetailPage({ params }) {
                   ) : null}
                 </div>
               </div>
+
+              {(displayEffect || displayPendulumEffect) ? (
+                <section className="panel-soft identifiers">
+                  <p className="eyebrow">Texto de la carta</p>
+                  <h2>Efecto / descripción</h2>
+                  {displayEffect ? <p>{displayEffect}</p> : null}
+                  {displayPendulumEffect ? (
+                    <>
+                      <h3>Efecto de Péndulo</h3>
+                      <p>{displayPendulumEffect}</p>
+                    </>
+                  ) : null}
+                  <p className="detail-meta">
+                    {displayFallback
+                      ? `No hay texto en ${requestedDisplayLanguage || 'el idioma solicitado'}; mostramos ${resolvedDisplayLanguage || 'el mejor texto disponible'}.`
+                      : `Texto mostrado en ${resolvedDisplayLanguage || requestedDisplayLanguage || displayLocale}.`}
+                    {printDetail?.display?.scope === 'card_display' ? ' Es una localización legible de la misma carta; la imagen sigue siendo la impresión física exacta.' : ''}
+                  </p>
+                </section>
+              ) : (
+                <section className="panel-soft identifiers">
+                  <p className="eyebrow">Texto de la carta</p>
+                  <h2>Efecto / descripción</h2>
+                  <p className="detail-meta">Todavía no tenemos un texto localizado certificado para esta carta. La identidad física y la imagen exacta no se sustituyen por datos de otra impresión.</p>
+                </section>
+              )}
 
               <section className="dri-version-summary panel-soft">
                 <div className="dri-version-summary-head">
@@ -244,6 +293,9 @@ export default function PrintDetailPage({ params }) {
                   <MetaLine label="Set de origen" value={printDetail.set_name} />
                   <MetaLine label="Código de origen" value={originCode} />
                   <MetaLine label="Variante" value={variantLabel || printDetail.variant} />
+                  <MetaLine label="Locale de lectura" value={printDetail?.display?.requested_locale || displayLocale} />
+                  {printDetail?.printed?.source ? <MetaLine label="Fuente texto impreso" value={printDetail.printed.source} /> : null}
+                  {printDetail?.display?.source ? <MetaLine label="Fuente texto mostrado" value={printDetail.display.source} /> : null}
                   {cardmarket?.id_product ? <MetaLine label="Cardmarket idProduct" value={cardmarket.id_product} /> : null}
                 </div>
               </details>
