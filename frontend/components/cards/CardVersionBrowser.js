@@ -48,10 +48,21 @@ function versionMeta(version) {
   ].filter(Boolean).join(' · ')
 }
 
-function firstPrintForLanguage(version, language) {
-  const ids = (version?.languages || []).find((item) => item.code === language)?.print_ids || []
-  if (!ids.length) return null
-  return (version?.prints || []).find((print) => String(print.print_id) === String(ids[0])) || null
+function printsForLanguage(version, language) {
+  const ids = new Set(
+    ((version?.languages || []).find((item) => item.code === language)?.print_ids || []).map(String),
+  )
+  return (version?.prints || []).filter((print) => ids.has(String(print.print_id)))
+}
+
+function exactPrintLabel(print) {
+  return [
+    print?.collector_number || null,
+    print?.rarity || null,
+    print?.is_foil ? 'Foil' : null,
+    print?.variant && print.variant !== 'default' ? print.variant : null,
+    print?.print_id ? `#${print.print_id}` : null,
+  ].filter(Boolean).join(' · ')
 }
 
 export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
@@ -173,17 +184,34 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
                   <p className={styles.meta}>Disponible en:</p>
                   <div className={styles.languages}>
                     {(version.languages || []).map((item) => {
-                      const exactPrint = firstPrintForLanguage(version, item.code)
-                      if (!exactPrint) return <span key={item.code} className={styles.languageChip}>{languageLabel(item.code)}</span>
+                      const exactPrints = printsForLanguage(version, item.code)
+                      if (!exactPrints.length) {
+                        return <span key={item.code} className={styles.languageChip}>{languageLabel(item.code)}</span>
+                      }
+                      if (exactPrints.length === 1) {
+                        const exactPrint = exactPrints[0]
+                        return (
+                          <Link
+                            key={item.code}
+                            href={getPrintHref(exactPrint.print_id)}
+                            className={styles.languageChip}
+                            title={`Abrir impresión exacta ${exactPrint.print_id}`}
+                          >
+                            {languageLabel(item.code)}
+                          </Link>
+                        )
+                      }
                       return (
-                        <Link
-                          key={item.code}
-                          href={getPrintHref(exactPrint.print_id)}
-                          className={styles.languageChip}
-                          title={`Abrir impresión exacta ${exactPrint.print_id}`}
-                        >
-                          {languageLabel(item.code)}{item.print_count > 1 ? ` · ${item.print_count}` : ''}
-                        </Link>
+                        <details key={item.code} className={styles.languageDetails}>
+                          <summary className={styles.languageChip}>{languageLabel(item.code)} · {exactPrints.length}</summary>
+                          <div className={styles.printChoices}>
+                            {exactPrints.map((print) => (
+                              <Link key={print.print_id} href={getPrintHref(print.print_id)} className={styles.printChoice}>
+                                {exactPrintLabel(print) || `Print #${print.print_id}`}
+                              </Link>
+                            ))}
+                          </div>
+                        </details>
                       )
                     })}
                   </div>
