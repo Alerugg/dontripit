@@ -67,7 +67,7 @@ def _seed_exact_target(*, identifier: str = "OP05-119_P1") -> int:
         return print_row.id
 
 
-def test_backfill_plan_uses_exact_official_identifier_only():
+def test_backfill_plan_uses_exact_official_identifier_only(client):
     print_id = _seed_exact_target()
     with db.SessionLocal() as session:
         plan = build_plan(_payload(), session)
@@ -87,7 +87,7 @@ def test_backfill_plan_uses_exact_official_identifier_only():
     assert proposal["details_json"]["official"] is True
 
 
-def test_backfill_plan_does_not_guess_when_identifier_does_not_match():
+def test_backfill_plan_does_not_guess_when_identifier_does_not_match(client):
     _seed_exact_target(identifier="OP05-119_P2")
     with db.SessionLocal() as session:
         plan = build_plan(_payload(external_id="OP05-119_P1"), session)
@@ -97,7 +97,7 @@ def test_backfill_plan_does_not_guess_when_identifier_does_not_match():
     assert plan["matching"]["database_without_source_count"] == 1
 
 
-def test_backfill_plan_blocks_existing_localization_from_other_source():
+def test_backfill_plan_blocks_existing_localization_from_other_source(client):
     print_id = _seed_exact_target()
     with db.SessionLocal() as session:
         session.add(
@@ -122,7 +122,7 @@ def test_backfill_plan_blocks_existing_localization_from_other_source():
     assert plan["samples"]["conflicting_localizations"][0]["print_id"] == print_id
 
 
-def test_backfill_plan_is_idempotent_for_identical_existing_payload():
+def test_backfill_plan_is_idempotent_for_identical_existing_payload(client):
     print_id = _seed_exact_target()
     with db.SessionLocal() as session:
         plan = build_plan(_payload(), session)
