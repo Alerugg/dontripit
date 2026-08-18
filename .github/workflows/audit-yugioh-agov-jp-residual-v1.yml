@@ -1,0 +1,42 @@
+name: Audit Yu-Gi-Oh AGOV-JP Residual V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_agov_jp_residual_v1.py'
+      - '.github/workflows/audit-yugioh-agov-jp-residual-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_AGOV_JP_RESIDUAL_OUTPUT: /tmp/yugioh-agov-jp-residual-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile residual audit
+        run: python -m py_compile app/scripts/audit_yugioh_agov_jp_residual_v1.py
+      - name: Audit residual AGOV-JP physical variants
+        run: python -m app.scripts.audit_yugioh_agov_jp_residual_v1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-agov-jp-residual-v1-${{ github.run_id }}
+          path: /tmp/yugioh-agov-jp-residual-v1.json
+          retention-days: 90
+          if-no-files-found: error
