@@ -1,0 +1,4 @@
+idProduct,print_id,idMetacard,market_name,canonical_card_name,collector_number,canonical_variant,canonical_rarity,product_image_sha256,canonical_image_sha256,minimum_relative_assignment_gap
+724145,697352,425894,T.G. Over Dragonar,T.G. Over Dragonar,AGOV-JP035,rarity-super,super,a175d6b5686d9b1a3561daf4f73217354d3bbc411bde60e7ef62c5a9fd2436c8,a54012a4cb4729de54b81829c2c900491bc801200875c964fb459493bc5a2444,0.085714
+724146,692285,422373,T.G. Over Dragner,T.G. Over Dragonar,AGOV-JP035,rarity-secret,secret,d8b82e6772d84370f5ff6bb0d91d7bcee5a9cba4dd0d7aac4b32a76b59822554,9cd33ca69fbfacba8fb6ad435463eaac3589ebace8a5761bb6d9edcfd162e934,0.085714
+724148,679962,422373,T.G. Over Dragner,T.G. Over Dragonar,AGOV-JP035,rarity-25thsecret,25thsecret,47610b465a59146948eb8210c9ab67a9b9e4a3e2cd52e8459486ee894f50dad4,98bec27d5e5f6dbd0ca383453780f4b268dc718875a94f94c0163381d31e84a2,0.085714
