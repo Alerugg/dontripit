@@ -43,7 +43,7 @@ jobs:
           pip install -r requirements.txt
           pip install --disable-pip-version-check 'ijson==3.4.0.post0'
 
-      - name: Compile Cardmarket bridge writer
+      - name: Compile Cardmarket version reader and bridge certifiers
         working-directory: backend
         run: |
           python -m py_compile \
@@ -52,44 +52,42 @@ jobs:
             app/scripts/audit_yugioh_cardmarket_es_bridge_v1.py \
             app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py
 
-      - name: Re-certify deterministic bridge immediately before write READ ONLY
+      - name: Audit current Cardmarket grouping READ ONLY
         working-directory: backend
-        run: python -m app.scripts.audit_yugioh_cardmarket_es_bridge_v1
+        run: python -m app.scripts.audit_cardmarket_version_grouping_v1
 
-      - name: Apply exactly 20,896 ES links atomically
+      - name: Certify ES bridge is fully idempotent READ ONLY
         working-directory: backend
         run: |
           python -m app.scripts.apply_yugioh_cardmarket_es_bridge_v1 \
-            --apply \
-            --expected-proposals 20896 \
-            --output /tmp/yugioh-cardmarket-es-bridge-apply-v1.json
+            --expected-proposals 0 \
+            --output /tmp/yugioh-cardmarket-es-bridge-idempotency-v1.json
 
-      - name: Enforce committed evidence
+      - name: Enforce post-apply read-only state
         run: |
           python - <<'PY'
           import json
-          r=json.load(open('/tmp/yugioh-cardmarket-es-bridge-apply-v1.json'))
+          r=json.load(open('/tmp/yugioh-cardmarket-es-bridge-idempotency-v1.json'))
           assert r['status']=='pass', r
-          assert r['apply'] is True and r['commit_confirmed'] is True, r
-          assert r['production_writes']==20896, r
-          assert r['before']['proposal_count']==20896, r
-          assert r['after']['proposal_count']==0, r
-          assert r['after']['multilingual_products']==20896, r
+          assert r['apply'] is False and r['commit_confirmed'] is False, r
+          assert r['production_writes']==0, r
+          assert r['before']['proposal_count']==0, r
+          assert r['before']['multilingual_products']==20896, r
           assert r['economics_untouched'] is True, r
           assert r['catalog_identity_untouched'] is True, r
           assert r['images_untouched'] is True, r
           assert r['ja_untouched'] is True, r
           PY
 
-      - name: Upload one-shot write evidence
+      - name: Upload read-only evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: yugioh-cardmarket-es-bridge-apply-v1-${{ github.run_id }}
+          name: cardmarket-version-grouping-post-apply-v1-${{ github.run_id }}
           path: |
-            /tmp/yugioh-cardmarket-es-bridge-v1.json
-            /tmp/yugioh-cardmarket-es-bridge-apply-v1.json
-          retention-days: 180
+            /tmp/cardmarket-version-grouping-v1.json
+            /tmp/yugioh-cardmarket-es-bridge-idempotency-v1.json
+          retention-days: 90
           if-no-files-found: warn
 
       - name: Install frontend dependencies
