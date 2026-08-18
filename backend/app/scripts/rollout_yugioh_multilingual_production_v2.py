@@ -8,6 +8,16 @@ from typing import Any
 from app.scripts import rollout_yugioh_multilingual_production_v1 as base
 
 
+class _WriteTransactionViewV2(base._WriteTransactionView):
+    """Production adapter that keeps session ownership in the outer transaction."""
+
+    def set_session(self, *args, **kwargs):
+        # The real outer connection is already configured readonly=False,
+        # autocommit=False by base.run(). The certified inner writer may repeat
+        # that request, but it must not reconfigure/commit the outer transaction.
+        return None
+
+
 def _non_ygo_counts(cur, game_id: int) -> dict[str, dict[str, int]]:
     """Audit other games without multiplying Sets x Cards x Prints."""
     cur.execute(
@@ -32,7 +42,9 @@ def _non_ygo_counts(cur, game_id: int) -> dict[str, dict[str, int]]:
     }
 
 
-# _snapshot() resolves this symbol from the base module at call time.
+# base.run()/base._snapshot() resolve these symbols at call time. Keep the V1
+# logic intact while hardening only the production transaction adapter/audit.
+base._WriteTransactionView = _WriteTransactionViewV2
 base._non_ygo_counts = _non_ygo_counts
 
 
