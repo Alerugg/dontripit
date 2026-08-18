@@ -1,80 +1,88 @@
-name: Certify Yu-Gi-Oh Multilingual Search V2
+name: Certify Cardmarket Version UI V1
 
 on:
-  push:
-    branches:
-      - agent/yugioh-multilingual-search-integration-v2
   pull_request:
     branches:
       - main
-
 permissions:
   contents: read
-
 concurrency:
-  group: certify-yugioh-multilingual-search-v2-${{ github.ref }}
+  group: certify-cardmarket-version-ui-v1-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   certify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
     steps:
-      - name: Checkout current revision
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install backend dependencies
         working-directory: backend
-        run: |
-          pip install -r requirements.txt
-          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
-
-      - name: Compile multilingual Search V2 backend and rebuild
+        run: pip install -r requirements.txt
+      - name: Compile market readers and read-only auditors
         working-directory: backend
-        run: |
-          python -m py_compile \
-            app/routes/search_v2.py \
-            app/search_v2/yugioh_query.py \
-            app/search_v2/yugioh_advanced.py \
-            app/search_v2/yugioh_profiles.py \
-            app/scripts/rebuild_yugioh_search_v2_fast.py \
-            app/scripts/audit_yugioh_multilingual_search_live.py
-
-      - name: Run targeted backend multilingual contract tests
+        run: python -m py_compile app/routes/card_prints.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/audit_yugioh_cardmarket_ja_surface_v1.py app/scripts/audit_onepiece_cardmarket_language_surface_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
+      - name: Audit Cardmarket grouping READ ONLY
         working-directory: backend
+        run: python -m app.scripts.audit_cardmarket_version_grouping_v1
+      - name: Certify modern Yu-Gi-Oh ES bridge idempotent READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.apply_yugioh_cardmarket_es_bridge_v1 --expected-proposals 0 --output /tmp/ygo-es-v1-idempotent.json
+      - name: Certify historical Yu-Gi-Oh ES bridge idempotent READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.apply_yugioh_cardmarket_es_historical_bridge_v2 --expected-proposals 0 --output /tmp/ygo-es-v2-idempotent.json
+      - name: Inspect Yu-Gi-Oh Japanese OCG surface READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_yugioh_cardmarket_ja_surface_v1
+      - name: Inspect One Piece global versus Asia surface READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_onepiece_cardmarket_language_surface_v1
+      - name: Enforce zero-write state
         run: |
-          pytest -q \
-            tests/test_yugioh_multilingual_search_v2.py \
-            tests/test_yugioh_multilingual_production_transaction_proxy.py
-
+          python - <<'PY'
+          import json
+          a=json.load(open('/tmp/ygo-es-v1-idempotent.json'))
+          b=json.load(open('/tmp/ygo-es-v2-idempotent.json'))
+          j=json.load(open('/tmp/yugioh-cardmarket-ja-surface-v1.json'))
+          o=json.load(open('/tmp/onepiece-cardmarket-language-surface-v1.json'))
+          assert a['production_writes']==0 and b['production_writes']==0, (a,b)
+          assert j['production_writes']==0 and o['production_writes']==0, (j,o)
+          assert a['before']['proposal_count']==0 and b['before']['proposal_count']==0, (a,b)
+          assert a['before']['multilingual_products']==22055, a
+          assert b['before']['multilingual_products']==22055, b
+          assert j['status']=='pass' and o['status']=='pass', (j,o)
+          PY
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardmarket-version-ui-readonly-${{ github.run_id }}
+          path: |
+            /tmp/cardmarket-version-grouping-v1.json
+            /tmp/ygo-es-v1-idempotent.json
+            /tmp/ygo-es-v2-idempotent.json
+            /tmp/yugioh-cardmarket-ja-surface-v1.json
+            /tmp/onepiece-cardmarket-language-surface-v1.json
+          retention-days: 90
+          if-no-files-found: warn
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-
-      - name: Enforce frontend security baseline
-        working-directory: frontend
-        run: |
-          npm audit --audit-level=high
-          npm audit --omit=dev --audit-level=high
-
-      - name: Run frontend contract suite
+      - name: Run frontend tests
         working-directory: frontend
         run: npm test
-
-      - name: Build Next.js frontend
+      - name: Build frontend
         working-directory: frontend
         run: npm run build

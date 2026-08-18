@@ -1,0 +1,42 @@
+.browser { display: grid; gap: 18px; }
+.heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.heading h2 { margin: 0; }
+.count { white-space: nowrap; opacity: 0.66; font-size: 0.9rem; }
+.filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.search { flex: 1 1 280px; min-width: 0; min-height: 42px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.035); color: inherit; padding: 0 14px; font: inherit; }
+.languageStrip, .languages { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.languageButton, .languageChip { border: 1px solid rgba(255,255,255,.13); border-radius: 999px; background: rgba(255,255,255,.045); color: inherit; font: inherit; text-decoration: none; }
+.languageButton { min-height: 34px; padding: 5px 11px; cursor: pointer; }
+.languageButtonActive { border-color: currentColor; background: rgba(255,255,255,.11); }
+.grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; align-items: stretch; }
+.versionCard { min-width: 0; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.10); border-radius: 18px; background: rgba(255,255,255,.025); }
+.mediaWrap { position: relative; display: grid; place-items: center; min-height: 330px; padding: 20px 20px 12px; background: radial-gradient(circle at 50% 35%,rgba(133,95,210,.10),transparent 58%),rgba(0,0,0,.18); }
+.mediaLink { display: grid; place-items: center; width: 100%; height: 100%; text-decoration: none; }
+.mediaWrap img, .mediaWrap :global(.detail-image) { display: block; width: auto; max-width: min(100%,235px); height: auto; max-height: 315px; object-fit: contain; transition: transform 160ms ease; }
+.mediaLink:hover img { transform: translateY(-2px) scale(1.015); }
+.marketBadge { position: absolute; top: 12px; right: 12px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(8,8,12,.82); font-size: .72rem; font-weight: 700; letter-spacing: .02em; opacity: .86; }
+.cardBody { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+.titleBlock { min-width: 0; display: grid; gap: 6px; }
+.setCode { width: fit-content; color: #c6b4ef; font-size: .74rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.titleBlock h3 { margin: 0; font-size: 1.05rem; line-height: 1.28; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.meta { margin: 0; opacity: .7; font-size: .87rem; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.languageBlock { display: grid; gap: 7px; }
+.languageLabel { font-size: .77rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
+.languageChip { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 4px 9px; font-size: .82rem; font-weight: 700; }
+.languageChip:hover { border-color: currentColor; background: rgba(255,255,255,.09); }
+.languageDetails { position: relative; }
+.languageDetails > summary { cursor: pointer; list-style: none; }
+.languageDetails > summary::-webkit-details-marker { display: none; }
+.printChoices { position: absolute; z-index: 4; left: 0; top: calc(100% + 6px); display: grid; gap: 5px; min-width: 220px; max-width: 290px; padding: 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 11px; background: rgba(10,10,15,.98); box-shadow: 0 14px 36px rgba(0,0,0,.38); }
+.printChoice { display: block; padding: 7px 9px; border-radius: 8px; color: inherit; text-decoration: none; font-size: .8rem; line-height: 1.25; }
+.printChoice:hover { background: rgba(255,255,255,.08); }
+.actions { margin-top: auto; }
+.cardmarketButton, .pendingButton { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 42px; padding: 8px 12px; border-radius: 11px; text-decoration: none; font-weight: 700; text-align: center; font-size: .9rem; }
+.cardmarketButton { background: #1f69ff; color: white; }
+.cardmarketButton:hover { filter: brightness(1.07); }
+.pendingButton { border: 1px solid rgba(255,255,255,.11); color: inherit; opacity: .52; }
+.loadMore { justify-self: center; min-height: 42px; padding: 8px 18px; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; background: rgba(255,255,255,.045); color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+.loadMore:hover { border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.08); }
+.empty { padding: 22px; text-align: center; opacity: .7; }
+@media (max-width:1180px) { .grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width:720px) { .heading { align-items: flex-start; flex-direction: column; gap: 6px; } .filters { align-items: stretch; } .search { flex-basis: 100%; } .grid { grid-template-columns: 1fr; gap: 14px; } .mediaWrap { min-height: 300px; padding-top: 18px; } .mediaWrap img, .mediaWrap :global(.detail-image) { max-width: min(82vw,225px); max-height: 290px; } .printChoices { position: fixed; left: 16px; right: 16px; top: auto; bottom: 16px; max-width: none; min-width: 0; } }
