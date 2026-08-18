@@ -11,8 +11,6 @@ on:
     paths:
       - 'backend/app/jobs/cardmarket_public_catalog_sync_v1.py'
       - '.github/workflows/cardmarket-public-catalog-sync-v1.yml'
-  schedule:
-    - cron: '23 4 * * *'
   workflow_dispatch:
     inputs:
       apply:
@@ -68,7 +66,7 @@ jobs:
           if-no-files-found: warn
 
   sync:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -100,17 +98,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          FORCE_APPLY=false
-          if [ "${{ github.event_name }}" = "push" ]; then
-            FORCE_APPLY=true
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.apply }}" = "true" ]; then
-            if [ "${{ inputs.confirm }}" != "APPLY_CARDMARKET_PUBLIC_CATALOG_V1" ]; then
-              echo 'workflow_dispatch apply requested without exact confirmation token' >&2
-              exit 2
-            fi
-            FORCE_APPLY=true
-          fi
-
           INSERTS=$(python -c "import json; d=json.load(open('/tmp/cardmarket-public-catalog/preflight.json')); print(d['ingest_plan']['inserts'])")
           UPDATES=$(python -c "import json; d=json.load(open('/tmp/cardmarket-public-catalog/preflight.json')); print(d['ingest_plan']['updates'])")
           COUNTS_MATCH=$(python - <<'PY'
@@ -120,12 +107,27 @@ jobs:
           print('true' if gate['incoming_counts'] == gate['previous_counts'] else 'false')
           PY
           )
+          HAS_DELTA=false
+          if [ "$INSERTS" -gt 0 ] || [ "$UPDATES" -gt 0 ] || [ "$COUNTS_MATCH" != "true" ]; then
+            HAS_DELTA=true
+          fi
 
-          if [ "$FORCE_APPLY" = "true" ] || [ "$INSERTS" -gt 0 ] || [ "$UPDATES" -gt 0 ] || [ "$COUNTS_MATCH" != "true" ]; then
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if [ "$HAS_DELTA" = "true" ]; then
+              echo 'apply=true' >> "$GITHUB_OUTPUT"
+            else
+              echo 'apply=false' >> "$GITHUB_OUTPUT"
+              echo 'Official Cardmarket Product Catalog is unchanged; preserving the current atomic capture.'
+            fi
+          elif [ "${{ inputs.apply }}" = "true" ]; then
+            if [ "${{ inputs.confirm }}" != "APPLY_CARDMARKET_PUBLIC_CATALOG_V1" ]; then
+              echo 'workflow_dispatch apply requested without exact confirmation token' >&2
+              exit 2
+            fi
             echo 'apply=true' >> "$GITHUB_OUTPUT"
           else
             echo 'apply=false' >> "$GITHUB_OUTPUT"
-            echo 'Official Cardmarket Product Catalog is unchanged; preserving the current atomic capture.'
+            echo 'workflow_dispatch is read-only because apply=false.'
           fi
       - name: Apply full five-game catalog atomically
         if: steps.decision.outputs.apply == 'true'
