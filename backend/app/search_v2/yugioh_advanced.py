@@ -106,7 +106,7 @@ def advanced_yugioh_search(
     except (TypeError, ValueError) as exc:
         raise ValueError("limit/offset must be integers") from exc
 
-    conditions = ["g.slug='yugioh'"]
+    conditions = ["g.slug='yugioh'", "lower(coalesce(p.language,'')) IN ('en','es','ja')"]
     params: dict[str, object] = {
         "limit": bounded_limit,
         "offset": bounded_offset,
@@ -115,7 +115,7 @@ def advanced_yugioh_search(
 
     if display_language:
         conditions.append(
-            "EXISTS (SELECT 1 FROM print_localizations pld WHERE pld.print_id=p.id AND lower(pld.language)=ANY(string_to_array(:display_language, ',')))"
+            "lower(coalesce(p.language,''))=ANY(string_to_array(:display_language, ','))"
         )
 
     q_raw = str(query or "").strip().casefold()
@@ -124,12 +124,12 @@ def advanced_yugioh_search(
         identity_parts = []
         if q_norm:
             identity_parts.append(
-                "csp.normalized_name LIKE :q OR psp.normalized_collector_number LIKE :q_code OR psp.normalized_set_code LIKE :q_code"
+                "csp.normalized_name LIKE :q OR psp.normalized_name LIKE :q OR psp.search_text LIKE :q OR psp.normalized_collector_number LIKE :q_code OR psp.normalized_set_code LIKE :q_code"
             )
             params["q"] = f"%{q_norm}%"
             params["q_code"] = f"%{q_norm.replace(' ', '-')}%"
         identity_parts.append(
-            "EXISTS (SELECT 1 FROM print_localizations plq WHERE plq.print_id=p.id AND plq.card_name IS NOT NULL AND position(:q_raw in lower(plq.card_name)) > 0 AND (:display_language IS NULL OR lower(plq.language)=ANY(string_to_array(:display_language, ','))))"
+            "EXISTS (SELECT 1 FROM print_localizations plq WHERE plq.print_id=p.id AND lower(plq.language)=lower(coalesce(p.language,'')) AND plq.card_name IS NOT NULL AND position(:q_raw in lower(plq.card_name)) > 0)"
         )
         params["q_raw"] = q_raw
         conditions.append(f"({' OR '.join(identity_parts)})")
@@ -150,9 +150,7 @@ def advanced_yugioh_search(
                     normalized_languages.append(normalized)
             if not normalized_languages:
                 raise ValueError("language must contain one of: en, es, ja")
-            conditions.append(
-                "EXISTS (SELECT 1 FROM print_localizations plf WHERE plf.print_id=p.id AND lower(plf.language)=ANY(:f_language))"
-            )
+            conditions.append("lower(coalesce(p.language,''))=ANY(:f_language)")
             params["f_language"] = normalized_languages
             continue
 
@@ -204,7 +202,10 @@ def advanced_yugioh_search(
     if has_price:
         conditions.append("cm.cardmarket_price IS NOT NULL")
     where_sql = " AND ".join(conditions)
-    order_sql = print_order_sql(sort, default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(p.rarity,'')) ASC, p.id ASC")
+    order_sql = print_order_sql(
+        sort,
+        default="lower(c.name) ASC, lower(s.code) ASC, lower(COALESCE(p.collector_number,'')) ASC, lower(COALESCE(p.rarity,'')) ASC, p.id ASC",
+    )
     sql = text(
         f"""
         WITH matched AS MATERIALIZED (
@@ -217,11 +218,11 @@ def advanced_yugioh_search(
             c.name AS canonical_name,
             COALESCE(loc.card_name, c.name) AS display_name,
             COALESCE(loc.set_name, s.name) AS display_set_name,
-            loc.language AS display_language,
+            COALESCE(loc.language, lower(coalesce(p.language,''))) AS display_language,
             (
-              SELECT array_agg(DISTINCT lower(pl2.language) ORDER BY lower(pl2.language))
-              FROM print_localizations pl2
-              WHERE pl2.print_id=p.id AND lower(pl2.language) IN ('en','es','ja')
+              SELECT array_agg(DISTINCT lower(p2.language) ORDER BY lower(p2.language))
+              FROM prints p2
+              WHERE p2.card_id=p.card_id AND lower(coalesce(p2.language,'')) IN ('en','es','ja')
             ) AS available_languages,
             COUNT(*) OVER () AS total_count,
             cm.cardmarket_external_product_id, cm.cardmarket_id_product, cm.cardmarket_product_name, cm.cardmarket_website_path,
@@ -234,22 +235,11 @@ def advanced_yugioh_search(
           JOIN cards c ON c.id=psp.card_id
           JOIN sets s ON s.id=p.set_id
           LEFT JOIN LATERAL (
-            SELECT
-              lower(pl.language) AS language,
-              pl.card_name,
-              pl.set_name
+            SELECT lower(pl.language) AS language, pl.card_name, pl.set_name
             FROM print_localizations pl
             WHERE pl.print_id=p.id
-              AND lower(pl.language) IN ('en','es','ja')
-              AND (
-                :display_language IS NULL
-                OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
-              )
-            ORDER BY
-              (lower(pl.card_name)=:q_raw) DESC,
-              (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
-              CASE lower(pl.language) WHEN 'en' THEN 0 WHEN 'es' THEN 1 WHEN 'ja' THEN 2 ELSE 3 END,
-              pl.id ASC
+              AND lower(pl.language)=lower(coalesce(p.language,''))
+            ORDER BY pl.id ASC
             LIMIT 1
           ) loc ON TRUE
           {market_join}
@@ -269,7 +259,7 @@ def advanced_yugioh_search(
           matched.available_languages,
           s.code AS set_code,
           p.collector_number,
-          p.language,
+          lower(coalesce(p.language,'')) AS language,
           p.rarity,
           psp.exact_variant,
           psp.variant_family,
