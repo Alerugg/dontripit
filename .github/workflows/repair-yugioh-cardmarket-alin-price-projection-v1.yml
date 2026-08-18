@@ -1,0 +1,92 @@
+name: Repair Yu-Gi-Oh Cardmarket ALIN Price Projection V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_price_projection_repair_v1.py'
+      - '.github/workflows/repair-yugioh-cardmarket-alin-price-projection-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_price_projection_repair_v1.py'
+      - '.github/workflows/repair-yugioh-cardmarket-alin-price-projection-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-cardmarket-alin-price-projection-v1
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile repair auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_price_projection_repair_v1.py
+      - name: READ ONLY prove exact OCG identities before price repair
+        run: |
+          mkdir -p /tmp/ygo-ocg-price-repair-v1
+          python -m app.scripts.audit_yugioh_ocg_price_projection_repair_v1 \
+            --output /tmp/ygo-ocg-price-repair-v1/preflight.json
+      - name: READ ONLY build Cardmarket projection plan
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --report /tmp/ygo-ocg-price-repair-v1/plan.json
+          python - <<'PY'
+          import json
+          p='/tmp/ygo-ocg-price-repair-v1/plan.json'
+          r=json.load(open(p,encoding='utf-8'))
+          failures=[]
+          if not r.get('write_ready'):
+              failures.append('write_ready=false')
+          if int(r.get('ambiguous_print_links') or 0) != 0:
+              failures.append(f"ambiguous_print_links={r.get('ambiguous_print_links')}")
+          if int(r.get('cross_game_links') or 0) != 0:
+              failures.append(f"cross_game_links={r.get('cross_game_links')}")
+          if not r.get('as_of'):
+              failures.append('as_of missing')
+          if int(r.get('priceable_prints') or 0) <= 0:
+              failures.append(f"priceable_prints={r.get('priceable_prints')}")
+          print(json.dumps({'projection_plan_guard': 'pass' if not failures else 'fail', 'failures': failures, 'summary': r}, indent=2))
+          if failures:
+              raise SystemExit(2)
+          PY
+      - name: Apply exact Cardmarket price projection only
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-ocg-price-repair-v1/applied.json
+      - name: READ ONLY prove repaired ALIN/POTE/AGOV prices
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.audit_yugioh_ocg_price_projection_repair_v1 \
+            --require-complete \
+            --output /tmp/ygo-ocg-price-repair-v1/final.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-cardmarket-alin-price-projection-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-price-repair-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
