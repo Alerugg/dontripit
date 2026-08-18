@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import itertools
 import json
 import os
 import urllib.error
@@ -60,7 +61,6 @@ def _prepare(body: bytes) -> Image.Image:
     image = Image.open(io.BytesIO(body))
     image = ImageOps.exif_transpose(image).convert("RGB")
     width, height = image.size
-    # Tiny border crop reduces scanner/background differences without removing card content.
     bx = max(1, int(width * 0.015))
     by = max(1, int(height * 0.015))
     if width > bx * 2 and height > by * 2:
@@ -104,16 +104,33 @@ def _pixel_mae(a: Image.Image, b: Image.Image) -> float:
 
 def _feature(body: bytes) -> dict:
     image = _prepare(body)
-    return {
-        "image": image,
-        "size": list(image.size),
-        "ahash": _ahash(image),
-        "dhash": _dhash(image),
-    }
+    return {"image": image, "ahash": _ahash(image), "dhash": _dhash(image)}
+
+
+def _assignment_rankings(matrix: list[dict], products: list[str], prints: list[int], metric: str) -> list[dict]:
+    lookup = {(str(r["idProduct"]), int(r["print_id"])): float(r[metric]) for r in matrix}
+    rankings = []
+    for permutation in itertools.permutations(prints):
+        pairs = list(zip(products, permutation))
+        if any((pid, print_id) not in lookup for pid, print_id in pairs):
+            continue
+        score = sum(lookup[(pid, print_id)] for pid, print_id in pairs)
+        rankings.append(
+            {
+                "score": round(score, 4),
+                "pairs": [{"idProduct": pid, "print_id": int(print_id)} for pid, print_id in pairs],
+            }
+        )
+    rankings.sort(key=lambda r: (r["score"], [(p["idProduct"], p["print_id"]) for p in r["pairs"]]))
+    return rankings
+
+
+def _pair_signature(pairs: list[dict]) -> tuple[tuple[str, int], ...]:
+    return tuple(sorted((str(p["idProduct"]), int(p["print_id"])) for p in pairs))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="READ ONLY pilot: compare Cardmarket AGOV-JP product images to exact canonical print images")
+    parser = argparse.ArgumentParser(description="READ ONLY compare Cardmarket AGOV-JP product images to exact canonical print images")
     parser.add_argument("--card-name", required=True)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
@@ -178,7 +195,7 @@ def main() -> int:
         if not url:
             print_downloads[str(print_id)] = {"url": None, "error": "missing canonical print image"}
             continue
-        body, meta = _download(str(url), referer=None)
+        body, meta = _download(str(url))
         print_downloads[str(print_id)] = {"url": str(url), "source": row.get("image_source"), **meta}
         if body:
             try:
@@ -209,32 +226,51 @@ def main() -> int:
                 }
             )
 
-    by_product = {}
-    for product in products:
-        pid = str(product["id_product"])
-        rows = sorted((r for r in matrix if r["idProduct"] == pid), key=lambda r: (r["pixel_mae"], r["dhash_distance"], r["ahash_distance"]))
-        if rows:
-            best = rows[0]
-            second = rows[1] if len(rows) > 1 else None
-            by_product[pid] = {
-                "best": best,
-                "second": second,
-                "pixel_mae_margin": round((second["pixel_mae"] - best["pixel_mae"]), 4) if second else None,
-            }
+    product_ids = sorted(product_features, key=int)
+    print_ids = sorted(print_features)
+    metrics = ("pixel_mae", "dhash_distance", "ahash_distance")
+    assignments = {}
+    signatures = []
+    for metric in metrics:
+        rankings = _assignment_rankings(matrix, product_ids, print_ids, metric)
+        best = rankings[0] if rankings else None
+        second = rankings[1] if len(rankings) > 1 else None
+        if best:
+            signatures.append(_pair_signature(best["pairs"]))
+        assignments[metric] = {
+            "best": best,
+            "second": second,
+            "absolute_gap": round(second["score"] - best["score"], 4) if best and second else None,
+            "relative_gap": round((second["score"] - best["score"]) / best["score"], 6) if best and second and best["score"] else None,
+        }
 
-    by_print = {}
-    for print_row in prints:
-        print_id = int(print_row["print_id"])
-        rows = sorted((r for r in matrix if r["print_id"] == print_id), key=lambda r: (r["pixel_mae"], r["dhash_distance"], r["ahash_distance"]))
-        if rows:
-            by_print[str(print_id)] = {"best_idProduct": rows[0]["idProduct"], "best_pixel_mae": rows[0]["pixel_mae"]}
+    complete_surface = (
+        bool(products)
+        and len(products) == len(prints)
+        and len(product_features) == len(products)
+        and len(print_features) == len(prints)
+    )
+    assignment_consensus = bool(signatures) and len(signatures) == len(metrics) and len(set(signatures)) == 1
+    min_relative_gap = min(
+        (info["relative_gap"] for info in assignments.values() if info.get("relative_gap") is not None),
+        default=None,
+    )
+    # This is still an audit-only candidate flag. Production mapping requires a separate apply gate.
+    image_bijection_candidate = bool(complete_surface and assignment_consensus and min_relative_gap is not None and min_relative_gap >= 0.03)
 
-    reciprocal = []
-    for pid, info in by_product.items():
-        best = info["best"]
-        reverse = by_print.get(str(best["print_id"]))
-        if reverse and reverse["best_idProduct"] == pid:
-            reciprocal.append({"idProduct": pid, **best, "pixel_mae_margin": info["pixel_mae_margin"]})
+    consensus_pairs = []
+    if assignment_consensus and assignments["pixel_mae"]["best"]:
+        lookup = {(str(r["idProduct"]), int(r["print_id"])): r for r in matrix}
+        for pair in assignments["pixel_mae"]["best"]["pairs"]:
+            row = lookup[(str(pair["idProduct"]), int(pair["print_id"]))]
+            consensus_pairs.append(
+                {
+                    "idProduct": str(pair["idProduct"]),
+                    "print_id": int(pair["print_id"]),
+                    "canonical_variant": row["canonical_variant"],
+                    "canonical_rarity": row["canonical_rarity"],
+                }
+            )
 
     report = {
         "status": "pass",
@@ -252,10 +288,14 @@ def main() -> int:
         "product_downloads": product_downloads,
         "canonical_downloads": print_downloads,
         "matrix": matrix,
-        "nearest_by_product": by_product,
-        "reciprocal_nearest": reciprocal,
         "complete_product_images": len(product_features),
         "complete_canonical_images": len(print_features),
+        "complete_surface": complete_surface,
+        "assignment_by_metric": assignments,
+        "assignment_consensus": assignment_consensus,
+        "minimum_relative_assignment_gap": min_relative_gap,
+        "image_bijection_candidate": image_bijection_candidate,
+        "consensus_pairs": consensus_pairs,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
