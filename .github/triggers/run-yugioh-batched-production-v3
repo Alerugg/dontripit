@@ -1,1 +1,7 @@
-{"preflight_run_id":32084050029,"source_run_id":31915462442,"writer_cert_run_id":32140349027,"main_sha":"79698d3d5068af7b93b9b63ea6e09a67eaa42c16","ack":"YGO_ES_JA_ROLLOUT_V3"}
+{
+  "preflight_run_id": 32084050029,
+  "source_run_id": 31915462442,
+  "writer_cert_run_id": 32140349027,
+  "main_sha": "79698d3d5068af7b93b9b63ea6e09a67eaa42c16",
+  "ack": "YGO_ES_JA_ROLLOUT_V3"
+}
