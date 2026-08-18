@@ -70,6 +70,10 @@ export function fetchCardById(id) {
   return request(`/api/catalog/cards/${id}`, {}, { ttlMs: FIVE_MINUTES })
 }
 
+export function fetchCardVersions(id) {
+  return request(`/api/catalog/cards/${id}/versions`, {}, { ttlMs: FIVE_MINUTES })
+}
+
 export function fetchCardPrintsPage(id, options = {}) {
   return request(`/api/catalog/cards/${id}/prints`, {
     limit: options.limit ?? 24,
