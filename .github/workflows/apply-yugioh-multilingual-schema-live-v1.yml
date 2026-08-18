@@ -1,9 +1,11 @@
 name: Apply Yu-Gi-Oh Multilingual Schema Live V1
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/yugioh-multilingual-rollout-v1
+      - main
+    types:
+      - synchronize
     paths:
       - .github/triggers/run-yugioh-schema-live-v1
 
@@ -16,6 +18,7 @@ concurrency:
 
 jobs:
   migrate:
+    if: github.head_ref == 'agent/yugioh-multilingual-rollout-v1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
