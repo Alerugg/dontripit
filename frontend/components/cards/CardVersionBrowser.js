@@ -8,17 +8,7 @@ import { getPrintHref } from '../../lib/catalog/routes'
 import styles from './CardVersionBrowser.module.css'
 
 const LANGUAGE_LABELS = {
-  es: 'ES',
-  en: 'EN',
-  fr: 'FR',
-  de: 'DE',
-  it: 'IT',
-  pt: 'PT',
-  ja: 'JA',
-  ko: 'KO',
-  zh: 'ZH',
-  zhs: 'ZH-S',
-  zht: 'ZH-T',
+  es: 'ES', en: 'EN', fr: 'FR', de: 'DE', it: 'IT', pt: 'PT', ja: 'JA', ko: 'KO', zh: 'ZH', zhs: 'ZH-S', zht: 'ZH-T',
 }
 
 function languageLabel(value) {
@@ -47,7 +37,6 @@ function versionSearchText(version) {
 
 function versionMeta(version) {
   return [
-    version?.set_code ? String(version.set_code).toUpperCase() : null,
     version?.collector_number || null,
     version?.rarity || null,
     version?.is_foil ? 'Foil' : null,
@@ -84,18 +73,14 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
     setLoading(true)
     setError('')
     fetchCardVersions(cardId)
-      .then((result) => {
-        if (!cancelled) setPayload(result)
-      })
+      .then((result) => { if (!cancelled) setPayload(result) })
       .catch((requestError) => {
         if (!cancelled) {
           setPayload(null)
           setError(requestError?.message || 'No pudimos cargar las versiones de esta carta.')
         }
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [cardId])
 
@@ -108,13 +93,8 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
     })
   }, [payload, query, language])
 
-  if (loading) {
-    return <section className="panel-soft"><p className="detail-meta">Organizando versiones e idiomas físicos…</p></section>
-  }
-
-  if (error) {
-    return <section className="panel-soft"><p className="detail-meta">{error}</p></section>
-  }
+  if (loading) return <section className="panel-soft"><p className="detail-meta">Organizando versiones e idiomas físicos…</p></section>
+  if (error) return <section className="panel-soft"><p className="detail-meta">{error}</p></section>
 
   const allLanguages = payload?.languages || []
 
@@ -138,20 +118,9 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
           aria-label="Filtrar versiones de esta carta"
         />
         <div className={styles.languageStrip} aria-label={`Idiomas disponibles en ${cardName || 'esta carta'}`}>
-          <button
-            type="button"
-            onClick={() => setLanguage('')}
-            className={`${styles.languageButton} ${!language ? styles.languageButtonActive : ''}`}
-          >
-            Todos
-          </button>
+          <button type="button" onClick={() => setLanguage('')} className={`${styles.languageButton} ${!language ? styles.languageButtonActive : ''}`}>Todos</button>
           {allLanguages.map((code) => (
-            <button
-              key={code}
-              type="button"
-              onClick={() => setLanguage(code)}
-              className={`${styles.languageButton} ${language === code ? styles.languageButtonActive : ''}`}
-            >
+            <button key={code} type="button" onClick={() => setLanguage(code)} className={`${styles.languageButton} ${language === code ? styles.languageButtonActive : ''}`}>
               {languageLabel(code)}
             </button>
           ))}
@@ -161,15 +130,16 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
       <div className={styles.grid}>
         {versions.map((version) => {
           const representative = version.representative_print || version.prints?.[0] || null
-          const marketName = version.cardmarket?.name || version.set_name || version.set_code || 'Versión física'
+          const versionTitle = version.set_name || version.set_code || version.cardmarket?.name || 'Versión física'
+          const setCode = version.set_code ? String(version.set_code).toUpperCase() : null
           const representativeHref = representative?.print_id ? getPrintHref(representative.print_id) : null
           const image = (
             <FallbackImage
               src={representative?.primary_image_url}
-              alt={`${cardName || 'Carta'} · ${marketName}`}
+              alt={`${cardName || 'Carta'} · ${versionTitle}`}
               className="detail-image"
               placeholderClassName="image-fallback"
-              label={version.set_code || gameLabel || 'TCG'}
+              label={setCode || gameLabel || 'TCG'}
             />
           )
 
@@ -177,18 +147,15 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
             <article key={version.key} className={styles.versionCard}>
               <div className={styles.mediaWrap}>
                 {representativeHref ? (
-                  <Link href={representativeHref} className={styles.mediaLink} aria-label={`Abrir ${marketName}`}>
-                    {image}
-                  </Link>
+                  <Link href={representativeHref} className={styles.mediaLink} aria-label={`Abrir ${versionTitle}`}>{image}</Link>
                 ) : image}
-                {version.market_status === 'linked' ? (
-                  <span className={styles.marketBadge}>Cardmarket</span>
-                ) : null}
+                {version.market_status === 'linked' ? <span className={styles.marketBadge}>Cardmarket</span> : null}
               </div>
 
               <div className={styles.cardBody}>
                 <div className={styles.titleBlock}>
-                  <h3 title={marketName}>{marketName}</h3>
+                  {setCode ? <span className={styles.setCode}>{setCode}</span> : null}
+                  <h3 title={versionTitle}>{versionTitle}</h3>
                   <p className={styles.meta}>{versionMeta(version) || 'Edición física identificada'}</p>
                 </div>
 
@@ -197,18 +164,11 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
                   <div className={styles.languages}>
                     {(version.languages || []).map((item) => {
                       const exactPrints = printsForLanguage(version, item.code)
-                      if (!exactPrints.length) {
-                        return <span key={item.code} className={styles.languageChip}>{languageLabel(item.code)}</span>
-                      }
+                      if (!exactPrints.length) return <span key={item.code} className={styles.languageChip}>{languageLabel(item.code)}</span>
                       if (exactPrints.length === 1) {
                         const exactPrint = exactPrints[0]
                         return (
-                          <Link
-                            key={item.code}
-                            href={getPrintHref(exactPrint.print_id)}
-                            className={styles.languageChip}
-                            title={`Abrir ${languageLabel(item.code)}`}
-                          >
+                          <Link key={item.code} href={getPrintHref(exactPrint.print_id)} className={styles.languageChip} title={`Abrir ${languageLabel(item.code)}`}>
                             {languageLabel(item.code)}
                           </Link>
                         )
@@ -231,14 +191,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
 
                 <div className={styles.actions}>
                   {version.cardmarket?.url ? (
-                    <a
-                      href={version.cardmarket.url}
-                      target="_blank"
-                      rel="noopener noreferrer sponsored"
-                      className={styles.cardmarketButton}
-                    >
-                      Ver en Cardmarket ↗
-                    </a>
+                    <a href={version.cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className={styles.cardmarketButton}>Ver en Cardmarket ↗</a>
                   ) : (
                     <span className={styles.pendingButton}>Cardmarket pendiente</span>
                   )}
@@ -249,9 +202,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
         })}
       </div>
 
-      {!versions.length ? (
-        <div className={`${styles.empty} panel-soft`}>No hay versiones que coincidan con este filtro.</div>
-      ) : null}
+      {!versions.length ? <div className={`${styles.empty} panel-soft`}>No hay versiones que coincidan con este filtro.</div> : null}
     </section>
   )
 }
