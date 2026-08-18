@@ -1,0 +1,149 @@
+name: Cardmarket Public Catalog Sync V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/jobs/cardmarket_public_catalog_sync_v1.py'
+      - 'backend/tests/test_cardmarket_public_catalog_sync_v1.py'
+      - '.github/workflows/cardmarket-public-catalog-sync-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/cardmarket_public_catalog_sync_v1.py'
+      - '.github/workflows/cardmarket-public-catalog-sync-v1.yml'
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply a new full five-game Cardmarket catalog capture'
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: 'Required for apply: APPLY_CARDMARKET_PUBLIC_CATALOG_V1'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cardmarket-public-catalog-sync-v1
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile sync tooling
+        run: python -m py_compile app/jobs/cardmarket_public_catalog_sync_v1.py
+      - name: Run source guard tests
+        run: pytest -q tests/test_cardmarket_public_catalog_sync_v1.py tests/test_cardmarket_master_inventory.py
+      - name: Verify all ten public Cardmarket Product Catalog feeds
+        run: |
+          mkdir -p /tmp/cardmarket-public-catalog
+          python -m app.jobs.cardmarket_public_catalog_sync_v1 \
+            --game all \
+            --source-only \
+            --report /tmp/cardmarket-public-catalog/source-only.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-public-catalog-source-${{ github.run_id }}
+          path: /tmp/cardmarket-public-catalog/source-only.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  sync:
+    if: github.event_name != 'pull_request'
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build full-catalog preflight against current Neon capture
+        run: |
+          mkdir -p /tmp/cardmarket-public-catalog
+          python -m app.jobs.cardmarket_public_catalog_sync_v1 \
+            --game all \
+            --report /tmp/cardmarket-public-catalog/preflight.json
+      - name: Decide whether an apply is required
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          FORCE_APPLY=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            FORCE_APPLY=true
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.apply }}" = "true" ]; then
+            if [ "${{ inputs.confirm }}" != "APPLY_CARDMARKET_PUBLIC_CATALOG_V1" ]; then
+              echo 'workflow_dispatch apply requested without exact confirmation token' >&2
+              exit 2
+            fi
+            FORCE_APPLY=true
+          fi
+
+          INSERTS=$(python -c "import json; d=json.load(open('/tmp/cardmarket-public-catalog/preflight.json')); print(d['ingest_plan']['inserts'])")
+          UPDATES=$(python -c "import json; d=json.load(open('/tmp/cardmarket-public-catalog/preflight.json')); print(d['ingest_plan']['updates'])")
+          COUNTS_MATCH=$(python - <<'PY'
+          import json
+          d=json.load(open('/tmp/cardmarket-public-catalog/preflight.json'))
+          gate=d['capture_regression_gate']
+          print('true' if gate['incoming_counts'] == gate['previous_counts'] else 'false')
+          PY
+          )
+
+          if [ "$FORCE_APPLY" = "true" ] || [ "$INSERTS" -gt 0 ] || [ "$UPDATES" -gt 0 ] || [ "$COUNTS_MATCH" != "true" ]; then
+            echo 'apply=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'apply=false' >> "$GITHUB_OUTPUT"
+            echo 'Official Cardmarket Product Catalog is unchanged; preserving the current atomic capture.'
+          fi
+      - name: Apply full five-game catalog atomically
+        if: steps.decision.outputs.apply == 'true'
+        run: |
+          python -m app.jobs.cardmarket_public_catalog_sync_v1 \
+            --game all \
+            --apply \
+            --confirm APPLY_CARDMARKET_PUBLIC_CATALOG_V1 \
+            --report /tmp/cardmarket-public-catalog/applied.json
+      - name: Final current-capture audit
+        run: |
+          python -m app.jobs.cardmarket_public_catalog_sync_v1 \
+            --game all \
+            --report /tmp/cardmarket-public-catalog/postflight.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-public-catalog-sync-${{ github.run_id }}
+          path: /tmp/cardmarket-public-catalog/*.json
+          retention-days: 90
+          if-no-files-found: warn
