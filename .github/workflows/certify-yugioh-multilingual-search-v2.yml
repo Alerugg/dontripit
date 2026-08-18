@@ -33,7 +33,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile market readers and idempotency certifiers
         working-directory: backend
-        run: python -m py_compile app/routes/card_prints.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
+        run: python -m py_compile app/routes/card_prints.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/audit_yugioh_cardmarket_ja_surface_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
       - name: Audit grouping READ ONLY
         working-directory: backend
         run: python -m app.scripts.audit_cardmarket_version_grouping_v1
@@ -43,15 +43,19 @@ jobs:
       - name: Certify historical ES bridge idempotent READ ONLY
         working-directory: backend
         run: python -m app.scripts.apply_yugioh_cardmarket_es_historical_bridge_v2 --expected-proposals 0 --output /tmp/ygo-es-v2-idempotent.json
+      - name: Inspect Japanese OCG Cardmarket surface READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_yugioh_cardmarket_ja_surface_v1
       - name: Enforce zero-write state
         run: |
           python - <<'PY'
           import json
-          a=json.load(open('/tmp/ygo-es-v1-idempotent.json')); b=json.load(open('/tmp/ygo-es-v2-idempotent.json'))
-          assert a['production_writes']==0 and b['production_writes']==0, (a,b)
+          a=json.load(open('/tmp/ygo-es-v1-idempotent.json')); b=json.load(open('/tmp/ygo-es-v2-idempotent.json')); j=json.load(open('/tmp/yugioh-cardmarket-ja-surface-v1.json'))
+          assert a['production_writes']==0 and b['production_writes']==0 and j['production_writes']==0, (a,b,j)
           assert a['before']['proposal_count']==0 and b['before']['proposal_count']==0, (a,b)
           assert a['before']['multilingual_products']==22055, a
           assert b['before']['multilingual_products']==22055, b
+          assert j['status']=='pass', j
           PY
       - name: Upload read-only evidence
         if: always()
@@ -62,6 +66,7 @@ jobs:
             /tmp/cardmarket-version-grouping-v1.json
             /tmp/ygo-es-v1-idempotent.json
             /tmp/ygo-es-v2-idempotent.json
+            /tmp/yugioh-cardmarket-ja-surface-v1.json
           retention-days: 90
           if-no-files-found: warn
       - name: Install frontend dependencies
