@@ -23,41 +23,53 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -r requirements.txt
-      - name: Compile bridge V2
+      - name: Compile market readers and idempotency certifiers
         working-directory: backend
-        run: python -m py_compile app/scripts/audit_yugioh_cardmarket_es_historical_bridge_v2.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py
-      - name: Require V1 remains idempotent READ ONLY
+        run: python -m py_compile app/routes/card_prints.py app/scripts/audit_cardmarket_version_grouping_v1.py app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py app/scripts/apply_yugioh_cardmarket_es_historical_bridge_v2.py
+      - name: Audit grouping READ ONLY
+        working-directory: backend
+        run: python -m app.scripts.audit_cardmarket_version_grouping_v1
+      - name: Certify modern ES bridge idempotent READ ONLY
         working-directory: backend
         run: python -m app.scripts.apply_yugioh_cardmarket_es_bridge_v1 --expected-proposals 0 --output /tmp/ygo-es-v1-idempotent.json
-      - name: Re-certify historical V2 immediately before write READ ONLY
+      - name: Certify historical ES bridge idempotent READ ONLY
         working-directory: backend
-        run: python -m app.scripts.audit_yugioh_cardmarket_es_historical_bridge_v2
-      - name: Apply exactly 1,159 historical ES links atomically
-        working-directory: backend
-        run: python -m app.scripts.apply_yugioh_cardmarket_es_historical_bridge_v2 --apply --expected-proposals 1159 --output /tmp/ygo-es-historical-v2-apply.json
-      - name: Enforce committed V2 evidence
+        run: python -m app.scripts.apply_yugioh_cardmarket_es_historical_bridge_v2 --expected-proposals 0 --output /tmp/ygo-es-v2-idempotent.json
+      - name: Enforce zero-write state
         run: |
           python - <<'PY'
           import json
-          r=json.load(open('/tmp/ygo-es-historical-v2-apply.json'))
-          assert r['status']=='pass' and r['commit_confirmed'] is True, r
-          assert r['production_writes']==1159, r
-          assert r['before']['proposal_count']==1159, r
-          assert r['after']['proposal_count']==0, r
-          assert r['after']['multilingual_products']==22055, r
-          assert r['economics_untouched'] and r['catalog_identity_untouched'] and r['images_untouched'] and r['ja_untouched'], r
+          a=json.load(open('/tmp/ygo-es-v1-idempotent.json')); b=json.load(open('/tmp/ygo-es-v2-idempotent.json'))
+          assert a['production_writes']==0 and b['production_writes']==0, (a,b)
+          assert a['before']['proposal_count']==0 and b['before']['proposal_count']==0, (a,b)
+          assert a['before']['multilingual_products']==22055, a
+          assert b['before']['multilingual_products']==22055, b
           PY
-      - name: Upload one-shot V2 evidence
+      - name: Upload read-only evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: yugioh-cardmarket-es-historical-v2-${{ github.run_id }}
+          name: cardmarket-version-ui-readonly-${{ github.run_id }}
           path: |
+            /tmp/cardmarket-version-grouping-v1.json
             /tmp/ygo-es-v1-idempotent.json
-            /tmp/yugioh-cardmarket-es-historical-bridge-v2.json
-            /tmp/ygo-es-historical-v2-apply.json
-          retention-days: 180
+            /tmp/ygo-es-v2-idempotent.json
+          retention-days: 90
           if-no-files-found: warn
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
