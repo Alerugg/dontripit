@@ -30,10 +30,10 @@ def _int_or_none(value):
 
 
 def _clean_list(value) -> list[str]:
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         return []
-    result = []
-    seen = set()
+    result: list[str] = []
+    seen: set[str] = set()
     for item in value:
         clean = str(item or "").strip()
         if clean and clean not in seen:
@@ -59,29 +59,18 @@ def compact_card_attributes(raw: dict | None) -> dict:
         "pendulum_scale": _int_or_none(raw.get("scale")),
         "link_value": _int_or_none(raw.get("link_value")),
         "link_markers": _clean_list(raw.get("link_markers")),
-        # Kept in the compact Card profile so Banlist can be activated later without
-        # re-reading rich canonical attributes. The facet remains hidden until its
-        # status semantics are separately certified.
         "banlist_tcg": banlist.get("ban_tcg"),
         "banlist_ocg": banlist.get("ban_ocg"),
         "banlist_goat": banlist.get("ban_goat"),
     }
-    return {
-        key: value
-        for key, value in attrs.items()
-        if value not in (None, "", [], {})
-    }
+    return {key: value for key, value in attrs.items() if value not in (None, "", [], {})}
 
 
 def iter_yugioh_card_profiles(session) -> Iterator[dict]:
     rows = session.execute(
         text(
             """
-            SELECT
-              c.id AS card_id,
-              c.name,
-              c.yugoprodeck_id,
-              ca.attributes_json
+            SELECT c.id AS card_id, c.name, c.yugoprodeck_id, ca.attributes_json
             FROM cards c
             JOIN games g ON g.id=c.game_id
             JOIN card_attributes ca ON ca.card_id=c.id
@@ -96,89 +85,109 @@ def iter_yugioh_card_profiles(session) -> Iterator[dict]:
         attrs = compact_card_attributes(raw)
         source_aliases = _clean_list(raw.get("source_alias_ids"))
         search_keywords = [
-            attrs.get("card_class"),
-            attrs.get("card_type"),
-            attrs.get("frame_type"),
-            attrs.get("attribute"),
-            attrs.get("race"),
-            attrs.get("archetype"),
+            attrs.get("card_class"), attrs.get("card_type"), attrs.get("frame_type"),
+            attrs.get("attribute"), attrs.get("race"), attrs.get("archetype"),
         ]
         canonical_source_id = str(row["yugoprodeck_id"] or "").strip()
         yield {
             "card_id": int(row["card_id"]),
             "normalized_name": normalize_search_text(row["name"]),
-            # Only true aliases are stored as an array. Canonical source ID and
-            # searchable dimensions already live in search_text and do not need a
-            # second JSON copy.
             "aliases_json": source_aliases,
             "keywords_json": [],
             "attributes_json": attrs,
             "search_text": build_search_text(
-                row["name"],
-                canonical_source_id,
-                source_aliases,
+                row["name"], canonical_source_id, source_aliases,
                 [value for value in search_keywords if value],
             ),
         }
 
 
 def iter_yugioh_print_profiles(session) -> Iterator[dict]:
+    """Yield exactly one Search V2 profile for each physical Yu-Gi-Oh Print.
+
+    Physical language lives on ``prints.language``. EN prints use canonical Card/Set
+    names because they do not require PrintLocalization rows. ES/JA use the exact
+    localization attached to that physical print. Multiple PrintRelease memberships
+    are aggregated, never multiplied into duplicate search-profile rows.
+    """
     rows = session.execute(
         text(
             """
             SELECT
               p.id AS print_id,
               p.card_id,
-              c.name,
+              c.name AS canonical_name,
               c.yugoprodeck_id,
               s.code AS set_code,
+              s.name AS canonical_set_name,
               p.collector_number,
-              p.language,
+              lower(coalesce(p.language,'')) AS language,
               p.rarity,
               p.variant,
-              cr.name AS release_name,
-              cr.code AS release_code,
-              cr.release_date
+              pl.card_name AS localized_name,
+              pl.set_name AS localized_set_name,
+              COALESCE(rel.release_names, ARRAY[]::text[]) AS release_names,
+              COALESCE(rel.release_codes, ARRAY[]::text[]) AS release_codes,
+              rel.first_release_date
             FROM prints p
             JOIN cards c ON c.id=p.card_id
             JOIN games g ON g.id=c.game_id
             JOIN sets s ON s.id=p.set_id
-            JOIN print_releases pr ON pr.print_id=p.id
-            JOIN catalog_releases cr ON cr.id=pr.release_id
+            LEFT JOIN print_localizations pl
+              ON pl.print_id=p.id AND lower(pl.language)=lower(coalesce(p.language,''))
+            LEFT JOIN LATERAL (
+              SELECT
+                array_agg(DISTINCT cr.name ORDER BY cr.name) FILTER (WHERE cr.name IS NOT NULL) AS release_names,
+                array_agg(DISTINCT cr.code ORDER BY cr.code) FILTER (WHERE cr.code IS NOT NULL) AS release_codes,
+                MIN(cr.release_date) AS first_release_date
+              FROM print_releases pr
+              JOIN catalog_releases cr ON cr.id=pr.release_id
+              WHERE pr.print_id=p.id
+            ) rel ON TRUE
             WHERE g.slug='yugioh'
+              AND lower(coalesce(p.language,'')) IN ('en','es','ja')
             ORDER BY p.id
             """
         )
     ).mappings()
 
     for row in rows:
-        release_year = row["release_date"].year if row["release_date"] is not None else None
+        language = str(row["language"] or "").strip().lower() or None
+        localized_name = str(row["localized_name"] or "").strip()
+        canonical_name = str(row["canonical_name"] or "").strip()
+        display_name = localized_name or canonical_name
+        display_set_name = str(row["localized_set_name"] or row["canonical_set_name"] or "").strip()
+        release_names = _clean_list(row["release_names"])
+        release_codes = _clean_list(row["release_codes"])
+        release_date = row["first_release_date"]
+        release_year = release_date.year if release_date is not None else None
         attributes = {"release_year": release_year} if release_year is not None else {}
-        release_names = [row["release_name"]] if row["release_name"] else []
+        aliases = [canonical_name] if localized_name and localized_name != canonical_name else []
+
         yield {
             "print_id": int(row["print_id"]),
             "card_id": int(row["card_id"]),
-            "normalized_name": normalize_search_text(row["name"]),
+            "normalized_name": normalize_search_text(display_name),
             "normalized_set_code": normalize_search_text(row["set_code"]).replace(" ", "-"),
             "normalized_collector_number": normalize_search_text(row["collector_number"]).replace(" ", "-"),
-            "language": str(row["language"] or "").strip().lower() or None,
+            "language": language,
             "rarity": row["rarity"],
             "exact_variant": row["variant"],
             "variant_family": "rarity",
             "release_names_json": release_names,
-            # Print aliases/keywords would duplicate collector number, Set, rarity,
-            # release and source Card ID already present in dedicated columns or
-            # search_text. Keep the JSON arrays empty for a lean 44k-row projection.
-            "aliases_json": [],
+            "aliases_json": aliases,
             "keywords_json": [],
             "attributes_json": attributes,
             "search_text": build_search_text(
-                row["name"],
+                display_name,
+                canonical_name,
                 row["collector_number"],
                 row["set_code"],
+                display_set_name,
                 row["rarity"],
-                row["release_name"],
-                row["release_code"],
+                release_names,
+                release_codes,
                 row["yugoprodeck_id"],
+                language,
             ),
         }
