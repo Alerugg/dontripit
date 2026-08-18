@@ -6,13 +6,24 @@ on:
       - agent/yugioh-multilingual-rollout-v1
     paths:
       - .github/triggers/run-yugioh-rollout-preflight-v1
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/certify-yugioh-rollout-preflight-v1.yml'
+      - 'backend/alembic/versions/20260815_35_add_set_region_identity.py'
+      - 'backend/alembic/versions/20260815_36_include_card_in_print_identity.py'
+      - 'backend/app/models.py'
+      - 'backend/app/routes/set_ui.py'
+      - 'backend/app/scripts/**yugioh**'
+      - 'backend/tests/test_set_ui_region_identity.py'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: certify-yugioh-rollout-preflight-v1
+  group: certify-yugioh-rollout-preflight-v1-${{ github.ref }}
   cancel-in-progress: true
 
 env:
