@@ -1,0 +1,74 @@
+name: Audit Yu-Gi-Oh POTE-JP Residual Post87 V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-yugioh-pote-jp-residual-post87-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_POTE_JP_RESIDUAL_GROUPS_OUTPUT: /tmp/yugioh-pote-jp-residual-post87-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Rebuild live residual surface
+        run: python -m app.scripts.audit_yugioh_pote_jp_residual_groups_v1
+      - name: Enforce post-87 residual contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/tmp/yugioh-pote-jp-residual-post87-v1.json')
+          r = json.loads(p.read_text(encoding='utf-8'))
+          expected = {
+              'regional_products_total': 126,
+              'canonical_ja_prints_total': 126,
+              'accepted_surface_links': 87,
+              'residual_products': 39,
+              'residual_prints': 39,
+              'balanced_image_ready_groups': 11,
+              'balanced_image_ready_products': 39,
+          }
+          errors = []
+          for key, value in expected.items():
+              if r.get(key) != value:
+                  errors.append(f'{key}: expected={value} actual={r.get(key)}')
+          histogram = r.get('balanced_group_size_histogram') or {}
+          if histogram != {'3x3': 6, '4x4': 4, '5x5': 1}:
+              errors.append(f'histogram expected={{"3x3":6,"4x4":4,"5x5":1}} actual={histogram}')
+          if r.get('ungrouped_prints'):
+              errors.append(f'ungrouped_prints={len(r["ungrouped_prints"])}')
+          classes = r.get('classification_by_product') or {}
+          if classes != {'balanced_image_ready': 39}:
+              errors.append(f'classification_by_product expected only 39 balanced_image_ready actual={classes}')
+          r['post87_contract_failures'] = errors
+          r['post87_contract_status'] = 'pass' if not errors else 'fail'
+          p.write_text(json.dumps(r, ensure_ascii=False, indent=2, sort_keys=True, default=str) + '\n', encoding='utf-8')
+          print(json.dumps({'post87_contract_status': r['post87_contract_status'], 'failures': errors}, indent=2))
+          if errors:
+              raise SystemExit(2)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-pote-jp-residual-post87-v1-${{ github.run_id }}
+          path: /tmp/yugioh-pote-jp-residual-post87-v1.json
+          retention-days: 90
+          if-no-files-found: error
