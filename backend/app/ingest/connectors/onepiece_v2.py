@@ -22,6 +22,18 @@ class OnePieceV2Connector(OnePieceConnector):
     name = "onepiece"
     _V2_CODE_RE = re.compile(r"^(OP|ST|EB|PRB)(\d{1,2})-\d{3}$", flags=re.IGNORECASE)
     _PROMO_RE = re.compile(r"^P-\d{3}$", flags=re.IGNORECASE)
+    _DETAIL_LABELS = (
+        "Cost",
+        "Attribute",
+        "Power",
+        "Counter",
+        "Color",
+        "Block",
+        "Type",
+        "Effect",
+        "Trigger",
+        "Card Set(s)",
+    )
 
     @classmethod
     def _extract_v2_set_code(cls, collector_base: str | None) -> str | None:
@@ -67,8 +79,85 @@ class OnePieceV2Connector(OnePieceConnector):
             return f"Premium Booster {set_code}"
         return str(source_label or set_code).strip() or set_code
 
-    def _parse_official_cards_page(self, html: str, *, base_url: str) -> list[dict[str, str]]:
-        records: list[dict[str, str]] = []
+    @classmethod
+    def _modal_text_lines(cls, body: str) -> list[str]:
+        """Turn one official modal into stable text lines without trusting CSS classes.
+
+        The official site exposes a TEXT VIEW with semantic labels such as Effect,
+        Trigger, Cost, Power and Type. Parsing the label boundaries is more robust
+        than coupling the ingest to presentation-only class names.
+        """
+        cleaned = re.sub(r"<script\b[^>]*>.*?</script>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(r"<style\b[^>]*>.*?</style>", " ", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = re.sub(
+            r'<img\b[^>]*\balt=["\']([^"\']*)["\'][^>]*>',
+            lambda match: f"\n{match.group(1)}\n",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"<(?:br|hr)\b[^>]*>|</(?:p|div|h[1-6]|li|dt|dd|span|section|article|ul|ol)>",
+            "\n",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        plain = unescape(cleaned).replace("\xa0", " ")
+        lines = []
+        for raw_line in plain.splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if line:
+                lines.append(line)
+        return lines
+
+    @classmethod
+    def _extract_labeled_detail(cls, lines: list[str], label: str) -> str | None:
+        labels = {candidate.casefold() for candidate in cls._DETAIL_LABELS}
+        start = None
+        for index, line in enumerate(lines):
+            if line.rstrip(":").strip().casefold() == label.casefold():
+                start = index + 1
+                break
+        if start is None:
+            return None
+
+        values: list[str] = []
+        for line in lines[start:]:
+            normalized = line.rstrip(":").strip().casefold()
+            if normalized in labels:
+                break
+            # Presentation-only noise from the official block icon does not add
+            # card rules meaning.
+            if normalized == "icon":
+                continue
+            values.append(line)
+        value = re.sub(r"\s+", " ", "\n".join(values)).strip()
+        return value or None
+
+    @classmethod
+    def _extract_official_details(cls, body: str) -> dict[str, object]:
+        lines = cls._modal_text_lines(body)
+        field_map = {
+            "cost": "Cost",
+            "attribute": "Attribute",
+            "power": "Power",
+            "counter": "Counter",
+            "color": "Color",
+            "block": "Block",
+            "card_type": "Type",
+            "effect": "Effect",
+            "trigger": "Trigger",
+        }
+        details: dict[str, object] = {
+            key: cls._extract_labeled_detail(lines, label)
+            for key, label in field_map.items()
+        }
+        details["official"] = True
+        details["source"] = "onepiece_official"
+        return details
+
+    def _parse_official_cards_page(self, html: str, *, base_url: str) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
         blocks = re.findall(
             r'<dl\s+class="modalCol"\s+id="([^"]+)"[^>]*>(.*?)</dl>',
             html,
@@ -123,6 +212,7 @@ class OnePieceV2Connector(OnePieceConnector):
                     "variant": variant,
                     "variant_family": self._variant_family(variant),
                     "image_url": image_url,
+                    "details": self._extract_official_details(body),
                 }
             )
         return records
@@ -174,6 +264,7 @@ class OnePieceV2Connector(OnePieceConnector):
             (row for row in card_row["prints"] if row.get("identity_key") == identity_key),
             None,
         )
+        incoming_details = dict(entry.get("details") or {})
         if print_row is None:
             print_row = {
                 "id": entry["print_id"],
@@ -184,13 +275,22 @@ class OnePieceV2Connector(OnePieceConnector):
                 "variant": entry["variant"],
                 "variant_family": entry.get("variant_family") or self._variant_family(entry["variant"]),
                 "image_url": entry["image_url"],
+                "details": incoming_details,
                 "release_appearances": [],
                 "alternate_source_images": [],
+                "alternate_source_details": [],
             }
             card_row["prints"].append(print_row)
-        elif entry.get("image_url") and entry["image_url"] != print_row.get("image_url"):
-            if entry["image_url"] not in print_row["alternate_source_images"]:
-                print_row["alternate_source_images"].append(entry["image_url"])
+        else:
+            if entry.get("image_url") and entry["image_url"] != print_row.get("image_url"):
+                if entry["image_url"] not in print_row["alternate_source_images"]:
+                    print_row["alternate_source_images"].append(entry["image_url"])
+            existing_details = dict(print_row.get("details") or {})
+            if incoming_details and not existing_details:
+                print_row["details"] = incoming_details
+            elif incoming_details and existing_details and incoming_details != existing_details:
+                if incoming_details not in print_row["alternate_source_details"]:
+                    print_row["alternate_source_details"].append(incoming_details)
 
         appearance = {
             "release_external_id": str(series_id),
@@ -240,7 +340,7 @@ class OnePieceV2Connector(OnePieceConnector):
             series_response.raise_for_status()
             entries = self._parse_official_cards_page(series_response.text, base_url=base_url)
             for entry in entries:
-                set_code = entry["set_code"]
+                set_code = str(entry["set_code"])
                 sets_by_code.setdefault(
                     set_code,
                     {
@@ -283,6 +383,7 @@ class OnePieceV2Connector(OnePieceConnector):
             releases = [row for row in releases if row["external_id"] in used_release_ids]
 
         physical_identity_conflicts = []
+        source_text_conflicts = []
         for card in cards:
             for print_row in card.get("prints") or []:
                 alternate_images = print_row.get("alternate_source_images") or []
@@ -294,6 +395,18 @@ class OnePieceV2Connector(OnePieceConnector):
                             "variant": print_row["variant"],
                             "primary_image": print_row["image_url"],
                             "alternate_images": alternate_images,
+                            "release_appearances": print_row["release_appearances"],
+                        }
+                    )
+                alternate_details = print_row.get("alternate_source_details") or []
+                if alternate_details:
+                    source_text_conflicts.append(
+                        {
+                            "card_key": card["id"],
+                            "collector_number": print_row["collector_number"],
+                            "variant": print_row["variant"],
+                            "primary_details": print_row.get("details") or {},
+                            "alternate_details": alternate_details,
                             "release_appearances": print_row["release_appearances"],
                         }
                     )
@@ -316,5 +429,18 @@ class OnePieceV2Connector(OnePieceConnector):
                     for print_row in card.get("prints") or []
                 ),
                 "physical_identity_conflicts": physical_identity_conflicts,
+                "source_text_conflicts": source_text_conflicts,
+                "effect_print_count": sum(
+                    1
+                    for card in cards
+                    for print_row in card.get("prints") or []
+                    if str((print_row.get("details") or {}).get("effect") or "").strip()
+                ),
+                "trigger_print_count": sum(
+                    1
+                    for card in cards
+                    for print_row in card.get("prints") or []
+                    if str((print_row.get("details") or {}).get("trigger") or "").strip()
+                ),
             },
         }
