@@ -31,12 +31,12 @@ def normal_yugioh_search(
     limit: int = 24,
     language: str | None = None,
 ) -> list[dict]:
-    """Rank logical Cards while resolving localized display data per physical Print.
+    """Rank logical Cards while returning an exact physical print.
 
-    ``print_localizations`` is the authoritative language surface. A selected
-    display-language set filters by localization availability instead of merely
-    relabeling an English row. The physical ``print_id`` never changes, so exact
-    images, variants and downstream Cardmarket joins retain their identity.
+    ``prints.language`` is authoritative for the physical language. EN uses the
+    canonical Card/Set names; ES/JA use the PrintLocalization attached to that
+    exact print. The selected language therefore filters real physical prints,
+    never an English row relabeled as another language.
     """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Yu-Gi-Oh Search V2 requires PostgreSQL")
@@ -68,27 +68,23 @@ def normal_yugioh_search(
         f"psp.search_text LIKE :token_{idx}" for idx in range(len(tokens))
     )
 
-    if q_norm:
-        card_predicate = """
-          csp.normalized_name = :q_norm
-          OR csp.normalized_name LIKE :prefix
-          OR csp.normalized_name LIKE :contains
-          OR csp.search_text LIKE :contains
-          OR similarity(csp.normalized_name, :q_norm) >= 0.20
-        """
-        print_predicate = """
-          psp.normalized_collector_number = :q_code
-          OR psp.normalized_set_code = :q_code
-          OR psp.normalized_name = :q_norm
-          OR psp.normalized_name LIKE :prefix
-          OR psp.search_text LIKE :contains
-        """
-        if token_card_where:
-            card_predicate = f"({card_predicate}) OR ({token_card_where})"
-            print_predicate = f"({print_predicate}) OR ({token_print_where})"
-    else:
-        card_predicate = "FALSE"
-        print_predicate = "FALSE"
+    card_predicate = """
+      csp.normalized_name = :q_norm
+      OR csp.normalized_name LIKE :prefix
+      OR csp.normalized_name LIKE :contains
+      OR csp.search_text LIKE :contains
+      OR similarity(csp.normalized_name, :q_norm) >= 0.20
+    """
+    print_predicate = """
+      psp.normalized_collector_number = :q_code
+      OR psp.normalized_set_code = :q_code
+      OR psp.normalized_name = :q_norm
+      OR psp.normalized_name LIKE :prefix
+      OR psp.search_text LIKE :contains
+    """
+    if token_card_where:
+        card_predicate = f"({card_predicate}) OR ({token_card_where})"
+        print_predicate = f"({print_predicate}) OR ({token_print_where})"
 
     sql = text(
         f"""
@@ -122,8 +118,11 @@ def normal_yugioh_search(
               {token_print_bonus}
             ) AS score
           FROM print_search_profiles psp
+          JOIN prints pp ON pp.id=psp.print_id
           JOIN games g ON g.id=psp.game_id
-          WHERE g.slug='yugioh' AND ({print_predicate})
+          WHERE g.slug='yugioh'
+            AND (:display_language IS NULL OR lower(coalesce(pp.language,''))=ANY(string_to_array(:display_language, ',')))
+            AND ({print_predicate})
           GROUP BY psp.card_id
           ORDER BY score DESC, psp.card_id ASC
           LIMIT :candidate_limit
@@ -138,15 +137,13 @@ def normal_yugioh_search(
             ) AS score
           FROM print_localizations pl
           JOIN prints p ON p.id=pl.print_id
-          JOIN sets s ON s.id=p.set_id
-          JOIN games g ON g.id=s.game_id
+          JOIN cards c ON c.id=p.card_id
+          JOIN games g ON g.id=c.game_id
           WHERE g.slug='yugioh'
             AND pl.card_name IS NOT NULL
-            AND lower(pl.language) IN ('en','es','ja')
-            AND (
-              :display_language IS NULL
-              OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
-            )
+            AND lower(pl.language)=lower(coalesce(p.language,''))
+            AND lower(coalesce(p.language,'')) IN ('es','ja')
+            AND (:display_language IS NULL OR lower(coalesce(p.language,''))=ANY(string_to_array(:display_language, ',')))
             AND position(:q_raw in lower(pl.card_name)) > 0
           GROUP BY p.card_id
           ORDER BY score DESC, p.card_id ASC
@@ -195,7 +192,7 @@ def normal_yugioh_search(
             s.code AS set_code,
             s.name AS canonical_set_name,
             p.collector_number,
-            p.language,
+            lower(coalesce(p.language,'')) AS language,
             p.rarity,
             psp.exact_variant,
             psp.variant_family,
@@ -203,11 +200,11 @@ def normal_yugioh_search(
             psp.attributes_json AS print_attributes,
             loc.card_name AS localized_card_name,
             loc.set_name AS localized_set_name,
-            loc.language AS display_language,
+            COALESCE(loc.language, lower(coalesce(p.language,''))) AS display_language,
             (
-              SELECT array_agg(DISTINCT lower(pl2.language) ORDER BY lower(pl2.language))
-              FROM print_localizations pl2
-              WHERE pl2.print_id=p.id AND lower(pl2.language) IN ('en','es','ja')
+              SELECT array_agg(DISTINCT lower(p2.language) ORDER BY lower(p2.language))
+              FROM prints p2
+              WHERE p2.card_id=p.card_id AND lower(coalesce(p2.language,'')) IN ('en','es','ja')
             ) AS available_languages,
             (
               SELECT pi.url FROM print_images pi
@@ -220,39 +217,23 @@ def normal_yugioh_search(
           JOIN prints p ON p.id=psp.print_id
           JOIN sets s ON s.id=p.set_id
           LEFT JOIN LATERAL (
-            SELECT
-              lower(pl.language) AS language,
-              pl.card_name,
-              pl.set_name
+            SELECT lower(pl.language) AS language, pl.card_name, pl.set_name
             FROM print_localizations pl
             WHERE pl.print_id=p.id
-              AND lower(pl.language) IN ('en','es','ja')
-              AND (
-                :display_language IS NULL
-                OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
-              )
-            ORDER BY
-              (lower(pl.card_name)=:q_raw) DESC,
-              (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
-              CASE lower(pl.language) WHEN 'en' THEN 0 WHEN 'es' THEN 1 WHEN 'ja' THEN 2 ELSE 3 END,
-              pl.id ASC
+              AND lower(pl.language)=lower(coalesce(p.language,''))
+            ORDER BY pl.id ASC
             LIMIT 1
           ) loc ON TRUE
           WHERE psp.card_id=candidates.card_id
-            AND (
-              :display_language IS NULL
-              OR EXISTS (
-                SELECT 1 FROM print_localizations plf
-                WHERE plf.print_id=p.id
-                  AND lower(plf.language)=ANY(string_to_array(:display_language, ','))
-              )
-            )
+            AND lower(coalesce(p.language,'')) IN ('en','es','ja')
+            AND (:display_language IS NULL OR lower(coalesce(p.language,''))=ANY(string_to_array(:display_language, ',')))
           ORDER BY
             (loc.card_name IS NOT NULL AND lower(loc.card_name)=:q_raw) DESC,
             (loc.card_name IS NOT NULL AND position(:q_raw in lower(loc.card_name)) > 0) DESC,
             (psp.normalized_collector_number = :q_code) DESC,
             (psp.normalized_set_code = :q_code) DESC,
             (psp.search_text LIKE :contains) DESC,
+            CASE lower(coalesce(p.language,'')) WHEN 'en' THEN 0 WHEN 'es' THEN 1 WHEN 'ja' THEN 2 ELSE 3 END,
             p.id ASC
           LIMIT 1
         ) best ON TRUE
