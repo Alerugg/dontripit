@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - .github/triggers/run-yugioh-production-execution-v1
+      - .github/workflows/execute-yugioh-multilingual-production-pr-v1.yml
 
 permissions:
   contents: read
@@ -25,7 +26,11 @@ jobs:
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       YUGIOH_PRODUCTION_ROLLOUT_ACK: YGO_ES_JA_ROLLOUT_V1
       PREFLIGHT_RUN_ID: '32083597736'
+      PREFLIGHT_ARTIFACT_ID: '9305982052'
+      PREFLIGHT_ARTIFACT_SHA256: '0c59ad4ff93d0b39d96fab711d09963c7738537cb51bcd66c45087656ede763f'
       SOURCE_RUN_ID: '31915462442'
+      SOURCE_ARTIFACT_ID: '9270830904'
+      SOURCE_ARTIFACT_SHA256: '7c2cb875c49d857d2b016786b8a45cb6ec3614568876dbcd38f14aae829bcc45'
       PYTHONPATH: .
     defaults:
       run:
@@ -55,21 +60,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p evidence/preflight evidence/fresh "$RUNNER_TEMP/ygojson-fresh/extracted"
-          preflight_state="$(gh run view "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
-          test "$preflight_state" = 'completed:success:Certify Yu-Gi-Oh Multilingual Rollout Preflight V1'
-          gh run download "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name "yugioh-multilingual-rollout-preflight-v1-${PREFLIGHT_RUN_ID}" \
-            --dir evidence/preflight
+
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          curl --fail --silent --show-error "${auth[@]}" "${api}/actions/runs/${PREFLIGHT_RUN_ID}" \
+            | jq -e '.status == "completed" and .conclusion == "success" and .name == "Certify Yu-Gi-Oh Multilingual Rollout Preflight V1"' >/dev/null
+          curl --fail --location --silent --show-error "${auth[@]}" \
+            --output "$RUNNER_TEMP/preflight-artifact.zip" \
+            "${api}/actions/artifacts/${PREFLIGHT_ARTIFACT_ID}/zip"
+          echo "${PREFLIGHT_ARTIFACT_SHA256}  $RUNNER_TEMP/preflight-artifact.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/preflight-artifact.zip" -d evidence/preflight
           test -s evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
           test -s evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
-          source_state="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
-          test "$source_state" = 'completed:success:Shadow YGOJSON Full Refresh V1'
-          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name "ygojson-shadow-full-refresh-v1-${SOURCE_RUN_ID}" \
-            --dir evidence/fresh
+          test -s evidence/preflight/yugioh-yaml-yugi-cards-sha256-preflight.txt
+          test -s evidence/preflight/yugioh-yaml-yugi-source-meta-preflight.json
+
+          curl --fail --silent --show-error "${auth[@]}" "${api}/actions/runs/${SOURCE_RUN_ID}" \
+            | jq -e '.status == "completed" and .conclusion == "success" and .name == "Shadow YGOJSON Full Refresh V1"' >/dev/null
+          curl --fail --location --silent --show-error "${auth[@]}" \
+            --output "$RUNNER_TEMP/source-artifact.zip" \
+            "${api}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip"
+          echo "${SOURCE_ARTIFACT_SHA256}  $RUNNER_TEMP/source-artifact.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/source-artifact.zip" -d evidence/fresh
+          test -s evidence/fresh/ygojson-shadow-fresh-aggregate-v1.zip
           unzip -q evidence/fresh/ygojson-shadow-fresh-aggregate-v1.zip -d "$RUNNER_TEMP/ygojson-fresh/extracted"
           test -s "$RUNNER_TEMP/ygojson-fresh/extracted/cards.json"
           test -s "$RUNNER_TEMP/ygojson-fresh/extracted/sets.json"
+          test -s "$RUNNER_TEMP/ygojson-fresh/extracted/meta.json"
 
       - name: Fetch YAML Yugi and require exact preflight hash
         working-directory: .
