@@ -8,6 +8,23 @@ from typing import Any
 from app.scripts import rollout_yugioh_multilingual_production_v1 as base
 
 
+class _WriteTransactionView(base._WriteTransactionView):
+    """Keep certification writer session calls inside the outer transaction.
+
+    The real production connection is already configured as read/write with
+    autocommit disabled. The nested certified writer calls ``set_session`` on
+    the connection it opens; this proxy must accept that call without changing
+    or prematurely ending the outer atomic transaction.
+    """
+
+    def set_session(self, *args, **kwargs):
+        return None
+
+
+# base._call_apply_in_outer_transaction() resolves this class at call time.
+base._WriteTransactionView = _WriteTransactionView
+
+
 def _non_ygo_counts(cur, game_id: int) -> dict[str, dict[str, int]]:
     """Audit other games without multiplying Sets x Cards x Prints."""
     cur.execute(
