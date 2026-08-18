@@ -62,7 +62,7 @@ function PriceBlock({ price, cardmarket }) {
       <section className="panel-soft identifiers ux-price-panel">
         <p className="eyebrow">Mercado</p>
         <h2>Cardmarket</h2>
-        <p className="detail-meta">Esta versión no tiene un Price Guide utilizable en Don’tRipIt. No tomamos el precio de otra edición.</p>
+        <p className="detail-meta"><strong>Sin Price Guide actual.</strong> No reutilizamos el precio de otra edición: solo mostramos la contraparte exacta cuando existe en Cardmarket.</p>
         {cardmarket?.url ? (
           <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn">
             Ver esta versión en Cardmarket ↗
@@ -87,12 +87,16 @@ function PriceBlock({ price, cardmarket }) {
 
       <div className="ux-price-grid">
         <PriceMetric label="Mínimo" value={price.minimum} currency={currency} />
-        <PriceMetric label="Referencia" value={price.conservative} currency={currency} featured />
+        <PriceMetric label="Conservador" value={price.conservative} currency={currency} featured />
         <PriceMetric label="Tendencia" value={price.trend} currency={currency} />
         <PriceMetric label="Media" value={price.average} currency={currency} />
       </div>
 
       <p className="detail-meta">{price.as_of ? `Actualizado ${new Date(price.as_of).toLocaleDateString('es-ES')}` : 'Precio de la versión comercial vinculada.'}</p>
+      <details className="dri-technical dri-price-method">
+        <summary>Cómo se calcula</summary>
+        <p className="detail-meta">El valor conservador usa Low Price EX+ para versiones no foil y Foil Low para versiones foil cuando Cardmarket publica esa métrica. No reutilizamos el precio de otra edición.</p>
+      </details>
       {cardmarket?.url ? (
         <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn">
           Ver esta versión en Cardmarket ↗
