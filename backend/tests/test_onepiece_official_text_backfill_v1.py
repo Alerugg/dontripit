@@ -20,6 +20,7 @@ def _payload(*, external_id: str = "OP05-119_P1") -> dict:
                         "variant": "p1",
                         "details": {
                             "cost": "10",
+                            "attribute": "Slash/Special Slash/Special",
                             "power": "12000",
                             "effect": "[On Play] DON!! -10: Take an extra turn after this one.",
                             "trigger": "None",
@@ -84,6 +85,7 @@ def test_backfill_plan_uses_exact_official_identifier_only(client):
     assert proposal["print_id"] == print_id
     assert proposal["external_id"] == "OP05-119_P1"
     assert proposal["details_json"]["effect"].startswith("[On Play] DON!! -10")
+    assert proposal["details_json"]["attribute"] == "Slash/Special"
     assert proposal["details_json"]["official"] is True
 
 
@@ -147,6 +149,7 @@ def test_backfill_plan_is_idempotent_for_identical_existing_payload(client):
         ).scalar_one()
 
     assert row.source == "onepiece_official"
+    assert row.details_json["attribute"] == "Slash/Special"
     assert plan["safe_to_apply"] is True
     assert plan["proposals"]["count"] == 0
     assert plan["proposals"]["already_current_count"] == 1
