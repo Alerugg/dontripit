@@ -1,0 +1,178 @@
+name: Apply Yu-Gi-Oh Multilingual Schema Live V1
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+    paths:
+      - .github/triggers/run-yugioh-schema-live-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-multilingual-schema-live-v1
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: github.head_ref == 'agent/yugioh-multilingual-rollout-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout guarded rollout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/yugioh-multilingual-rollout-v1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Neon secret
+        run: test -n "${DATABASE_URL}${DATABASE_URL_UNPOOLED}"
+
+      - name: Capture and gate pre-migration state
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise SystemExit('No Neon database URL configured')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          engine = create_engine(url, pool_pre_ping=True)
+
+          def grouped(conn, sql):
+              return {str(k): int(v) for k, v in conn.execute(text(sql))}
+
+          with engine.connect() as conn:
+              version = str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one())
+              if version not in {'20260814_34', '20260815_36'}:
+                  raise SystemExit(f'Unexpected live Alembic version: {version}')
+              state = {
+                  'alembic_version': version,
+                  'games': int(conn.execute(text('SELECT COUNT(*) FROM games')).scalar_one()),
+                  'sets_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(s.id)::bigint FROM games g LEFT JOIN sets s ON s.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'cards_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(c.id)::bigint FROM games g LEFT JOIN cards c ON c.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'prints_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(p.id)::bigint FROM games g
+                      LEFT JOIN cards c ON c.game_id=g.id LEFT JOIN prints p ON p.card_id=c.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'catalog_releases_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(cr.id)::bigint FROM games g LEFT JOIN catalog_releases cr ON cr.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'print_localizations': int(conn.execute(text('SELECT COUNT(*) FROM print_localizations')).scalar_one()),
+                  'print_releases': int(conn.execute(text('SELECT COUNT(*) FROM print_releases')).scalar_one()),
+                  'price_snapshots': int(conn.execute(text('SELECT COUNT(*) FROM price_snapshots')).scalar_one()),
+              }
+          Path('/tmp/yugioh-schema-before.json').write_text(json.dumps(state, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(state, indent=2, sort_keys=True))
+          PY
+
+      - name: Apply only certified schema revisions 35 and 36
+        run: alembic upgrade 20260815_36
+
+      - name: Verify exact schema and zero catalog-row changes
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, inspect, text
+
+          before = json.loads(Path('/tmp/yugioh-schema-before.json').read_text())
+          url = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          engine = create_engine(url, pool_pre_ping=True)
+
+          def grouped(conn, sql):
+              return {str(k): int(v) for k, v in conn.execute(text(sql))}
+
+          with engine.connect() as conn:
+              insp = inspect(conn)
+              set_columns = {c['name']: c for c in insp.get_columns('sets')}
+              set_uqs = {u['name']: tuple(u.get('column_names') or ()) for u in insp.get_unique_constraints('sets')}
+              print_uqs = {u['name']: tuple(u.get('column_names') or ()) for u in insp.get_unique_constraints('prints')}
+              print_indexes = {i['name']: i for i in insp.get_indexes('prints')}
+              after = {
+                  'alembic_version': str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()),
+                  'games': int(conn.execute(text('SELECT COUNT(*) FROM games')).scalar_one()),
+                  'sets_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(s.id)::bigint FROM games g LEFT JOIN sets s ON s.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'cards_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(c.id)::bigint FROM games g LEFT JOIN cards c ON c.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'prints_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(p.id)::bigint FROM games g
+                      LEFT JOIN cards c ON c.game_id=g.id LEFT JOIN prints p ON p.card_id=c.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'catalog_releases_by_game': grouped(conn, '''
+                      SELECT g.slug, COUNT(cr.id)::bigint FROM games g LEFT JOIN catalog_releases cr ON cr.game_id=g.id
+                      GROUP BY g.slug ORDER BY g.slug
+                  '''),
+                  'print_localizations': int(conn.execute(text('SELECT COUNT(*) FROM print_localizations')).scalar_one()),
+                  'print_releases': int(conn.execute(text('SELECT COUNT(*) FROM print_releases')).scalar_one()),
+                  'price_snapshots': int(conn.execute(text('SELECT COUNT(*) FROM price_snapshots')).scalar_one()),
+              }
+
+          assert after['alembic_version'] == '20260815_36', after
+          assert 'region' in set_columns and set_columns['region']['nullable'] is False, set_columns
+          assert set_uqs.get('uq_sets_game_code_region') == ('game_id', 'code', 'region'), set_uqs
+          assert print_uqs.get('uq_prints_set_number_language_is_foil_variant') == (
+              'card_id', 'set_id', 'collector_number', 'language', 'is_foil', 'variant'
+          ), print_uqs
+          assert 'ix_prints_set_number_language_foil_variant' in print_indexes, print_indexes
+
+          for key in (
+              'games','sets_by_game','cards_by_game','prints_by_game','catalog_releases_by_game',
+              'print_localizations','print_releases','price_snapshots'
+          ):
+              if before[key] != after[key]:
+                  raise SystemExit(f'Catalog rows changed during schema-only migration: {key}: {before[key]} -> {after[key]}')
+
+          report = {'status':'pass','catalog_row_writes':0,'before':before,'after':after}
+          Path('/tmp/yugioh-schema-live-report.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload live schema evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-schema-live-v1-${{ github.run_id }}
+          path: |
+            /tmp/yugioh-schema-before.json
+            /tmp/yugioh-schema-live-report.json
+          retention-days: 90
+          if-no-files-found: warn

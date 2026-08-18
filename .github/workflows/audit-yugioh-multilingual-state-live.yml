@@ -1,0 +1,88 @@
+name: Audit Yu-Gi-Oh Multilingual State Live
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/triggers/audit-yugioh-multilingual-state-live
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-state-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary
+      - name: Audit production READ ONLY
+        run: |
+          python - <<'PY' | tee /tmp/yugioh-multilingual-state-live.json
+          import json, os, psycopg2
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url: raise SystemExit('DATABASE_URL missing')
+          conn=psycopg2.connect(url,connect_timeout=30,application_name='dontripit_ygo_state_audit_readonly')
+          conn.set_session(readonly=True,autocommit=False)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("""
+                    SELECT pid,application_name,state,backend_xid::text
+                    FROM pg_stat_activity
+                    WHERE datname=current_database()
+                      AND application_name = ANY(%s)
+                    ORDER BY pid
+                  """, (['dontripit_ygo_multilingual_production_v1','dontripit_ygo_cert_writer','dontripit_ygo_cert_validate'],))
+                  activity=[list(row) for row in cur.fetchall()]
+                  cur.execute("""
+                    SELECT lower(coalesce(p.language,'')),count(*)
+                    FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                    WHERE g.slug='yugioh' GROUP BY 1 ORDER BY 1
+                  """)
+                  languages={str(k):int(v) for k,v in cur.fetchall()}
+                  cur.execute("""
+                    SELECT count(*) FROM print_localizations l
+                    JOIN prints p ON p.id=l.print_id JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                    WHERE g.slug='yugioh' AND lower(l.language) IN ('es','ja')
+                  """)
+                  localizations=int(cur.fetchone()[0] or 0)
+                  cur.execute("SELECT count(*) FROM cards c JOIN games g ON g.id=c.game_id WHERE g.slug='yugioh'")
+                  cards=int(cur.fetchone()[0] or 0)
+                  cur.execute("SELECT count(*) FROM sets s JOIN games g ON g.id=s.game_id WHERE g.slug='yugioh'")
+                  sets=int(cur.fetchone()[0] or 0)
+                  cur.execute("SELECT count(*) FROM catalog_releases cr JOIN games g ON g.id=cr.game_id WHERE g.slug='yugioh' AND cr.source='ygojson'")
+                  releases=int(cur.fetchone()[0] or 0)
+                  cur.execute("SELECT pg_database_size(current_database())")
+                  database_bytes=int(cur.fetchone()[0] or 0)
+              conn.rollback()
+          finally:
+              conn.close()
+          expected={'en':44226,'es':38249,'ja':36426}
+          complete=(not activity and languages==expected and localizations==74675 and cards==14479 and sets==1457)
+          report={
+            'status':'pass','production_writes':0,'writer_backends_visible':len(activity),'activity':activity,
+            'languages':languages,'print_localizations_es_ja':localizations,'cards':cards,'sets':sets,
+            'ygojson_catalog_releases':releases,'database_bytes':database_bytes,'rollout_complete':complete,
+          }
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if not complete: raise SystemExit(2)
+          PY
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-state-live-${{ github.run_id }}
+          path: /tmp/yugioh-multilingual-state-live.json
+          retention-days: 90
+          if-no-files-found: warn
