@@ -58,7 +58,8 @@ jobs:
             app/scripts/rebuild_yugioh_search_v2_fast.py \
             app/scripts/audit_yugioh_multilingual_search_live.py \
             app/scripts/audit_cardmarket_version_grouping_v1.py \
-            app/scripts/audit_yugioh_cardmarket_es_bridge_v1.py
+            app/scripts/audit_yugioh_cardmarket_es_bridge_v1.py \
+            app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py
 
       - name: Audit Cardmarket product-language grouping READ ONLY
         working-directory: backend
@@ -68,6 +69,28 @@ jobs:
         working-directory: backend
         run: python -m app.scripts.audit_yugioh_cardmarket_es_bridge_v1
 
+      - name: Dry-run atomic Yu-Gi-Oh ES Cardmarket bridge
+        working-directory: backend
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_es_bridge_v1 \
+            --expected-proposals 20896 \
+            --output /tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json
+
+      - name: Enforce dry-run evidence
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json'))
+          assert r['status']=='pass', r
+          assert r['apply'] is False and r['commit_confirmed'] is False, r
+          assert r['production_writes']==0, r
+          assert r['before']['proposal_count']==20896, r
+          assert r['economics_untouched'] is True, r
+          assert r['catalog_identity_untouched'] is True, r
+          assert r['images_untouched'] is True, r
+          assert r['ja_untouched'] is True, r
+          PY
+
       - name: Upload Cardmarket grouping evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,6 +99,7 @@ jobs:
           path: |
             /tmp/cardmarket-version-grouping-v1.json
             /tmp/yugioh-cardmarket-es-bridge-v1.json
+            /tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json
           retention-days: 90
           if-no-files-found: warn
 
