@@ -10,6 +10,7 @@ on:
       - 'backend/tests/test_onepiece_v2_identity.py'
       - 'backend/tests/test_onepiece_official_text_backfill_v1.py'
       - '.github/workflows/audit-onepiece-official-text-v1.yml'
+      - '.github/workflows/apply-onepiece-official-text-v1.yml'
   workflow_dispatch:
 
 permissions:
