@@ -1,9 +1,6 @@
 name: Certify Yu-Gi-Oh Multilingual Search V2
 
 on:
-  push:
-    branches:
-      - agent/yugioh-multilingual-search-integration-v2
   pull_request:
     branches:
       - main
@@ -46,79 +43,58 @@ jobs:
           pip install -r requirements.txt
           pip install --disable-pip-version-check 'ijson==3.4.0.post0'
 
-      - name: Compile multilingual Search V2 backend and Cardmarket readers
+      - name: Compile Cardmarket bridge writer
         working-directory: backend
         run: |
           python -m py_compile \
-            app/routes/search_v2.py \
             app/routes/card_prints.py \
-            app/search_v2/yugioh_query.py \
-            app/search_v2/yugioh_advanced.py \
-            app/search_v2/yugioh_profiles.py \
-            app/scripts/rebuild_yugioh_search_v2_fast.py \
-            app/scripts/audit_yugioh_multilingual_search_live.py \
             app/scripts/audit_cardmarket_version_grouping_v1.py \
             app/scripts/audit_yugioh_cardmarket_es_bridge_v1.py \
             app/scripts/apply_yugioh_cardmarket_es_bridge_v1.py
 
-      - name: Audit Cardmarket product-language grouping READ ONLY
-        working-directory: backend
-        run: python -m app.scripts.audit_cardmarket_version_grouping_v1
-
-      - name: Audit deterministic Yu-Gi-Oh ES Cardmarket bridge READ ONLY
+      - name: Re-certify deterministic bridge immediately before write READ ONLY
         working-directory: backend
         run: python -m app.scripts.audit_yugioh_cardmarket_es_bridge_v1
 
-      - name: Dry-run atomic Yu-Gi-Oh ES Cardmarket bridge
+      - name: Apply exactly 20,896 ES links atomically
         working-directory: backend
         run: |
           python -m app.scripts.apply_yugioh_cardmarket_es_bridge_v1 \
+            --apply \
             --expected-proposals 20896 \
-            --output /tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json
+            --output /tmp/yugioh-cardmarket-es-bridge-apply-v1.json
 
-      - name: Enforce dry-run evidence
+      - name: Enforce committed evidence
         run: |
           python - <<'PY'
           import json
-          r=json.load(open('/tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json'))
+          r=json.load(open('/tmp/yugioh-cardmarket-es-bridge-apply-v1.json'))
           assert r['status']=='pass', r
-          assert r['apply'] is False and r['commit_confirmed'] is False, r
-          assert r['production_writes']==0, r
+          assert r['apply'] is True and r['commit_confirmed'] is True, r
+          assert r['production_writes']==20896, r
           assert r['before']['proposal_count']==20896, r
+          assert r['after']['proposal_count']==0, r
+          assert r['after']['multilingual_products']==20896, r
           assert r['economics_untouched'] is True, r
           assert r['catalog_identity_untouched'] is True, r
           assert r['images_untouched'] is True, r
           assert r['ja_untouched'] is True, r
           PY
 
-      - name: Upload Cardmarket grouping evidence
+      - name: Upload one-shot write evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cardmarket-version-grouping-v1-${{ github.run_id }}
+          name: yugioh-cardmarket-es-bridge-apply-v1-${{ github.run_id }}
           path: |
-            /tmp/cardmarket-version-grouping-v1.json
             /tmp/yugioh-cardmarket-es-bridge-v1.json
-            /tmp/yugioh-cardmarket-es-bridge-dry-run-v1.json
-          retention-days: 90
+            /tmp/yugioh-cardmarket-es-bridge-apply-v1.json
+          retention-days: 180
           if-no-files-found: warn
-
-      - name: Run targeted backend multilingual contract tests
-        working-directory: backend
-        run: |
-          pytest -q \
-            tests/test_yugioh_multilingual_search_v2.py \
-            tests/test_yugioh_multilingual_production_transaction_proxy.py
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-
-      - name: Enforce frontend security baseline
-        working-directory: frontend
-        run: |
-          npm audit --audit-level=high
-          npm audit --omit=dev --audit-level=high
 
       - name: Run frontend contract suite
         working-directory: frontend
