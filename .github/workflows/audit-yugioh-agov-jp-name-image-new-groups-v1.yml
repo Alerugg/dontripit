@@ -1,0 +1,58 @@
+name: Audit Yu-Gi-Oh AGOV-JP Name-Image New Groups V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-yugioh-agov-jp-name-image-new-groups-v1.yml'
+      - 'backend/app/scripts/audit_yugioh_agov_jp_image_match_pilot_v1.py'
+
+permissions:
+  contents: read
+
+jobs:
+  image-match:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - {key: mannadium-trisukta, card: 'Mannadium Trisukta'}
+          - {key: odd-eyes-arcray-dragon, card: 'Odd-Eyes Arcray Dragon'}
+          - {key: supreme-king-z-arc, card: 'Supreme King Z-ARC'}
+          - {key: tg-glaive-blaster, card: 'T.G. Glaive Blaster'}
+          - {key: tg-limiter-removal, card: 'T.G. Limiter Removal'}
+          - {key: vanquish-soul-jiaolong, card: 'Vanquish Soul Jiaolong'}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Install audit-only image dependency
+        run: pip install 'Pillow>=10,<13'
+      - name: Compile image certifier
+        run: python -m py_compile app/scripts/audit_yugioh_agov_jp_image_match_pilot_v1.py
+      - name: Compare Cardmarket product images to exact canonical JA prints
+        run: |
+          mkdir -p /tmp/agov-name-image-new
+          python -m app.scripts.audit_yugioh_agov_jp_image_match_pilot_v1 \
+            --card-name "${{ matrix.card }}" \
+            --report "/tmp/agov-name-image-new/${{ matrix.key }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-agov-jp-name-image-${{ matrix.key }}-${{ github.run_id }}
+          path: /tmp/agov-name-image-new/${{ matrix.key }}.json
+          retention-days: 90
+          if-no-files-found: error
