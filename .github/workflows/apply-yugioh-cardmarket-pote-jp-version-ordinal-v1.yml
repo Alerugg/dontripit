@@ -1,0 +1,115 @@
+name: Apply Yu-Gi-Oh Cardmarket POTE-JP Version Ordinal V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/data/yugioh_pote_jp_version_ordinal_v1.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_pote_jp_version_ordinal_v1.py'
+      - '.github/workflows/apply-yugioh-cardmarket-pote-jp-version-ordinal-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/data/yugioh_pote_jp_version_ordinal_v1.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_pote_jp_version_ordinal_v1.py'
+      - '.github/workflows/apply-yugioh-cardmarket-pote-jp-version-ordinal-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-cardmarket-pote-jp-version-ordinal-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded ordinal mapper
+        run: python -m py_compile app/scripts/apply_yugioh_cardmarket_pote_jp_version_ordinal_v1.py
+      - name: READ ONLY validate frozen 39-pair manifest and live ordinal calibration
+        run: |
+          mkdir -p /tmp/ygo-pote-jp-ordinal-v1
+          python -m app.scripts.apply_yugioh_cardmarket_pote_jp_version_ordinal_v1 \
+            --report /tmp/ygo-pote-jp-ordinal-v1/proposal.json
+      - name: Atomically apply 39 version-ordinal-certified exact links
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_pote_jp_version_ordinal_v1 \
+            --apply \
+            --confirm APPLY_YUGIOH_CARDMARKET_POTE_JP_VERSION_ORDINAL_V1 \
+            --report /tmp/ygo-pote-jp-ordinal-v1/applied.json
+      - name: Project Cardmarket prices from all accepted Yu-Gi-Oh links
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-pote-jp-ordinal-v1/projection.json
+      - name: Prove writer idempotency on second apply
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_pote_jp_version_ordinal_v1 \
+            --apply \
+            --confirm APPLY_YUGIOH_CARDMARKET_POTE_JP_VERSION_ORDINAL_V1 \
+            --report /tmp/ygo-pote-jp-ordinal-v1/second-pass.json
+          python - <<'PY'
+          import json
+          p='/tmp/ygo-pote-jp-ordinal-v1/second-pass.json'
+          r=json.load(open(p,encoding='utf-8'))
+          if r.get('production_writes') != 0 or r.get('already_exact_idempotent_links') != 39:
+              raise SystemExit(f'idempotency failed: {r}')
+          print('second pass writes=0; existing exact links=39')
+          PY
+      - name: Final POTE/ALIN/AGOV identity proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          from psycopg2.extras import RealDictCursor
+          surfaces={'5044':('POTE',126),'6025':('ALIN',55),'5421':('AGOV',98)}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              for exp,(set_code,expected) in surfaces.items():
+                cur.execute("""SELECT count(*) n,count(DISTINCT e.external_id) products,count(DISTINCT p.id) prints FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id WHERE e.source='cardmarket' AND e.game_id=(SELECT id FROM games WHERE slug='yugioh') AND e.product_group='single' AND e.expansion_external_id=%s AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))=%s""",(exp,set_code))
+                row=cur.fetchone(); n=int(row['n']); products=int(row['products']); prints=int(row['prints'])
+                if (n,products,prints) != (expected,expected,expected): raise SystemExit(f'{set_code} identity expected {expected}/{expected}/{expected}, got {n}/{products}/{prints}')
+                cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id WHERE e.source='cardmarket' AND e.expansion_external_id=%s AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))<>'ja'""",(exp,))
+                bad=int(cur.fetchone()['n'])
+                if bad: raise SystemExit(f'{set_code} wrong-language links: {bad}')
+                out[set_code]={'accepted_ja_links':n,'unique_products':products,'unique_prints':prints,'wrong_language_links':bad}
+              cur.execute("""SELECT mapping_method,count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND e.expansion_external_id='5044' AND l.link_status IN ('accepted','mapped','exact') GROUP BY mapping_method ORDER BY mapping_method""")
+              methods={str(r['mapping_method']):int(r['n']) for r in cur.fetchall()}
+              expected_methods={'cardmarket_ocg_certified_unique_physical_v2':63,'cardmarket_ocg_certified_image_bijection_v2':24,'cardmarket_ocg_certified_version_ordinal_v1':39}
+              if methods != expected_methods: raise SystemExit(f'POTE method counts drifted: expected={expected_methods} actual={methods}')
+              out['POTE']['method_counts']=methods
+          finally: conn.close()
+          open('/tmp/ygo-pote-jp-ordinal-v1/final.json','w').write(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-cardmarket-pote-jp-version-ordinal-v1-${{ github.run_id }}
+          path: /tmp/ygo-pote-jp-ordinal-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
