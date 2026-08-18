@@ -1,6 +1,13 @@
 name: Apply One Piece Official Text V1
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/app/ingest/connectors/onepiece_v2.py'
+      - 'backend/app/scripts/apply_onepiece_official_text_v1.py'
+      - '.github/workflows/apply-onepiece-official-text-v1.yml'
   workflow_dispatch:
 
 permissions:
