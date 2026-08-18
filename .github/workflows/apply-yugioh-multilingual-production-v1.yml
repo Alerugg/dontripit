@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - .github/triggers/run-yugioh-multilingual-production-v1
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/triggers/run-yugioh-multilingual-production-recovery-v1
 
 permissions:
   contents: read
@@ -71,20 +76,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          rm -rf evidence/preflight evidence/fresh
           mkdir -p evidence/preflight evidence/fresh "$RUNNER_TEMP/ygojson-fresh/extracted"
+
           state="$(gh run view "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
           test "$state" = 'completed:success:Certify Yu-Gi-Oh Multilingual Rollout Preflight V1'
           gh run download "$PREFLIGHT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "yugioh-multilingual-rollout-preflight-v1-${PREFLIGHT_RUN_ID}" \
-            --dir evidence/preflight
-          test -s evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
-          test -s evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
+            --dir evidence/preflight/raw
+
+          fresh_cert="$(find evidence/preflight/raw -type f -name 'yugioh-multilingual-rollout-preflight-fresh.json' -print -quit)"
+          readiness="$(find evidence/preflight/raw -type f -name 'yugioh-multilingual-rollout-readiness-v1.json' -print -quit)"
+          yaml_sha="$(find evidence/preflight/raw -type f -name 'yugioh-yaml-yugi-cards-sha256-preflight.txt' -print -quit)"
+          yaml_meta="$(find evidence/preflight/raw -type f -name 'yugioh-yaml-yugi-source-meta-preflight.json' -print -quit)"
+          test -n "$fresh_cert" && test -s "$fresh_cert"
+          test -n "$readiness" && test -s "$readiness"
+          test -n "$yaml_sha" && test -s "$yaml_sha"
+          test -n "$yaml_meta" && test -s "$yaml_meta"
+          cp "$fresh_cert" evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
+          cp "$readiness" evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
+          cp "$yaml_sha" evidence/preflight/yugioh-yaml-yugi-cards-sha256-preflight.txt
+          cp "$yaml_meta" evidence/preflight/yugioh-yaml-yugi-source-meta-preflight.json
+
           state="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,name --jq '.status+":"+(.conclusion // "")+":"+.name')"
           test "$state" = 'completed:success:Shadow YGOJSON Full Refresh V1'
           gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "ygojson-shadow-full-refresh-v1-${SOURCE_RUN_ID}" \
-            --dir evidence/fresh
-          unzip -q evidence/fresh/ygojson-shadow-fresh-aggregate-v1.zip -d "$RUNNER_TEMP/ygojson-fresh/extracted"
+            --dir evidence/fresh/raw
+          aggregate_zip="$(find evidence/fresh/raw -type f -name 'ygojson-shadow-fresh-aggregate-v1.zip' -print -quit)"
+          test -n "$aggregate_zip" && test -s "$aggregate_zip"
+          unzip -q "$aggregate_zip" -d "$RUNNER_TEMP/ygojson-fresh/extracted"
           test -s "$RUNNER_TEMP/ygojson-fresh/extracted/cards.json"
           test -s "$RUNNER_TEMP/ygojson-fresh/extracted/sets.json"
 
