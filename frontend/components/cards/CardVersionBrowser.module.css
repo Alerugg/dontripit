@@ -119,6 +119,7 @@
   display: flex;
   gap: 7px;
   flex-wrap: wrap;
+  align-items: flex-start;
 }
 
 .languageChip {
@@ -132,6 +133,44 @@
 
 .languageChip:hover {
   border-color: currentColor;
+}
+
+.languageDetails {
+  position: relative;
+}
+
+.languageDetails > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.languageDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.printChoices {
+  display: grid;
+  gap: 6px;
+  margin-top: 7px;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 11px;
+  background: rgba(10, 10, 15, 0.96);
+}
+
+.printChoice {
+  display: block;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.printChoice:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .actions {
@@ -193,5 +232,9 @@
   .actions {
     grid-column: 1 / -1;
     min-width: 0;
+  }
+
+  .printChoices {
+    min-width: 180px;
   }
 }
