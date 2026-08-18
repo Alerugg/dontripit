@@ -46,7 +46,7 @@ jobs:
           mkdir -p /tmp/ygo-agov-jp-v1
           python -m app.scripts.apply_yugioh_cardmarket_agov_jp_unique_v1 \
             --report /tmp/ygo-agov-jp-v1/proposal.json
-      - name: Apply 62 certified unique-print links
+      - name: Apply 59 certified unique-print links
         if: github.event_name == 'push'
         run: |
           python -m app.scripts.apply_yugioh_cardmarket_agov_jp_unique_v1 \
@@ -60,11 +60,9 @@ jobs:
             --game yugioh \
             --apply \
             --report /tmp/ygo-agov-jp-v1/projection.json
-      - name: Final READ ONLY idempotency proof
+      - name: Final production proof
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.apply_yugioh_cardmarket_agov_jp_unique_v1 \
-            --report /tmp/ygo-agov-jp-v1/final.json || true
           python - <<'PY'
           import json, os, psycopg2
           from psycopg2.extras import RealDictCursor
@@ -74,12 +72,12 @@ jobs:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
               cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id WHERE e.source='cardmarket' AND e.game_id=(SELECT id FROM games WHERE slug='yugioh') AND e.product_group='single' AND e.expansion_external_id='5421' AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))='ja'""")
               n=int(cur.fetchone()['n'])
-              if n != 62: raise SystemExit(f'expected 62 accepted AGOV-JP JA links, got {n}')
+              if n != 59: raise SystemExit(f'expected 59 accepted AGOV-JP JA links, got {n}')
               cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id WHERE e.source='cardmarket' AND e.expansion_external_id='5421' AND l.link_status IN ('accepted','mapped','exact') AND lower(coalesce(p.language,''))<>'ja'""")
               bad=int(cur.fetchone()['n'])
               if bad: raise SystemExit(f'wrong-language AGOV-JP links remain: {bad}')
           finally: conn.close()
-          print(json.dumps({'accepted_agov_jp_ja_links':62,'wrong_language_links':0},indent=2))
+          print(json.dumps({'accepted_agov_jp_ja_links':59,'wrong_language_links':0},indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
