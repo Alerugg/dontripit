@@ -13,12 +13,25 @@ jobs:
   image-match:
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         include:
-          - key: sp-little-knight
-            card: 'S:P Little Knight'
-          - key: arias-labrynth-butler
-            card: 'Arias the Labrynth Butler'
+          - {key: arias-labrynth-butler, card: 'Arias the Labrynth Butler'}
+          - {key: berfomet, card: 'Berfomet the Mythical King of Phantom Beasts'}
+          - {key: dark-hole-dragon, card: 'Dark Hole Dragon'}
+          - {key: diabellstar, card: 'Diabellstar the Black Witch'}
+          - {key: exceed-pendulum, card: 'Exceed the Pendulum'}
+          - {key: full-armored-lancer, card: 'Full Armored Dark Knight Lancer'}
+          - {key: imsety, card: 'Imsety, Glory of Horus'}
+          - {key: nephilabyss, card: 'Nephilabyss, the Ogdoadic Overlord'}
+          - {key: poissonniere, card: 'Poissonniere de Nouvelles'}
+          - {key: sp-little-knight, card: 'S:P Little Knight'}
+          - {key: snake-eye-ash, card: 'Snake-Eye Ash'}
+          - {key: flamberge, card: 'Snake-Eyes Flamberge Dragon'}
+          - {key: ty-phon, card: 'Super Starslayer TY-PHON - Sky Crisis'}
+          - {key: supreme-king-gate, card: 'Supreme King Gate Magician'}
+          - {key: tg-rocket-salamander, card: 'T.G. Rocket Salamander'}
+          - {key: veda-kalarcanum, card: 'Veda Kalarcanum'}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
