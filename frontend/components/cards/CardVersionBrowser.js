@@ -7,6 +7,7 @@ import { fetchCardVersions } from '../../lib/catalog/client'
 import { getPrintHref } from '../../lib/catalog/routes'
 import styles from './CardVersionBrowser.module.css'
 
+const PAGE_SIZE = 12
 const LANGUAGE_LABELS = {
   es: 'ES', en: 'EN', fr: 'FR', de: 'DE', it: 'IT', pt: 'PT', ja: 'JA', ko: 'KO', zh: 'ZH', zhs: 'ZH-S', zht: 'ZH-T',
 }
@@ -66,6 +67,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [language, setLanguage] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   useEffect(() => {
     if (!cardId) return undefined
@@ -84,6 +86,10 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
     return () => { cancelled = true }
   }, [cardId])
 
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [query, language, cardId])
+
   const versions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     return (payload?.versions || []).filter((version) => {
@@ -92,6 +98,8 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
       return true
     })
   }, [payload, query, language])
+
+  const displayedVersions = versions.slice(0, visibleCount)
 
   if (loading) return <section className="panel-soft"><p className="detail-meta">Organizando versiones e idiomas físicos…</p></section>
   if (error) return <section className="panel-soft"><p className="detail-meta">{error}</p></section>
@@ -105,7 +113,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
           <p className="eyebrow">Versiones disponibles</p>
           <h2>Elige la versión y el idioma</h2>
         </div>
-        <span className={styles.count}>{versions.length} de {payload?.version_count || 0}</span>
+        <span className={styles.count}>{versions.length} versiones</span>
       </div>
 
       <div className={styles.filters}>
@@ -128,7 +136,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
       </div>
 
       <div className={styles.grid}>
-        {versions.map((version) => {
+        {displayedVersions.map((version) => {
           const representative = version.representative_print || version.prints?.[0] || null
           const versionTitle = version.set_name || version.set_code || version.cardmarket?.name || 'Versión física'
           const setCode = version.set_code ? String(version.set_code).toUpperCase() : null
@@ -201,6 +209,12 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
           )
         })}
       </div>
+
+      {visibleCount < versions.length ? (
+        <button type="button" className={styles.loadMore} onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}>
+          Ver más versiones ({versions.length - visibleCount})
+        </button>
+      ) : null}
 
       {!versions.length ? <div className={`${styles.empty} panel-soft`}>No hay versiones que coincidan con este filtro.</div> : null}
     </section>
