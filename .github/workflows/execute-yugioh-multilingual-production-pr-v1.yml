@@ -59,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p evidence/preflight evidence/fresh "$RUNNER_TEMP/ygojson-fresh/extracted"
+          mkdir -p evidence/preflight evidence/fresh "$RUNNER_TEMP/ygojson-fresh/extracted" "$RUNNER_TEMP/preflight-unpacked"
 
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
@@ -70,7 +70,16 @@ jobs:
             --output "$RUNNER_TEMP/preflight-artifact.zip" \
             "${api}/actions/artifacts/${PREFLIGHT_ARTIFACT_ID}/zip"
           echo "${PREFLIGHT_ARTIFACT_SHA256}  $RUNNER_TEMP/preflight-artifact.zip" | sha256sum --check --strict
-          unzip -q "$RUNNER_TEMP/preflight-artifact.zip" -d evidence/preflight
+          unzip -q "$RUNNER_TEMP/preflight-artifact.zip" -d "$RUNNER_TEMP/preflight-unpacked"
+          for name in \
+            yugioh-multilingual-rollout-preflight-fresh.json \
+            yugioh-multilingual-rollout-readiness-v1.json \
+            yugioh-yaml-yugi-cards-sha256-preflight.txt \
+            yugioh-yaml-yugi-source-meta-preflight.json; do
+            src="$(find "$RUNNER_TEMP/preflight-unpacked" -type f -name "$name" -print -quit)"
+            test -n "$src" && test -s "$src"
+            cp "$src" "evidence/preflight/$name"
+          done
           test -s evidence/preflight/yugioh-multilingual-rollout-preflight-fresh.json
           test -s evidence/preflight/yugioh-multilingual-rollout-readiness-v1.json
           test -s evidence/preflight/yugioh-yaml-yugi-cards-sha256-preflight.txt
