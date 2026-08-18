@@ -42,6 +42,9 @@ function CardResult({ item, gameSlug, query }) {
   const attrs = item.attributes || {}
   const versions = Number(item.variant_count || 1)
   const cardName = item.name || 'Nombre no disponible'
+  const resultLanguage = gameSlug === 'yugioh'
+    ? (item.display_language || matched.display_language || matched.language)
+    : matched.language
 
   return (
     <Link
@@ -65,7 +68,7 @@ function CardResult({ item, gameSlug, query }) {
         </p>
         <div className="sv2-badges">
           {badge(matched.rarity)}
-          {badge(matched.language?.toUpperCase())}
+          {badge(resultLanguage?.toUpperCase())}
           {matched.variant_family && matched.variant_family !== 'default' ? badge(matched.variant_family) : null}
           {matched.exact_variant && matched.exact_variant !== 'default' ? badge(matched.exact_variant) : null}
           {gameSlug === 'yugioh' && attrs.card_class ? badge(attrs.card_class) : null}
@@ -99,6 +102,9 @@ function PrintResult({ item, gameSlug }) {
   )
   const exactReleaseNames = releaseNames(item, physical)
   const cardName = item.name || item.title || 'Nombre no disponible'
+  const resultLanguage = gameSlug === 'yugioh'
+    ? (item.display_language || item.language)
+    : item.language
 
   return (
     <article className="sv2-result-card sv2-result-card-print">
@@ -123,7 +129,7 @@ function PrintResult({ item, gameSlug }) {
           {item.set_name ? <small className="sv2-release-line"><strong>Set/carta de origen:</strong> {item.set_name}</small> : null}
           <div className="sv2-badges">
             {badge(item.rarity)}
-            {badge(item.language?.toUpperCase())}
+            {badge(resultLanguage?.toUpperCase())}
             {item.variant_family && item.variant_family !== 'default' ? badge(item.variant_family) : null}
             {item.exact_variant && item.exact_variant !== 'default' ? badge(item.exact_variant) : null}
             {gameSlug === 'onepiece' && physical.block ? badge(`Block ${physical.block}`) : null}

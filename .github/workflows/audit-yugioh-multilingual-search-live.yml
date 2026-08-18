@@ -1,0 +1,85 @@
+name: Audit Yu-Gi-Oh Multilingual Search Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/yugioh-multilingual-search-v2
+    paths:
+      - 'backend/app/scripts/audit_yugioh_multilingual_search_live.py'
+      - '.github/workflows/audit-yugioh-multilingual-search-live.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/search_v2/yugioh_query.py'
+      - 'backend/app/search_v2/yugioh_advanced.py'
+      - 'backend/app/scripts/audit_yugioh_multilingual_search_live.py'
+      - 'frontend/app/api/search-v2/**'
+      - 'frontend/components/searchV2/**'
+      - 'frontend/lib/searchV2/**'
+      - '.github/workflows/audit-yugioh-multilingual-search-live.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-multilingual-search-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-live-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile read-only audit
+        working-directory: backend
+        run: python -m py_compile app/scripts/audit_yugioh_multilingual_search_live.py
+
+      - name: Audit production materialization and Search V2 index
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python -m app.scripts.audit_yugioh_multilingual_search_live | tee /tmp/yugioh-multilingual-search-live.json
+
+      - name: Enforce no writes and multilingual readiness
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('/tmp/yugioh-multilingual-search-live.json').read_text(encoding='utf-8'))
+          assert report['production_writes'] == 0, report
+          if report['status'] != 'pass':
+              print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+              raise SystemExit(2)
+          assert all(report['gates'].values()), report
+          print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-multilingual-search-live-${{ github.run_id }}
+          path: /tmp/yugioh-multilingual-search-live.json
+          retention-days: 90
+          if-no-files-found: warn

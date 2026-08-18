@@ -2,16 +2,41 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from app.search_v2.normalization import normalize_search_text
+from app.search_v2.normalization import normalize_language, normalize_search_text
 
 
-def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
-    """Rank logical Cards first while still recognizing Print/release codes.
+SUPPORTED_DISPLAY_LANGUAGES = {"en", "es", "ja"}
 
-    Yu-Gi-Oh! has many physical Prints per logical Card. Ranking all Prints would
-    overweight heavily reprinted cards. This path combines a Card signal with a
-    Print/release signal, aggregates to one score per canonical Card, then resolves
-    the best matching physical Print in a lateral lookup.
+
+def _display_language(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized_values: list[str] = []
+    for raw in str(value).split(","):
+        clean = raw.strip()
+        if not clean:
+            continue
+        normalized = normalize_language(clean)
+        if normalized not in SUPPORTED_DISPLAY_LANGUAGES:
+            raise ValueError("Yu-Gi-Oh language must contain only: en, es, ja")
+        if normalized not in normalized_values:
+            normalized_values.append(normalized)
+    return ",".join(normalized_values) or None
+
+
+def normal_yugioh_search(
+    session,
+    *,
+    query: str,
+    limit: int = 24,
+    language: str | None = None,
+) -> list[dict]:
+    """Rank logical Cards while resolving localized display data per physical Print.
+
+    ``print_localizations`` is the authoritative language surface. A selected
+    display-language set filters by localization availability instead of merely
+    relabeling an English row. The physical ``print_id`` never changes, so exact
+    images, variants and downstream Cardmarket joins retain their identity.
     """
     if session.bind.dialect.name != "postgresql":
         raise RuntimeError("Yu-Gi-Oh Search V2 requires PostgreSQL")
@@ -19,8 +44,10 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
     q = str(query or "").strip()
     if not q:
         return []
+    display_language = _display_language(language)
     q_norm = normalize_search_text(q)
     q_code = q_norm.replace(" ", "-")
+    q_raw = q.casefold()
     bounded_limit = max(1, min(int(limit or 24), 100))
     candidate_limit = max(100, bounded_limit * 10)
 
@@ -41,23 +68,27 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
         f"psp.search_text LIKE :token_{idx}" for idx in range(len(tokens))
     )
 
-    card_predicate = """
-      csp.normalized_name = :q_norm
-      OR csp.normalized_name LIKE :prefix
-      OR csp.normalized_name LIKE :contains
-      OR csp.search_text LIKE :contains
-      OR similarity(csp.normalized_name, :q_norm) >= 0.20
-    """
-    print_predicate = """
-      psp.normalized_collector_number = :q_code
-      OR psp.normalized_set_code = :q_code
-      OR psp.normalized_name = :q_norm
-      OR psp.normalized_name LIKE :prefix
-      OR psp.search_text LIKE :contains
-    """
-    if token_card_where:
-        card_predicate = f"({card_predicate}) OR ({token_card_where})"
-        print_predicate = f"({print_predicate}) OR ({token_print_where})"
+    if q_norm:
+        card_predicate = """
+          csp.normalized_name = :q_norm
+          OR csp.normalized_name LIKE :prefix
+          OR csp.normalized_name LIKE :contains
+          OR csp.search_text LIKE :contains
+          OR similarity(csp.normalized_name, :q_norm) >= 0.20
+        """
+        print_predicate = """
+          psp.normalized_collector_number = :q_code
+          OR psp.normalized_set_code = :q_code
+          OR psp.normalized_name = :q_norm
+          OR psp.normalized_name LIKE :prefix
+          OR psp.search_text LIKE :contains
+        """
+        if token_card_where:
+            card_predicate = f"({card_predicate}) OR ({token_card_where})"
+            print_predicate = f"({print_predicate}) OR ({token_print_where})"
+    else:
+        card_predicate = "FALSE"
+        print_predicate = "FALSE"
 
     sql = text(
         f"""
@@ -97,12 +128,38 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
           ORDER BY score DESC, psp.card_id ASC
           LIMIT :candidate_limit
         ),
+        localized_signal AS MATERIALIZED (
+          SELECT
+            p.card_id,
+            MAX(
+              CASE WHEN lower(pl.card_name) = :q_raw THEN 6500.0 ELSE 0.0 END +
+              CASE WHEN left(lower(pl.card_name), length(:q_raw)) = :q_raw THEN 3000.0 ELSE 0.0 END +
+              CASE WHEN position(:q_raw in lower(pl.card_name)) > 0 THEN 1700.0 ELSE 0.0 END
+            ) AS score
+          FROM print_localizations pl
+          JOIN prints p ON p.id=pl.print_id
+          JOIN sets s ON s.id=p.set_id
+          JOIN games g ON g.id=s.game_id
+          WHERE g.slug='yugioh'
+            AND pl.card_name IS NOT NULL
+            AND lower(pl.language) IN ('en','es','ja')
+            AND (
+              :display_language IS NULL
+              OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
+            )
+            AND position(:q_raw in lower(pl.card_name)) > 0
+          GROUP BY p.card_id
+          ORDER BY score DESC, p.card_id ASC
+          LIMIT :candidate_limit
+        ),
         candidates AS MATERIALIZED (
           SELECT card_id, MAX(score) AS score
           FROM (
             SELECT * FROM card_signal
             UNION ALL
             SELECT * FROM print_signal
+            UNION ALL
+            SELECT * FROM localized_signal
           ) signals
           GROUP BY card_id
           ORDER BY score DESC, card_id ASC
@@ -111,11 +168,14 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
         SELECT
           c.id AS card_id,
           c.card_key,
-          c.name,
+          c.name AS canonical_name,
+          COALESCE(best.localized_card_name, c.name) AS display_name,
+          best.display_language,
+          best.available_languages,
           csp.attributes_json AS card_attributes,
           best.print_id,
           best.set_code,
-          best.set_name,
+          COALESCE(best.localized_set_name, best.canonical_set_name) AS set_name,
           best.collector_number,
           best.language,
           best.rarity,
@@ -133,7 +193,7 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
           SELECT
             psp.print_id,
             s.code AS set_code,
-            s.name AS set_name,
+            s.name AS canonical_set_name,
             p.collector_number,
             p.language,
             p.rarity,
@@ -141,6 +201,14 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
             psp.variant_family,
             psp.release_names_json,
             psp.attributes_json AS print_attributes,
+            loc.card_name AS localized_card_name,
+            loc.set_name AS localized_set_name,
+            loc.language AS display_language,
+            (
+              SELECT array_agg(DISTINCT lower(pl2.language) ORDER BY lower(pl2.language))
+              FROM print_localizations pl2
+              WHERE pl2.print_id=p.id AND lower(pl2.language) IN ('en','es','ja')
+            ) AS available_languages,
             (
               SELECT pi.url FROM print_images pi
               WHERE pi.print_id=psp.print_id
@@ -151,21 +219,52 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
           FROM print_search_profiles psp
           JOIN prints p ON p.id=psp.print_id
           JOIN sets s ON s.id=p.set_id
+          LEFT JOIN LATERAL (
+            SELECT
+              lower(pl.language) AS language,
+              pl.card_name,
+              pl.set_name
+            FROM print_localizations pl
+            WHERE pl.print_id=p.id
+              AND lower(pl.language) IN ('en','es','ja')
+              AND (
+                :display_language IS NULL
+                OR lower(pl.language)=ANY(string_to_array(:display_language, ','))
+              )
+            ORDER BY
+              (lower(pl.card_name)=:q_raw) DESC,
+              (position(:q_raw in lower(COALESCE(pl.card_name,''))) > 0) DESC,
+              CASE lower(pl.language) WHEN 'en' THEN 0 WHEN 'es' THEN 1 WHEN 'ja' THEN 2 ELSE 3 END,
+              pl.id ASC
+            LIMIT 1
+          ) loc ON TRUE
           WHERE psp.card_id=candidates.card_id
+            AND (
+              :display_language IS NULL
+              OR EXISTS (
+                SELECT 1 FROM print_localizations plf
+                WHERE plf.print_id=p.id
+                  AND lower(plf.language)=ANY(string_to_array(:display_language, ','))
+              )
+            )
           ORDER BY
+            (loc.card_name IS NOT NULL AND lower(loc.card_name)=:q_raw) DESC,
+            (loc.card_name IS NOT NULL AND position(:q_raw in lower(loc.card_name)) > 0) DESC,
             (psp.normalized_collector_number = :q_code) DESC,
             (psp.normalized_set_code = :q_code) DESC,
             (psp.search_text LIKE :contains) DESC,
             p.id ASC
           LIMIT 1
         ) best ON TRUE
-        ORDER BY candidates.score DESC, c.name ASC, c.id ASC
+        ORDER BY candidates.score DESC, display_name ASC, c.id ASC
         LIMIT :limit
         """
     )
     params = {
         "q_norm": q_norm,
         "q_code": q_code,
+        "q_raw": q_raw,
+        "display_language": display_language,
         "prefix": f"{q_norm}%",
         "contains": f"%{q_norm}%",
         "word": f"% {q_norm} %",
@@ -179,14 +278,19 @@ def normal_yugioh_search(session, *, query: str, limit: int = 24) -> list[dict]:
             "type": "card",
             "card_id": row["card_id"],
             "card_key": row["card_key"],
-            "name": row["name"],
+            "name": row["display_name"],
+            "canonical_name": row["canonical_name"],
             "game": "yugioh",
+            "display_language": row["display_language"],
+            "available_languages": list(row["available_languages"] or []),
             "matched_print": {
                 "print_id": row["print_id"],
                 "set_code": row["set_code"],
                 "set_name": row["set_name"],
                 "collector_number": row["collector_number"],
                 "language": row["language"],
+                "display_language": row["display_language"],
+                "available_languages": list(row["available_languages"] or []),
                 "rarity": row["rarity"],
                 "exact_variant": row["exact_variant"],
                 "variant_family": row["variant_family"],
