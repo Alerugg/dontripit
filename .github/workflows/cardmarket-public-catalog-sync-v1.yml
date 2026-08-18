@@ -57,11 +57,65 @@ jobs:
             --game all \
             --source-only \
             --report /tmp/cardmarket-public-catalog/source-only.json
+      - name: Probe authoritative Cardmarket expansion metadata surfaces
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          urls = {
+              "api_yugioh": "https://apiv2.cardmarket.com/ws/v2.0/output.json/games/3/expansions",
+              "api_onepiece": "https://apiv2.cardmarket.com/ws/v2.0/output.json/games/18/expansions",
+              "api_riftbound": "https://apiv2.cardmarket.com/ws/v2.0/output.json/games/22/expansions",
+              "s3_expansions_yugioh": "https://downloads.s3.cardmarket.com/productCatalog/expansionList/expansions_3.json",
+              "s3_expansions_onepiece": "https://downloads.s3.cardmarket.com/productCatalog/expansionList/expansions_18.json",
+              "html_yugioh": "https://www.cardmarket.com/en/YuGiOh/Products/Singles",
+              "html_onepiece": "https://www.cardmarket.com/en/OnePiece/Products/Singles",
+          }
+          report = {}
+          for key, url in urls.items():
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "DontRipIt-Cardmarket-Expansion-Probe/1.0",
+                      "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      body = response.read(4096)
+                      report[key] = {
+                          "url": url,
+                          "status": int(getattr(response, "status", 200) or 200),
+                          "content_type": response.headers.get("Content-Type"),
+                          "sample": body.decode("utf-8", "replace")[:2000],
+                      }
+              except urllib.error.HTTPError as exc:
+                  body = exc.read(4096)
+                  report[key] = {
+                      "url": url,
+                      "status": int(exc.code),
+                      "content_type": exc.headers.get("Content-Type") if exc.headers else None,
+                      "sample": body.decode("utf-8", "replace")[:2000],
+                  }
+              except Exception as exc:
+                  report[key] = {
+                      "url": url,
+                      "status": None,
+                      "error": f"{type(exc).__name__}: {exc}",
+                  }
+          path = Path("/tmp/cardmarket-public-catalog/expansion-probe.json")
+          path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(path.read_text())
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cardmarket-public-catalog-source-${{ github.run_id }}
-          path: /tmp/cardmarket-public-catalog/source-only.json
+          path: /tmp/cardmarket-public-catalog/*.json
           retention-days: 30
           if-no-files-found: warn
 
