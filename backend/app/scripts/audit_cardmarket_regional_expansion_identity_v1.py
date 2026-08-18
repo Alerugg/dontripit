@@ -31,19 +31,9 @@ class RegionalAnchorSet:
     min_confirmations: int = 2
 
 
+# One Piece intentionally runs first so a previously-certified YGO expansion
+# cannot consume the image host's small datacenter-IP request budget.
 REGIONAL_ANCHORS: tuple[RegionalAnchorSet, ...] = (
-    RegionalAnchorSet(
-        key="yugioh_agov_jp",
-        game_slug="yugioh",
-        expansion_code="AGOV-JP",
-        region="ocg_japan",
-        official_expansion_url="https://www.cardmarket.com/en/YuGiOh/Products/Singles/Age-of-Overlord-OCG",
-        anchors=(
-            "Arias the Labrynth Butler (V.1 - Super Rare)",
-            "Xyz Armor Fortress",
-            "Card Scanner",
-        ),
-    ),
     RegionalAnchorSet(
         key="onepiece_op16_jp",
         game_slug="onepiece",
@@ -56,6 +46,18 @@ REGIONAL_ANCHORS: tuple[RegionalAnchorSet, ...] = (
             "Portgas.D.Ace (OP16-094)",
         ),
     ),
+    RegionalAnchorSet(
+        key="yugioh_agov_jp",
+        game_slug="yugioh",
+        expansion_code="AGOV-JP",
+        region="ocg_japan",
+        official_expansion_url="https://www.cardmarket.com/en/YuGiOh/Products/Singles/Age-of-Overlord-OCG",
+        anchors=(
+            "Arias the Labrynth Butler (V.1 - Super Rare)",
+            "Xyz Armor Fortress",
+            "Card Scanner",
+        ),
+    ),
 )
 
 
@@ -66,18 +68,24 @@ def _normalise_name(value: str) -> str:
 def find_anchor_candidates(rows: tuple[ProductListRow, ...], anchor: str) -> list[ProductListRow]:
     target = _normalise_name(anchor)
     exact = [row for row in rows if _normalise_name(row.name) == target]
-    if exact:
-        return exact
-    # Cardmarket sometimes duplicates the visible version suffix in rendered UI
-    # while Product Catalog keeps a shorter name. Only allow prefix fallback when
-    # it still has meaningful specificity.
-    if len(target) < 12:
-        return []
-    return [
-        row
-        for row in rows
-        if _normalise_name(row.name).startswith(target) or target.startswith(_normalise_name(row.name))
-    ]
+    matches = exact
+    if not matches and len(target) >= 12:
+        matches = [
+            row
+            for row in rows
+            if _normalise_name(row.name).startswith(target) or target.startswith(_normalise_name(row.name))
+        ]
+    # One probe per idExpansion is enough to test that candidate surface and
+    # avoids Cardmarket image-S3 throttling on rarity/version siblings.
+    result: list[ProductListRow] = []
+    seen_expansions: set[str] = set()
+    for row in matches:
+        expansion_id = str(row.expansion_id or "")
+        if not expansion_id or expansion_id in seen_expansions:
+            continue
+        seen_expansions.add(expansion_id)
+        result.append(row)
+    return result
 
 
 def image_url(row: ProductListRow, expansion_code: str) -> str:
@@ -88,7 +96,21 @@ def image_url(row: ProductListRow, expansion_code: str) -> str:
     return f"{IMAGE_BASE}/{category_id}/{expansion_code}/{product_id}/{product_id}.jpg"
 
 
-def probe_jpeg(url: str, *, timeout: int = 25, attempts: int = 2) -> dict:
+def _image_format(body: bytes) -> str | None:
+    if body[:2] == b"\xff\xd8":
+        return "jpeg"
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if body.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WEBP":
+        return "webp"
+    if len(body) >= 12 and body[4:12] in {b"ftypavif", b"ftypavis"}:
+        return "avif"
+    return None
+
+
+def probe_image(url: str, *, timeout: int = 20, attempts: int = 2) -> dict:
     last_status = None
     for attempt in range(1, attempts + 1):
         request = urllib.request.Request(
@@ -96,30 +118,38 @@ def probe_jpeg(url: str, *, timeout: int = 25, attempts: int = 2) -> dict:
             headers={
                 "User-Agent": USER_AGENT,
                 "Referer": "https://www.cardmarket.com/",
-                "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+                "Accept": "image/jpeg,image/png,image/webp,image/avif,image/*;q=0.8,*/*;q=0.1",
             },
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 status = int(getattr(response, "status", 200) or 200)
                 body = response.read(64)
+                fmt = _image_format(body)
                 return {
                     "status": status,
-                    "jpeg": body[:2] == b"\xff\xd8",
+                    "image": fmt is not None,
+                    "image_format": fmt,
                     "content_type": response.headers.get("Content-Type"),
+                    "magic_hex": body[:16].hex(),
                 }
         except urllib.error.HTTPError as exc:
             last_status = int(exc.code)
             if exc.code == 403 and attempt < attempts:
-                time.sleep(2 * attempt)
+                time.sleep(3 * attempt)
                 continue
-            return {"status": int(exc.code), "jpeg": False, "content_type": exc.headers.get("Content-Type") if exc.headers else None}
-        except Exception as exc:  # network failures are evidence of nothing
+            return {
+                "status": int(exc.code),
+                "image": False,
+                "image_format": None,
+                "content_type": exc.headers.get("Content-Type") if exc.headers else None,
+            }
+        except Exception as exc:
             if attempt < attempts:
-                time.sleep(2 * attempt)
+                time.sleep(3 * attempt)
                 continue
-            return {"status": last_status, "jpeg": False, "error": f"{type(exc).__name__}: {exc}"}
-    return {"status": last_status, "jpeg": False}
+            return {"status": last_status, "image": False, "image_format": None, "error": f"{type(exc).__name__}: {exc}"}
+    return {"status": last_status, "image": False, "image_format": None}
 
 
 def certify_anchor_set(anchor_set: RegionalAnchorSet, rows: tuple[ProductListRow, ...]) -> dict:
@@ -132,44 +162,57 @@ def certify_anchor_set(anchor_set: RegionalAnchorSet, rows: tuple[ProductListRow
         probes = []
         for row in candidates:
             url = image_url(row, anchor_set.expansion_code)
-            result = probe_jpeg(url)
+            result = probe_image(url)
             any_403 = any_403 or result.get("status") == 403
-            probe = {
-                "product_id": str(row.product_id),
-                "product_name": row.name,
-                "expansion_id": str(row.expansion_id or ""),
-                "category_id": str(row.category_id or ""),
-                "image_url": url,
-                **result,
-            }
-            probes.append(probe)
-            if result.get("jpeg"):
+            probes.append(
+                {
+                    "product_id": str(row.product_id),
+                    "product_name": row.name,
+                    "expansion_id": str(row.expansion_id or ""),
+                    "category_id": str(row.category_id or ""),
+                    "image_url": url,
+                    **result,
+                }
+            )
+            if result.get("image"):
                 confirmed_rows.append(row)
-            time.sleep(0.35)
+                break
+            time.sleep(1.25)
         anchor_reports.append({"anchor": anchor, "candidate_count": len(candidates), "probes": probes})
+
+        confirmed_expansion_ids = {
+            str(row.expansion_id or "") for row in confirmed_rows if str(row.expansion_id or "")
+        }
+        confirmed_anchor_count = sum(
+            1 for report in anchor_reports if any(bool(probe.get("image")) for probe in report["probes"])
+        )
+        # Once two independent anchors certify one and the same idExpansion,
+        # more HTTP requests add throttle risk rather than identity evidence.
+        if confirmed_anchor_count >= anchor_set.min_confirmations and len(confirmed_expansion_ids) == 1:
+            break
 
     confirmed_product_ids = sorted({str(row.product_id) for row in confirmed_rows})
     confirmed_expansion_ids = sorted({str(row.expansion_id or "") for row in confirmed_rows if str(row.expansion_id or "")})
     confirmed_anchor_count = sum(
-        1 for report in anchor_reports if any(bool(probe.get("jpeg")) for probe in report["probes"])
+        1 for report in anchor_reports if any(bool(probe.get("image")) for probe in report["probes"])
     )
 
     status = "certified"
     reason = None
     if len(confirmed_expansion_ids) > 1:
         status = "conflict"
-        reason = "candidate expansion code resolved JPEGs under multiple Cardmarket idExpansion values"
+        reason = "candidate expansion code resolved images under multiple Cardmarket idExpansion values"
     elif confirmed_anchor_count < anchor_set.min_confirmations:
         status = "inconclusive"
         reason = (
             "Cardmarket image evidence did not reach the required independent-anchor threshold; "
             "403/network failures must never be treated as a negative identity result"
             if any_403
-            else "not enough independent anchors resolved as JPEGs"
+            else "not enough independent anchors resolved as valid images"
         )
     elif len(confirmed_expansion_ids) != 1:
         status = "inconclusive"
-        reason = "JPEG evidence did not resolve exactly one non-empty Cardmarket idExpansion"
+        reason = "image evidence did not resolve exactly one non-empty Cardmarket idExpansion"
 
     return {
         "key": anchor_set.key,
@@ -189,8 +232,7 @@ def certify_anchor_set(anchor_set: RegionalAnchorSet, rows: tuple[ProductListRow
 
 
 def _download_singles(game_slug: str) -> tuple[ProductListRow, ...]:
-    url = catalog_url(game_slug, "single")
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    request = urllib.request.Request(catalog_url(game_slug, "single"), headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=180) as response:
         content = response.read()
     feed = load_catalog_feed_bytes(content, game_slug=game_slug, product_group="single")
@@ -213,7 +255,7 @@ def run_audit(keys: set[str] | None = None) -> dict:
     return {
         "source": "cardmarket",
         "mode": "read_only",
-        "method": "product_catalog_candidate_plus_cardmarket_image_s3_jpeg",
+        "method": "product_catalog_candidate_plus_cardmarket_image_s3_binary_signature",
         "certified": sum(report["status"] == "certified" for report in reports),
         "conflicts": sum(report["status"] == "conflict" for report in reports),
         "inconclusive": sum(report["status"] == "inconclusive" for report in reports),
