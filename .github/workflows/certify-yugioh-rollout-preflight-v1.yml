@@ -15,7 +15,12 @@ on:
       - 'backend/alembic/versions/20260815_36_include_card_in_print_identity.py'
       - 'backend/app/models.py'
       - 'backend/app/routes/set_ui.py'
-      - 'backend/app/scripts/**yugioh**'
+      - 'backend/app/scripts/seed_yugioh_production_shape_v1.py'
+      - 'backend/app/scripts/prepare_yugioh_multilingual_ephemeral_v1.py'
+      - 'backend/app/scripts/certify_yugioh_multilingual_ephemeral_v1.py'
+      - 'backend/app/scripts/certify_yugioh_multilingual_ephemeral_v2.py'
+      - 'backend/app/scripts/certify_yugioh_multilingual_ephemeral_v3.py'
+      - 'backend/app/scripts/audit_yugioh_multilingual_rollout_readiness_v1.py'
       - 'backend/tests/test_set_ui_region_identity.py'
 
 permissions:
