@@ -7,6 +7,12 @@ on:
     paths:
       - backend/app/scripts/audit_yugioh_rollout_activity_v1.py
       - .github/workflows/audit-yugioh-rollout-activity-v1.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - backend/app/scripts/audit_yugioh_rollout_activity_v1.py
+      - .github/workflows/audit-yugioh-rollout-activity-v1.yml
 
 permissions:
   contents: read
