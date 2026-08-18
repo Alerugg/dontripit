@@ -68,23 +68,31 @@ def normal_yugioh_search(
         f"psp.search_text LIKE :token_{idx}" for idx in range(len(tokens))
     )
 
-    card_predicate = """
-      csp.normalized_name = :q_norm
-      OR csp.normalized_name LIKE :prefix
-      OR csp.normalized_name LIKE :contains
-      OR csp.search_text LIKE :contains
-      OR similarity(csp.normalized_name, :q_norm) >= 0.20
-    """
-    print_predicate = """
-      psp.normalized_collector_number = :q_code
-      OR psp.normalized_set_code = :q_code
-      OR psp.normalized_name = :q_norm
-      OR psp.normalized_name LIKE :prefix
-      OR psp.search_text LIKE :contains
-    """
-    if token_card_where:
-        card_predicate = f"({card_predicate}) OR ({token_card_where})"
-        print_predicate = f"({print_predicate}) OR ({token_print_where})"
+    # normalize_search_text is intentionally ASCII-oriented. For a pure CJK
+    # query q_norm is empty; never turn that into LIKE '%' over every profile.
+    # Japanese exact/contains matching is handled by localized_signal below,
+    # which preserves q_raw Unicode and reads exact PrintLocalization rows.
+    if q_norm:
+        card_predicate = """
+          csp.normalized_name = :q_norm
+          OR csp.normalized_name LIKE :prefix
+          OR csp.normalized_name LIKE :contains
+          OR csp.search_text LIKE :contains
+          OR similarity(csp.normalized_name, :q_norm) >= 0.20
+        """
+        print_predicate = """
+          psp.normalized_collector_number = :q_code
+          OR psp.normalized_set_code = :q_code
+          OR psp.normalized_name = :q_norm
+          OR psp.normalized_name LIKE :prefix
+          OR psp.search_text LIKE :contains
+        """
+        if token_card_where:
+            card_predicate = f"({card_predicate}) OR ({token_card_where})"
+            print_predicate = f"({print_predicate}) OR ({token_print_where})"
+    else:
+        card_predicate = "FALSE"
+        print_predicate = "FALSE"
 
     sql = text(
         f"""
