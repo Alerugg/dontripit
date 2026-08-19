@@ -1,0 +1,116 @@
+name: Apply Yu-Gi-Oh OCG Near Exact Singleton302 V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_near_exact_singleton302_v1.py'
+      - '.github/workflows/apply-yugioh-ocg-near-exact-singleton302-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_near_exact_singleton302_v1.py'
+      - '.github/workflows/apply-yugioh-ocg-near-exact-singleton302-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-ocg-near-exact-singleton302-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded writer and exact-idProduct price projector
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_near_exact_singleton302_v1.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY rebuild exact stable 302-link singleton proposal
+        run: |
+          mkdir -p /tmp/ygo-ocg-near-exact-singleton302
+          python -m app.scripts.apply_yugioh_ocg_near_exact_singleton302_v1 --report /tmp/ygo-ocg-near-exact-singleton302/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-near-exact-singleton302/proposal.json'))
+          expected={'YU':47,'SD33':41,'301':50,'CYHO':63,'SPFE':14,'LGB1':37,'SD37':44,'RC02':6}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['cardmarket_capture']=='2026-08-18 21:09:20.740891+00:00',p
+          assert p['stable_identity_sha256']=='61e2bfbbe68fd199e32eb0561db755c68753600c2d652dc9564c5c560f409284',p
+          assert p['certified_pairs']==302,p
+          assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,302),(302,0)),p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['pairs'] for k in rows}==expected,p
+          assert all((rows[k]['existing_same'],rows[k]['new_ready']) in ((0,expected[k]),(expected[k],0)) for k in expected),p
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':expected},indent=2))
+          PY
+      - name: Atomically apply 302 exact singleton links
+        if: github.event_name == 'push'
+        run: python -m app.scripts.apply_yugioh_ocg_near_exact_singleton302_v1 --apply --confirm APPLY_YUGIOH_OCG_NEAR_EXACT_SINGLETON302_V1 --report /tmp/ygo-ocg-near-exact-singleton302/applied.json
+      - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
+        if: github.event_name == 'push'
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-near-exact-singleton302/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_near_exact_singleton302_v1 --apply --confirm APPLY_YUGIOH_OCG_NEAR_EXACT_SINGLETON302_V1 --report /tmp/ygo-ocg-near-exact-singleton302/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-near-exact-singleton302/idempotency.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==302,p
+          assert p['new_links_ready']==0,p
+          assert p['stable_identity_sha256']=='61e2bfbbe68fd199e32eb0561db755c68753600c2d652dc9564c5c560f409284',p
+          print(json.dumps({'idempotency':'pass','exact_links':302},indent=2))
+          PY
+      - name: Final exact singleton method proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          method='cardmarket_ocg_certified_near_exact_singleton_cohort_v1'
+          expected={'YU':47,'SD33':41,'301':50,'CYHO':63,'SPFE':14,'LGB1':37,'SD37':44,'RC02':6}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_near_exact_singleton302_final_v1'); conn.set_session(readonly=True,autocommit=False)
+          total=0; out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); gid=int(cur.fetchone()['id'])
+              for code,n in expected.items():
+                cur.execute("""SELECT count(*) n,count(DISTINCT l.external_product_id) products,count(DISTINCT l.print_id) prints FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status IN ('accepted','mapped','exact') AND l.mapping_method=%s AND upper(coalesce(s.code,''))=%s AND lower(coalesce(p.language,''))='ja'""",(gid,method,code)); r=cur.fetchone(); vals=(int(r['n']),int(r['products']),int(r['prints']))
+                assert vals==(n,n,n),(code,vals,n)
+                out[code]=n; total+=n
+              assert total==302,total
+              conn.rollback()
+          finally: conn.close()
+          payload={'mapping_method':method,'total':total,'sets':out}
+          open('/tmp/ygo-ocg-near-exact-singleton302/final.json','w').write(json.dumps(payload,indent=2)+'\n'); print(json.dumps(payload,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-near-exact-singleton302-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-near-exact-singleton302/*.json
+          retention-days: 90
+          if-no-files-found: warn
