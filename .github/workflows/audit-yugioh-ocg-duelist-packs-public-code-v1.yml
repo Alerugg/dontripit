@@ -1,0 +1,78 @@
+name: Audit Yu-Gi-Oh OCG Duelist Packs Public Code V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_duelist_packs_public_code_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-duelist-packs-public-code-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_DUELIST_PACKS_PUBLIC_CODE_OUTPUT: /tmp/ygo-ocg-duelist-packs-public-code/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile OCG Duelist Pack public-code auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_duelist_packs_public_code_v1.py
+      - name: READ ONLY certify frozen public codes against complete current surfaces
+        run: |
+          mkdir -p /tmp/ygo-ocg-duelist-packs-public-code
+          python -m app.scripts.audit_yugioh_ocg_duelist_packs_public_code_v1
+      - name: Require four complete first-party-certified identities
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-duelist-packs-public-code/report.json'))
+          expected={
+            'DP23':('4569',56),
+            'DP22':('4580',56),
+            'DP21':('4604',56),
+            'DP19':('4633',51),
+          }
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert len(p['evidence_sha256'])==64,p
+          assert p['certified_count']==4,p
+          rows={r['set_code']:r for r in p['results']}
+          assert set(rows)==set(expected),p
+          for code,(exp,n) in expected.items():
+              r=rows[code]
+              assert r['idExpansion']==exp,r
+              assert r['public_code']==code,r
+              assert (r['products'],r['canonical_ja_prints'])==(n,n),r
+              assert r['accepted']=={'links':0,'products':0,'prints':0},r
+              assert r['unique_metacards']==n,r
+              assert r['blank_metacards']==0,r
+              assert r['unique_canonical_cards']==n,r
+              assert r['name_multiset_equal'] is True,r
+              assert r['global_metacard_resolution']=={'unique':n,'into_exact_set':n,'ambiguous':0,'unresolved':0},r
+              assert r['all_observed_names_present'] is True,r
+              assert r['candidate_certified'] is True,r
+          print(json.dumps({'evidence_sha256':p['evidence_sha256'],'certified':{k:rows[k]['idExpansion'] for k in rows},'physical':sum(rows[k]['products'] for k in rows)},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-duelist-packs-public-code-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-duelist-packs-public-code/report.json
+          retention-days: 90
+          if-no-files-found: error
