@@ -1,0 +1,61 @@
+name: Audit Yu-Gi-Oh OCG BE01 205 Production V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_be01_205_production_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-be01-205-production-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_BE01_205_PROOF_OUTPUT: /tmp/ygo-ocg-be01-205-production-v1/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile BE01 writer and independent proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_be01_205_v1.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_be01_205_production_v1.py
+      - name: READ ONLY prove 205 existing exact identities and prices
+        run: |
+          mkdir -p /tmp/ygo-ocg-be01-205-production-v1
+          python -m app.scripts.audit_yugioh_ocg_be01_205_production_v1
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-be01-205-production-v1/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['stable_identity_sha256']=='0f6afeb05d84a6e7e22d13275093997e15bdbb479e90d8ffab23b290bf05470e',p
+          assert (p['identity']['links'],p['identity']['products'],p['identity']['prints'])==(205,205,205),p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          print(json.dumps({'BE01':'205/205','externally_priceable':p['pricing']['externally_priceable_links'],'canonically_exact_priced':p['pricing']['canonical_current_exact_idProduct_prices'],'unpriced_external':p['pricing']['missing_external_current_price'],'wrong_idProduct':0},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-be01-205-production-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-be01-205-production-v1/report.json
+          retention-days: 90
+          if-no-files-found: error
