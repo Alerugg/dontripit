@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,6 +25,8 @@ EXPECTED_PHYSICAL = 149
 EXPECTED_LOGICAL = 119
 EXPECTED_TARGET_VARIANTS = {"default", "p1"}
 TARGET_COLLECTOR = "OP16-119"
+EXPECTED_ONLY_JP_VARIANT_KEYS = {("OP16-042", "p1")}
+EXPECTED_ONLY_EN_VARIANT_KEYS = {("OP16-011", "p1")}
 CONFIRM = "APPLY_ONEPIECE_JP_OP16_PHYSICAL_V1"
 
 
@@ -165,16 +167,36 @@ def _load_state(cur, official: dict) -> dict:
         raise RuntimeError({"OP16_EN_collector_card_collisions": non_unique})
 
     official_rows = official["physical"]
-    official_keys = {(row["collector_number"], row["variant"]) for row in official_rows}
-    if official_keys != en_keys:
+    official_collectors = {row["collector_number"] for row in official_rows}
+    en_collectors = set(card_ids_by_collector)
+    if official_collectors != en_collectors:
         raise RuntimeError(
             {
-                "OP16_JP_EN_physical_key_mismatch": {
-                    "only_jp": sorted(official_keys - en_keys),
-                    "only_en": sorted(en_keys - official_keys),
+                "OP16_JP_EN_logical_collector_mismatch": {
+                    "only_jp": sorted(official_collectors - en_collectors),
+                    "only_en": sorted(en_collectors - official_collectors),
                 }
             }
         )
+
+    official_keys = {(row["collector_number"], row["variant"]) for row in official_rows}
+    only_jp = official_keys - en_keys
+    only_en = en_keys - official_keys
+    if only_jp != EXPECTED_ONLY_JP_VARIANT_KEYS or only_en != EXPECTED_ONLY_EN_VARIANT_KEYS:
+        raise RuntimeError(
+            {
+                "OP16_regional_variant_delta_drift": {
+                    "expected_only_jp": sorted(EXPECTED_ONLY_JP_VARIANT_KEYS),
+                    "actual_only_jp": sorted(only_jp),
+                    "expected_only_en": sorted(EXPECTED_ONLY_EN_VARIANT_KEYS),
+                    "actual_only_en": sorted(only_en),
+                }
+            }
+        )
+    regional_variant_delta = {
+        "only_jp": sorted(only_jp),
+        "only_en": sorted(only_en),
+    }
 
     expected = []
     for row in official_rows:
@@ -262,7 +284,12 @@ def _load_state(cur, official: dict) -> dict:
             images_by_print[int(image["print_id"])].append(image)
         for row in existing_exact:
             images = images_by_print.get(int(row["print_id"]), [])
-            exact_primary = [img for img in images if bool(img["is_primary"]) and str(img["url"]) == row["image_url"] and str(img.get("source") or "") == IMAGE_SOURCE]
+            exact_primary = [
+                img for img in images
+                if bool(img["is_primary"])
+                and str(img["url"]) == row["image_url"]
+                and str(img.get("source") or "") == IMAGE_SOURCE
+            ]
             if len(exact_primary) != 1:
                 raise RuntimeError({"existing_OP16_JA_image_drift": {"print_id": row["print_id"], "images": images}})
 
@@ -274,6 +301,7 @@ def _load_state(cur, official: dict) -> dict:
         "set_region": str(set_row["region"]),
         "game_cards_before": game_cards_before,
         "game_sets_before": game_sets_before,
+        "regional_variant_delta": regional_variant_delta,
         "expected": expected,
         "proposal": proposal,
         "existing_exact": existing_exact,
@@ -303,6 +331,7 @@ def run(*, apply: bool, confirm: str = "") -> dict:
                 "official_physical": EXPECTED_PHYSICAL,
                 "official_logical_collectors": EXPECTED_LOGICAL,
                 "en_physical_baseline": EXPECTED_PHYSICAL,
+                "regional_variant_delta": state["regional_variant_delta"],
                 "game_cards_before": state["game_cards_before"],
                 "game_sets_before": state["game_sets_before"],
                 "existing_exact_ja": len(state["existing_exact"]),
