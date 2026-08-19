@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
-_ONEPIECE_OFFICIAL_HOST = "en.onepiece-cardgame.com"
+_ONEPIECE_OFFICIAL_HOSTS = {
+    "en.onepiece-cardgame.com",
+    "www.onepiece-cardgame.com",
+    "onepiece-cardgame.com",
+}
 _ONEPIECE_LEGACY_FAKE_HOST = "example.cdn.onepiece"
 _PLACEHOLDER_HOST = "placehold.co"
 
@@ -17,7 +22,14 @@ _CANONICAL_EXTERNAL_ID_RE = re.compile(
 
 
 def is_onepiece_official_image(url: str | None) -> bool:
-    return _ONEPIECE_OFFICIAL_HOST in str(url or "").strip().lower()
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        host = (urlparse(raw).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _ONEPIECE_OFFICIAL_HOSTS
 
 
 def is_onepiece_placeholder_or_fake_image(url: str | None) -> bool:
