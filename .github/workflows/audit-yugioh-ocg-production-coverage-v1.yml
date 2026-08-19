@@ -1,0 +1,80 @@
+name: Audit Yu-Gi-Oh OCG Production Coverage V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_production_coverage_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-production-coverage-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_PRODUCTION_COVERAGE_OUTPUT: /tmp/ygo-ocg-coverage/coverage.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile global OCG coverage auditor and projector
+        run: |
+          python -m py_compile app/scripts/audit_yugioh_ocg_production_coverage_v1.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY audit current OCG mapping coverage
+        run: |
+          mkdir -p /tmp/ygo-ocg-coverage
+          python -m app.scripts.audit_yugioh_ocg_production_coverage_v1
+      - name: READ ONLY build complete Yu-Gi-Oh Cardmarket price projection plan
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --report /tmp/ygo-ocg-coverage/price-plan.json
+      - name: Require production identity safety invariants
+        run: |
+          python - <<'PY'
+          import json
+          c=json.load(open('/tmp/ygo-ocg-coverage/coverage.json'))
+          p=json.load(open('/tmp/ygo-ocg-coverage/price-plan.json'))
+          assert c['status']=='pass',c
+          assert c['production_writes']==0,c
+          assert c['ja_physical_prints']==36426,c
+          assert c['ja_sets']==797,c
+          assert c['certified_ocg']['links']>=2262,c
+          assert c['certified_ocg']['links']==c['certified_ocg']['products']==c['certified_ocg']['prints'],c
+          assert c['identity_conflicts']['prints_with_multiple_products']==0,c
+          assert c['identity_conflicts']['products_with_multiple_prints']==0,c
+          assert p['write_ready'] is True,p
+          assert p['ambiguous_print_links']==0,p
+          assert p['cross_game_links']==0,p
+          assert p['snapshot_count']==p['priceable_prints'],p
+          assert p['accepted_links']>=c['accepted_cardmarket_ja']['links'],(p,c)
+          print(json.dumps({
+            'ja_prints':c['ja_physical_prints'],
+            'ja_mapped':c['coverage']['mapped_ja_prints'],
+            'ja_unmapped':c['coverage']['unmapped_ja_prints'],
+            'certified_ocg_links':c['certified_ocg']['links'],
+            'mapped_sets':c['coverage']['sets_with_any_mapping'],
+            'fully_mapped_sets':c['coverage']['fully_mapped_sets'],
+            'all_yugioh_priceable_prints':p['priceable_prints'],
+            'all_yugioh_missing_external_price':p['missing_external_price'],
+            'all_yugioh_unsupported_finish':p['unsupported_finish'],
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-production-coverage-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-coverage/*.json
+          retention-days: 90
+          if-no-files-found: error
