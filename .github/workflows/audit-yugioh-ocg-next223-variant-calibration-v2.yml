@@ -1,0 +1,62 @@
+name: Audit Yu-Gi-Oh OCG Next223 Variant Calibration V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_next223_variant_calibration_v2.py'
+      - '.github/workflows/audit-yugioh-ocg-next223-variant-calibration-v2.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_VARIANT_ORDINAL_CALIBRATION_OUTPUT: /tmp/ygo-next223-variant-calibration-v2/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile independent calibration wrapper
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_next223_variant_calibration_v2.py
+      - name: READ ONLY calibrate residual multi-version groups
+        run: |
+          mkdir -p /tmp/ygo-next223-variant-calibration-v2
+          python -m app.scripts.audit_yugioh_ocg_next223_variant_calibration_v2
+      - name: Require safe calibrated subset
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-next223-variant-calibration-v2/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['target_variant_groups']>0,p
+          assert p['certifiable_pairs']>0,p
+          assert p['certifiable_groups']+p['unresolved_groups']==p['target_variant_groups'],p
+          print(json.dumps({
+            'target_groups':p['target_variant_groups'],
+            'target_physical':p['target_variant_physical'],
+            'certifiable_groups':p['certifiable_groups'],
+            'certifiable_pairs':p['certifiable_pairs'],
+            'unresolved_groups':p['unresolved_groups'],
+            'independent_calibration_groups':p['independent_calibration_groups'],
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-next223-variant-calibration-v2-${{ github.run_id }}
+          path: /tmp/ygo-next223-variant-calibration-v2/report.json
+          retention-days: 90
+          if-no-files-found: error
