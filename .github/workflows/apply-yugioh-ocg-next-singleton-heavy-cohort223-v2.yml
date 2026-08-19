@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Next Singleton Heavy Cohort223 V2
 
+# Explicit production retrigger after workflow installation.
 on:
   pull_request:
     branches: [catalog-v2]
