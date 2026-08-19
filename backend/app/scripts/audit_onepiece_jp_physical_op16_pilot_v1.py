@@ -68,10 +68,6 @@ def main() -> int:
                 }
             )
             entries.extend({**row, "series_id": str(series_id), "series_label": label} for row in target_entries)
-        # If the index label explicitly identified OP16, inspect every matching
-        # candidate because multiple official releases can expose variants.
-        # On fallback crawling, stop after finding the first OP16 release to keep
-        # this pilot conservative and low-impact.
         if target_entries and not direct_candidates:
             break
 
@@ -132,7 +128,9 @@ def main() -> int:
             game_id = int(cur.fetchone()["id"])
             cur.execute(
                 """SELECT p.id print_id,p.card_id,p.collector_number,p.variant,p.rarity,p.language,
-                          p.image_url,c.name card_name,s.code set_code
+                          (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id
+                           ORDER BY pi.is_primary DESC,pi.id ASC LIMIT 1) image_url,
+                          c.name card_name,s.code set_code
                    FROM prints p
                    JOIN cards c ON c.id=p.card_id
                    JOIN sets s ON s.id=p.set_id
@@ -143,7 +141,9 @@ def main() -> int:
             neon_op16 = [dict(row) for row in cur.fetchall()]
             cur.execute(
                 """SELECT p.id print_id,p.card_id,p.collector_number,p.variant,p.rarity,p.language,
-                          p.image_url,c.name card_name,s.code set_code
+                          (SELECT pi.url FROM print_images pi WHERE pi.print_id=p.id
+                           ORDER BY pi.is_primary DESC,pi.id ASC LIMIT 1) image_url,
+                          c.name card_name,s.code set_code
                    FROM prints p
                    JOIN cards c ON c.id=p.card_id
                    JOIN sets s ON s.id=p.set_id
