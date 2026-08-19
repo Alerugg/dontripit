@@ -1,0 +1,50 @@
+name: Audit Yu-Gi-Oh OCG Beginners Editions Public Code V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_beginners_editions_public_code_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-beginners-editions-public-code-v1.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_BEGINNERS_EDITIONS_PUBLIC_CODE_OUTPUT: /tmp/ygo-ocg-beginners-editions-public-code-v1/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile Beginner's Edition public-code auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_beginners_editions_public_code_v1.py
+      - name: READ ONLY certify BE2 and BE02 current surfaces
+        run: python -m app.scripts.audit_yugioh_ocg_beginners_editions_public_code_v1
+      - name: Require two complete first-party-certified identities
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-beginners-editions-public-code-v1/report.json'))
+          assert p['status']=='pass', p
+          assert p['production_writes']==0, p
+          assert p['certified_count']==2, p
+          rows={r['set_code']:r for r in p['results']}
+          assert rows['BE2']['products']==250 and rows['BE2']['canonical_ja_prints']==250, p
+          assert rows['BE02']['products']==210 and rows['BE02']['canonical_ja_prints']==210, p
+          print(json.dumps({'status':'pass','certified':['BE2','BE02'],'physical':460},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-beginners-editions-public-code-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-beginners-editions-public-code-v1/*.json
+          retention-days: 90
