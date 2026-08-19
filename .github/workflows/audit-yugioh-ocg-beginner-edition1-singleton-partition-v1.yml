@@ -1,0 +1,68 @@
+name: Audit Yu-Gi-Oh OCG Beginner Edition 1 Singleton Partition V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_beginner_edition1_singleton_partition_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-beginner-edition1-singleton-partition-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_BE1_PARTITION_OUTPUT: /tmp/ygo-ocg-be1-partition-v1/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile Beginner Edition partition auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_beginner_edition1_singleton_partition_v1.py
+      - name: READ ONLY partition BE01 and BE1 current regional surfaces
+        run: |
+          mkdir -p /tmp/ygo-ocg-be1-partition-v1
+          python -m app.scripts.audit_yugioh_ocg_beginner_edition1_singleton_partition_v1
+      - name: Require read-only safety invariants
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-be1-partition-v1/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['screened_surfaces']==3,p
+          assert len(p['surfaces'])==3,p
+          assert all(s['canonical_cards']==s['canonical_prints'] for s in p['surfaces']),p
+          assert all(s['products']>=s['canonical_cards'] for s in p['surfaces']),p
+          print(json.dumps({
+            'certified_singleton_pairs':p['certified_singleton_pairs'],
+            'stable_sha256':p['stable_singleton_identity_sha256'],
+            'surfaces':[{
+              'label':s['label'],'products':s['products'],'canonical':s['canonical_cards'],
+              'competitors':s['competitors'],'singletons':s['singleton_pairs_ready'],
+              'residual_groups':s['residual_groups']
+            } for s in p['surfaces']]
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-be1-partition-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-be1-partition-v1/report.json
+          retention-days: 90
+          if-no-files-found: error
