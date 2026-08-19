@@ -1,3 +1,4 @@
+# Production retrigger after workflow installation on catalog-v2.
 name: Apply One Piece JP EB PRB Batch V1
 
 on:
@@ -89,7 +90,6 @@ jobs:
         run: |
           python - <<'PY'
           import json,os,re,psycopg2
-          from collections import Counter
           from psycopg2.extras import RealDictCursor
           expected={'EB01':118,'EB02':93,'EB03':94,'EB04':88,'PRB01':2,'PRB02':39}
           conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
@@ -105,26 +105,21 @@ jobs:
               all_ja=[]
               for token,count in expected.items():
                 row=set_by_token[token]; set_id=int(row['id'])
-                cur.execute("""SELECT p.id print_id FROM prints p
-                  WHERE p.set_id=%s AND lower(coalesce(p.language,''))='ja'""",(set_id,))
+                cur.execute("SELECT p.id print_id FROM prints p WHERE p.set_id=%s AND lower(coalesce(p.language,''))='ja'",(set_id,))
                 ids=[int(r['print_id']) for r in cur.fetchall()]
                 assert len(ids)==count,(token,len(ids),count)
                 all_ja.extend(ids)
                 out[token]={'ja_prints':len(ids)}
               assert len(all_ja)==434
-              cur.execute("""SELECT count(*) n,count(DISTINCT print_id) prints FROM print_images
-                WHERE print_id=ANY(%s) AND is_primary=true AND source='onepiece_official_jp'""",(all_ja,))
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) prints FROM print_images WHERE print_id=ANY(%s) AND is_primary=true AND source='onepiece_official_jp'",(all_ja,))
               img=cur.fetchone(); assert int(img['n'])==434 and int(img['prints'])==434,img
-              cur.execute("""SELECT count(*) n,count(DISTINCT print_id) prints,count(DISTINCT external_id) ext
-                FROM print_identifiers WHERE print_id=ANY(%s) AND source='onepiece_official_jp'""",(all_ja,))
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) prints,count(DISTINCT external_id) ext FROM print_identifiers WHERE print_id=ANY(%s) AND source='onepiece_official_jp'",(all_ja,))
               ident=cur.fetchone(); assert (int(ident['n']),int(ident['prints']),int(ident['ext']))==(434,434,434),ident
               cur.execute("SELECT count(*) n FROM search_documents WHERE doc_type='print' AND object_id=ANY(%s)",(all_ja,))
               assert int(cur.fetchone()['n'])==434
-              cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
-                WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')""",(all_ja,))
+              cur.execute("SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')",(all_ja,))
               assert int(cur.fetchone()['n'])==0
-              cur.execute("""SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id
-                WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)""",(all_ja,))
+              cur.execute("SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)",(all_ja,))
               assert int(cur.fetchone()['n'])==0
               out['total']={'ja_prints':434,'official_images':434,'official_identifiers':434,'search_docs':434,'cardmarket_links':0,'cardmarket_prices':0}
               conn.rollback()
