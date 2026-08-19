@@ -31,18 +31,27 @@ jobs:
         run: python -m py_compile app/scripts/audit_yugioh_ocg_recent_expansions_v9.py
       - name: READ ONLY certify OCG expansion identities V9
         run: python -m app.scripts.audit_yugioh_ocg_recent_expansions_v9
-      - name: Require four first-party certified identities
+      - name: Require three certified identities and keep SPTR fail-closed if S3 is rate-limited
         run: |
           python - <<'PY'
           import json
           p=json.load(open('/tmp/yugioh-ocg-recent-expansions-v9.json'))
-          expected={'DOCS':'4680','LTGY':'4725','CSOC':'4809','SPTR':'4698'}
           assert p['production_writes']==0,p
-          got={r['set_code']:r['certified_idExpansion'] for r in p['results']}
-          assert got==expected,(got,expected,p)
-          assert p['certified']==4,p
-          assert p['inconclusive']==0,p
-          print(json.dumps(got,indent=2))
+          rows={r['set_code']:r for r in p['results']}
+          assert {k:rows[k]['certified_idExpansion'] for k in ('DOCS','LTGY','CSOC')}=={'DOCS':'4680','LTGY':'4725','CSOC':'4809'},p
+          assert all(rows[k]['status']=='certified' for k in ('DOCS','LTGY','CSOC')),p
+          sptr=rows['SPTR']
+          assert sptr['candidate_ids']==['4698','1591'],sptr
+          if sptr['status']=='certified':
+              assert sptr['certified_idExpansion']=='4698',sptr
+          else:
+              assert sptr['status']=='inconclusive',sptr
+              assert sptr['certified_idExpansion'] is None,sptr
+              probes=[x for c in sptr['candidates'] for x in c.get('probes',[])]
+              assert probes and any(x.get('status')==403 for x in probes),sptr
+          assert p['certified'] in (3,4),p
+          assert p['inconclusive'] in (0,1),p
+          print(json.dumps({'certified':{k:rows[k]['certified_idExpansion'] for k in ('DOCS','LTGY','CSOC')},'SPTR':sptr['status']},indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
