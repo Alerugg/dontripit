@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG BE01 205 V1
 
+# Explicit production retrigger after installing the guarded writer.
 on:
   pull_request:
     branches: [catalog-v2]
