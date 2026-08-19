@@ -1,0 +1,80 @@
+name: Audit Yu-Gi-Oh OCG Structure Deck Singletons Production V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_structure_decks_singletons_production_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-structure-decks-singletons-production-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_STRUCTURE_DECK_SINGLETONS_PROOF_OUTPUT: /tmp/ygo-ocg-structure-deck-singletons-proof/production.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_structure_decks_singletons_v1.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_structure_decks_singletons_production_v1.py
+      - name: READ ONLY prove writer sees full idempotent 168 state
+        run: |
+          mkdir -p /tmp/ygo-ocg-structure-deck-singletons-proof
+          python -m app.scripts.apply_yugioh_ocg_structure_decks_singletons_v1 \
+            --report /tmp/ygo-ocg-structure-deck-singletons-proof/idempotency-readonly.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-structure-deck-singletons-proof/idempotency-readonly.json'))
+          expected={'SD41':43,'SD40':38,'SD38':43,'SD36':44}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['certified_pairs']==168,p
+          assert p['already_accepted_same_pair']==168,p
+          assert p['new_links_ready']==0,p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['existing_same'] for k in rows}==expected,p
+          print(json.dumps({'writer_readonly':'idempotent','existing':168},indent=2))
+          PY
+      - name: READ ONLY certify exact identity and current exact-idProduct prices
+        run: python -m app.scripts.audit_yugioh_ocg_structure_decks_singletons_production_v1
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-structure-deck-singletons-proof/production.json'))
+          expected={'SD41':43,'SD40':38,'SD38':43,'SD36':44}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['accepted_links']==168,p
+          assert p['unique_products']==168,p
+          assert p['unique_prints']==168,p
+          assert {k:p['sets'][k]['links'] for k in p['sets']}==expected,p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          assert p['failures']==[],p
+          print(json.dumps({'links':168,'priceable':p['pricing']['externally_priceable_links'],'unpriced_external':p['pricing']['missing_external_current_price'],'wrong_idProduct':0},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-structure-deck-singletons-production-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-structure-deck-singletons-proof/*.json
+          retention-days: 90
+          if-no-files-found: warn
