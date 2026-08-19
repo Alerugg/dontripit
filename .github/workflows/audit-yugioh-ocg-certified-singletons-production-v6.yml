@@ -1,0 +1,74 @@
+name: Audit Yu-Gi-Oh OCG Certified Singletons Production V6
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_certified_singletons_production_v6.py'
+      - '.github/workflows/audit-yugioh-ocg-certified-singletons-production-v6.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_CERTIFIED_SINGLETONS_PROOF_V6_OUTPUT: /tmp/ygo-ocg-certified-singletons-proof-v6/production.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent proof V6
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_certified_singletons_v6.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_certified_singletons_production_v6.py
+      - name: READ ONLY prove writer sees full idempotent 218 state
+        run: |
+          mkdir -p /tmp/ygo-ocg-certified-singletons-proof-v6
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v6 --report /tmp/ygo-ocg-certified-singletons-proof-v6/idempotency-readonly.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-certified-singletons-proof-v6/idempotency-readonly.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['certified_pairs']==218,p
+          assert p['already_accepted_same_pair']==218,p
+          assert p['new_links_ready']==0,p
+          print(json.dumps({'writer_readonly':'idempotent','existing':218},indent=2))
+          PY
+      - name: READ ONLY certify exact identity and current exact-idProduct prices V6
+        run: python -m app.scripts.audit_yugioh_ocg_certified_singletons_production_v6
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-certified-singletons-proof-v6/production.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['accepted_links']==218,p
+          assert p['unique_products']==218,p
+          assert p['unique_prints']==218,p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          assert p['failures']==[],p
+          print(json.dumps({'links':218,'priceable':p['pricing']['externally_priceable_links'],'unpriced_external':p['pricing']['missing_external_current_price'],'wrong_idProduct':0},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-certified-singletons-production-v6-${{ github.run_id }}
+          path: /tmp/ygo-ocg-certified-singletons-proof-v6/*.json
+          retention-days: 90
+          if-no-files-found: warn
