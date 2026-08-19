@@ -1,0 +1,86 @@
+name: Project Yu-Gi-Oh OCG V6 Exact Prices V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/project-yugioh-ocg-v6-prices-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/project-yugioh-ocg-v6-prices-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-yugioh-ocg-v6-prices-v1
+  cancel-in-progress: false
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile installed V6 writer and projector
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_certified_singletons_v6.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY prove exact V6 identity is already complete
+        run: |
+          mkdir -p /tmp/ygo-ocg-v6-price-projection
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v6 \
+            --report /tmp/ygo-ocg-v6-price-projection/identity-before.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-v6-price-projection/identity-before.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['certified_pairs']==218,p
+          assert p['already_accepted_same_pair']==218,p
+          assert p['new_links_ready']==0,p
+          assert {r['set_code']:r['existing_same'] for r in p['sets']}=={'DOCS':69,'LTGY':75,'CSOC':74},p
+          print(json.dumps({'identity':'complete','links':218},indent=2))
+          PY
+      - name: Project current prices from exact linked Cardmarket idProducts
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-ocg-v6-price-projection/projection.json
+      - name: READ ONLY prove identity remained unchanged
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v6 \
+            --report /tmp/ygo-ocg-v6-price-projection/identity-after.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-v6-price-projection/identity-after.json'))
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==218,p
+          assert p['new_links_ready']==0,p
+          print(json.dumps({'identity_after_projection':'unchanged','links':218},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-v6-exact-price-projection-${{ github.run_id }}
+          path: /tmp/ygo-ocg-v6-price-projection/*.json
+          retention-days: 90
+          if-no-files-found: warn
