@@ -1,0 +1,155 @@
+name: Apply One Piece OP16 JP Physical V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/apply_onepiece_op16_jp_physical_v1.py'
+      - '.github/workflows/apply-onepiece-op16-jp-physical-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_onepiece_op16_jp_physical_v1.py'
+      - '.github/workflows/apply-onepiece-op16-jp-physical-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onepiece-op16-jp-physical-v1
+  cancel-in-progress: false
+
+jobs:
+  physical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_HTTP_TIMEOUT: '30'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded OP16 JP writer
+        run: python -m py_compile app/scripts/apply_onepiece_op16_jp_physical_v1.py
+      - name: READ ONLY certify exact OP16 JP proposal
+        run: |
+          mkdir -p /tmp/onepiece-op16-jp-v1
+          python -m app.scripts.apply_onepiece_op16_jp_physical_v1 \
+            --report /tmp/onepiece-op16-jp-v1/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/onepiece-op16-jp-v1/proposal.json'))
+          assert p['status']=='pass', p
+          assert p['official_physical']==149, p
+          assert p['official_collectors']==119, p
+          assert p['official_images']==149, p
+          assert p['en_prints_before']==149, p
+          assert p['new_ja_prints_ready'] + p['existing_exact_ja'] == 149, p
+          if p['existing_exact_ja']==0:
+              assert p['new_ja_prints_ready']==149, p
+          else:
+              assert p['existing_exact_ja']==149 and p['new_ja_prints_ready']==0, p
+          target=p['op16_119']
+          assert len(target)==2, target
+          assert {x['variant'] for x in target}=={'default','p1'}, target
+          assert {x['rarity'] for x in target}=={'SEC'}, target
+          assert all(x['image_url'].startswith('https://www.onepiece-cardgame.com/images/cardlist/card/OP16-119') for x in target), target
+          print(json.dumps({'dry_run':'pass','new_ja':p['new_ja_prints_ready'],'existing_ja':p['existing_exact_ja'],'op16_119_variants':['default','p1']},indent=2))
+          PY
+      - name: Apply only exact missing OP16 JP physical rows
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_onepiece_op16_jp_physical_v1 \
+            --apply \
+            --confirm APPLY_ONEPIECE_OP16_JP_PHYSICAL_V1 \
+            --report /tmp/onepiece-op16-jp-v1/applied.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_onepiece_op16_jp_physical_v1 \
+            --apply \
+            --confirm APPLY_ONEPIECE_OP16_JP_PHYSICAL_V1 \
+            --report /tmp/onepiece-op16-jp-v1/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/onepiece-op16-jp-v1/idempotency.json'))
+          assert p['production_writes']==0, p
+          assert p['inserted_prints']==0, p
+          assert p['inserted_identifiers']==0, p
+          assert p['inserted_images']==0, p
+          assert p['existing_exact_ja']==149, p
+          assert p['new_ja_prints_ready']==0, p
+          assert p['en_prints_after']==149 and p['ja_prints_after']==149, p
+          print(json.dumps({'idempotency':'pass','en':149,'ja':149},indent=2))
+          PY
+      - name: Independent Neon physical proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url,connect_timeout=30,application_name='onepiece_op16_jp_independent_proof_v1')
+          conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")
+              game_id=int(cur.fetchone()['id'])
+              cur.execute("SELECT count(*) n FROM cards WHERE game_id=%s",(game_id,)); cards=int(cur.fetchone()['n'])
+              cur.execute("SELECT count(*) n FROM sets WHERE game_id=%s",(game_id,)); sets=int(cur.fetchone()['n'])
+              cur.execute("""SELECT p.id print_id,p.card_id,p.collector_number,p.variant,p.rarity,p.language,p.print_key
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                WHERE c.game_id=%s AND upper(replace(coalesce(s.code,''),'_','-')) IN ('OP16','OP-16')
+                ORDER BY p.language,p.collector_number,p.variant,p.id""",(game_id,))
+              rows=[dict(r) for r in cur.fetchall()]
+              en=[r for r in rows if str(r['language']).lower()=='en']; ja=[r for r in rows if str(r['language']).lower()=='ja']
+              assert len(en)==149 and len(ja)==149,(len(en),len(ja))
+              en_by={(str(r['collector_number']).upper(),str(r['variant']).lower()):r for r in en}
+              ja_by={(str(r['collector_number']).upper(),str(r['variant']).lower()):r for r in ja}
+              assert set(en_by)==set(ja_by) and len(en_by)==149
+              for key in en_by:
+                a,b=en_by[key],ja_by[key]
+                assert int(a['card_id'])==int(b['card_id']),key
+                assert str(a['rarity']).casefold()==str(b['rarity']).casefold(),key
+                assert str(b['print_key']).split(':')[-2]=='ja',b
+              ja_ids=[int(r['print_id']) for r in ja]
+              cur.execute("""SELECT count(*) n,count(DISTINCT print_id) prints,count(DISTINCT external_id) external_ids
+                FROM print_identifiers WHERE source='onepiece_official_jp' AND print_id=ANY(%s)""",(ja_ids,))
+              ids=dict(cur.fetchone()); assert (int(ids['n']),int(ids['prints']),int(ids['external_ids']))==(149,149,149),ids
+              cur.execute("""SELECT count(*) n,count(DISTINCT print_id) prints
+                FROM print_images WHERE source='onepiece_official_jp' AND is_primary=true AND print_id=ANY(%s)""",(ja_ids,))
+              imgs=dict(cur.fetchone()); assert (int(imgs['n']),int(imgs['prints']))==(149,149),imgs
+              cur.execute("""SELECT p.id print_id,p.variant,p.rarity,pi.url
+                FROM prints p JOIN cards c ON c.id=p.card_id LEFT JOIN print_images pi ON pi.print_id=p.id AND pi.source='onepiece_official_jp' AND pi.is_primary=true
+                WHERE c.game_id=%s AND p.language='ja' AND upper(replace(coalesce(p.collector_number,''),'_','-'))='OP16-119'
+                ORDER BY p.variant""",(game_id,))
+              target=[dict(r) for r in cur.fetchall()]
+              assert len(target)==2,target
+              assert {str(r['variant']) for r in target}=={'default','p1'},target
+              assert {str(r['rarity']) for r in target}=={'SEC'},target
+              assert all(str(r['url']).startswith('https://www.onepiece-cardgame.com/images/cardlist/card/OP16-119') for r in target),target
+              out={'status':'pass','production_writes':0,'cards_total':cards,'sets_total':sets,'op16_en':149,'op16_ja':149,'jp_identifiers':149,'jp_primary_images':149,'op16_119':target}
+              conn.rollback()
+          finally: conn.close()
+          open('/tmp/onepiece-op16-jp-v1/final.json','w').write(json.dumps(out,ensure_ascii=False,indent=2,default=str)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-op16-jp-physical-v1-${{ github.run_id }}
+          path: /tmp/onepiece-op16-jp-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
