@@ -51,3 +51,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# READ ONLY post-production retrigger; no data or guard changes.
