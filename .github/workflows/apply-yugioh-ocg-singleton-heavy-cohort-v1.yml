@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Singleton Heavy Cohort V1
 
+# Explicit production retrigger after the workflow-introduction merge.
 on:
   pull_request:
     paths:
