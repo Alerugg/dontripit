@@ -1,0 +1,131 @@
+name: Audit One Piece JP Production Final V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-onepiece-jp-production-final-v1.yml'
+      - 'backend/app/scripts/audit_onepiece_jp_full_surface_v1.py'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-onepiece-jp-production-final-v1.yml'
+      - 'backend/app/scripts/audit_onepiece_jp_full_surface_v1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onepiece-jp-production-final-v1
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_HTTP_TIMEOUT: '30'
+      ONEPIECE_JP_FULL_SURFACE_OUTPUT: /tmp/opjp-final/full-surface.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile final auditor
+        run: python -m py_compile app/scripts/audit_onepiece_jp_full_surface_v1.py
+      - name: READ ONLY rebuild complete official Japanese surface
+        run: |
+          mkdir -p /tmp/opjp-final
+          python -m app.scripts.audit_onepiece_jp_full_surface_v1
+      - name: Assert official-vs-canonical final contract
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/opjp-final/full-surface.json'))
+          digest='772684372981c8004acc0b17598f2853118b2ea0c375e5654631b2cfacdf2008'
+          blocked=['P-110','P-120','P-150','P-151','P-157','P-159']
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['official_surface_sha256']==digest,p
+          assert p['official_unique_physical_identities']==4776,p
+          assert p['official_set_tokens']==59,p
+          assert p['official_duplicate_physical_conflicts']==0,p
+          assert p['onepiece_cards']==2681,p
+          assert p['onepiece_sets']==59,p
+          assert p['safe_materializable_set_count']==0,p
+          assert p['already_materialized_exact_set_count']==58,p
+          assert p['blocked_set_count']==1,p
+          assert p['blocked_sets']==[{'set_token':'P','reason':'logical_collector_mismatch'}],p
+          assert p['official_set_tokens_without_neon_set']==[],p
+          rows={r['set_token']:r for r in p['sets']}
+          assert len(rows)==59,p
+          promo=rows['P']
+          assert promo['official_physical']==232,promo
+          assert promo['official_logical_collectors']==127,promo
+          assert promo['neon_logical_collectors']==121,promo
+          assert promo['ja_physical']==225,promo
+          assert promo['ja_exact_source_matches']==225,promo
+          assert promo['collectors_only_jp']==blocked,promo
+          assert promo['collectors_only_neon']==[],promo
+          assert promo['collector_card_collisions']=={},promo
+          assert promo['official_missing_images']==0,promo
+          assert promo['official_source_ids_unique'] is True,promo
+          assert sum(r['official_physical'] for r in rows.values())==4776,p
+          assert sum(r['ja_physical'] for r in rows.values())==4769,p
+          assert sum(r['ja_exact_source_matches'] for r in rows.values())==4769,p
+          assert sum(r['official_missing_images'] for r in rows.values())==0,p
+          exact=[k for k,r in rows.items() if r['status']=='already_materialized_exact']
+          assert len(exact)==58,exact
+          assert [k for k,r in rows.items() if r['status']=='blocked']==['P'],p
+          print(json.dumps({'official_physical':4776,'materialized_exact_JA':4769,'exact_sets':58,'blocked_set':'P','blocked_collectors':blocked},indent=2))
+          PY
+      - name: Assert Neon physical integrity and zero wrong-market inheritance
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          expected=4769
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_onepiece_jp_final_integrity_v1')
+          conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1"); gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT count(*) n FROM cards WHERE game_id=%s",(gid,)); cards=int(cur.fetchone()['n']); assert cards==2681,cards
+              cur.execute("SELECT count(*) n FROM sets WHERE game_id=%s",(gid,)); sets=int(cur.fetchone()['n']); assert sets==59,sets
+              cur.execute("""SELECT count(*) n,count(DISTINCT p.id) ids,count(DISTINCT p.print_key) keys
+                FROM prints p JOIN cards c ON c.id=p.card_id
+                WHERE c.game_id=%s AND lower(coalesce(p.language,''))='ja'""",(gid,)); x=cur.fetchone(); assert (int(x['n']),int(x['ids']),int(x['keys']))==(expected,expected,expected),x
+              cur.execute("""SELECT array_agg(p.id ORDER BY p.id) ids
+                FROM prints p JOIN cards c ON c.id=p.card_id
+                WHERE c.game_id=%s AND lower(coalesce(p.language,''))='ja'""",(gid,)); ids=list(cur.fetchone()['ids']); assert len(ids)==expected
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) p FROM print_images WHERE print_id=ANY(%s) AND is_primary=true AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']))==(expected,expected),x
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) p,count(DISTINCT external_id) e FROM print_identifiers WHERE print_id=ANY(%s) AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']),int(x['e']))==(expected,expected,expected),x
+              cur.execute("SELECT count(*) n FROM search_documents WHERE doc_type='print' AND object_id=ANY(%s)",(ids,)); search=int(cur.fetchone()['n']); assert search==expected,search
+              cur.execute("SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')",(ids,)); cm_links=int(cur.fetchone()['n']); assert cm_links==0,cm_links
+              cur.execute("SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)",(ids,)); cm_prices=int(cur.fetchone()['n']); assert cm_prices==0,cm_prices
+              out={'status':'pass','onepiece_cards':cards,'onepiece_sets':sets,'ja_prints':expected,'official_primary_images':expected,'official_identifiers':expected,'unique_official_identifiers':expected,'print_search_docs':expected,'cardmarket_links_on_ja':0,'cardmarket_prices_on_ja':0}
+              conn.rollback()
+          finally:
+            conn.close()
+          open('/tmp/opjp-final/neon-integrity.json','w').write(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-jp-production-final-v1-${{ github.run_id }}
+          path: /tmp/opjp-final/*.json
+          retention-days: 90
+          if-no-files-found: error
