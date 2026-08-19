@@ -1,0 +1,64 @@
+name: Audit Yu-Gi-Oh OCG Partial Set Residual Singletons V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_partial_set_residual_singletons_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-partial-set-residual-singletons-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_PARTIAL_RESIDUAL_SINGLETONS_OUTPUT: /tmp/ygo-ocg-partial-residual-singletons/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile residual singleton auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_partial_set_residual_singletons_v1.py
+      - name: READ ONLY derive deterministic complement pairs from established partial expansions
+        run: |
+          mkdir -p /tmp/ygo-ocg-partial-residual-singletons
+          python -m app.scripts.audit_yugioh_ocg_partial_set_residual_singletons_v1
+      - name: Require safe one-to-one residual singleton subset
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-partial-residual-singletons/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['screened_sets']==11,p
+          n=p['certified_residual_singleton_pairs']
+          assert n==len(p['proposal']),p
+          assert n>=50,p
+          assert len({x['external_product_id'] for x in p['proposal']})==n,p
+          assert len({x['print_id'] for x in p['proposal']})==n,p
+          assert all(x['metacard_evidence_links']>0 for x in p['proposal']),p
+          for r in p['sets']:
+            assert r['existing_accepted_target_links']+r['total_residual_physical']==r['physical'],r
+          print(json.dumps({'sets':p['sets'],'certified_residual_singletons':n,'stable_identity_sha256':p['stable_identity_sha256'],'ambiguous_groups':len(p['ambiguous_residual_groups'])},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-partial-residual-singletons-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-partial-residual-singletons/report.json
+          retention-days: 90
+          if-no-files-found: error
