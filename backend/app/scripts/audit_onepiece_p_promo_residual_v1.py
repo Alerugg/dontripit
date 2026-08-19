@@ -15,7 +15,7 @@ from app.ingest.normalization import normalize_collector_number, normalize_varia
 from app.scripts.audit_onepiece_jp_full_surface_v1 import _load_official
 
 JP_BASE = "https://www.onepiece-cardgame.com/cardlist/"
-EN_BASE = "https://en.onepiece-cardgame.com/cardlist/"
+ASIA_EN_BASE = "https://asia-en.onepiece-cardgame.com/cardlist/"
 SET_TOKEN = "P"
 EXPECTED_JP_LOGICAL = 127
 EXPECTED_NEON_LOGICAL = 105
@@ -26,17 +26,19 @@ def norm_set(value: object) -> str:
     return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
 
 
-def load_en_p() -> dict[str, list[dict]]:
+def load_asia_en_p() -> dict[str, list[dict]]:
     connector = OnePieceV2Connector()
     timeout = float(os.getenv("ONEPIECE_HTTP_TIMEOUT", "30"))
     session = requests.Session()
     session.headers.update({"User-Agent":"TCGCatalogV2/1.0 (+https://github.com/Alerugg/dontripit)"})
-    index = session.get(EN_BASE,timeout=timeout); index.raise_for_status()
+    index = session.get(ASIA_EN_BASE,timeout=timeout); index.raise_for_status()
     options = connector._parse_official_series_options(index.text)
+    if not options:
+        raise RuntimeError("official Asia-English One Piece cardlist returned zero series options")
     by_collector=defaultdict(list)
     for series_id,label in options:
-        r=session.get(f"{EN_BASE}?series={series_id}",timeout=timeout); r.raise_for_status()
-        for row in connector._parse_official_cards_page(r.text,base_url=EN_BASE):
+        r=session.get(f"{ASIA_EN_BASE}?series={series_id}",timeout=timeout); r.raise_for_status()
+        for row in connector._parse_official_cards_page(r.text,base_url=ASIA_EN_BASE):
             if norm_set(row.get("set_code")) != SET_TOKEN:
                 continue
             by_collector[str(row.get("collector_number") or "").upper().strip()].append({
@@ -78,35 +80,35 @@ def main() -> int:
     residual=sorted(set(jp_by_collector)-neon_collectors)
     if len(residual)!=EXPECTED_RESIDUAL: raise RuntimeError({"P_residual_drift":{"count":len(residual),"collectors":residual}})
 
-    en_by_collector=load_en_p()
+    asia_by_collector=load_asia_en_p()
     card_by_key=defaultdict(list)
     for card in all_cards: card_by_key[str(card.get("card_key") or "")].append(card)
     rows=[]; safe=[]; blocked=[]
     for collector in residual:
         jp_variants=jp_by_collector[collector]
-        en_variants=en_by_collector.get(collector,[])
-        en_names=sorted({str(r.get("name") or "").strip() for r in en_variants if str(r.get("name") or "").strip()})
+        asia_variants=asia_by_collector.get(collector,[])
+        asia_names=sorted({str(r.get("name") or "").strip() for r in asia_variants if str(r.get("name") or "").strip()})
         expected_key=f"onepiece:{normalize_collector_number(collector)}"
         existing_logical=card_by_key.get(expected_key,[])
         reason=None
         if existing_logical: reason="card_key_already_exists_outside_P_set"
-        elif not en_variants: reason="missing_from_official_EN_surface"
-        elif len(en_names)!=1: reason="official_EN_name_not_unique"
+        elif not asia_variants: reason="missing_from_official_Asia_EN_surface"
+        elif len(asia_names)!=1: reason="official_Asia_EN_name_not_unique"
         elif any(not str(r.get("image_url") or "").startswith("https://www.onepiece-cardgame.com/") for r in jp_variants): reason="JP_image_missing_or_nonofficial"
         item={
-          "collector_number":collector,"expected_card_key":expected_key,"official_en_names":en_names,
-          "official_en_physical":len(en_variants),"official_jp_physical":len(jp_variants),
-          "official_en_variants":sorted({r["variant"] for r in en_variants}),"official_jp_variants":sorted({normalize_variant(r["variant"]) for r in jp_variants}),
+          "collector_number":collector,"expected_card_key":expected_key,"official_asia_en_names":asia_names,
+          "official_asia_en_physical":len(asia_variants),"official_jp_physical":len(jp_variants),
+          "official_asia_en_variants":sorted({r["variant"] for r in asia_variants}),"official_jp_variants":sorted({normalize_variant(r["variant"]) for r in jp_variants}),
           "existing_card_key_matches":existing_logical,
           "jp": [{"variant":normalize_variant(r["variant"]),"source_print_id":r["source_print_id"],"rarity":r.get("rarity"),"image_url":r["image_url"],"series_ids":r.get("series_ids") or [],"series_labels":r.get("series_labels") or []} for r in jp_variants],
-          "en": en_variants,"status":"safe_logical_create" if reason is None else "blocked","blocked_reason":reason,
+          "asia_en": asia_variants,"status":"safe_logical_create" if reason is None else "blocked","blocked_reason":reason,
         }
         rows.append(item)
         (safe if reason is None else blocked).append(collector if reason is None else {"collector_number":collector,"reason":reason})
     report={
-      "status":"pass","production_writes":0,"jp_full_surface_sha256":jp["digest"],
+      "status":"pass","production_writes":0,"jp_full_surface_sha256":jp["digest"],"asia_en_base_url":ASIA_EN_BASE,
       "jp_P_physical":len(jp_rows),"jp_P_logical":len(jp_by_collector),"neon_P_logical":len(neon_collectors),"residual_count":len(residual),
-      "official_EN_P_logical":len(en_by_collector),"safe_logical_create_count":len(safe),"safe_logical_create_collectors":safe,"blocked_count":len(blocked),"blocked":blocked,"residual":rows,
+      "official_Asia_EN_P_logical":len(asia_by_collector),"safe_logical_create_count":len(safe),"safe_logical_create_collectors":safe,"blocked_count":len(blocked),"blocked":blocked,"residual":rows,
     }
     out=Path(os.getenv("ONEPIECE_P_PROMO_RESIDUAL_OUTPUT","/tmp/onepiece-p-promo-residual-v1.json")); out.parent.mkdir(parents=True,exist_ok=True); text=json.dumps(report,ensure_ascii=False,indent=2,sort_keys=True,default=str)+"\n"; out.write_text(text,encoding="utf-8"); print(text,end=""); return 0
 
