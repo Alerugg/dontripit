@@ -77,3 +77,5 @@ CONFIRM_TOKENS = {
     batch: f"APPLY_ONEPIECE_JP_SAFE_BATCH_{batch.upper()}"
     for batch in BATCHES
 }
+
+# READ ONLY post-production retrigger for ST25-36; no data or guard changes.
