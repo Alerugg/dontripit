@@ -130,3 +130,5 @@ jobs:
           path: /tmp/opjp-safe-batch/*.json
           retention-days: 90
           if-no-files-found: warn
+
+# READ ONLY post-production retrigger for OP06-10; no guard changes.
