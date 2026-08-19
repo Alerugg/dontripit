@@ -31,9 +31,9 @@ jobs:
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       PYTHONPATH: .
       ONEPIECE_HTTP_TIMEOUT: '30'
-      BATCH_ID: op06_10
-      EXPECTED_TOTAL: '1130'
-      CONFIRM_TOKEN: APPLY_ONEPIECE_JP_SAFE_BATCH_OP06_10
+      BATCH_ID: op11_15
+      EXPECTED_TOTAL: '860'
+      CONFIRM_TOKEN: APPLY_ONEPIECE_JP_SAFE_BATCH_OP11_15
     defaults:
       run:
         working-directory: backend
