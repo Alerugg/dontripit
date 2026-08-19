@@ -1,15 +1,17 @@
 name: Apply Yu-Gi-Oh OCG Full Bijection Cohort V1
 
-# Explicit production retrigger after the initial workflow-introduction merge.
+# Explicit production retrigger with an idempotent stable identity fingerprint.
 on:
   pull_request:
     paths:
       - 'backend/app/scripts/apply_yugioh_ocg_full_bijection_cohort_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_full_bijection_cohort_v2.py'
       - '.github/workflows/apply-yugioh-ocg-full-bijection-cohort-v1.yml'
   push:
     branches: [catalog-v2]
     paths:
       - 'backend/app/scripts/apply_yugioh_ocg_full_bijection_cohort_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_full_bijection_cohort_v2.py'
       - '.github/workflows/apply-yugioh-ocg-full-bijection-cohort-v1.yml'
 
 permissions:
@@ -40,14 +42,15 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile guarded cohort writer and exact-idProduct projector
+      - name: Compile guarded cohort writers and exact-idProduct projector
         run: |
           python -m py_compile app/scripts/apply_yugioh_ocg_full_bijection_cohort_v1.py
+          python -m py_compile app/scripts/apply_yugioh_ocg_full_bijection_cohort_v2.py
           python -m py_compile scripts/project_cardmarket_link_prices.py
-      - name: READ ONLY rebuild exact frozen 715-link proposal
+      - name: READ ONLY rebuild exact stable 715-link identity
         run: |
           mkdir -p /tmp/ygo-ocg-full-bijection-cohort-apply
-          python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v1 --report /tmp/ygo-ocg-full-bijection-cohort-apply/proposal.json
+          python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v2 --report /tmp/ygo-ocg-full-bijection-cohort-apply/proposal.json
           python - <<'PY'
           import json
           p=json.load(open('/tmp/ygo-ocg-full-bijection-cohort-apply/proposal.json'))
@@ -56,36 +59,34 @@ jobs:
           assert p['production_writes']==0,p
           assert p['ja_baseline']==36426,p
           assert p['cardmarket_capture']=='2026-08-18 21:09:20.740891+00:00',p
-          assert p['frozen_proposal_sha256']=='ef0ee909fa46752d37df46f91df473be96ebdf3ef67a54e9be93fd7cbac57d03',p
+          assert p['stable_identity_sha256']=='9a2b8ed9c43c0110fd8818a4b91239b26a565addaf5a88f4d898f6d6d41311ac',p
           assert p['certified_pairs']==715,p
-          assert p['already_accepted_same_pair'] in (0,715),p
-          assert p['new_links_ready'] in (0,715),p
-          assert p['already_accepted_same_pair']+p['new_links_ready']==715,p
+          assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,715),(715,0)),p
           rows={r['set_code']:r for r in p['sets']}
           assert {k:rows[k]['pairs'] for k in rows}==expected,p
-          if '${{ github.event_name }}'=='pull_request':
-              assert p['already_accepted_same_pair']==0,p
-              assert p['new_links_ready']==715,p
-          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':len(expected)},indent=2))
+          assert all((rows[k]['existing_same'],rows[k]['new_ready']) in ((0,expected[k]),(expected[k],0)) for k in expected),p
+          # Global derive rejects partial state, so either complete pre-install or complete installed state is safe on PR.
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':len(expected),'stable_identity_sha256':p['stable_identity_sha256']},indent=2))
           PY
       - name: Atomically apply 715 exact OCG cohort links
         if: github.event_name == 'push'
-        run: python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v1 --apply --confirm APPLY_YUGIOH_OCG_FULL_BIJECTION_COHORT_V1 --report /tmp/ygo-ocg-full-bijection-cohort-apply/applied.json
+        run: python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v2 --apply --confirm APPLY_YUGIOH_OCG_FULL_BIJECTION_COHORT_V1 --report /tmp/ygo-ocg-full-bijection-cohort-apply/applied.json
       - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
         if: github.event_name == 'push'
         run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-full-bijection-cohort-apply/projection.json
       - name: Prove writer idempotency
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v1 --apply --confirm APPLY_YUGIOH_OCG_FULL_BIJECTION_COHORT_V1 --report /tmp/ygo-ocg-full-bijection-cohort-apply/idempotency.json
+          python -m app.scripts.apply_yugioh_ocg_full_bijection_cohort_v2 --apply --confirm APPLY_YUGIOH_OCG_FULL_BIJECTION_COHORT_V1 --report /tmp/ygo-ocg-full-bijection-cohort-apply/idempotency.json
           python - <<'PY'
           import json
           p=json.load(open('/tmp/ygo-ocg-full-bijection-cohort-apply/idempotency.json'))
           assert p['status']=='pass',p
           assert p['production_writes']==0,p
+          assert p['stable_identity_sha256']=='9a2b8ed9c43c0110fd8818a4b91239b26a565addaf5a88f4d898f6d6d41311ac',p
           assert p['already_accepted_same_pair']==715,p
           assert p['new_links_ready']==0,p
-          print(json.dumps({'idempotency':'pass','exact_links':715},indent=2))
+          print(json.dumps({'idempotency':'pass','exact_links':715,'stable_identity_sha256':p['stable_identity_sha256']},indent=2))
           PY
       - name: Final exact regional identity proof
         if: github.event_name == 'push'
@@ -95,7 +96,7 @@ jobs:
           from psycopg2.extras import RealDictCursor
           method='cardmarket_ocg_certified_full_logical_bijection_cohort_v1'
           surfaces={'4889':('SK2',57),'4910':('PE',55),'4708':('ST14',48),'5894':('TDS2',46),'4641':('SD32',43),'4645':('ST17',43),'4763':('YSD6',43),'4636':('SR05',42),'4624':('SR06',42),'4711':('SR10',41),'4721':('SD25',40),'4789':('SD18',38),'4769':('SD20',38),'4822':('DP07',30),'4871':('SD2',28),'4599':('SSD2',21),'4686':('EN01',20),'4805':('JF09',10),'4762':('PP13',10),'4749':('PP14',10),'4729':('PP15',10)}
-          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_full_bijection_cohort_final_v1'); conn.set_session(readonly=True,autocommit=False); out={}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_full_bijection_cohort_final_v2'); conn.set_session(readonly=True,autocommit=False); out={}
           try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
               cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); gid=int(cur.fetchone()['id'])
@@ -121,7 +122,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: yugioh-ocg-full-bijection-cohort-apply-v1-${{ github.run_id }}
+          name: yugioh-ocg-full-bijection-cohort-apply-v2-${{ github.run_id }}
           path: /tmp/ygo-ocg-full-bijection-cohort-apply/*.json
           retention-days: 90
           if-no-files-found: warn
