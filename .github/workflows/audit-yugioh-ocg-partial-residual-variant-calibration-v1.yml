@@ -1,0 +1,70 @@
+name: Audit Yu-Gi-Oh OCG Partial Residual Variant Calibration V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_partial_residual_variant_calibration_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-partial-residual-variant-calibration-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_PARTIAL_RESIDUAL_VARIANT_CALIBRATION_OUTPUT: /tmp/ygo-ocg-partial-residual-variant-calibration/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile independent residual calibration auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_partial_residual_variant_calibration_v1.py
+      - name: READ ONLY calibrate residual multi-version groups from non-ordinal accepted evidence
+        run: |
+          mkdir -p /tmp/ygo-ocg-partial-residual-variant-calibration
+          python -m app.scripts.audit_yugioh_ocg_partial_residual_variant_calibration_v1
+      - name: Require only globally one-to-one supported calibration output
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-partial-residual-variant-calibration/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert len(p['sets'])==11,p
+          assert p['target_residual_variant_groups']==167,p
+          assert p['certifiable_groups']+p['unresolved_groups']==167,p
+          assert p['certifiable_pairs']==len(p['proposal']),p
+          assert len({x['external_product_id'] for x in p['proposal']})==p['certifiable_pairs'],p
+          assert len({x['print_id'] for x in p['proposal']})==p['certifiable_pairs'],p
+          assert all(x['calibration_support_groups']>=2 for x in p['proposal']),p
+          print(json.dumps({
+            'calibration_groups':p['independent_calibration_groups'],
+            'target_groups':p['target_residual_variant_groups'],
+            'certifiable_groups':p['certifiable_groups'],
+            'certifiable_pairs':p['certifiable_pairs'],
+            'unresolved_groups':p['unresolved_groups'],
+            'sets':p['sets'],
+            'target_signatures':p['target_signature_counts'][:15]
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-partial-residual-variant-calibration-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-partial-residual-variant-calibration/report.json
+          retention-days: 90
+          if-no-files-found: error
