@@ -1,0 +1,71 @@
+name: Audit Yu-Gi-Oh OCG Version Labels V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_version_labels_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-version-labels-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_VERSION_LABELS_OUTPUT: /tmp/ygo-ocg-version-labels/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile version-label residual auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_version_labels_v1.py
+      - name: READ ONLY derive explicit Cardmarket version-label bijections
+        run: |
+          mkdir -p /tmp/ygo-ocg-version-labels
+          python -m app.scripts.audit_yugioh_ocg_version_labels_v1
+      - name: Require frozen certified-surface invariants
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-version-labels/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['candidate_pairs']==p['candidate_products']==p['candidate_prints'],p
+          expected={
+            'DOCS':(108,108,69),
+            'LTGY':(86,86,75),
+            'CSOC':(87,87,74),
+          }
+          rows={r['set_code']:r for r in p['sets']}
+          assert set(rows)==set(expected),p
+          for code,(products,prints,accepted) in expected.items():
+              r=rows[code]
+              assert (r['products'],r['canonical_ja_prints'],r['accepted_links'])==(products,prints,accepted),r
+              assert r['residual_products']==products-accepted,r
+              assert r['residual_prints']==prints-accepted,r
+          print(json.dumps({
+            'candidate_pairs':p['candidate_pairs'],
+            'per_set':{k:{'residual':rows[k]['residual_products'],'label_candidates':rows[k]['version_label_candidate_pairs']} for k in rows},
+            'blocked_groups':len(p['blocked_groups']),
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-version-labels-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-version-labels/report.json
+          retention-days: 90
+          if-no-files-found: error
