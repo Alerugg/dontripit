@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Partial Core Calibrated333 V1
 
+# Explicit production retrigger after installing the guarded writer.
 on:
   pull_request:
     paths:
