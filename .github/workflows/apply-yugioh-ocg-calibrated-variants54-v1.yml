@@ -1,0 +1,125 @@
+name: Apply Yu-Gi-Oh OCG Calibrated Variants54 V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-calibrated-variants54-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-calibrated-variants54-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-ocg-calibrated-variants54-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile corrected calibrated-variant writer and price projector
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY rebuild exact stable 54-link calibrated variant proposal
+        run: |
+          mkdir -p /tmp/ygo-ocg-calibrated-variants54
+          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --report /tmp/ygo-ocg-calibrated-variants54/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-calibrated-variants54/proposal.json'))
+          expected={'SLT1':26,'SR14':10,'SR13':10,'ST19':4,'SD35':4}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['cardmarket_capture']=='2026-08-18 21:09:20.740891+00:00',p
+          assert p['stable_identity_sha256']=='f864e644d3b27e8adcf0a09bdb124a4735736b72134c719e5ff9931664efa72e',p
+          assert p['certified_pairs']==54,p
+          assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,54),(54,0)),p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['pairs'] for k in rows}==expected,p
+          assert all((rows[k]['existing_same'],rows[k]['new_ready']) in ((0,expected[k]),(expected[k],0)) for k in expected),p
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':expected},indent=2))
+          PY
+      - name: Atomically apply 54 calibrated exact variant links
+        if: github.event_name == 'push'
+        run: python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/applied.json
+      - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
+        if: github.event_name == 'push'
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-calibrated-variants54/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-calibrated-variants54/idempotency.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==54,p
+          assert p['new_links_ready']==0,p
+          assert p['stable_identity_sha256']=='f864e644d3b27e8adcf0a09bdb124a4735736b72134c719e5ff9931664efa72e',p
+          print(json.dumps({'idempotency':'pass','exact_links':54},indent=2))
+          PY
+      - name: Final calibrated-variant regional proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          method='cardmarket_ocg_certified_independent_ordinal_rarity_v1'
+          surfaces={'4543':('SLT1',26),'5475':('SR14',10),'5111':('SR13',10),'4585':('ST19',4),'4600':('SD35',4)}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_calibrated_variants54_final_v1'); conn.set_session(readonly=True,autocommit=False); out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); gid=int(cur.fetchone()['id'])
+              cur.execute("SELECT max(last_seen_at) capture FROM external_catalog_products WHERE source='cardmarket' AND game_id=%s",(gid,)); capture=cur.fetchone()['capture']
+              assert str(capture)=='2026-08-18 21:09:20.740891+00:00',capture
+              total=0
+              for exp,(code,expected) in surfaces.items():
+                cur.execute("""SELECT count(*) total,count(DISTINCT l.external_product_id) products,count(DISTINCT l.print_id) prints,
+                    count(*) FILTER (WHERE lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))=%s) good,
+                    count(*) FILTER (WHERE l.mapping_method=%s AND l.confidence='exact' AND l.reviewed=true) method_good,
+                    count(*) FILTER (WHERE e.last_seen_at=%s) current
+                  FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
+                  WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND e.expansion_external_id=%s AND l.link_status IN ('accepted','mapped','exact') AND l.mapping_method=%s""",(code,method,capture,gid,exp,method)); x=cur.fetchone()
+                vals=(int(x['total']),int(x['products']),int(x['prints']),int(x['good']),int(x['method_good']),int(x['current']))
+                assert vals==(expected,expected,expected,expected,expected,expected),(exp,code,vals,expected)
+                out[code]={'idExpansion':exp,'accepted_calibrated_variants':expected}; total+=expected
+              assert total==54,total
+              out['total']={'mapping_method':method,'links':total}; conn.rollback()
+          finally: conn.close()
+          open('/tmp/ygo-ocg-calibrated-variants54/final.json','w').write(json.dumps(out,indent=2)+'\n'); print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-calibrated-variants54-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-calibrated-variants54/*.json
+          retention-days: 90
+          if-no-files-found: warn
