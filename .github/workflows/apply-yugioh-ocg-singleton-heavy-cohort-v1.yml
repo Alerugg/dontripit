@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Singleton Heavy Cohort V1
 
+# Explicit production retrigger after the workflow-introduction merge.
 on:
   pull_request:
     paths:
@@ -60,9 +61,7 @@ jobs:
           assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,445),(445,0)),p
           rows={r['set_code']:r for r in p['sets']}
           assert {k:rows[k]['pairs'] for k in rows}==expected,p
-          if '${{ github.event_name }}'=='pull_request':
-              assert p['already_accepted_same_pair']==0,p
-              assert p['new_links_ready']==445,p
+          assert all((rows[k]['existing_same'],rows[k]['new_ready']) in ((0,expected[k]),(expected[k],0)) for k in expected),p
           print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':expected},indent=2))
           PY
       - name: Atomically apply 445 exact singleton links
