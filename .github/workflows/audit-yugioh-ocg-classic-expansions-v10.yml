@@ -1,0 +1,64 @@
+name: Audit Yu-Gi-Oh OCG Classic Expansions V10
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_classic_expansions_v10.py'
+      - '.github/workflows/audit-yugioh-ocg-classic-expansions-v10.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile OCG classic certifier V10
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_classic_expansions_v10.py
+      - name: READ ONLY probe exact regional Cardmarket identities
+        run: python -m app.scripts.audit_yugioh_ocg_classic_expansions_v10
+      - name: Require only first-party-positive identities
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/yugioh-ocg-classic-expansions-v10.json'))
+          assert p['production_writes']==0,p
+          rows={r['set_code']:r for r in p['results']}
+          expected={'BE2':'4870','BE02':'4756','309':'4885','SK2':'4889'}
+          assert set(rows)==set(expected),p
+          for code,exp in expected.items():
+              r=rows[code]
+              assert r['candidate_id']==exp,r
+              if r['status']=='certified':
+                  assert r['certified_idExpansion']==exp,r
+                  assert r['candidate']['positive_images']>=2,r
+              elif r['status']=='inconclusive':
+                  assert r['certified_idExpansion'] is None,r
+                  assert any(x.get('status')==403 for x in r['candidate']['probes']),r
+              else:
+                  assert r['status']=='not_certified',r
+                  assert r['certified_idExpansion'] is None,r
+          assert p['certified']+p['inconclusive']+p['not_certified']==4,p
+          print(json.dumps({'results':{k:(v['status'],v['certified_idExpansion']) for k,v in rows.items()}},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-classic-expansions-v10-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-classic-expansions-v10.json
+          retention-days: 90
+          if-no-files-found: error
