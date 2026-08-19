@@ -1,0 +1,140 @@
+name: Apply One Piece JP P Promo Partial V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/apply_onepiece_jp_p_promo_partial_v1.py'
+      - 'backend/app/scripts/reindex_onepiece_jp_p_promo_partial_v1.py'
+      - '.github/workflows/apply-onepiece-jp-p-promo-partial-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_onepiece_jp_p_promo_partial_v1.py'
+      - 'backend/app/scripts/reindex_onepiece_jp_p_promo_partial_v1.py'
+      - '.github/workflows/apply-onepiece-jp-p-promo-partial-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onepiece-jp-p-promo-partial-v1
+  cancel-in-progress: false
+
+jobs:
+  physical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_HTTP_TIMEOUT: '30'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile P promo writer and reindex
+        run: |
+          python -m py_compile app/scripts/apply_onepiece_jp_p_promo_partial_v1.py
+          python -m py_compile app/scripts/reindex_onepiece_jp_p_promo_partial_v1.py
+      - name: READ ONLY rebuild exact P promo partial surface
+        run: |
+          mkdir -p /tmp/opjp-p-promo
+          python -m app.scripts.apply_onepiece_jp_p_promo_partial_v1 \
+            --report /tmp/opjp-p-promo/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/opjp-p-promo/proposal.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['official_surface_sha256']=='772684372981c8004acc0b17598f2853118b2ea0c375e5654631b2cfacdf2008',p
+          assert p['target_logical_collectors']==121,p
+          assert p['target_physical']==225,p
+          assert p['blocked_collectors']==['P-110','P-120','P-150','P-151','P-157','P-159'],p
+          assert p['cards_before'] in (2665,2681),p
+          if p['cards_before']==2665:
+              assert p['logical_cards_ready']==16,p
+              assert p['existing_exact_ja']==0,p
+              assert p['new_ja_prints_ready']==225,p
+          else:
+              assert p['logical_cards_ready']==0,p
+              assert p['existing_exact_ja']==225,p
+              assert p['new_ja_prints_ready']==0,p
+          print(json.dumps({'dry_run':'pass','cards_before':p['cards_before'],'new_cards':p['logical_cards_ready'],'new_ja':p['new_ja_prints_ready']},indent=2))
+          PY
+      - name: Apply official Asia-English-backed logical Cards and JP physical prints
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_onepiece_jp_p_promo_partial_v1 \
+            --apply --confirm APPLY_ONEPIECE_JP_P_PROMO_PARTIAL_V1 \
+            --report /tmp/opjp-p-promo/applied.json
+      - name: Reindex P promo Cards and JP prints only
+        if: github.event_name == 'push'
+        run: python -m app.scripts.reindex_onepiece_jp_p_promo_partial_v1
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_onepiece_jp_p_promo_partial_v1 \
+            --apply --confirm APPLY_ONEPIECE_JP_P_PROMO_PARTIAL_V1 \
+            --report /tmp/opjp-p-promo/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/opjp-p-promo/idempotency.json'))
+          assert p['production_writes']==0,p
+          assert p['cards_before']==2681,p
+          assert p['logical_cards_ready']==0,p
+          assert p['existing_exact_ja']==225,p
+          assert p['new_ja_prints_ready']==0,p
+          print(json.dumps({'idempotency':'pass','cards':2681,'P_JA':225},indent=2))
+          PY
+      - name: Final P promo partial production proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,re,psycopg2
+          from collections import defaultdict
+          from psycopg2.extras import RealDictCursor
+          blocked={'P-110','P-120','P-150','P-151','P-157','P-159'}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']); conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='onepiece' LIMIT 1"); game_id=int(cur.fetchone()['id'])
+              cur.execute("SELECT count(*) n FROM cards WHERE game_id=%s",(game_id,)); cards=int(cur.fetchone()['n']); assert cards==2681,cards
+              cur.execute("SELECT count(*) n FROM sets WHERE game_id=%s",(game_id,)); sets_count=int(cur.fetchone()['n']); assert sets_count==59,sets_count
+              cur.execute("SELECT id,code FROM sets WHERE game_id=%s",(game_id,)); sets=[dict(r) for r in cur.fetchall()]; matches=[r for r in sets if re.sub(r'[^A-Z0-9]+','',str(r['code']).upper())=='P']; assert len(matches)==1,matches; set_id=int(matches[0]['id'])
+              cur.execute("""SELECT p.id print_id,p.card_id,p.collector_number,p.variant,c.name,c.card_key
+                FROM prints p JOIN cards c ON c.id=p.card_id
+                WHERE p.set_id=%s AND lower(coalesce(p.language,''))='ja'
+                ORDER BY p.collector_number,p.variant,p.id""",(set_id,)); ja=[dict(r) for r in cur.fetchall()]
+              assert len(ja)==225,len(ja); ids=[int(r['print_id']) for r in ja]; card_ids={int(r['card_id']) for r in ja}; collectors={str(r['collector_number']).upper() for r in ja}; assert len(card_ids)==121,len(card_ids); assert len(collectors)==121,len(collectors)
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) p FROM print_images WHERE print_id=ANY(%s) AND is_primary=true AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']))==(225,225),x
+              cur.execute("SELECT count(*) n,count(DISTINCT print_id) p,count(DISTINCT external_id) e FROM print_identifiers WHERE print_id=ANY(%s) AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']),int(x['e']))==(225,225,225),x
+              cur.execute("SELECT count(*) n FROM search_documents WHERE doc_type='print' AND object_id=ANY(%s)",(ids,)); print_docs=int(cur.fetchone()['n']); assert print_docs==225,print_docs
+              cur.execute("SELECT count(*) n FROM search_documents WHERE doc_type='card' AND object_id=ANY(%s)",(list(card_ids),)); card_docs=int(cur.fetchone()['n']); assert card_docs==121,card_docs
+              cur.execute("SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')",(ids,)); cm_links=int(cur.fetchone()['n']); assert cm_links==0,cm_links
+              cur.execute("SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)",(ids,)); cm_prices=int(cur.fetchone()['n']); assert cm_prices==0,cm_prices
+              # Ensure only the six intentionally unsupported JP-only collectors remain outside the logical P catalog.
+              from app.scripts.audit_onepiece_jp_full_surface_v1 import _load_official
+              source=_load_official(); official_collectors={r['collector_number'] for r in source['sets']['P']}; residual=official_collectors-collectors; assert residual==blocked,(sorted(residual),sorted(blocked))
+              out={'status':'pass','onepiece_cards':cards,'onepiece_sets':sets_count,'P_JA_prints':225,'P_JA_logical_cards':121,'official_images':225,'official_identifiers':225,'print_search_docs':225,'card_search_docs':121,'cardmarket_links':0,'cardmarket_prices':0,'blocked_collectors':sorted(blocked)}
+              conn.rollback()
+          finally: conn.close()
+          open('/tmp/opjp-p-promo/final.json','w').write(json.dumps(out,indent=2)+'\n'); print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-jp-p-promo-partial-v1-${{ github.run_id }}
+          path: /tmp/opjp-p-promo/*.json
+          retention-days: 90
+          if-no-files-found: warn
