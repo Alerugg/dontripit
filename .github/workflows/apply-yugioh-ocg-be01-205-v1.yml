@@ -58,7 +58,7 @@ jobs:
           assert p['stable_identity_sha256']=='0f6afeb05d84a6e7e22d13275093997e15bdbb479e90d8ffab23b290bf05470e',p
           assert p['certified_pairs']==205,p
           assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,205),(205,0)),p
-          assert sorted(x['idProduct'] for x in p['outside_products'],key=int)==['711248','711275','711277','711292','711392'],p
+          assert sorted((x['idProduct'] for x in p['outside_products']),key=int)==['711248','711275','711277','711292','711392'],p
           print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'outside_frozen':5},indent=2))
           PY
       - name: Atomically apply 205 exact BE01 links
