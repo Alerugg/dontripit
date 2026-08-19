@@ -1,5 +1,6 @@
 name: Audit Yu-Gi-Oh OCG Production Coverage V2
 
+# Fresh checkpoint after BE2/BE02 production completion.
 on:
   pull_request:
     paths:
