@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# Explicit production retrigger after guarded writer installation.
 from app.scripts import apply_yugioh_ocg_calibrated_variants54_v2 as base
 
 base.METHOD='cardmarket_ocg_certified_independent_ordinal_rarity_next223_v2'
