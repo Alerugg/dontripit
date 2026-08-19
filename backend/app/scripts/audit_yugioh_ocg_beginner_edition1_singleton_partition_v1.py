@@ -33,8 +33,7 @@ def main()->int:
             if ja!=EXPECTED_JA: raise RuntimeError({'ja_baseline_drift':ja})
 
             cur.execute("""SELECT e.metacard_external_id,p.card_id,count(*) evidence_links
-                FROM external_catalog_print_links l
-                JOIN external_catalog_products e ON e.id=l.external_product_id
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                 JOIN prints p ON p.id=l.print_id
                 WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
                   AND e.metacard_external_id IS NOT NULL AND l.link_status=ANY(%s)
@@ -45,8 +44,7 @@ def main()->int:
                 meta_cards[m].add(cid); evidence[(m,cid)]+=int(r['evidence_links'] or 0)
 
             cur.execute("""SELECT l.external_product_id,l.print_id,e.external_id id_product
-                FROM external_catalog_print_links l
-                JOIN external_catalog_products e ON e.id=l.external_product_id
+                FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                 WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
                   AND l.link_status=ANY(%s)""",(gid,list(ACCEPTED)))
             product_claims=defaultdict(list); print_claims=defaultdict(list)
@@ -63,8 +61,7 @@ def main()->int:
 
             surfaces=[]; global_proposal=[]
             for t in TARGETS:
-                code=t['set_code']; exp=t['idExpansion']
-                products=all_products.get(exp,[])
+                code=t['set_code']; exp=t['idExpansion']; products=all_products.get(exp,[])
                 if len(products)!=t['products']: raise RuntimeError({'product_count_drift':t['label'],'got':len(products),'expected':t['products']})
                 cur.execute("""SELECT p.id print_id,p.card_id,p.collector_number,p.rarity,p.variant,c.name card_name
                     FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
@@ -77,35 +74,38 @@ def main()->int:
                     raise RuntimeError({'canonical_surface_drift':t['label'],'physical':len(prints),'logical':len(by_card),'expected':t['canonical']})
                 canonical_ids=set(by_card)
 
-                pg=defaultdict(list)
+                pg=defaultdict(list); outside=[]; unresolved=[]
                 for p in products:
                     m=str(p.get('metacard_external_id') or '')
                     cards=meta_cards.get(m,set()) if m else set()
-                    if not m or len(cards)!=1: raise RuntimeError({'metacard_resolution':t['label'],'idProduct':str(p['id_product']),'cards':sorted(cards)})
+                    if not m or len(cards)!=1:
+                        unresolved.append({'idProduct':str(p['id_product']),'idMetacard':m,'resolved_cards':sorted(cards)})
+                        continue
                     cid=next(iter(cards))
-                    if cid not in canonical_ids: raise RuntimeError({'resolved_outside_set':t['label'],'idProduct':str(p['id_product']),'card_id':cid})
+                    if cid not in canonical_ids:
+                        outside.append({'idProduct':str(p['id_product']),'idMetacard':m,'card_id':cid,'name':str(p['name'])})
+                        continue
                     if norm(p['name'])!=norm(by_card[cid][0]['card_name']): raise RuntimeError({'name_drift':t['label'],'idProduct':str(p['id_product'])})
                     pg[cid].append({**p,'idMetacard':m})
                 if set(pg)!=canonical_ids or len(pg)!=t['canonical']:
-                    raise RuntimeError({'logical_coverage_failed':t['label'],'covered':len(pg),'canonical':t['canonical']})
+                    raise RuntimeError({'logical_coverage_failed':t['label'],'covered':len(pg),'canonical':t['canonical'],'outside':len(outside),'unresolved':len(unresolved)})
 
                 competitors=[]
                 for oexp,other in all_products.items():
                     if oexp==exp or len(other)<t['canonical']: continue
-                    oc=Counter(); ok=True
+                    covered=set(); outside_other=0; bad=False
                     for p in other:
                         m=str(p.get('metacard_external_id') or ''); cards=meta_cards.get(m,set()) if m else set()
-                        if not m or len(cards)!=1: ok=False; break
+                        if not m or len(cards)!=1: bad=True; break
                         cid=next(iter(cards))
-                        if cid not in canonical_ids: ok=False; break
-                        oc[cid]+=1
-                    if ok and set(oc)==canonical_ids and len(oc)==t['canonical']:
-                        competitors.append({'idExpansion':oexp,'products':len(other),'extra_products':len(other)-t['canonical']})
+                        if cid in canonical_ids: covered.add(cid)
+                        else: outside_other+=1
+                    if not bad and covered==canonical_ids:
+                        competitors.append({'idExpansion':oexp,'products':len(other),'outside_products':outside_other})
 
                 proposal=[]; residual=[]
                 for cid in sorted(canonical_ids):
-                    group=pg[cid]; pr=by_card[cid][0]
-                    blockers=[]
+                    group=pg[cid]; pr=by_card[cid][0]; blockers=[]
                     if len(group)!=1: blockers.append(f'product_multiplicity_{len(group)}')
                     if print_claims.get(int(pr['print_id'])): blockers.append(f'print_claims_{len(print_claims[int(pr["print_id"])])}')
                     for p in group:
@@ -116,7 +116,7 @@ def main()->int:
                     else:
                         residual.append({'card_id':cid,'card_name':str(pr['card_name']),'collector_number':str(pr['collector_number']),'print_id':int(pr['print_id']),'idProducts':[str(p['id_product']) for p in group],'product_count':len(group),'blockers':sorted(set(blockers))})
 
-                surface={'label':t['label'],'set_code':code,'idExpansion':exp,'products':len(products),'canonical_prints':len(prints),'canonical_cards':len(canonical_ids),'extra_products':len(products)-len(canonical_ids),'competitors':competitors,'singleton_pairs_ready':len(proposal),'residual_groups':len(residual),'residual_physical_products':sum(x['product_count'] for x in residual),'proposal':proposal,'residual':residual}
+                surface={'label':t['label'],'set_code':code,'idExpansion':exp,'products':len(products),'canonical_prints':len(prints),'canonical_cards':len(canonical_ids),'outside_products':outside,'unresolved_products':unresolved,'competitors':competitors,'singleton_pairs_ready':len(proposal),'residual_groups':len(residual),'residual_physical_products':sum(x['product_count'] for x in residual),'proposal':proposal,'residual':residual}
                 surfaces.append(surface); global_proposal.extend(proposal)
             conn.rollback()
     finally:
