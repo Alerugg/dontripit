@@ -1,0 +1,149 @@
+name: Apply Yu-Gi-Oh OCG Certified Singletons V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_certified_singletons_v1.py'
+      - '.github/workflows/apply-yugioh-ocg-certified-singletons-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_certified_singletons_v1.py'
+      - '.github/workflows/apply-yugioh-ocg-certified-singletons-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-ocg-certified-singletons-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile certified OCG singleton writer
+        run: python -m py_compile app/scripts/apply_yugioh_ocg_certified_singletons_v1.py
+      - name: READ ONLY rebuild exact frozen 738-link proposal
+        run: |
+          mkdir -p /tmp/ygo-ocg-certified-singletons-v1
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v1 \
+            --report /tmp/ygo-ocg-certified-singletons-v1/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-certified-singletons-v1/proposal.json'))
+          expected={'ROTA':62,'SUDA':58,'INFO':61,'LEDE':62,'PHNI':62,'DUNE':60,'CYAC':63,'PHHY':61,'DABL':63,'DIFO':62,'BACH':62,'BODE':62}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['certified_pairs']==738,p
+          assert p['already_accepted_same_pair'] in (0,738),p
+          assert p['new_links_ready'] in (0,738),p
+          assert p['already_accepted_same_pair']+p['new_links_ready']==738,p
+          assert {r['set_code']:r['pairs'] for r in p['sets']}==expected,p
+          if '${{ github.event_name }}' == 'pull_request':
+              assert p['already_accepted_same_pair']==0,p
+              assert p['new_links_ready']==738,p
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready']},indent=2))
+          PY
+      - name: Atomically apply 738 exact OCG singleton links
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v1 \
+            --apply \
+            --confirm APPLY_YUGIOH_OCG_CERTIFIED_SINGLETONS_V1 \
+            --report /tmp/ygo-ocg-certified-singletons-v1/applied.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-certified-singletons-v1/applied.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes'] in (0,738),p
+          assert p['certified_pairs']==738,p
+          print(json.dumps({'applied_writes':p['production_writes']},indent=2))
+          PY
+      - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-ocg-certified-singletons-v1/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_certified_singletons_v1 \
+            --apply \
+            --confirm APPLY_YUGIOH_OCG_CERTIFIED_SINGLETONS_V1 \
+            --report /tmp/ygo-ocg-certified-singletons-v1/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-certified-singletons-v1/idempotency.json'))
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==738,p
+          assert p['new_links_ready']==0,p
+          print(json.dumps({'idempotency':'pass','exact_links':738},indent=2))
+          PY
+      - name: Final exact regional identity proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          surfaces={'5840':('ROTA',62),'5929':('SUDA',58),'5753':('INFO',61),'5608':('LEDE',62),'5533':('PHNI',62),'5326':('DUNE',60),'5242':('CYAC',63),'5166':('PHHY',61),'5107':('DABL',63),'4519':('DIFO',62),'4524':('BACH',62),'4528':('BODE',62)}
+          method='cardmarket_ocg_certified_unique_physical_v3'
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_certified_singletons_final_v1')
+          conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              gid_sql="(SELECT id FROM games WHERE slug='yugioh')"
+              total=0
+              for exp,(set_code,expected) in surfaces.items():
+                cur.execute(f"""SELECT count(*) total,
+                  count(*) FILTER (WHERE lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))=%s) good,
+                  count(*) FILTER (WHERE l.mapping_method=%s AND l.confidence='exact' AND l.reviewed=true) method_good,
+                  count(DISTINCT e.external_id) products,count(DISTINCT p.id) prints
+                  FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
+                  WHERE e.source='cardmarket' AND e.game_id={gid_sql} AND e.product_group='single'
+                    AND e.expansion_external_id=%s AND l.link_status IN ('accepted','mapped','exact')""",(set_code,method,exp))
+                x=cur.fetchone(); vals=(int(x['total']),int(x['good']),int(x['method_good']),int(x['products']),int(x['prints']))
+                assert vals==(expected,expected,expected,expected,expected),(exp,set_code,vals,expected)
+                out[set_code]={'idExpansion':exp,'accepted_exact_ja_links':expected}; total+=expected
+              assert total==738,total
+              cur.execute(f"""SELECT count(*) n FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                WHERE e.source='cardmarket' AND e.game_id={gid_sql} AND l.mapping_method=%s
+                  AND l.link_status IN ('accepted','mapped','exact')""",(method,))
+              n=int(cur.fetchone()['n']); assert n==738,n
+              out['total']={'mapping_method':method,'links':n}
+              conn.rollback()
+          finally: conn.close()
+          open('/tmp/ygo-ocg-certified-singletons-v1/final.json','w').write(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-certified-singletons-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-certified-singletons-v1/*.json
+          retention-days: 90
+          if-no-files-found: warn
