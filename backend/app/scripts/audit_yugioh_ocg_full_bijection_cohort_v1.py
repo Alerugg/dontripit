@@ -68,11 +68,12 @@ def main()->int:
                 meta=str(r['metacard_external_id']); cid=int(r['card_id'])
                 meta_cards[meta].add(cid); evidence[(meta,cid)]+=int(r['evidence_links'] or 0)
 
-            cur.execute("""SELECT l.external_product_id,l.print_id
+            cur.execute("""SELECT l.external_product_id,l.print_id,e.external_id id_product
                 FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id
                 WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status=ANY(%s)""",(gid,list(ACCEPTED)))
-            claimed_products=set(); claimed_prints=set()
-            for r in cur.fetchall(): claimed_products.add(int(r['external_product_id'])); claimed_prints.add(int(r['print_id']))
+            product_claims=defaultdict(list); print_claims=defaultdict(list)
+            for r in cur.fetchall():
+                row=dict(r); product_claims[int(r['external_product_id'])].append(row); print_claims[int(r['print_id'])].append(row)
 
             cur.execute("""SELECT e.id external_product_id,e.external_id id_product,e.expansion_external_id,e.name,e.metacard_external_id
                 FROM external_catalog_products e
@@ -92,7 +93,7 @@ def main()->int:
                 for x in prints: by_card[int(x['card_id'])].append(x)
                 if len(products)!=expected or len(prints)!=expected or len(card_ids)!=expected or any(len(v)!=1 for v in by_card.values()):
                     raise RuntimeError({'target_surface_drift':code,'products':len(products),'prints':len(prints),'logical':len(card_ids),'expected':expected})
-                product_cards=[]; pairs=[]
+                product_cards=[]; pairs=[]; claim_conflicts=[]
                 for prod in products:
                     meta=str(prod.get('metacard_external_id') or ''); cards=meta_cards.get(meta,set())
                     if not meta or len(cards)!=1: raise RuntimeError({'target_metacard_resolution_drift':code,'idProduct':str(prod['id_product']),'cards':sorted(cards)})
@@ -101,7 +102,8 @@ def main()->int:
                     pr=by_card[cid][0]
                     if norm(prod['name'])!=norm(pr['card_name']): raise RuntimeError({'target_name_drift':code,'idProduct':str(prod['id_product'])})
                     eid=int(prod['external_product_id']); pid=int(pr['print_id'])
-                    if eid in claimed_products or pid in claimed_prints: raise RuntimeError({'target_existing_claim':code,'idProduct':str(prod['id_product']),'print_id':pid})
+                    if product_claims.get(eid) or print_claims.get(pid):
+                        claim_conflicts.append({'idProduct':str(prod['id_product']),'print_id':pid,'product_claims':len(product_claims.get(eid,[])),'print_claims':len(print_claims.get(pid,[]))})
                     pairs.append({'set_code':code,'idExpansion':exp,'external_product_id':eid,'idProduct':str(prod['id_product']),'idMetacard':meta,'print_id':pid,'card_id':cid,'card_name':str(pr['card_name']),'collector_number':str(pr['collector_number']),'canonical_rarity':pr.get('rarity'),'canonical_variant':pr.get('variant'),'metacard_evidence_links':int(evidence.get((meta,cid),0))})
                 if len(set(product_cards))!=expected or set(product_cards)!=card_ids or Counter(norm(x['name']) for x in products)!=Counter(norm(x['card_name']) for x in prints):
                     raise RuntimeError({'target_full_bijection_failed':code})
@@ -119,8 +121,8 @@ def main()->int:
                         resolved.append(cid)
                     if ok and len(set(resolved))==expected and set(resolved)==card_ids and Counter(norm(x['name']) for x in other)==canonical_names:
                         competitors.append(other_exp)
-                if competitors:
-                    ambiguous.append({'set_code':code,'target_idExpansion':exp,'physical':expected,'competing_full_bijection_expansions':sorted(competitors,key=lambda x:int(x) if x.isdigit() else x)})
+                if competitors or claim_conflicts:
+                    ambiguous.append({'set_code':code,'target_idExpansion':exp,'physical':expected,'competing_full_bijection_expansions':sorted(competitors,key=lambda x:int(x) if x.isdigit() else x),'existing_claim_conflicts':len(claim_conflicts),'claim_samples':claim_conflicts[:8]})
                 else:
                     certified.append({'set_code':code,'idExpansion':exp,'pairs':expected})
                     proposal.extend(pairs)
