@@ -1,0 +1,42 @@
+name: Audit One Piece JP OP16 Full Production Proof V2
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_onepiece_jp_op16_full_production_proof_v2.py'
+      - '.github/workflows/audit-onepiece-jp-op16-full-production-proof-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_HTTP_TIMEOUT: '30'
+      ONEPIECE_JP_OP16_FULL_PROOF_V2_OUTPUT: /tmp/onepiece-jp-op16-full-production-proof-v2.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile app/scripts/audit_onepiece_jp_op16_full_production_proof_v2.py
+      - name: Compare live full OP16 Japanese surface against Neon READ ONLY
+        run: python -m app.scripts.audit_onepiece_jp_op16_full_production_proof_v2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-jp-op16-full-production-proof-v2-${{ github.run_id }}
+          path: /tmp/onepiece-jp-op16-full-production-proof-v2.json
+          retention-days: 90
+          if-no-files-found: error
