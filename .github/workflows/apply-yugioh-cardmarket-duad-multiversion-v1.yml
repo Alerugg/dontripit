@@ -1,0 +1,156 @@
+name: Apply Yu-Gi-Oh Cardmarket DUAD Multiversion V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/data/yugioh_duad_jp_image_bijection_certified_v2.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v1.py'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py'
+      - '.github/workflows/apply-yugioh-cardmarket-duad-multiversion-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/data/yugioh_duad_jp_image_bijection_certified_v2.csv'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v1.py'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py'
+      - '.github/workflows/apply-yugioh-cardmarket-duad-multiversion-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-cardmarket-duad-multiversion-v1
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded DUAD V2 entrypoint
+        run: python -m py_compile app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py
+      - name: READ ONLY rebuild exact 78-pair proposal from certified V2 manifest
+        run: |
+          mkdir -p /tmp/ygo-duad-multiversion-v2
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
+            --report /tmp/ygo-duad-multiversion-v2/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-duad-multiversion-v2/proposal.json'))
+          assert p['status']=='pass', p
+          assert p['target_pairs']==78, p
+          assert p['certified_image_pairs']==76, p
+          assert p['certified_ordinal_pairs']==2, p
+          assert p['image_pair_manifest_sha256']=='08e05737810f62de80231162b40346d4d6c546a062149b0373b4c7154a2f63c4', p
+          assert p['accepted_duad_ja_before'] in (38,116), p
+          assert p['new_links_ready'] + p['already_accepted_same_pair'] == 78, p
+          if p['accepted_duad_ja_before']==38:
+              assert p['new_links_ready']==78 and p['already_accepted_same_pair']==0, p
+          else:
+              assert p['new_links_ready']==0 and p['already_accepted_same_pair']==78, p
+          print(json.dumps({'dry_run':'pass','new':p['new_links_ready'],'existing':p['already_accepted_same_pair']},indent=2))
+          PY
+      - name: Apply only missing certified DUAD multiversion links
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
+            --apply \
+            --confirm APPLY_YUGIOH_CARDMARKET_DUAD_MULTIVERSION_V1 \
+            --report /tmp/ygo-duad-multiversion-v2/applied.json
+      - name: Project Yu-Gi-Oh Cardmarket prices
+        if: github.event_name == 'push'
+        run: |
+          python scripts/project_cardmarket_link_prices.py \
+            --game yugioh \
+            --apply \
+            --report /tmp/ygo-duad-multiversion-v2/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
+            --apply \
+            --confirm APPLY_YUGIOH_CARDMARKET_DUAD_MULTIVERSION_V1 \
+            --report /tmp/ygo-duad-multiversion-v2/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-duad-multiversion-v2/idempotency.json'))
+          assert p['production_writes']==0, p
+          assert p['new_links_ready']==0, p
+          assert p['already_accepted_same_pair']==78, p
+          assert p['accepted_duad_ja_before']==116, p
+          print(json.dumps({'idempotency':'pass','accepted_DUAD_JA':116},indent=2))
+          PY
+      - name: Final OCG identity regression proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          surfaces={'6129':('DUAD',116),'6025':('ALIN',132),'5044':('POTE',126),'5421':('AGOV',98)}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          conn.set_session(readonly=True,autocommit=False)
+          out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              for exp,(set_code,expected) in surfaces.items():
+                cur.execute("""SELECT count(*) n,count(DISTINCT e.id) products,count(DISTINCT p.id) prints
+                  FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
+                  WHERE e.source='cardmarket' AND e.game_id=(SELECT id FROM games WHERE slug='yugioh')
+                    AND e.product_group='single' AND e.expansion_external_id=%s
+                    AND l.link_status IN ('accepted','mapped','exact')
+                    AND lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))=%s""",(exp,set_code))
+                row=cur.fetchone(); got=(int(row['n']),int(row['products']),int(row['prints']))
+                if got!=(expected,expected,expected): raise SystemExit(f'{set_code} expected {expected} one-to-one, got {got}')
+                cur.execute("""SELECT count(*) n FROM external_catalog_print_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
+                  WHERE e.source='cardmarket' AND e.expansion_external_id=%s
+                    AND l.link_status IN ('accepted','mapped','exact')
+                    AND (lower(coalesce(p.language,''))<>'ja' OR upper(coalesce(s.code,''))<>%s)""",(exp,set_code))
+                bad=int(cur.fetchone()['n'])
+                if bad: raise SystemExit(f'{set_code} wrong language/set links {bad}')
+                out[set_code]={'accepted_ja_links':expected,'unique_products':expected,'unique_prints':expected,'wrong_language_or_set':bad}
+              cur.execute("""SELECT l.mapping_method,count(*) n FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
+                WHERE e.source='cardmarket' AND e.expansion_external_id='6129'
+                  AND l.link_status IN ('accepted','mapped','exact')
+                  AND lower(coalesce(p.language,''))='ja' AND upper(coalesce(s.code,''))='DUAD'
+                GROUP BY l.mapping_method ORDER BY l.mapping_method""")
+              methods={str(r['mapping_method']):int(r['n']) for r in cur.fetchall()}
+              expected_methods={
+                'cardmarket_ocg_certified_unique_physical_v2':38,
+                'cardmarket_ocg_certified_image_bijection_v2':76,
+                'cardmarket_ocg_certified_version_ordinal_v1':2,
+              }
+              if methods!=expected_methods: raise SystemExit(f'DUAD methods mismatch {methods}')
+              out['DUAD']['method_counts']=methods
+          finally: conn.close()
+          open('/tmp/ygo-duad-multiversion-v2/final.json','w').write(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-cardmarket-duad-multiversion-v2-${{ github.run_id }}
+          path: /tmp/ygo-duad-multiversion-v2/*.json
+          retention-days: 90
+          if-no-files-found: warn
