@@ -1,0 +1,114 @@
+name: Apply Yu-Gi-Oh OCG Next Singleton Heavy Cohort223 V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_next_singleton_heavy_cohort223_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-next-singleton-heavy-cohort223-v2.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_next_singleton_heavy_cohort223_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-next-singleton-heavy-cohort223-v2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-ocg-next-singleton-heavy-cohort223-v2
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded writer and exact-idProduct price projector
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_next_singleton_heavy_cohort223_v2.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY rebuild exact stable 223-link singleton proposal
+        run: |
+          mkdir -p /tmp/ygo-ocg-next-singleton-heavy223
+          python -m app.scripts.apply_yugioh_ocg_next_singleton_heavy_cohort223_v2 --report /tmp/ygo-ocg-next-singleton-heavy223/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-next-singleton-heavy223/proposal.json'))
+          expected={'AC01':2,'AC02':2,'SD45':39,'CPD1':36,'DBDS':12,'DBGC':12,'DBHS':12,'DBIC':12,'DBMF':12,'DBSS':12,'SPDS':15,'SPHR':15,'SPWR':15,'21PP':12,'22PP':12,'DC01':0,'GS02':0,'GS03':0,'GS04':0,'GS06':3,'PP19':0}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['stable_identity_sha256']=='059fb9ad22dc29c20ef16cbc67bc30b2ca7bc4be7e0a6b9c7798ecdc24387a60',p
+          assert p['certified_pairs']==223,p
+          assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,223),(223,0)),p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['pairs'] for k in rows}==expected,p
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':expected},indent=2))
+          PY
+      - name: Atomically apply 223 exact singleton links
+        if: github.event_name == 'push'
+        run: python -m app.scripts.apply_yugioh_ocg_next_singleton_heavy_cohort223_v2 --apply --confirm APPLY_YUGIOH_OCG_NEXT_SINGLETON_HEAVY_COHORT223_V2 --report /tmp/ygo-ocg-next-singleton-heavy223/applied.json
+      - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
+        if: github.event_name == 'push'
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-next-singleton-heavy223/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_next_singleton_heavy_cohort223_v2 --apply --confirm APPLY_YUGIOH_OCG_NEXT_SINGLETON_HEAVY_COHORT223_V2 --report /tmp/ygo-ocg-next-singleton-heavy223/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-next-singleton-heavy223/idempotency.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==223,p
+          assert p['new_links_ready']==0,p
+          assert p['stable_identity_sha256']=='059fb9ad22dc29c20ef16cbc67bc30b2ca7bc4be7e0a6b9c7798ecdc24387a60',p
+          print(json.dumps({'idempotency':'pass','exact_links':223},indent=2))
+          PY
+      - name: Final exact singleton method proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          method='cardmarket_ocg_certified_singleton_heavy_cohort_v2'
+          expected={'AC01':2,'AC02':2,'SD45':39,'CPD1':36,'DBDS':12,'DBGC':12,'DBHS':12,'DBIC':12,'DBMF':12,'DBSS':12,'SPDS':15,'SPHR':15,'SPWR':15,'21PP':12,'22PP':12,'DC01':0,'GS02':0,'GS03':0,'GS04':0,'GS06':3,'PP19':0}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_next_singleton_heavy223_final_v2'); conn.set_session(readonly=True,autocommit=False)
+          out={}; total=0
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); gid=int(cur.fetchone()['id'])
+              for code,n in expected.items():
+                cur.execute("""SELECT count(*) n,count(DISTINCT l.external_product_id) products,count(DISTINCT l.print_id) prints FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status IN ('accepted','mapped','exact') AND l.mapping_method=%s AND upper(coalesce(s.code,''))=%s AND lower(coalesce(p.language,''))='ja'""",(gid,method,code)); r=cur.fetchone(); vals=(int(r['n']),int(r['products']),int(r['prints']))
+                assert vals==(n,n,n),(code,vals,n)
+                out[code]=n; total+=n
+              assert total==223,total
+              conn.rollback()
+          finally: conn.close()
+          open('/tmp/ygo-ocg-next-singleton-heavy223/final.json','w').write(json.dumps({'mapping_method':method,'total':total,'sets':out},indent=2)+'\n')
+          print(json.dumps({'mapping_method':method,'total':total,'sets':out},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-next-singleton-heavy223-v2-${{ github.run_id }}
+          path: /tmp/ygo-ocg-next-singleton-heavy223/*.json
+          retention-days: 90
+          if-no-files-found: warn
