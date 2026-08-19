@@ -122,3 +122,5 @@ jobs:
           path: /tmp/ygo-ocg-certified-singletons-v2/*.json
           retention-days: 90
           if-no-files-found: warn
+
+# Controlled second push after workflow installation; all existing guards remain unchanged.
