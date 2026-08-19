@@ -1,0 +1,67 @@
+name: Audit Yu-Gi-Oh OCG Global Surface V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_global_surface_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-global-surface-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_GLOBAL_SURFACE_OUTPUT: /tmp/yugioh-ocg-global-surface-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile global OCG inventory
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_global_surface_v1.py
+      - name: READ ONLY inventory all Cardmarket expansions against canonical JA sets
+        run: python -m app.scripts.audit_yugioh_ocg_global_surface_v1
+      - name: Assert baseline and known certified surfaces remain discoverable
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/yugioh-ocg-global-surface-v1.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_physical_prints']==36426,p
+          assert p['official_feed_products'] >= 86000,p
+          assert p['unambiguous_metacard_card_bridges'] > 10000,p
+          known={r['idExpansion']:r for r in p['all_expansions'] if r['idExpansion'] in p['known_certified']}
+          assert set(known)==set(p['known_certified']),known
+          for expansion,set_code in p['known_certified'].items():
+              row=known[expansion]
+              assert row['best_candidate'],row
+              assert row['best_candidate']['code'].upper()==set_code,row
+              assert row['accepted_ja_links'] > 0,row
+          print(json.dumps({
+            'ja_prints':p['ja_physical_prints'],
+            'cardmarket_expansions':p['cardmarket_expansions'],
+            'strong_candidates':p['strong_candidate_count'],
+            'known_certified':p['known_certified'],
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-global-surface-v1-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-global-surface-v1.json
+          retention-days: 90
+          if-no-files-found: error
