@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'backend/app/scripts/audit_yugioh_ocg_production_proof_v6.py'
+      - 'backend/app/scripts/audit_yugioh_duad_price_projection_gap_v1.py'
       - '.github/workflows/audit-yugioh-ocg-production-proof-v6.yml'
 
 permissions:
@@ -18,6 +19,7 @@ jobs:
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       PYTHONPATH: .
       YGO_OCG_PRODUCTION_PROOF_V6_OUTPUT: /tmp/yugioh-ocg-production-proof-v6.json
+      YGO_DUAD_PRICE_GAP_OUTPUT: /tmp/yugioh-duad-price-projection-gap-v1.json
     defaults:
       run:
         working-directory: backend
@@ -29,14 +31,20 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile independent OCG proof V6
-        run: python -m py_compile app/scripts/audit_yugioh_ocg_production_proof_v6.py
+      - name: Compile independent OCG proof and DUAD price-gap audit
+        run: |
+          python -m py_compile app/scripts/audit_yugioh_ocg_production_proof_v6.py
+          python -m py_compile app/scripts/audit_yugioh_duad_price_projection_gap_v1.py
+      - name: Diagnose DUAD foil/nonfoil source-price compatibility READ ONLY
+        run: python -m app.scripts.audit_yugioh_duad_price_projection_gap_v1
       - name: Certify DUAD 116 plus ALIN/POTE/AGOV identities and exact Cardmarket price projection in Neon
         run: python -m app.scripts.audit_yugioh_ocg_production_proof_v6
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: yugioh-ocg-production-proof-v6-${{ github.run_id }}
-          path: /tmp/yugioh-ocg-production-proof-v6.json
+          path: |
+            /tmp/yugioh-ocg-production-proof-v6.json
+            /tmp/yugioh-duad-price-projection-gap-v1.json
           retention-days: 90
           if-no-files-found: error
