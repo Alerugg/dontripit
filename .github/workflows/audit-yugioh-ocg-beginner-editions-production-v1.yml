@@ -1,0 +1,82 @@
+name: Audit Yu-Gi-Oh OCG Beginner Editions Production V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_beginner_editions_production_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-beginner-editions-production-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_BEGINNER_EDITIONS_PROOF_OUTPUT: /tmp/ygo-ocg-beginner-editions-proof/production.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent production proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_beginner_editions_v1.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_beginner_editions_production_v1.py
+      - name: READ ONLY prove writer sees full idempotent 460 state
+        run: |
+          mkdir -p /tmp/ygo-ocg-beginner-editions-proof
+          python -m app.scripts.apply_yugioh_ocg_beginner_editions_v1 --report /tmp/ygo-ocg-beginner-editions-proof/idempotency-readonly.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-beginner-editions-proof/idempotency-readonly.json'))
+          expected={'BE2':250,'BE02':210}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['certified_pairs']==460,p
+          assert p['already_accepted_same_pair']==460,p
+          assert p['new_links_ready']==0,p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['existing_same'] for k in rows}==expected,p
+          print(json.dumps({'writer_readonly':'idempotent','existing':460},indent=2))
+          PY
+      - name: READ ONLY certify exact identity and current exact-idProduct prices
+        run: python -m app.scripts.audit_yugioh_ocg_beginner_editions_production_v1
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-beginner-editions-proof/production.json'))
+          expected={'BE2':250,'BE02':210}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['accepted_links']==460,p
+          assert p['unique_products']==460,p
+          assert p['unique_prints']==460,p
+          rows=p['sets']
+          assert {k:rows[k]['links'] for k in rows}==expected,p
+          assert all(rows[k]['products']==expected[k] and rows[k]['prints']==expected[k] for k in expected),p
+          assert all(rows[k]['wrong_language']==0 and rows[k]['wrong_set']==0 and rows[k]['wrong_method']==0 and rows[k]['stale']==0 for k in expected),p
+          pricing=p['pricing']
+          assert pricing['canonical_current_wrong_idProduct']==0,p
+          assert pricing['canonical_current_exact_idProduct_prices']==pricing['externally_priceable_links'],p
+          print(json.dumps({'identity':'460/460','pricing':pricing},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-beginner-editions-production-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-beginner-editions-proof/*.json
+          retention-days: 90
+          if-no-files-found: warn
