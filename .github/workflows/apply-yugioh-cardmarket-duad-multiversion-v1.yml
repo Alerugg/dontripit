@@ -3,14 +3,16 @@ name: Apply Yu-Gi-Oh Cardmarket DUAD Multiversion V1
 on:
   pull_request:
     paths:
-      - 'backend/app/data/yugioh_duad_jp_image_bijection_v1.csv'
+      - 'backend/app/data/yugioh_duad_jp_image_bijection_certified_v2.csv'
       - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v1.py'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py'
       - '.github/workflows/apply-yugioh-cardmarket-duad-multiversion-v1.yml'
   push:
     branches: [catalog-v2]
     paths:
-      - 'backend/app/data/yugioh_duad_jp_image_bijection_v1.csv'
+      - 'backend/app/data/yugioh_duad_jp_image_bijection_certified_v2.csv'
       - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v1.py'
+      - 'backend/app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py'
       - '.github/workflows/apply-yugioh-cardmarket-duad-multiversion-v1.yml'
 
 permissions:
@@ -41,20 +43,21 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile guarded DUAD multiversion mapper
-        run: python -m py_compile app/scripts/apply_yugioh_cardmarket_duad_multiversion_v1.py
-      - name: READ ONLY rebuild exact 78-pair proposal
+      - name: Compile guarded DUAD V2 entrypoint
+        run: python -m py_compile app/scripts/apply_yugioh_cardmarket_duad_multiversion_v2.py
+      - name: READ ONLY rebuild exact 78-pair proposal from certified V2 manifest
         run: |
-          mkdir -p /tmp/ygo-duad-multiversion-v1
-          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v1 \
-            --report /tmp/ygo-duad-multiversion-v1/proposal.json
+          mkdir -p /tmp/ygo-duad-multiversion-v2
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
+            --report /tmp/ygo-duad-multiversion-v2/proposal.json
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/ygo-duad-multiversion-v1/proposal.json'))
+          p=json.load(open('/tmp/ygo-duad-multiversion-v2/proposal.json'))
           assert p['status']=='pass', p
           assert p['target_pairs']==78, p
           assert p['certified_image_pairs']==76, p
           assert p['certified_ordinal_pairs']==2, p
+          assert p['image_pair_manifest_sha256']=='08e05737810f62de80231162b40346d4d6c546a062149b0373b4c7154a2f63c4', p
           assert p['accepted_duad_ja_before'] in (38,116), p
           assert p['new_links_ready'] + p['already_accepted_same_pair'] == 78, p
           if p['accepted_duad_ja_before']==38:
@@ -66,27 +69,27 @@ jobs:
       - name: Apply only missing certified DUAD multiversion links
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v1 \
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
             --apply \
             --confirm APPLY_YUGIOH_CARDMARKET_DUAD_MULTIVERSION_V1 \
-            --report /tmp/ygo-duad-multiversion-v1/applied.json
+            --report /tmp/ygo-duad-multiversion-v2/applied.json
       - name: Project Yu-Gi-Oh Cardmarket prices
         if: github.event_name == 'push'
         run: |
           python scripts/project_cardmarket_link_prices.py \
             --game yugioh \
             --apply \
-            --report /tmp/ygo-duad-multiversion-v1/projection.json
+            --report /tmp/ygo-duad-multiversion-v2/projection.json
       - name: Prove writer idempotency
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v1 \
+          python -m app.scripts.apply_yugioh_cardmarket_duad_multiversion_v2 \
             --apply \
             --confirm APPLY_YUGIOH_CARDMARKET_DUAD_MULTIVERSION_V1 \
-            --report /tmp/ygo-duad-multiversion-v1/idempotency.json
+            --report /tmp/ygo-duad-multiversion-v2/idempotency.json
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/ygo-duad-multiversion-v1/idempotency.json'))
+          p=json.load(open('/tmp/ygo-duad-multiversion-v2/idempotency.json'))
           assert p['production_writes']==0, p
           assert p['new_links_ready']==0, p
           assert p['already_accepted_same_pair']==78, p
@@ -141,13 +144,13 @@ jobs:
               if methods!=expected_methods: raise SystemExit(f'DUAD methods mismatch {methods}')
               out['DUAD']['method_counts']=methods
           finally: conn.close()
-          open('/tmp/ygo-duad-multiversion-v1/final.json','w').write(json.dumps(out,indent=2)+'\n')
+          open('/tmp/ygo-duad-multiversion-v2/final.json','w').write(json.dumps(out,indent=2)+'\n')
           print(json.dumps(out,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: yugioh-cardmarket-duad-multiversion-v1-${{ github.run_id }}
-          path: /tmp/ygo-duad-multiversion-v1/*.json
+          name: yugioh-cardmarket-duad-multiversion-v2-${{ github.run_id }}
+          path: /tmp/ygo-duad-multiversion-v2/*.json
           retention-days: 90
           if-no-files-found: warn
