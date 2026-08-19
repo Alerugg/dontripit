@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -29,31 +30,20 @@ CONFIRM = "APPLY_YUGIOH_CARDMARKET_DUAD_MULTIVERSION_V1"
 IMAGE_AUDIT_RUN_ID = 32202085860
 IMAGE_SOURCE_CONTROL_RUN_ID = 32201582727
 ORDINAL_AUDIT_RUN_ID = 32202085871
+IMAGE_PAIR_DIGEST = "08e05737810f62de80231162b40346d4d6c546a062149b0373b4c7154a2f63c4"
 MANIFEST = Path(__file__).resolve().parents[1] / "data" / "yugioh_duad_jp_image_bijection_v1.csv"
 WAKE = (
     {
-        "idProduct": "823713",
-        "idMetacard": "448572",
-        "print_id": 697205,
-        "card_id": 72603,
-        "card_name": "WAKE CUP! Mocha",
-        "collector_number": "DUAD-JP028",
-        "canonical_variant": "rarity-shortprint",
-        "canonical_rarity": "shortprint",
-        "ordinal": 1,
-        "ordinal_role": "base_non_secret",
+        "idProduct": "823713", "idMetacard": "448572", "print_id": 697205,
+        "card_id": 72603, "card_name": "WAKE CUP! Mocha", "collector_number": "DUAD-JP028",
+        "canonical_variant": "rarity-shortprint", "canonical_rarity": "shortprint",
+        "ordinal": 1, "ordinal_role": "base_non_secret",
     },
     {
-        "idProduct": "823714",
-        "idMetacard": "448572",
-        "print_id": 674606,
-        "card_id": 72603,
-        "card_name": "WAKE CUP! Mocha",
-        "collector_number": "DUAD-JP028",
-        "canonical_variant": "rarity-prismaticsecret",
-        "canonical_rarity": "prismaticsecret",
-        "ordinal": 2,
-        "ordinal_role": "secret_or_prismaticsecret",
+        "idProduct": "823714", "idMetacard": "448572", "print_id": 674606,
+        "card_id": 72603, "card_name": "WAKE CUP! Mocha", "collector_number": "DUAD-JP028",
+        "canonical_variant": "rarity-prismaticsecret", "canonical_rarity": "prismaticsecret",
+        "ordinal": 2, "ordinal_role": "secret_or_prismaticsecret",
     },
 )
 
@@ -75,28 +65,37 @@ def _connect(*, readonly: bool):
 
 def _load_manifest() -> list[dict]:
     with MANIFEST.open("r", encoding="utf-8", newline="") as handle:
-        rows = [dict(row) for row in csv.DictReader(handle)]
-    if len(rows) != EXPECTED_IMAGE_PAIRS:
-        raise RuntimeError({"image_manifest_count_drift": len(rows)})
-    for row in rows:
+        image_rows = [dict(row) for row in csv.DictReader(handle)]
+    if len(image_rows) != EXPECTED_IMAGE_PAIRS:
+        raise RuntimeError({"image_manifest_count_drift": len(image_rows)})
+    for row in image_rows:
         row["print_id"] = int(row["print_id"])
         row["card_id"] = int(row["card_id"])
         row["minimum_relative_assignment_gap"] = float(row["minimum_relative_assignment_gap"])
         if row["minimum_relative_assignment_gap"] < 0.03:
             raise RuntimeError({"below_threshold_image_pair": row["idProduct"]})
-        for key in ("product_image_sha256", "canonical_image_sha256"):
-            value = str(row.get(key) or "").casefold()
-            if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
-                raise RuntimeError({"invalid_image_hash": {"idProduct": row["idProduct"], "field": key}})
         row["mapping_method"] = IMAGE_METHOD
         row["evidence_kind"] = "image"
-    target = rows + [{**row, "mapping_method": ORDINAL_METHOD, "evidence_kind": "ordinal"} for row in WAKE]
+
+    pair_material = "".join(
+        f"{int(row['idProduct'])}:{int(row['print_id'])}\n"
+        for row in sorted(image_rows, key=lambda x: int(x["idProduct"]))
+    )
+    actual_digest = hashlib.sha256(pair_material.encode("utf-8")).hexdigest()
+    if actual_digest != IMAGE_PAIR_DIGEST:
+        raise RuntimeError({"image_pair_digest_drift": {"expected": IMAGE_PAIR_DIGEST, "actual": actual_digest}})
+
+    target = image_rows + [{**row, "mapping_method": ORDINAL_METHOD, "evidence_kind": "ordinal"} for row in WAKE]
     if len(target) != EXPECTED_TARGET_PAIRS:
         raise RuntimeError({"target_pair_count_drift": len(target)})
     if len({str(r["idProduct"]) for r in target}) != EXPECTED_TARGET_PAIRS:
         raise RuntimeError("target Cardmarket products are not one-to-one")
     if len({int(r["print_id"]) for r in target}) != EXPECTED_TARGET_PAIRS:
         raise RuntimeError("target canonical prints are not one-to-one")
+    methods = Counter(str(r["mapping_method"]) for r in target)
+    expected_methods = Counter({IMAGE_METHOD: EXPECTED_IMAGE_PAIRS, ORDINAL_METHOD: EXPECTED_ORDINAL_PAIRS})
+    if methods != expected_methods:
+        raise RuntimeError({"target_method_distribution_drift": dict(methods)})
     return target
 
 
@@ -128,8 +127,7 @@ def _load_state(cur, target: list[dict]):
         """SELECT p.id print_id,p.card_id,p.collector_number,p.rarity,p.variant,p.language,
                   c.name card_name,s.code set_code
            FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
-           WHERE p.id=ANY(%s) AND c.game_id=%s
-           ORDER BY p.id""",
+           WHERE p.id=ANY(%s) AND c.game_id=%s ORDER BY p.id""",
         (print_ids, game_id),
     )
     prints = {int(r["print_id"]): dict(r) for r in cur.fetchall()}
@@ -139,8 +137,7 @@ def _load_state(cur, target: list[dict]):
                   e.external_id id_product,e.expansion_external_id,p.language,s.code set_code
            FROM external_catalog_print_links l
            JOIN external_catalog_products e ON e.id=l.external_product_id
-           JOIN prints p ON p.id=l.print_id
-           JOIN sets s ON s.id=p.set_id
+           JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id
            WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single'
              AND l.link_status=ANY(%s)""",
         (game_id, list(ACCEPTED)),
@@ -154,22 +151,16 @@ def _build(cur, target: list[dict]) -> dict:
     if len(products) != EXPECTED_TARGET_PAIRS or len(prints) != EXPECTED_TARGET_PAIRS:
         raise RuntimeError({"target_current_surface_missing": {"products": len(products), "prints": len(prints)}})
 
-    target_product_ids = {str(r["idProduct"]) for r in target}
-    target_print_ids = {int(r["print_id"]) for r in target}
     accepted_by_product: dict[str, list[dict]] = {}
     accepted_by_print: dict[int, list[dict]] = {}
     for row in accepted:
         accepted_by_product.setdefault(str(row["id_product"]), []).append(row)
         accepted_by_print.setdefault(int(row["print_id"]), []).append(row)
 
-    proposal = []
-    existing_same = []
-    errors = []
+    proposal, existing_same, errors = [], [], []
     for cert in target:
-        pid = str(cert["idProduct"])
-        print_id = int(cert["print_id"])
-        product = products[pid]
-        pr = prints[print_id]
+        pid, print_id = str(cert["idProduct"]), int(cert["print_id"])
+        product, pr = products[pid], prints[print_id]
         checks = {
             "region": str(product.get("expansion_external_id") or "") == EXPANSION_ID,
             "metacard": str(product.get("metacard_external_id") or "") == str(cert["idMetacard"]),
@@ -194,11 +185,8 @@ def _build(cur, target: list[dict]) -> dict:
         conflicting_print = [r for r in print_claims if str(r["id_product"]) != pid]
         if conflicting_product or conflicting_print or len(same) > 1:
             errors.append({
-                "idProduct": pid,
-                "print_id": print_id,
-                "accepted_identity_conflict": True,
-                "product_claims": conflicting_product,
-                "print_claims": conflicting_print,
+                "idProduct": pid, "print_id": print_id, "accepted_identity_conflict": True,
+                "product_claims": conflicting_product, "print_claims": conflicting_print,
                 "same_pair_count": len(same),
             })
             continue
@@ -229,60 +217,44 @@ def _build(cur, target: list[dict]) -> dict:
     expected_current = EXPECTED_SINGLETON_BASELINE + len(existing_same)
     if (int(counts["n"]), int(counts["products"]), int(counts["prints"])) != (expected_current, expected_current, expected_current):
         raise RuntimeError({"DUAD_current_accepted_surface_drift": {"expected": expected_current, "actual": counts}})
-
-    methods = Counter(str(r["mapping_method"]) for r in target)
-    if methods != Counter({IMAGE_METHOD: EXPECTED_IMAGE_PAIRS, ORDINAL_METHOD: EXPECTED_ORDINAL_PAIRS}):
-        raise RuntimeError({"target_method_distribution_drift": dict(methods)})
     return {
-        "game_id": game_id,
-        "capture": capture,
-        "proposal": proposal,
-        "existing_same": existing_same,
-        "accepted_before": expected_current,
+        "game_id": game_id, "capture": capture, "proposal": proposal,
+        "existing_same": existing_same, "accepted_before": expected_current,
     }
 
 
 def _evidence(row: dict) -> dict:
     common = {
         "source": "cardmarket+yugioh_canonical_physical_identity",
-        "idExpansion": EXPANSION_ID,
-        "expansion_code": EXPANSION_CODE,
-        "idProduct": str(row["idProduct"]),
-        "idMetacard": str(row["idMetacard"]),
+        "idExpansion": EXPANSION_ID, "expansion_code": EXPANSION_CODE,
+        "idProduct": str(row["idProduct"]), "idMetacard": str(row["idMetacard"]),
         "collector_number": str(row["collector_number"]),
-        "canonical_variant": str(row["canonical_variant"]),
-        "canonical_rarity": str(row["canonical_rarity"]),
+        "canonical_variant": str(row["canonical_variant"]), "canonical_rarity": str(row["canonical_rarity"]),
         "global_one_to_one": True,
     }
     if row["evidence_kind"] == "image":
         return {
             **common,
             "identity_basis": [
-                "certified_DUAD-JP_regional_expansion",
-                "complete_2x2_metacard_physical_surface",
-                "first_party_cardmarket_product_image",
-                "exact_canonical_print_image",
-                "global_minimum_bijection_consensus_pixel_dhash_ahash",
-                "minimum_assignment_gap_at_least_3_percent",
+                "certified_DUAD-JP_regional_expansion", "complete_2x2_metacard_physical_surface",
+                "first_party_cardmarket_product_image", "exact_canonical_print_image",
+                "global_minimum_bijection_consensus_pixel_dhash_ahash", "minimum_assignment_gap_at_least_3_percent",
             ],
             "audit_workflow_run_id": IMAGE_AUDIT_RUN_ID,
             "source_control_workflow_run_id": IMAGE_SOURCE_CONTROL_RUN_ID,
-            "product_image_sha256": str(row["product_image_sha256"]),
-            "canonical_image_sha256": str(row["canonical_image_sha256"]),
+            "certified_pair_manifest_sha256": IMAGE_PAIR_DIGEST,
             "minimum_relative_assignment_gap": float(row["minimum_relative_assignment_gap"]),
         }
     return {
         **common,
         "identity_basis": [
-            "certified_DUAD-JP_regional_expansion",
-            "exact_2x2_metacard_physical_surface",
+            "certified_DUAD-JP_regional_expansion", "exact_2x2_metacard_physical_surface",
             "canonical_images_missing_2_of_2",
             "DUAD_specific_ordinal_contract_validated_by_38_image_certified_groups_76_pairs",
             "zero_ordinal_control_exceptions_across_five_base_rarity_classes_and_two_premium_classes",
         ],
         "audit_workflow_run_id": ORDINAL_AUDIT_RUN_ID,
-        "ordinal": int(row["ordinal"]),
-        "ordinal_role": str(row["ordinal_role"]),
+        "ordinal": int(row["ordinal"]), "ordinal_role": str(row["ordinal_role"]),
     }
 
 
@@ -295,22 +267,14 @@ def run(*, apply: bool, confirm: str = "") -> dict:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             built = _build(cur, target)
             report = {
-                "mode": "apply" if apply else "dry_run",
-                "status": "pass",
-                "production_writes": 0,
-                "game": GAME,
-                "cardmarket_capture": str(built["capture"]),
-                "idExpansion": EXPANSION_ID,
-                "canonical_set": SET_CODE,
-                "language": LANGUAGE,
-                "image_audit_run_id": IMAGE_AUDIT_RUN_ID,
-                "ordinal_audit_run_id": ORDINAL_AUDIT_RUN_ID,
-                "certified_image_pairs": EXPECTED_IMAGE_PAIRS,
-                "certified_ordinal_pairs": EXPECTED_ORDINAL_PAIRS,
-                "target_pairs": EXPECTED_TARGET_PAIRS,
-                "already_accepted_same_pair": len(built["existing_same"]),
-                "new_links_ready": len(built["proposal"]),
-                "accepted_duad_ja_before": built["accepted_before"],
+                "mode": "apply" if apply else "dry_run", "status": "pass", "production_writes": 0,
+                "game": GAME, "cardmarket_capture": str(built["capture"]), "idExpansion": EXPANSION_ID,
+                "canonical_set": SET_CODE, "language": LANGUAGE,
+                "image_audit_run_id": IMAGE_AUDIT_RUN_ID, "ordinal_audit_run_id": ORDINAL_AUDIT_RUN_ID,
+                "image_pair_manifest_sha256": IMAGE_PAIR_DIGEST,
+                "certified_image_pairs": EXPECTED_IMAGE_PAIRS, "certified_ordinal_pairs": EXPECTED_ORDINAL_PAIRS,
+                "target_pairs": EXPECTED_TARGET_PAIRS, "already_accepted_same_pair": len(built["existing_same"]),
+                "new_links_ready": len(built["proposal"]), "accepted_duad_ja_before": built["accepted_before"],
                 "proposal": built["proposal"],
             }
             if not apply:
