@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Calibrated Variants54 V1
 
+# Explicit production retrigger after installing the corrected V2 identity bridge.
 on:
   pull_request:
     paths:
