@@ -1,3 +1,4 @@
+# Production retrigger after workflow installation on catalog-v2.
 name: Apply One Piece JP OP16 Residual V1
 
 on:
@@ -86,7 +87,6 @@ jobs:
       - name: Final OP16-JP full-source proof
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.audit_onepiece_jp_op16_production_proof_v1 || true
           python - <<'PY'
           import json,os,re,psycopg2
           from psycopg2.extras import RealDictCursor
@@ -102,8 +102,8 @@ jobs:
               cur.execute("SELECT count(*) n,count(DISTINCT print_id) p FROM print_images WHERE print_id=ANY(%s) AND is_primary=true AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']))==(154,154),x
               cur.execute("SELECT count(*) n,count(DISTINCT print_id) p,count(DISTINCT external_id) e FROM print_identifiers WHERE print_id=ANY(%s) AND source='onepiece_official_jp'",(ids,)); x=cur.fetchone(); assert (int(x['n']),int(x['p']),int(x['e']))==(154,154,154),x
               cur.execute("SELECT count(*) n FROM search_documents WHERE doc_type='print' AND object_id=ANY(%s)",(ids,)); assert int(cur.fetchone()['n'])==154
-              cur.execute("""SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')""",(ids,)); assert int(cur.fetchone()['n'])==0
-              cur.execute("""SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)""",(ids,)); assert int(cur.fetchone()['n'])==0
+              cur.execute("SELECT count(*) n FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id WHERE e.source='cardmarket' AND l.print_id=ANY(%s) AND l.link_status IN ('accepted','mapped','exact')",(ids,)); assert int(cur.fetchone()['n'])==0
+              cur.execute("SELECT count(*) n FROM price_snapshots ps JOIN price_sources src ON src.id=ps.source_id WHERE src.name='cardmarket' AND ps.entity_type='print' AND ps.entity_id=ANY(%s)",(ids,)); assert int(cur.fetchone()['n'])==0
               out={'status':'pass','OP16_JA':154,'official_images':154,'official_identifiers':154,'search_docs':154,'cardmarket_links':0,'cardmarket_prices':0}
               conn.rollback()
           finally: conn.close()
