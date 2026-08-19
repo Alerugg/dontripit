@@ -1,0 +1,68 @@
+name: Audit Yu-Gi-Oh OCG Structure Deck Variants V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_structure_decks_variants_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-structure-decks-variants-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_STRUCTURE_DECK_VARIANTS_OUTPUT: /tmp/ygo-ocg-structure-deck-variants/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile frozen Structure Deck variant auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_structure_decks_variants_v1.py
+      - name: READ ONLY derive exact 40 multi-version pairs
+        run: |
+          mkdir -p /tmp/ygo-ocg-structure-deck-variants
+          python -m app.scripts.audit_yugioh_ocg_structure_decks_variants_v1
+      - name: Require exact first-party version-contract surface
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-structure-deck-variants/report.json'))
+          expected={'SD41':10,'SD40':16,'SD38':10,'SD36':4}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert len(p['evidence_sha256'])==64,p
+          assert p['candidate_pairs']==40,p
+          assert p['candidate_products']==40,p
+          assert p['candidate_prints']==40,p
+          assert len(p['proposal'])==40,p
+          assert len({x['external_product_id'] for x in p['proposal']})==40,p
+          assert len({x['print_id'] for x in p['proposal']})==40,p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['variant_pairs'] for k in rows}==expected,p
+          assert {k:rows[k]['singleton_links_expected'] for k in rows}=={'SD41':43,'SD40':38,'SD38':43,'SD36':44},p
+          assert sum(r['variant_groups'] for r in rows.values())==20,p
+          assert all(len(g['pairs'])==2 for r in rows.values() for g in r['groups']),p
+          print(json.dumps({'evidence_sha256':p['evidence_sha256'],'pairs':40,'per_set':expected,'groups':20},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-structure-deck-variants-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-structure-deck-variants/report.json
+          retention-days: 90
+          if-no-files-found: error
