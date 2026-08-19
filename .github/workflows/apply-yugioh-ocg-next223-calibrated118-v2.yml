@@ -1,0 +1,114 @@
+name: Apply Yu-Gi-Oh OCG Next223 Calibrated118 V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_next223_calibrated118_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-next223-calibrated118-v2.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/apply_yugioh_ocg_next223_calibrated118_v2.py'
+      - '.github/workflows/apply-yugioh-ocg-next223-calibrated118-v2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yugioh-ocg-next223-calibrated118-v2
+  cancel-in-progress: false
+
+jobs:
+  exact-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && 'catalog-v2' || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile guarded calibrated writer and exact-idProduct projector
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_next223_calibrated118_v2.py
+          python -m py_compile scripts/project_cardmarket_link_prices.py
+      - name: READ ONLY rebuild exact stable 118-link calibrated proposal
+        run: |
+          mkdir -p /tmp/ygo-ocg-next223-calibrated118
+          python -m app.scripts.apply_yugioh_ocg_next223_calibrated118_v2 --report /tmp/ygo-ocg-next223-calibrated118/proposal.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-next223-calibrated118/proposal.json'))
+          expected={'SD45':10,'DBDS':6,'DBGC':6,'DBHS':6,'DBIC':6,'DBMF':6,'DBSS':6,'21PP':16,'22PP':16,'PP19':40}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['stable_identity_sha256']=='75b1645c668e1eec2bd79f58e23636d8cddb463ea59093bf34789700ae19d823',p
+          assert p['certified_pairs']==118,p
+          assert (p['already_accepted_same_pair'],p['new_links_ready']) in ((0,118),(118,0)),p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['pairs'] for k in rows}==expected,p
+          print(json.dumps({'dry_run':'pass','existing':p['already_accepted_same_pair'],'new':p['new_links_ready'],'sets':expected},indent=2))
+          PY
+      - name: Atomically apply 118 calibrated variant links
+        if: github.event_name == 'push'
+        run: python -m app.scripts.apply_yugioh_ocg_next223_calibrated118_v2 --apply --confirm APPLY_YUGIOH_OCG_NEXT223_CALIBRATED118_V2 --report /tmp/ygo-ocg-next223-calibrated118/applied.json
+      - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
+        if: github.event_name == 'push'
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-next223-calibrated118/projection.json
+      - name: Prove writer idempotency
+        if: github.event_name == 'push'
+        run: |
+          python -m app.scripts.apply_yugioh_ocg_next223_calibrated118_v2 --apply --confirm APPLY_YUGIOH_OCG_NEXT223_CALIBRATED118_V2 --report /tmp/ygo-ocg-next223-calibrated118/idempotency.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-next223-calibrated118/idempotency.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['already_accepted_same_pair']==118,p
+          assert p['new_links_ready']==0,p
+          assert p['stable_identity_sha256']=='75b1645c668e1eec2bd79f58e23636d8cddb463ea59093bf34789700ae19d823',p
+          print(json.dumps({'idempotency':'pass','exact_links':118},indent=2))
+          PY
+      - name: Final exact calibrated method proof
+        if: github.event_name == 'push'
+        run: |
+          python - <<'PY'
+          import json,os,psycopg2
+          from psycopg2.extras import RealDictCursor
+          method='cardmarket_ocg_certified_independent_ordinal_rarity_next223_v2'
+          expected={'SD45':10,'DBDS':6,'DBGC':6,'DBHS':6,'DBIC':6,'DBMF':6,'DBSS':6,'21PP':16,'22PP':16,'PP19':40}
+          conn=psycopg2.connect(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'],connect_timeout=30,application_name='dontripit_ygo_ocg_next223_calibrated118_final_v2'); conn.set_session(readonly=True,autocommit=False)
+          total=0; out={}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("SELECT id FROM games WHERE slug='yugioh' LIMIT 1"); gid=int(cur.fetchone()['id'])
+              for code,n in expected.items():
+                cur.execute("""SELECT count(*) n,count(DISTINCT l.external_product_id) products,count(DISTINCT l.print_id) prints FROM external_catalog_print_links l JOIN external_catalog_products e ON e.id=l.external_product_id JOIN prints p ON p.id=l.print_id JOIN sets s ON s.id=p.set_id WHERE e.source='cardmarket' AND e.game_id=%s AND e.product_group='single' AND l.link_status IN ('accepted','mapped','exact') AND l.mapping_method=%s AND upper(coalesce(s.code,''))=%s AND lower(coalesce(p.language,''))='ja'""",(gid,method,code)); r=cur.fetchone(); vals=(int(r['n']),int(r['products']),int(r['prints']))
+                assert vals==(n,n,n),(code,vals,n)
+                total+=n; out[code]=n
+              assert total==118,total
+              conn.rollback()
+          finally: conn.close()
+          open('/tmp/ygo-ocg-next223-calibrated118/final.json','w').write(json.dumps({'mapping_method':method,'total':total,'sets':out},indent=2)+'\n')
+          print(json.dumps({'mapping_method':method,'total':total,'sets':out},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-next223-calibrated118-v2-${{ github.run_id }}
+          path: /tmp/ygo-ocg-next223-calibrated118/*.json
+          retention-days: 90
+          if-no-files-found: warn
