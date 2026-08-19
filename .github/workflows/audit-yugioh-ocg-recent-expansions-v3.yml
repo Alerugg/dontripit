@@ -1,0 +1,54 @@
+name: Audit Yu-Gi-Oh OCG Recent Expansions V3
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_recent_expansions_v3.py'
+      - '.github/workflows/audit-yugioh-ocg-recent-expansions-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile OCG certifier V3
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_recent_expansions_v3.py
+      - name: READ ONLY certify OCG expansion identities V3
+        run: python -m app.scripts.audit_yugioh_ocg_recent_expansions_v3
+      - name: Require four first-party certified identities
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/yugioh-ocg-recent-expansions-v3.json'))
+          expected={'DABL':'5107','DIFO':'4519','BACH':'4524','BODE':'4528'}
+          assert p['production_writes']==0,p
+          assert p['conflicts']==0,p
+          got={r['set_code']:r['certified_idExpansion'] for r in p['results']}
+          assert got==expected,(got,expected,p)
+          assert p['certified']==4,p
+          assert p['inconclusive']==0,p
+          print(json.dumps(got,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-recent-expansions-v3-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-recent-expansions-v3.json
+          retention-days: 90
+          if-no-files-found: error
