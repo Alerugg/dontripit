@@ -93,3 +93,75 @@ jobs:
           path: /tmp/duad-image-bijection/${{ matrix.key }}.json
           retention-days: 90
           if-no-files-found: error
+
+  aggregate:
+    needs: image-match
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download all group reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: yugioh-duad-jp-image-*-${{ github.run_id }}
+          path: /tmp/duad-image-reports
+          merge-multiple: true
+      - name: Build complete DUAD image certificate
+        run: |
+          python - <<'PY'
+          import glob, json
+          from pathlib import Path
+
+          files=sorted(glob.glob('/tmp/duad-image-reports/*.json'))
+          reports=[json.load(open(path,encoding='utf-8')) for path in files]
+          strong=[]; weak=[]; disagree=[]; incomplete=[]
+          for r in reports:
+              item={
+                  'card_name': r.get('card_name'),
+                  'idMetacard': r.get('idMetacard'),
+                  'minimum_relative_assignment_gap': r.get('minimum_relative_assignment_gap'),
+                  'assignment_consensus': bool(r.get('assignment_consensus')),
+                  'complete_surface': bool(r.get('complete_surface')),
+                  'image_bijection_candidate': bool(r.get('image_bijection_candidate')),
+                  'pairs': r.get('consensus_pairs') or [],
+              }
+              if not item['complete_surface']:
+                  incomplete.append(item)
+              elif item['image_bijection_candidate']:
+                  strong.append(item)
+              elif item['assignment_consensus']:
+                  weak.append(item)
+              else:
+                  disagree.append(item)
+          strong_pairs=[pair for group in strong for pair in group['pairs']]
+          payload={
+              'status': 'pass' if len(reports)==39 else 'incomplete',
+              'production_writes': 0,
+              'expected_groups': 39,
+              'reports_found': len(reports),
+              'expected_multiversion_products': 78,
+              'strong_groups': len(strong),
+              'strong_pairs': len(strong_pairs),
+              'consensus_below_threshold_groups': len(weak),
+              'metric_disagreement_groups': len(disagree),
+              'incomplete_groups': len(incomplete),
+              'strong': strong,
+              'consensus_below_threshold': weak,
+              'metric_disagreement': disagree,
+              'incomplete': incomplete,
+              'certified_pairs': strong_pairs,
+          }
+          Path('/tmp/duad-image-summary').mkdir(parents=True,exist_ok=True)
+          out=Path('/tmp/duad-image-summary/summary.json')
+          out.write_text(json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(out.read_text(encoding='utf-8'))
+          if len(reports) != 39:
+              raise SystemExit(f'expected 39 image reports, found {len(reports)}')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-duad-jp-image-summary-${{ github.run_id }}
+          path: /tmp/duad-image-summary/summary.json
+          retention-days: 90
+          if-no-files-found: error
