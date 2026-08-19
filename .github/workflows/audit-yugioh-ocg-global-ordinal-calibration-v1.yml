@@ -1,0 +1,69 @@
+name: Audit Yu-Gi-Oh OCG Global Ordinal Calibration V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_global_ordinal_calibration_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-global-ordinal-calibration-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_GLOBAL_ORDINAL_OUTPUT: /tmp/ygo-ocg-global-ordinal/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile global ordinal calibration auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_global_ordinal_calibration_v1.py
+      - name: READ ONLY derive global exact-reviewed ordinal controls
+        run: |
+          mkdir -p /tmp/ygo-ocg-global-ordinal
+          python -m app.scripts.audit_yugioh_ocg_global_ordinal_calibration_v1
+      - name: Require target and candidate safety invariants
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-global-ordinal/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['minimum_independent_controls']==5,p
+          assert p['complete_control_groups']>0,p
+          assert p['candidate_pairs']==p['candidate_products']==p['candidate_prints'],p
+          expected={'DOCS':(108,108,69,39),'LTGY':(86,86,75,11),'CSOC':(87,87,74,13)}
+          rows={r['set_code']:r for r in p['targets']}
+          assert set(rows)==set(expected),p
+          for code,(products,prints,accepted,residual) in expected.items():
+              r=rows[code]
+              assert (r['products'],r['prints'],r['accepted'],r['residual'])==(products,prints,accepted,residual),r
+          print(json.dumps({
+            'complete_controls':p['complete_control_groups'],
+            'calibration_buckets':len(p['calibration_buckets']),
+            'candidate_pairs':p['candidate_pairs'],
+            'per_set':{k:{'residual':rows[k]['residual'],'candidates':rows[k]['candidate_pairs']} for k in rows},
+            'blocked_groups':len(p['blocked_groups']),
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-global-ordinal-calibration-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-global-ordinal/report.json
+          retention-days: 90
+          if-no-files-found: error
