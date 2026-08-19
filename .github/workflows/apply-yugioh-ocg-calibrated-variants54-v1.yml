@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py'
       - '.github/workflows/apply-yugioh-ocg-calibrated-variants54-v1.yml'
   push:
     branches: [catalog-v2]
     paths:
       - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v1.py'
+      - 'backend/app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py'
       - '.github/workflows/apply-yugioh-ocg-calibrated-variants54-v1.yml'
 
 permissions:
@@ -39,14 +41,14 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile guarded calibrated-variant writer and price projector
+      - name: Compile corrected calibrated-variant writer and price projector
         run: |
-          python -m py_compile app/scripts/apply_yugioh_ocg_calibrated_variants54_v1.py
+          python -m py_compile app/scripts/apply_yugioh_ocg_calibrated_variants54_v2.py
           python -m py_compile scripts/project_cardmarket_link_prices.py
       - name: READ ONLY rebuild exact stable 54-link calibrated variant proposal
         run: |
           mkdir -p /tmp/ygo-ocg-calibrated-variants54
-          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v1 --report /tmp/ygo-ocg-calibrated-variants54/proposal.json
+          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --report /tmp/ygo-ocg-calibrated-variants54/proposal.json
           python - <<'PY'
           import json
           p=json.load(open('/tmp/ygo-ocg-calibrated-variants54/proposal.json'))
@@ -65,14 +67,14 @@ jobs:
           PY
       - name: Atomically apply 54 calibrated exact variant links
         if: github.event_name == 'push'
-        run: python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v1 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/applied.json
+        run: python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/applied.json
       - name: Project Yu-Gi-Oh Cardmarket prices from exact linked idProducts
         if: github.event_name == 'push'
         run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-ocg-calibrated-variants54/projection.json
       - name: Prove writer idempotency
         if: github.event_name == 'push'
         run: |
-          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v1 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/idempotency.json
+          python -m app.scripts.apply_yugioh_ocg_calibrated_variants54_v2 --apply --confirm APPLY_YUGIOH_OCG_CALIBRATED_VARIANTS54_V1 --report /tmp/ygo-ocg-calibrated-variants54/idempotency.json
           python - <<'PY'
           import json
           p=json.load(open('/tmp/ygo-ocg-calibrated-variants54/idempotency.json'))
