@@ -1,0 +1,76 @@
+name: Audit Yu-Gi-Oh OCG Partial Residual Geometry V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_partial_residual_geometry_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-partial-residual-geometry-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_PARTIAL_RESIDUAL_GEOMETRY_OUTPUT: /tmp/ygo-ocg-partial-residual-geometry/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile geometry diagnostic
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_partial_residual_geometry_v1.py
+      - name: READ ONLY inspect product/print/claim geometry for 11 established partial sets
+        run: |
+          mkdir -p /tmp/ygo-ocg-partial-residual-geometry
+          python -m app.scripts.audit_yugioh_ocg_partial_residual_geometry_v1
+      - name: Require diagnostic safety invariants only
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-partial-residual-geometry/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['screened_sets']==11,p
+          assert len(p['sets'])==11,p
+          assert p['deterministic_complement_pairs']==p['deterministic_unique_products']==p['deterministic_unique_prints'],p
+          assert p['deterministic_all_metacard_evidence'],p
+          print(json.dumps({
+            'screened_sets':11,
+            'deterministic_complement_pairs':p['deterministic_complement_pairs'],
+            'sets':[{
+              'set_code':r['set_code'],
+              'products':r['products'],
+              'prints':r['canonical_ja_prints'],
+              'product_hist':r['product_group_size_histogram'],
+              'print_hist':r['canonical_group_size_histogram'],
+              'existing_target':r['existing_target_product_claims'],
+              'foreign_product_claims':r['existing_foreign_product_claims'],
+              'foreign_print_claims':r['existing_foreign_print_claims'],
+              'deterministic_1x1':r['deterministic_complement_pairs'],
+              'ambiguous_groups':r['ambiguous_residual_groups'],
+              'ambiguous_products':r['ambiguous_residual_products'],
+              'unbalanced_groups':r['groups_unclaimed_differs'],
+            } for r in p['sets']]
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-partial-residual-geometry-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-partial-residual-geometry/report.json
+          retention-days: 90
+          if-no-files-found: error
