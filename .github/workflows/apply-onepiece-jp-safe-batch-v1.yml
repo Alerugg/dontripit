@@ -130,3 +130,5 @@ jobs:
           path: /tmp/opjp-safe-batch/*.json
           retention-days: 90
           if-no-files-found: warn
+
+# Controlled retrigger after first installation on catalog-v2: OP01-05 remains fully guarded and idempotent.
