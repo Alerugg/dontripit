@@ -72,10 +72,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Install audit-only image dependency
-        run: pip install 'Pillow>=10,<13'
-      - name: Compile generic OCG image certifier
-        run: python -m py_compile app/scripts/audit_yugioh_ocg_residual_image_bijection_v1.py
+      - run: pip install 'Pillow>=10,<13'
+      - run: python -m py_compile app/scripts/audit_yugioh_ocg_residual_image_bijection_v1.py
       - name: Certify one complete residual DUAD-JP 2x2 physical group
         run: |
           mkdir -p /tmp/duad-image-bijection
@@ -93,21 +91,7 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  image-match-explicit-name-anomaly:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - key: guilt-gripping-morganite
-            product1: '823777'
-            product2: '823778'
-            print1: '681323'
-            print2: '684247'
-          - key: wake-cup-mocha
-            product1: '823713'
-            product2: '823714'
-            print1: '674606'
-            print2: '697205'
+  image-match-guilt-name-anomaly:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -126,91 +110,123 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
       - run: pip install 'Pillow>=10,<13'
-      - name: Compile explicit-ID OCG image certifier
-        run: python -m py_compile app/scripts/audit_yugioh_ocg_explicit_image_bijection_v1.py
-      - name: Certify one punctuation/Unicode-normalization anomaly without using text to assign rarity
+      - run: python -m py_compile app/scripts/audit_yugioh_ocg_explicit_image_bijection_v1.py
+      - name: Certify Guilt-Gripping Morganite by exact IDs and physical images
         run: |
           mkdir -p /tmp/duad-image-bijection
           python -m app.scripts.audit_yugioh_ocg_explicit_image_bijection_v1 \
             --id-expansion 6129 \
             --expansion-code DUAD-JP \
             --set-code DUAD \
-            --id-product "${{ matrix.product1 }}" \
-            --id-product "${{ matrix.product2 }}" \
-            --print-id "${{ matrix.print1 }}" \
-            --print-id "${{ matrix.print2 }}" \
-            --report "/tmp/duad-image-bijection/${{ matrix.key }}.json"
+            --id-product 823777 --id-product 823778 \
+            --print-id 681323 --print-id 684247 \
+            --report /tmp/duad-image-bijection/guilt-gripping-morganite.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: yugioh-duad-jp-image-${{ matrix.key }}-${{ github.run_id }}
-          path: /tmp/duad-image-bijection/${{ matrix.key }}.json
+          name: yugioh-duad-jp-image-guilt-gripping-morganite-${{ github.run_id }}
+          path: /tmp/duad-image-bijection/guilt-gripping-morganite.json
           retention-days: 90
           if-no-files-found: error
 
+  wake-image-absence-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Prove WAKE CUP! Mocha has 2 exact JA prints and 0 physical images
+        run: |
+          mkdir -p /tmp/duad-image-bijection
+          python - <<'PY'
+          import json, os, psycopg2
+          from psycopg2.extras import RealDictCursor
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
+          conn=psycopg2.connect(url)
+          conn.set_session(readonly=True,autocommit=False)
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute("""SELECT p.id print_id,p.card_id,p.collector_number,p.rarity,p.variant,p.language,c.name card_name,s.code set_code,
+                count(pi.id) image_count
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_images pi ON pi.print_id=p.id
+                WHERE p.id=ANY(%s)
+                GROUP BY p.id,p.card_id,p.collector_number,p.rarity,p.variant,p.language,c.name,s.code
+                ORDER BY p.id""",([674606,697205],))
+              prints=[dict(r) for r in cur.fetchall()]
+              cur.execute("""SELECT e.external_id id_product,e.name,e.metacard_external_id,e.expansion_external_id
+                FROM external_catalog_products e
+                WHERE e.source='cardmarket' AND e.external_id=ANY(%s)
+                  AND e.last_seen_at=(SELECT max(last_seen_at) FROM external_catalog_products WHERE source='cardmarket')
+                ORDER BY e.external_id::bigint""",(['823713','823714'],))
+              products=[dict(r) for r in cur.fetchall()]
+              conn.rollback()
+          finally: conn.close()
+          assert len(prints)==2 and {int(r['print_id']) for r in prints}=={674606,697205}, prints
+          assert {str(r['language']).lower() for r in prints}=={'ja'}, prints
+          assert {str(r['set_code']).upper() for r in prints}=={'DUAD'}, prints
+          assert {int(r['image_count']) for r in prints}=={0}, prints
+          assert len(products)==2 and {str(r['id_product']) for r in products}=={'823713','823714'}, products
+          assert {str(r['metacard_external_id']) for r in products}=={'448572'}, products
+          payload={
+            'status':'pass','production_writes':0,'card_name':'WAKE CUP! Mocha','idMetacard':'448572',
+            'complete_surface':False,'assignment_consensus':False,'image_bijection_candidate':False,
+            'minimum_relative_assignment_gap':None,'blocked_reason':'canonical_physical_images_missing_2_of_2',
+            'products':products,'prints':prints,'consensus_pairs':[]
+          }
+          open('/tmp/duad-image-bijection/wake-cup-mocha.json','w').write(json.dumps(payload,ensure_ascii=False,indent=2,default=str)+'\n')
+          print(json.dumps(payload,ensure_ascii=False,indent=2,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yugioh-duad-jp-image-wake-cup-mocha-${{ github.run_id }}
+          path: /tmp/duad-image-bijection/wake-cup-mocha.json
+          retention-days: 90
+
   aggregate:
-    needs: [image-match, image-match-explicit-name-anomaly]
+    needs: [image-match, image-match-guilt-name-anomaly, wake-image-absence-proof]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download all group reports
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: yugioh-duad-jp-image-*-${{ github.run_id }}
           path: /tmp/duad-image-reports
           merge-multiple: true
-      - name: Build complete DUAD image certificate
+      - name: Build complete 39-group DUAD image certificate
         run: |
           python - <<'PY'
-          import glob, json
+          import glob,json
           from pathlib import Path
-
           files=sorted(glob.glob('/tmp/duad-image-reports/*.json'))
-          reports=[json.load(open(path,encoding='utf-8')) for path in files]
+          reports=[json.load(open(x,encoding='utf-8')) for x in files]
           strong=[]; weak=[]; disagree=[]; incomplete=[]
           for r in reports:
-              item={
-                  'card_name': r.get('card_name'),
-                  'idMetacard': r.get('idMetacard'),
-                  'minimum_relative_assignment_gap': r.get('minimum_relative_assignment_gap'),
-                  'assignment_consensus': bool(r.get('assignment_consensus')),
-                  'complete_surface': bool(r.get('complete_surface')),
-                  'image_bijection_candidate': bool(r.get('image_bijection_candidate')),
-                  'pairs': r.get('consensus_pairs') or [],
-              }
-              if not item['complete_surface']:
-                  incomplete.append(item)
-              elif item['image_bijection_candidate']:
-                  strong.append(item)
-              elif item['assignment_consensus']:
-                  weak.append(item)
-              else:
-                  disagree.append(item)
-          strong_pairs=[pair for group in strong for pair in group['pairs']]
-          payload={
-              'status': 'pass' if len(reports)==39 else 'incomplete',
-              'production_writes': 0,
-              'expected_groups': 39,
-              'reports_found': len(reports),
-              'expected_multiversion_products': 78,
-              'strong_groups': len(strong),
-              'strong_pairs': len(strong_pairs),
-              'consensus_below_threshold_groups': len(weak),
-              'metric_disagreement_groups': len(disagree),
-              'incomplete_groups': len(incomplete),
-              'strong': strong,
-              'consensus_below_threshold': weak,
-              'metric_disagreement': disagree,
-              'incomplete': incomplete,
-              'certified_pairs': strong_pairs,
-          }
+            item={'card_name':r.get('card_name'),'idMetacard':r.get('idMetacard'),'minimum_relative_assignment_gap':r.get('minimum_relative_assignment_gap'),'assignment_consensus':bool(r.get('assignment_consensus')),'complete_surface':bool(r.get('complete_surface')),'image_bijection_candidate':bool(r.get('image_bijection_candidate')),'blocked_reason':r.get('blocked_reason'),'pairs':r.get('consensus_pairs') or []}
+            if not item['complete_surface']: incomplete.append(item)
+            elif item['image_bijection_candidate']: strong.append(item)
+            elif item['assignment_consensus']: weak.append(item)
+            else: disagree.append(item)
+          strong_pairs=[x for g in strong for x in g['pairs']]
+          payload={'status':'pass' if len(reports)==39 and len(strong)==38 and len(incomplete)==1 else 'fail','production_writes':0,'expected_groups':39,'reports_found':len(reports),'strong_groups':len(strong),'strong_pairs':len(strong_pairs),'consensus_below_threshold_groups':len(weak),'metric_disagreement_groups':len(disagree),'incomplete_groups':len(incomplete),'strong':strong,'consensus_below_threshold':weak,'metric_disagreement':disagree,'incomplete':incomplete,'certified_pairs':strong_pairs}
           Path('/tmp/duad-image-summary').mkdir(parents=True,exist_ok=True)
-          out=Path('/tmp/duad-image-summary/summary.json')
-          out.write_text(json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
-          print(out.read_text(encoding='utf-8'))
-          if len(reports) != 39:
-              raise SystemExit(f'expected 39 image reports, found {len(reports)}')
+          out=Path('/tmp/duad-image-summary/summary.json'); out.write_text(json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8'); print(out.read_text())
+          assert payload['status']=='pass', payload
+          assert len(strong_pairs)==76, payload
+          assert incomplete[0]['card_name']=='WAKE CUP! Mocha', incomplete
           PY
       - uses: actions/upload-artifact@v4
         if: always()
