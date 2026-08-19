@@ -29,8 +29,8 @@ EVIDENCE = {
             },
         ],
         "contracts": {
-            "secret|ultra|ultimate": ["ultra", "secret", "ultimate"],
-            "ghost|secret|ultra|ultimate": ["ultra", "secret", "ultimate", "ghost"],
+            "secret|ultimate|ultra": ["ultra", "secret", "ultimate"],
+            "ghost|secret|ultimate|ultra": ["ultra", "secret", "ultimate", "ghost"],
         },
         "excluded_geometries": ["secret|super"],
     },
@@ -59,8 +59,8 @@ EVIDENCE = {
             },
         ],
         "contracts": {
-            "ultra|ultimate": ["ultra", "ultimate"],
-            "ghost|ultra|ultimate": ["ultra", "ultimate", "ghost"],
+            "ultimate|ultra": ["ultra", "ultimate"],
+            "ghost|ultimate|ultra": ["ultra", "ultimate", "ghost"],
         },
         "excluded_geometries": [],
     },
@@ -85,8 +85,8 @@ EVIDENCE = {
             },
         ],
         "contracts": {
-            "ultra|ultimate": ["ultra", "ultimate"],
-            "ghost|ultra|ultimate": ["ultra", "ultimate", "ghost"],
+            "ultimate|ultra": ["ultra", "ultimate"],
+            "ghost|ultimate|ultra": ["ultra", "ultimate", "ghost"],
         },
         "excluded_geometries": ["common|commonparallel"],
     },
