@@ -48,7 +48,6 @@ jobs:
           - {key: psychic-blaster-mk-ii, card: 'Psychic Blaster Mk-II'}
           - {key: gagagaga-girl, card: 'Gagagaga Girl'}
           - {key: secreterion-dragon, card: 'Secreterion Dragon'}
-          - {key: wake-cup-mocha, card: 'WAKE CUP! Mocha'}
           - {key: super-quantum-black-layer, card: 'Super Quantum Black Layer'}
           - {key: vanquish-soul-hollie-sue, card: 'Vanquish Soul Hollie Sue'}
           - {key: dark-flare-swordsman, card: 'Dark Flare Swordsman'}
@@ -95,6 +94,20 @@ jobs:
           if-no-files-found: error
 
   image-match-explicit-name-anomaly:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: guilt-gripping-morganite
+            product1: '823777'
+            product2: '823778'
+            print1: '681323'
+            print2: '684247'
+          - key: wake-cup-mocha
+            product1: '823713'
+            product2: '823714'
+            print1: '674606'
+            print2: '697205'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -115,23 +128,23 @@ jobs:
       - run: pip install 'Pillow>=10,<13'
       - name: Compile explicit-ID OCG image certifier
         run: python -m py_compile app/scripts/audit_yugioh_ocg_explicit_image_bijection_v1.py
-      - name: Certify Guilt-Gripping Morganite without using punctuation to assign rarity
+      - name: Certify one punctuation/Unicode-normalization anomaly without using text to assign rarity
         run: |
           mkdir -p /tmp/duad-image-bijection
           python -m app.scripts.audit_yugioh_ocg_explicit_image_bijection_v1 \
             --id-expansion 6129 \
             --expansion-code DUAD-JP \
             --set-code DUAD \
-            --id-product 823777 \
-            --id-product 823778 \
-            --print-id 681323 \
-            --print-id 684247 \
-            --report /tmp/duad-image-bijection/guilt-gripping-morganite.json
+            --id-product "${{ matrix.product1 }}" \
+            --id-product "${{ matrix.product2 }}" \
+            --print-id "${{ matrix.print1 }}" \
+            --print-id "${{ matrix.print2 }}" \
+            --report "/tmp/duad-image-bijection/${{ matrix.key }}.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: yugioh-duad-jp-image-guilt-gripping-morganite-${{ github.run_id }}
-          path: /tmp/duad-image-bijection/guilt-gripping-morganite.json
+          name: yugioh-duad-jp-image-${{ matrix.key }}-${{ github.run_id }}
+          path: /tmp/duad-image-bijection/${{ matrix.key }}.json
           retention-days: 90
           if-no-files-found: error
 
