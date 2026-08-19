@@ -1,6 +1,6 @@
 name: Audit Yu-Gi-Oh OCG Production Coverage V2
 
-# Fresh checkpoint after the certified next-cohort 223 singleton + 118 calibrated-variant rollouts.
+# Fresh checkpoint after the independently certified 205-link BE01 rollout.
 on:
   pull_request:
     paths:
