@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Near Exact Singleton302 V1
 
+# Explicit production retrigger after installing the guarded 302-link writer.
 on:
   pull_request:
     branches: [catalog-v2]
