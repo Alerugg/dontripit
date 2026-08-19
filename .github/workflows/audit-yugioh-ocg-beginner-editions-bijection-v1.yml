@@ -1,0 +1,67 @@
+name: Audit Yu-Gi-Oh OCG Beginner Editions Bijection V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_beginner_editions_bijection_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-beginner-editions-bijection-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_BEGINNER_EDITIONS_BIJECTION_OUTPUT: /tmp/ygo-ocg-beginner-editions-bijection/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile full-bijection auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_beginner_editions_bijection_v1.py
+      - name: READ ONLY certify BE2 and BE02 complete logical and physical bijections
+        run: |
+          mkdir -p /tmp/ygo-ocg-beginner-editions-bijection
+          python -m app.scripts.audit_yugioh_ocg_beginner_editions_bijection_v1
+      - name: Require exact 460-pair untouched surface
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-beginner-editions-bijection/report.json'))
+          expected={'BE2':250,'BE02':210}
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['certified_pairs']==460,p
+          assert len(p['proposal'])==460,p
+          assert len({x['external_product_id'] for x in p['proposal']})==460,p
+          assert len({x['idProduct'] for x in p['proposal']})==460,p
+          assert len({x['print_id'] for x in p['proposal']})==460,p
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['pairs'] for k in rows}==expected,p
+          assert all(rows[k]['canonical_logical_cards']==expected[k] for k in expected),p
+          assert all(rows[k]['resolved_unique_logical_cards']==expected[k] for k in expected),p
+          assert all(rows[k]['existing_same']==0 and rows[k]['new_ready']==expected[k] for k in expected),p
+          assert all(x['metacard_evidence_links']>0 for x in p['proposal']),p
+          print(json.dumps({'pairs':460,'sets':expected,'contract_sha256':p['contract_sha256']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-beginner-editions-bijection-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-beginner-editions-bijection/report.json
+          retention-days: 90
+          if-no-files-found: error
