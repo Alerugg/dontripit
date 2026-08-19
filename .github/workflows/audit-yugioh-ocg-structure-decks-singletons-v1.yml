@@ -1,0 +1,68 @@
+name: Audit Yu-Gi-Oh OCG Structure Decks Singletons V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_structure_decks_singletons_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-structure-decks-singletons-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_STRUCTURE_DECKS_SINGLETONS_OUTPUT: /tmp/ygo-ocg-structure-decks-singletons/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile deterministic Structure Deck singleton auditor
+        run: python -m py_compile app/scripts/audit_yugioh_ocg_structure_decks_singletons_v1.py
+      - name: READ ONLY partition certified Structure Deck physical surfaces
+        run: |
+          mkdir -p /tmp/ygo-ocg-structure-decks-singletons
+          python -m app.scripts.audit_yugioh_ocg_structure_decks_singletons_v1
+      - name: Require exact safe partition and one-to-one singleton proposal
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-structure-decks-singletons/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['ja_baseline']==36426,p
+          assert p['identity_evidence_sha256']=='07442825adbebf570c237eb793b38a2f12072b930b2f7e8c7c9ebdd3bc3c15c7',p
+          assert p['singleton_pairs']==p['singleton_products']==p['singleton_prints'],p
+          assert p['singleton_pairs']>0,p
+          assert p['singleton_pairs']+p['variant_products']==208,p
+          assert len(p['proposal'])==p['singleton_pairs'],p
+          assert len({x['external_product_id'] for x in p['proposal']})==p['singleton_pairs'],p
+          assert len({x['print_id'] for x in p['proposal']})==p['singleton_pairs'],p
+          assert all(x['metacard_evidence_links']>0 for x in p['proposal']),p
+          expected={'SD41':53,'SD40':54,'SD38':53,'SD36':48}
+          rows={r['set_code']:r for r in p['sets']}
+          assert {k:rows[k]['physical'] for k in rows}==expected,p
+          assert all(rows[k]['singleton_pairs']+rows[k]['variant_products']==expected[k] for k in expected),p
+          assert p['variant_groups']==len(p['variant_residuals']),p
+          print(json.dumps({'singleton_pairs':p['singleton_pairs'],'variant_groups':p['variant_groups'],'variant_products':p['variant_products'],'per_set':{k:{'singletons':rows[k]['singleton_pairs'],'variant_products':rows[k]['variant_products']} for k in rows}},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-structure-decks-singletons-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-structure-decks-singletons/report.json
+          retention-days: 90
+          if-no-files-found: error
