@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Full Bijection Cohort V1
 
+# Explicit production retrigger after the initial workflow-introduction merge.
 on:
   pull_request:
     paths:
