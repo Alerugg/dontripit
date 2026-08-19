@@ -1,0 +1,58 @@
+name: Audit Yu-Gi-Oh OCG Next223 Calibrated118 Production V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_next223_calibrated118_production_v2.py'
+      - '.github/workflows/audit-yugioh-ocg-next223-calibrated118-production-v2.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_NEXT223_CALIBRATED118_PROOF_OUTPUT: /tmp/ygo-next223-calibrated118-proof/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent production proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_next223_calibrated118_v2.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_next223_calibrated118_production_v2.py
+      - name: READ ONLY certify 118 exact identities and prices
+        run: |
+          mkdir -p /tmp/ygo-next223-calibrated118-proof
+          python -m app.scripts.audit_yugioh_ocg_next223_calibrated118_production_v2
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-next223-calibrated118-proof/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['accepted_links']==118,p
+          assert p['unique_products']==118 and p['unique_prints']==118,p
+          assert p['stable_identity_sha256']=='75b1645c668e1eec2bd79f58e23636d8cddb463ea59093bf34789700ae19d823',p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          print(json.dumps({'status':'pass','links':118,'priceable':p['pricing']['externally_priceable_links'],'exact_prices':p['pricing']['canonical_current_exact_idProduct_prices'],'external_unpriced':p['pricing']['missing_external_current_price']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-next223-calibrated118-production-v2-${{ github.run_id }}
+          path: /tmp/ygo-next223-calibrated118-proof/*.json
+          retention-days: 90
+          if-no-files-found: warn
