@@ -1,6 +1,6 @@
 name: Audit Yu-Gi-Oh OCG Production Coverage V2
 
-# Fresh checkpoint after the certified 715-link full-bijection cohort.
+# Fresh checkpoint after the certified 445-link singleton-heavy cohort.
 on:
   pull_request:
     paths:
