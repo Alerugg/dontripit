@@ -1,0 +1,58 @@
+name: Audit Yu-Gi-Oh OCG Next Singleton Heavy223 Production V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_next_singleton_heavy223_production_v2.py'
+      - '.github/workflows/audit-yugioh-ocg-next-singleton-heavy223-production-v2.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_NEXT_SINGLETON_HEAVY223_PROOF_OUTPUT: /tmp/ygo-ocg-next-singleton-heavy223-proof-v2/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_next_singleton_heavy_cohort223_v2.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_next_singleton_heavy223_production_v2.py
+      - name: READ ONLY prove complete idempotent 223 state and exact prices
+        run: |
+          mkdir -p /tmp/ygo-ocg-next-singleton-heavy223-proof-v2
+          python -m app.scripts.audit_yugioh_ocg_next_singleton_heavy223_production_v2
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-next-singleton-heavy223-proof-v2/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['accepted_links']==223,p
+          assert p['unique_products']==223 and p['unique_prints']==223,p
+          assert p['stable_identity_sha256']=='059fb9ad22dc29c20ef16cbc67bc30b2ca7bc4be7e0a6b9c7798ecdc24387a60',p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          print(json.dumps({'status':'pass','accepted_links':223,'priceable':p['pricing']['externally_priceable_links'],'exact_prices':p['pricing']['canonical_current_exact_idProduct_prices'],'external_unpriced':p['pricing']['missing_external_current_price']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-next-singleton-heavy223-production-v2-${{ github.run_id }}
+          path: /tmp/ygo-ocg-next-singleton-heavy223-proof-v2/*.json
+          retention-days: 90
+          if-no-files-found: warn
