@@ -74,7 +74,9 @@ def run(apply=False,confirm=''):
    for x in s['proposal']:
     evidence={'source':'cardmarket_first_party_public_structure_deck_code+current_cardmarket_product_catalog+yugioh_canonical_physical_identity','identity_basis':['first_party_public_Structure_Deck_code','pinned_current_cardmarket_capture','accepted_metacard_to_logical_card_bridge','single_product_for_metacard','single_canonical_JA_print_for_card_in_exact_set','strict_normalized_name_match','global_product_and_print_unclaimed','global_one_to_one'],'identity_evidence_sha256':EVIDENCE_SHA256,'idExpansion':x['idExpansion'],'canonical_set':x['set_code'],'idProduct':x['idProduct'],'idMetacard':x['idMetacard'],'collector_number':x['collector_number'],'canonical_variant':x['canonical_variant'],'canonical_rarity':x['canonical_rarity'],'metacard_evidence_links':x['metacard_evidence_links']}
     cur.execute("""INSERT INTO external_catalog_print_links(external_product_id,print_id,mapping_method,confidence,link_status,reviewed,evidence) VALUES(%s,%s,%s,'exact','accepted',true,%s) ON CONFLICT(external_product_id,print_id) DO NOTHING""",(x['external_product_id'],x['print_id'],METHOD,Json(evidence)))
-    if cur.rowcount!=1: raise RuntimeError({'insert_failed':x['idProduct']}); writes+=1
+    if cur.rowcount!=1:
+     raise RuntimeError({'insert_failed':x['idProduct']})
+    writes+=1
    report['production_writes']=writes; c.commit(); return report
  except Exception: c.rollback(); raise
  finally: c.close()
