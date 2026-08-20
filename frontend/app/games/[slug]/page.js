@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation'
 import TopNav from '../../../components/layout/TopNav'
 import GameHubPage from '../../../components/games/GameHubPage'
 import RiftboundComingSoonPage from '../../../components/games/RiftboundComingSoonPage'
-import { getGameConfig } from '../../../lib/catalog/games'
+import { getGameConfig, isGameCatalogActive } from '../../../lib/catalog/games'
 
 const VALID_VIEWS = new Set(['grid', 'list'])
 const VALID_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'collector_asc', 'collector_desc', 'name_asc', 'name_desc'])
@@ -76,7 +76,7 @@ export default async function GamePage({ params, searchParams }) {
   return (
     <main>
       <TopNav />
-      {game.slug === 'riftbound'
+      {!isGameCatalogActive(game.slug)
         ? <RiftboundComingSoonPage game={game} />
         : <GameHubPage game={game} initialExplorerState={initialExplorerState} />}
     </main>

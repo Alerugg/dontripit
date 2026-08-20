@@ -1,14 +1,33 @@
+import { cache } from 'react'
+import { redirect } from 'next/navigation'
 import { callInternalApi } from '../../../lib/catalog/internalApi'
-import { getGameConfig, normalizeGameSlug } from '../../../lib/catalog/games'
+import { getGameConfig, isGameCatalogActive, normalizeGameSlug } from '../../../lib/catalog/games'
 import { SITE_URL } from '../../../lib/site'
+
+const loadPrint = cache(async (id) => callInternalApi(`/api/v1/prints/${encodeURIComponent(id)}`))
+
+function printGame(print) {
+  const gameSlug = normalizeGameSlug(print?.game || print?.card?.game || '')
+  return getGameConfig(gameSlug)
+}
 
 export async function generateMetadata({ params }) {
   const { id } = await params
-  const upstream = await callInternalApi(`/api/v1/prints/${id}`)
+  const upstream = await loadPrint(id)
   const print = upstream.ok ? upstream.payload : null
+  const game = printGame(print)
+
+  if (game && !isGameCatalogActive(game.slug)) {
+    return {
+      title: `${game.name} · Próximamente`,
+      description: game.description,
+      alternates: { canonical: `/games/${game.slug}` },
+      robots: { index: false, follow: true },
+    }
+  }
+
   const name = print?.card?.name || print?.title || `Versión ${id}`
-  const gameSlug = normalizeGameSlug(print?.game || print?.card?.game || '')
-  const gameLabel = getGameConfig(gameSlug)?.name || print?.game || 'TCG'
+  const gameLabel = game?.name || print?.game || 'TCG'
   const identity = [
     print?.set_code ? String(print.set_code).toUpperCase() : null,
     print?.collector_number ? `#${print.collector_number}` : null,
@@ -28,6 +47,13 @@ export async function generateMetadata({ params }) {
   }
 }
 
-export default function PrintDetailLayoutRoute({ children }) {
+export default async function PrintDetailLayoutRoute({ children, params }) {
+  const { id } = await params
+  const upstream = await loadPrint(id)
+  const print = upstream.ok ? upstream.payload : null
+  const game = printGame(print)
+
+  if (game && !isGameCatalogActive(game.slug)) redirect(`/games/${game.slug}`)
+
   return children
 }
