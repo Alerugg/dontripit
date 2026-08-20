@@ -1,0 +1,73 @@
+name: Audit Missing Images Live V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-missing-images-live-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-missing-images-live-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Require production database
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+      - name: Generate complete missing verified image worklist READ ONLY
+        run: |
+          python scripts/report_missing_images.py \
+            --json /tmp/missing-images-live-v1.json \
+            --csv /tmp/missing-images-live-v1.csv
+      - name: Summarize actionable image gaps
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          payload=json.loads(Path('/tmp/missing-images-live-v1.json').read_text())
+          rows=payload['items']
+          matrix=defaultdict(Counter)
+          for row in rows:
+              matrix[row['game']][row['reason']]+=1
+          summary={
+              'missing_verified_images':payload['missing_verified_images'],
+              'entity_counts':payload['entity_counts'],
+              'game_counts':payload['game_counts'],
+              'reason_counts':payload['reason_counts'],
+              'game_reason_matrix':{g:dict(sorted(c.items())) for g,c in sorted(matrix.items())},
+          }
+          Path('/tmp/missing-images-summary-v1.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: missing-images-live-v1-${{ github.run_id }}
+          path: |
+            /tmp/missing-images-live-v1.json
+            /tmp/missing-images-live-v1.csv
+            /tmp/missing-images-summary-v1.json
+          retention-days: 30
+          if-no-files-found: error
