@@ -20,7 +20,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -42,3 +42,30 @@ jobs:
             tests/test_regional_content_daily_v2.py
       - name: Run regional contract tests
         run: pytest -q tests/test_regional_content_daily.py tests/test_regional_content_daily_v2.py
+      - name: Gate all official sources live without database access
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          python scripts/sync_regional_content_daily_v2.py \
+            --dry-run \
+            --report /tmp/regional-live-source-proof.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/regional-live-source-proof.json'))
+          assert p['failed_sources']==[], p
+          assert p['canonical_sources']==11, p
+          reports={row['source']:row for row in p['source_reports']}
+          eu=reports['pokemon_eu_pokemon_es']
+          assert eu['ok'] is True, eu
+          assert eu['items'] > 0, eu
+          assert eu['locale']=='es-ES', eu
+          assert eu['regions']==['eu'], eu
+          assert 'pokemon_eu_tpci_press' not in reports, reports.keys()
+          print(json.dumps({'status':'pass','pokemon_eu':eu,'records':len(p['records'])},indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regional-live-source-proof-${{ github.run_id }}
+          path: /tmp/regional-live-source-proof.json
+          retention-days: 30
+          if-no-files-found: warn
