@@ -1,0 +1,119 @@
+name: Audit MTG Sealed Four Post V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-sealed-four-post-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Wait for and prove four-target production closure READ ONLY
+        run: |
+          python - <<'PY'
+          import json, os, time
+          from decimal import Decimal
+          from pathlib import Path
+          from sqlalchemy import func, select
+
+          from app import db
+          from app.external_catalog_models import ExternalMarketPriceSnapshot
+          from app.jobs.mtg_sealed_gap_closure import build_mtg_sealed_gap_closure_plan
+          from app.models import PriceSnapshot, PriceSource
+
+          db.init_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          final=None
+          for attempt in range(12):
+              with db.SessionLocal() as session:
+                  plan=build_mtg_sealed_gap_closure_plan(session)
+                  summary=plan.summary()
+                  session.rollback()
+              if summary['already_closed']==4 and summary['conflicts']==0:
+                  final=(plan,summary)
+                  break
+              time.sleep(10)
+          if final is None:
+              raise AssertionError({'closure_not_visible':summary})
+
+          with db.SessionLocal() as session:
+              plan=build_mtg_sealed_gap_closure_plan(session)
+              source=session.execute(select(PriceSource).where(PriceSource.name=='cardmarket')).scalar_one()
+              price_rows=[]
+              for decision in plan.decisions:
+                  assert decision.status=='already_closed',decision.as_dict()
+                  ext_latest=session.execute(
+                      select(ExternalMarketPriceSnapshot)
+                      .where(
+                          ExternalMarketPriceSnapshot.external_product_id==decision.external_product_id,
+                          ExternalMarketPriceSnapshot.currency=='EUR',
+                          ExternalMarketPriceSnapshot.price_variant=='sealed',
+                      )
+                      .order_by(ExternalMarketPriceSnapshot.as_of.desc(),ExternalMarketPriceSnapshot.id.desc())
+                      .limit(1)
+                  ).scalar_one_or_none()
+                  meaningful=False
+                  if ext_latest is not None:
+                      meaningful=any(
+                          value is not None and Decimal(str(value))>0
+                          for value in (ext_latest.price_low,ext_latest.price_mid,ext_latest.price_market,ext_latest.price_last)
+                      )
+                  canonical=None
+                  if meaningful:
+                      canonical=session.execute(
+                          select(PriceSnapshot).where(
+                              PriceSnapshot.entity_type=='product_variant',
+                              PriceSnapshot.entity_id==decision.variant_id,
+                              PriceSnapshot.source_id==source.id,
+                              PriceSnapshot.currency=='EUR',
+                              PriceSnapshot.as_of==ext_latest.as_of,
+                          )
+                      ).scalar_one_or_none()
+                      assert canonical is not None,decision.as_dict()
+                  price_rows.append({
+                      'external_id':decision.spec.external_id,
+                      'variant_id':decision.variant_id,
+                      'external_price_as_of':ext_latest.as_of.isoformat() if ext_latest else None,
+                      'public_price_available':meaningful,
+                      'canonical_projected':canonical is not None,
+                  })
+              session.rollback()
+
+          report={
+              'mode':'production_read_only',
+              'production_writes':0,
+              'closure':plan.summary(),
+              'decisions':[item.as_dict() for item in plan.decisions],
+              'prices':price_rows,
+              'status':'pass',
+          }
+          Path('/tmp/mtg-sealed-four-post-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-sealed-four-post-v1-${{ github.run_id }}
+          path: /tmp/mtg-sealed-four-post-v1.json
+          retention-days: 90
+          if-no-files-found: error
