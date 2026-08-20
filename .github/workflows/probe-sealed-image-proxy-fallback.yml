@@ -1,0 +1,135 @@
+name: Probe Sealed Image Proxy Fallback
+
+on:
+  push:
+    branches:
+      - probe/sealed-image-proxy-v1
+    paths:
+      - '.github/workflows/probe-sealed-image-proxy-fallback.yml'
+      - 'backend/app/routes/product_media.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probe exact Cardmarket page-derived images
+        run: |
+          python - <<'PY'
+          import hashlib
+          from html.parser import HTMLParser
+          import http.cookiejar
+          import json
+          from pathlib import Path
+          import urllib.error
+          import urllib.request
+          from urllib.parse import urljoin, urlparse
+
+          SAMPLES = [
+            {"expected":"blocked","variant_id":35143,"game":"mtg","category_id":"7","product_id":"710617","website_path":"/Magic/Products?idProduct=710617"},
+            {"expected":"blocked","variant_id":34927,"game":"mtg","category_id":"2","product_id":"683353","website_path":"/Magic/Products?idProduct=683353"},
+            {"expected":"blocked","variant_id":31684,"game":"mtg","category_id":"19","product_id":"210204","website_path":"/Magic/Products?idProduct=210204"},
+            {"expected":"blocked","variant_id":44035,"game":"onepiece","category_id":"1624","product_id":"750067","website_path":"/OnePiece/Products?idProduct=750067"},
+            {"expected":"blocked","variant_id":44019,"game":"onepiece","category_id":"1622","product_id":"749447","website_path":"/OnePiece/Products?idProduct=749447"},
+            {"expected":"resolved","variant_id":36155,"game":"mtg","category_id":"19","product_id":"855004","website_path":"/Magic/Products?idProduct=855004"},
+            {"expected":"resolved","variant_id":35751,"game":"mtg","category_id":"17","product_id":"803871","website_path":"/Magic/Products?idProduct=803871"},
+            {"expected":"resolved","variant_id":44037,"game":"onepiece","category_id":"1624","product_id":"750069","website_path":"/OnePiece/Products?idProduct=750069"},
+            {"expected":"resolved","variant_id":43832,"game":"pokemon","category_id":"1083","product_id":"895554","website_path":"/Pokemon/Products?idProduct=895554"},
+            {"expected":"resolved","variant_id":42840,"game":"pokemon","category_id":"53","product_id":"794902","website_path":"/Pokemon/Products?idProduct=794902"},
+          ]
+          UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          HOST = "product-images.s3.cardmarket.com"
+
+          class Parser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.urls=[]
+              def handle_starttag(self, tag, attrs):
+                  data=dict(attrs)
+                  if tag == 'img':
+                      for key in ('src','data-src','data-original'):
+                          if data.get(key): self.urls.append(data[key])
+                      if data.get('srcset'):
+                          self.urls.extend(piece.strip().split(' ')[0] for piece in data['srcset'].split(',') if piece.strip())
+                  if tag == 'meta' and data.get('content') and str(data.get('property') or data.get('name') or '').lower() in {'og:image','twitter:image','twitter:image:src'}:
+                      self.urls.append(data['content'])
+
+          def opener():
+              jar=http.cookiejar.CookieJar()
+              return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+          def fetch(op, url, *, referer, accept, limit):
+              req=urllib.request.Request(url, headers={'User-Agent':UA,'Referer':referer,'Accept':accept,'Accept-Language':'en-US,en;q=0.9'})
+              with op.open(req, timeout=20) as resp:
+                  body=resp.read(limit+1)
+                  if len(body)>limit: raise ValueError('response too large')
+                  return int(getattr(resp,'status',200) or 200), resp.geturl(), body, dict(resp.headers)
+
+          def is_image(body):
+              return body.startswith(b'\xff\xd8\xff') or body.startswith(b'\x89PNG\r\n\x1a\n') or (len(body)>=12 and body[:4]==b'RIFF' and body[8:12]==b'WEBP')
+
+          results=[]
+          for sample in SAMPLES:
+              op=opener()
+              pid=sample['product_id']; cat=sample['category_id']
+              direct=f'https://{HOST}/{cat}/{pid}/{pid}.jpg'
+              page='https://www.cardmarket.com/en' + sample['website_path']
+              row={**sample,'direct_url':direct,'page_url':page}
+              for label, referer in [('root_referer','https://www.cardmarket.com/'),('exact_page_referer',page)]:
+                  try:
+                      status, final, body, headers=fetch(op,direct,referer=referer,accept='image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',limit=8*1024*1024)
+                      row[label]={'status':status,'final_url':final,'valid_image':is_image(body),'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest() if is_image(body) else None}
+                  except Exception as exc:
+                      row[label]={'error':f'{type(exc).__name__}: {exc}'}
+              try:
+                  status, final_page, html, headers=fetch(op,page,referer='https://www.cardmarket.com/',accept='text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',limit=2*1024*1024)
+                  parser=Parser(); parser.feed(html.decode('utf-8','ignore'))
+                  candidates=[]
+                  for raw in parser.urls:
+                      url=urljoin(final_page, raw)
+                      parsed=urlparse(url)
+                      if parsed.scheme=='https' and parsed.hostname==HOST and (f'/{pid}/' in parsed.path or parsed.path.endswith(f'/{pid}.jpg')):
+                          if url not in candidates: candidates.append(url)
+                  row['page']={'status':status,'final_url':final_page,'candidate_count':len(candidates),'candidates':candidates[:10]}
+                  page_images=[]
+                  for candidate in candidates[:10]:
+                      try:
+                          st, final, body, hdr=fetch(op,candidate,referer=final_page,accept='image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',limit=8*1024*1024)
+                          page_images.append({'url':candidate,'status':st,'final_url':final,'valid_image':is_image(body),'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest() if is_image(body) else None})
+                      except Exception as exc:
+                          page_images.append({'url':candidate,'error':f'{type(exc).__name__}: {exc}'})
+                  row['page_images']=page_images
+              except Exception as exc:
+                  row['page']={'error':f'{type(exc).__name__}: {exc}'}
+                  row['page_images']=[]
+              row['recovered_by_exact_referer']=bool(row.get('exact_page_referer',{}).get('valid_image'))
+              row['recovered_by_page_candidate']=any(item.get('valid_image') for item in row.get('page_images',[]))
+              results.append(row)
+              print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+
+          summary={
+              'samples':len(results),
+              'blocked_samples':sum(r['expected']=='blocked' for r in results),
+              'blocked_recovered_exact_referer':sum(r['expected']=='blocked' and r['recovered_by_exact_referer'] for r in results),
+              'blocked_recovered_page_candidate':sum(r['expected']=='blocked' and r['recovered_by_page_candidate'] for r in results),
+              'resolved_still_valid_exact_referer':sum(r['expected']=='resolved' and r['recovered_by_exact_referer'] for r in results),
+          }
+          report={'summary':summary,'results':results}
+          Path('/tmp/sealed-image-proxy-fallback.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed-image-proxy-fallback-${{ github.run_id }}
+          path: /tmp/sealed-image-proxy-fallback.json
+          retention-days: 30
+          if-no-files-found: warn
