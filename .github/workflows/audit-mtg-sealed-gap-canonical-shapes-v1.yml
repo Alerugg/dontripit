@@ -5,6 +5,10 @@ on:
     branches: [catalog-v2]
     paths:
       - '.github/workflows/audit-mtg-sealed-gap-canonical-shapes-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-sealed-gap-canonical-shapes-v1.yml'
   workflow_dispatch:
 
 permissions:
