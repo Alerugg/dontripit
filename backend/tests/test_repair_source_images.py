@@ -1,12 +1,16 @@
+from sqlalchemy import select
+
 from app import db
 from app.jobs.repair_source_images import _pokemon_exact_sources
 from app.models import Card, Game, Print, PrintIdentifier, Set
 
 
 def _seed_print(session, *, language: str, legacy_tcgdex_id: str | None = None):
-    game = Game(slug="pokemon", name="Pokemon")
-    session.add(game)
-    session.flush()
+    game = session.execute(select(Game).where(Game.slug == "pokemon")).scalar_one_or_none()
+    if game is None:
+        game = Game(slug="pokemon", name="Pokemon")
+        session.add(game)
+        session.flush()
     set_row = Set(game_id=game.id, code=f"t-{language}", name=f"Test {language}")
     session.add(set_row)
     session.flush()
