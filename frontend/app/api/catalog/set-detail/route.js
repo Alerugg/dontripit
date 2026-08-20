@@ -28,8 +28,8 @@ function normalized(value) {
 }
 
 function exactMarketPrice(item = {}) {
-  const raw = item?.market?.display_price ?? item?.cardmarket_price
-  const value = Number(raw)
+  const raw = item?.market?.display_price
+  const value = raw === null || raw === undefined || raw === '' ? null : Number(raw)
   return Number.isFinite(value) ? value : null
 }
 
@@ -106,7 +106,8 @@ async function loadAllSetPrints(game, setCode) {
 
     offset += batch.length
     if (upstreamTotal !== null && offset >= upstreamTotal) break
-    if (upstreamTotal === null && batch.length < PRINT_BATCH_SIZE) break
+    if (response.payload?.has_more === false) break
+    if (upstreamTotal === null && response.payload?.has_more !== true && batch.length < PRINT_BATCH_SIZE) break
   }
 
   const truncated = stalled || (upstreamTotal !== null && rows.length < upstreamTotal)
@@ -149,10 +150,10 @@ function compareText(left, right, direction = 1) {
 }
 
 function compareNullableNumber(left, right, direction = 1) {
-  const a = Number(left)
-  const b = Number(right)
-  const validA = Number.isFinite(a)
-  const validB = Number.isFinite(b)
+  const a = left === null || left === undefined || left === '' ? null : Number(left)
+  const b = right === null || right === undefined || right === '' ? null : Number(right)
+  const validA = a !== null && Number.isFinite(a)
+  const validB = b !== null && Number.isFinite(b)
   if (!validA && !validB) return 0
   if (!validA) return 1
   if (!validB) return -1
