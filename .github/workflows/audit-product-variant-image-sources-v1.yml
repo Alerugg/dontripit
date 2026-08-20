@@ -1,0 +1,67 @@
+name: Audit ProductVariant Image Sources V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_product_variant_image_sources_v1.py'
+      - '.github/workflows/audit-product-variant-image-sources-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile read-only source auditor
+        run: python -m py_compile app/scripts/audit_product_variant_image_sources_v1.py
+      - name: Audit missing ProductVariant image provenance
+        run: |
+          mkdir -p /tmp/product-variant-image-sources-v1
+          python -m app.scripts.audit_product_variant_image_sources_v1 \
+            --report /tmp/product-variant-image-sources-v1/report.json \
+            --sample-limit 10
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/product-variant-image-sources-v1/report.json'))
+          assert p['status']=='pass', p
+          assert p['production_writes']==0, p
+          assert p['missing_product_variants']==13191, p
+          assert p['missing_by_game']=={
+              'mtg':5040,
+              'onepiece':753,
+              'pokemon':5007,
+              'yugioh':2391,
+          }, p
+          print(json.dumps({
+              'missing':p['missing_by_game'],
+              'identifiers':p['identifier_coverage_by_game'],
+              'existing_image_sources':p['existing_product_image_sources_by_game'],
+              'cardmarket_exact_1to1':p['current_cardmarket_exact_reviewed_one_to_one_missing_by_game'],
+              'cardmarket_paths':p['strict_with_website_path_by_game'],
+              'raw_image_fields':p['strict_with_image_like_raw_field_by_game'],
+          },indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: product-variant-image-sources-v1-${{ github.run_id }}
+          path: /tmp/product-variant-image-sources-v1/*
+          retention-days: 90
+          if-no-files-found: warn
