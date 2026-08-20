@@ -33,11 +33,13 @@ test('autocomplete reserves plain Enter for all results and arrows for exact sug
   assert.match(input, /runFullSearch\(\)/)
 })
 
-test('explorer exposes canonical cards, exact prints, sets and numbered pagination', () => {
+test('explorer exposes counted canonical cards, exact prints, sets and numbered pagination', () => {
   const explorer = source('components/catalog/CatalogExplorer.js')
-  assert.match(explorer, /\{ value: 'card', label: 'Cartas' \}/)
-  assert.match(explorer, /\{ value: 'print', label: 'Impresiones' \}/)
-  assert.match(explorer, /\{ value: 'set', label: 'Sets' \}/)
+  assert.match(explorer, /\{ value: 'card', label: 'Cartas', countKey: 'card' \}/)
+  assert.match(explorer, /\{ value: 'print', label: 'Impresiones', countKey: 'print' \}/)
+  assert.match(explorer, /\{ value: 'set', label: 'Sets', countKey: 'set' \}/)
+  assert.match(explorer, /countKey: 'all'/)
+  assert.match(explorer, /counts\[option\.countKey\]\.toLocaleString\(\)/)
   assert.match(explorer, /pageWindow/)
   assert.match(explorer, /aria-current=\{safePage === value \? 'page'/)
   assert.match(explorer, /searchCatalog\(\{/)
