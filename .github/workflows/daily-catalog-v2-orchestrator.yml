@@ -33,8 +33,12 @@ jobs:
             // This workflow is the only owner of the daily production schedule.
             // Every production child below is workflow_dispatch-only and executes
             // the exact ref dispatched by this orchestrator. Riftbound remains excluded.
+            // MTG canonical writes remain deliberately excluded until the finish-aware
+            // incremental writer is certified; Cardmarket MTG market data still refreshes
+            // through the multigame master child below.
             const pipeline = [
               ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
+              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh'],
               ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
               ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
               ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
