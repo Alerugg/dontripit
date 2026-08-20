@@ -221,11 +221,12 @@ def repair_mtg_images(session) -> ImageRepairReport:
     for index, (source_id, rows) in enumerate(by_source.items()):
         if index:
             time.sleep(0.11)
+        transport_failed = False
         try:
             payload = _get_json(http, f"https://api.scryfall.com/cards/{quote(source_id, safe='')}")
         except requests.RequestException:
             payload = None
-            failures += len(rows)
+            transport_failed = True
         image_url = _scryfall_image(payload or {})
 
         if not image_url:
@@ -237,13 +238,16 @@ def repair_mtg_images(session) -> ImageRepairReport:
                     exact_payload = _scryfall_exact_print_payload(
                         http, set_code=set_code, collector_number=collector
                     )
+                    transport_failed = False
                 except requests.RequestException:
                     exact_payload = None
-                    failures += len(rows)
                 image_url = _scryfall_image(exact_payload or {})
 
         if not image_url or not _valid_image(http, image_url):
-            no_image += len(rows)
+            if transport_failed:
+                failures += len(rows)
+            else:
+                no_image += len(rows)
             continue
         for row in rows:
             if session.execute(select(PrintImage.id).where(PrintImage.print_id == row.id)).first() is None:
