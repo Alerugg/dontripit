@@ -1,20 +1,41 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
+import TopNav from '../../../../components/layout/TopNav'
 import GameCollectionsDirectoryPage from '../../../../components/games/GameCollectionsDirectoryPage'
+import { getGameConfig } from '../../../../lib/catalog/games'
 
-const GAMES = {
-  pokemon: { slug: 'pokemon', name: 'Pokémon', accent: '#9b6bff' },
-  mtg: { slug: 'mtg', name: 'Magic', accent: '#9b6bff' },
-  onepiece: { slug: 'onepiece', name: 'One Piece', accent: '#9b6bff' },
-  yugioh: { slug: 'yugioh', name: 'Yu-Gi-Oh!', accent: '#9b6bff' },
-  riftbound: { slug: 'riftbound', name: 'Riftbound', accent: '#9b6bff' },
+export async function generateMetadata({ params }) {
+  const { slug } = await params
+  const game = getGameConfig(String(slug || '').toLowerCase())
+  if (!game) return {}
+
+  const canonical = `/games/${game.slug}/sets`
+  const title = `Sets · ${game.name}`
+  const description = `Explora los sets reales de ${game.name}, paginados sobre el catálogo completo de Don’tRipIt.`
+
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title: `${title} · Don’tRipIt`,
+      description,
+      url: canonical,
+    },
+  }
 }
 
 export default async function GameSetsDirectoryRoute({ params }) {
   const { slug: rawSlug } = await params
-  const slug = String(rawSlug || '').toLowerCase()
-  const game = GAMES[slug]
+  const requestedSlug = String(rawSlug || '').trim().toLowerCase()
+  const game = getGameConfig(requestedSlug)
 
   if (!game) notFound()
+  if (requestedSlug !== game.slug) redirect(`/games/${game.slug}/sets`)
 
-  return <GameCollectionsDirectoryPage game={game} />
+  return (
+    <main>
+      <TopNav />
+      <GameCollectionsDirectoryPage game={game} />
+    </main>
+  )
 }
