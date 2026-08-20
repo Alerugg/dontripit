@@ -146,6 +146,7 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             initialSort={initialExplorerState.sort || 'relevance'}
             initialLanguage={initialExplorerState.language || ''}
             initialPricedOnly={Boolean(initialExplorerState.pricedOnly)}
+            initialPage={initialExplorerState.page || 1}
           />
 
           <details className="v6-advanced-search">
