@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../layout/TopNav'
 import FallbackImage from '../common/FallbackImage'
 import './LibraryPage.css'
+import './LibraryWishlist.css'
 
 function money(value, currency = 'EUR') {
   if (value === null || value === undefined || value === '' || !currency) return null
@@ -28,6 +29,12 @@ function shortDate(value) {
   }
 }
 
+function numericOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 function searchableText(item) {
   const print = item?.print || {}
   return [
@@ -44,12 +51,132 @@ function searchableText(item) {
 }
 
 function valuationNumber(item) {
-  const value = item?.latest_price?.valuation_value ?? item?.latest_price?.conservative
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
+  return numericOrNull(item?.latest_price?.valuation_value ?? item?.latest_price?.conservative)
 }
 
-function LibraryCard({ item, kind, onRemove, onQuantity }) {
+function wishlistComparison(item) {
+  const current = numericOrNull(item?.latest_price?.value)
+  const target = numericOrNull(item?.target_price)
+  const currentCurrency = String(item?.latest_price?.currency || '').toUpperCase()
+  const targetCurrency = String(item?.target_currency || '').toUpperCase()
+  const comparable = current !== null && target !== null && currentCurrency && targetCurrency && currentCurrency === targetCurrency
+
+  return {
+    current,
+    target,
+    currentCurrency,
+    targetCurrency,
+    comparable,
+    reached: comparable ? current <= target : false,
+    difference: comparable ? current - target : null,
+  }
+}
+
+function PriorityBadge({ value }) {
+  const priority = Math.max(0, Math.min(3, Number(value || 0)))
+  return (
+    <span className={`v11-priority-badge priority-${priority}`}>
+      {priority === 0 ? 'Sin prioridad' : `Prioridad ${priority}/3`}
+    </span>
+  )
+}
+
+function WishlistPlan({ item, onUpdate }) {
+  const [priority, setPriority] = useState(String(Number(item.priority || 0)))
+  const [target, setTarget] = useState(item.target_price ?? '')
+  const [currency, setCurrency] = useState(String(item.target_currency || item.latest_price?.currency || 'EUR').toUpperCase())
+  const [saving, setSaving] = useState(false)
+  const comparison = wishlistComparison(item)
+  const targetDisplay = money(item.target_price, item.target_currency)
+  const currentDisplay = money(comparison.current, comparison.currentCurrency)
+  const differenceDisplay = comparison.comparable ? money(Math.abs(comparison.difference), comparison.currentCurrency) : null
+
+  async function save(event) {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await onUpdate(item, {
+        priority: Number(priority),
+        target_price: target === '' ? null : Number(target),
+        target_currency: target === '' ? null : currency,
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="v11-wishlist-plan">
+      <div className="v11-target-summary">
+        <div>
+          <span>Precio actual exacto</span>
+          <strong>{currentDisplay || 'Sin precio actual'}</strong>
+        </div>
+        <div>
+          <span>Tu objetivo</span>
+          <strong>{targetDisplay || 'Sin objetivo'}</strong>
+        </div>
+      </div>
+
+      {comparison.comparable ? (
+        <div className={`v11-target-status ${comparison.reached ? 'is-reached' : 'is-above'}`}>
+          <strong>{comparison.reached ? 'Objetivo alcanzado' : `${differenceDisplay} sobre tu objetivo`}</strong>
+          <span>{comparison.reached ? 'El precio actual exacto está en o por debajo del objetivo que guardaste.' : 'El precio actual exacto todavía está por encima de tu objetivo.'}</span>
+        </div>
+      ) : (
+        <div className="v11-target-status is-unknown">
+          <strong>No comparable</strong>
+          <span>
+            {comparison.current === null
+              ? 'No existe un precio Cardmarket actual para esta Print exacta.'
+              : comparison.target === null
+                ? 'Añade un precio objetivo para poder comparar.'
+                : 'Precio actual y objetivo usan monedas distintas; no aplicamos FX implícito.'}
+          </span>
+        </div>
+      )}
+
+      <details className="v11-target-editor">
+        <summary>Editar objetivo y prioridad</summary>
+        <form onSubmit={save}>
+          <label>
+            <span>Prioridad</span>
+            <select value={priority} onChange={(event) => setPriority(event.target.value)}>
+              <option value="0">Sin prioridad</option>
+              <option value="1">Prioridad 1/3</option>
+              <option value="2">Prioridad 2/3</option>
+              <option value="3">Prioridad 3/3</option>
+            </select>
+          </label>
+          <label>
+            <span>Precio objetivo</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+              placeholder="Sin objetivo"
+            />
+          </label>
+          <label>
+            <span>Moneda</span>
+            <select value={currency} onChange={(event) => setCurrency(event.target.value)} disabled={target === ''}>
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+              <option value="GBP">GBP</option>
+              <option value="JPY">JPY</option>
+            </select>
+          </label>
+          <button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</button>
+        </form>
+      </details>
+    </div>
+  )
+}
+
+function LibraryCard({ item, kind, onRemove, onQuantity, onWishlistUpdate }) {
   const isCollection = kind === 'collection'
   const print = item.print || {}
   const price = item.latest_price || null
@@ -74,7 +201,7 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
   ].filter(Boolean)
 
   return (
-    <article className={`library-card v10-library-card ${conservative ? 'is-valued' : 'is-unvalued'}`}>
+    <article className={`library-card v10-library-card ${isCollection ? 'v10-collection-card' : 'v11-wishlist-card'} ${conservative ? 'is-valued' : 'is-unvalued'}`}>
       <Link href={`/prints/${print.id}`} className="library-card-media v10-library-media">
         <FallbackImage
           src={print.image_url}
@@ -84,6 +211,7 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
           label={print.game || 'TCG'}
         />
         <span className="v10-print-badge">Print {print.id}</span>
+        {!isCollection ? <PriorityBadge value={item.priority} /> : null}
       </Link>
 
       <div className="library-card-body v10-library-body">
@@ -95,36 +223,40 @@ function LibraryCard({ item, kind, onRemove, onQuantity }) {
           </div>
         </div>
 
-        <div className={`library-price v10-library-price ${conservative ? 'is-valued' : ''}`}>
-          <div className="v10-price-head">
-            <span className="library-price-label">{conservative ? 'Valor conservador · unidad' : observed ? 'Precio actual observado' : 'Mercado exacto'}</span>
-            {price?.source ? <span className="v10-source-pill">{price.source}</span> : null}
-          </div>
-          <strong>{conservative || observed || 'Sin precio verificado'}</strong>
-
-          {isCollection && positionValue && quantity > 1 ? (
-            <div className="v10-position-value">
-              <span>Posición · {quantity} × {conservative}</span>
-              <strong>{positionValue}</strong>
+        {isCollection ? (
+          <div className={`library-price v10-library-price ${conservative ? 'is-valued' : ''}`}>
+            <div className="v10-price-head">
+              <span className="library-price-label">{conservative ? 'Valor conservador · unidad' : observed ? 'Precio actual observado' : 'Mercado exacto'}</span>
+              {price?.source ? <span className="v10-source-pill">{price.source}</span> : null}
             </div>
-          ) : null}
+            <strong>{conservative || observed || 'Sin precio verificado'}</strong>
 
-          {price ? (
-            <>
-              {(minimum || trend || average) ? (
-                <small className="library-price-metrics">
-                  {[minimum ? `Mín ${minimum}` : null, trend ? `Tend ${trend}` : null, average ? `Media ${average}` : null].filter(Boolean).join(' · ')}
+            {positionValue && quantity > 1 ? (
+              <div className="v10-position-value">
+                <span>Posición · {quantity} × {conservative}</span>
+                <strong>{positionValue}</strong>
+              </div>
+            ) : null}
+
+            {price ? (
+              <>
+                {(minimum || trend || average) ? (
+                  <small className="library-price-metrics">
+                    {[minimum ? `Mín ${minimum}` : null, trend ? `Tend ${trend}` : null, average ? `Media ${average}` : null].filter(Boolean).join(' · ')}
+                  </small>
+                ) : null}
+                <small>
+                  {marketDate ? `Actualizado ${marketDate}` : 'Precio actual de fuente registrada'}
+                  {!conservative ? ' · No suma al valor conservador' : ''}
                 </small>
-              ) : null}
-              <small>
-                {marketDate ? `Actualizado ${marketDate}` : 'Precio actual de fuente registrada'}
-                {!conservative ? ' · No suma al valor conservador' : ''}
-              </small>
-            </>
-          ) : (
-            <small>Esta Print no se estima con otra edición. Se valorará cuando exista un precio fiable para esta identidad exacta.</small>
-          )}
-        </div>
+              </>
+            ) : (
+              <small>Esta Print no se estima con otra edición. Se valorará cuando exista un precio fiable para esta identidad exacta.</small>
+            )}
+          </div>
+        ) : (
+          <WishlistPlan item={item} onUpdate={onWishlistUpdate} />
+        )}
 
         {isCollection && (item.condition || purchasePrice || acquiredAt) ? (
           <div className="v10-owned-meta">
@@ -191,22 +323,47 @@ export default function LibraryPage({ kind = 'collection' }) {
   const unvaluedCount = Math.max(0, totalVersions - coverageCount)
   const coveragePercent = totalVersions > 0 ? Math.round((coverageCount / totalVersions) * 100) : 0
 
+  const wishlistStats = useMemo(() => {
+    if (isCollection) return { priced: 0, targeted: 0, reached: 0 }
+    return (data.items || []).reduce((stats, item) => {
+      const comparison = wishlistComparison(item)
+      if (comparison.current !== null) stats.priced += 1
+      if (comparison.target !== null) stats.targeted += 1
+      if (comparison.reached) stats.reached += 1
+      return stats
+    }, { priced: 0, targeted: 0, reached: 0 })
+  }, [data.items, isCollection])
+
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const filtered = (data.items || []).filter((item) => !normalized || searchableText(item).includes(normalized))
-    if (!isCollection) return filtered
 
     return [...filtered].sort((left, right) => {
       if (sort === 'name') return String(left?.print?.card_name || '').localeCompare(String(right?.print?.card_name || ''), 'es', { sensitivity: 'base' })
-      if (sort === 'value_desc') {
-        const leftValue = valuationNumber(left)
-        const rightValue = valuationNumber(right)
-        if (leftValue === null && rightValue === null) return 0
-        if (leftValue === null) return 1
-        if (rightValue === null) return -1
-        return (rightValue * Number(right.quantity || 1)) - (leftValue * Number(left.quantity || 1))
+
+      if (isCollection) {
+        if (sort === 'value_desc') {
+          const leftValue = valuationNumber(left)
+          const rightValue = valuationNumber(right)
+          if (leftValue === null && rightValue === null) return 0
+          if (leftValue === null) return 1
+          if (rightValue === null) return -1
+          return (rightValue * Number(right.quantity || 1)) - (leftValue * Number(left.quantity || 1))
+        }
+        if (sort === 'quantity_desc') return Number(right.quantity || 0) - Number(left.quantity || 0)
+        return 0
       }
-      if (sort === 'quantity_desc') return Number(right.quantity || 0) - Number(left.quantity || 0)
+
+      if (sort === 'priority_desc') return Number(right.priority || 0) - Number(left.priority || 0)
+      if (sort === 'target_status') {
+        const leftComparison = wishlistComparison(left)
+        const rightComparison = wishlistComparison(right)
+        const leftRank = leftComparison.reached ? 0 : leftComparison.comparable ? 1 : 2
+        const rightRank = rightComparison.reached ? 0 : rightComparison.comparable ? 1 : 2
+        if (leftRank !== rightRank) return leftRank - rightRank
+        if (leftComparison.comparable && rightComparison.comparable) return leftComparison.difference - rightComparison.difference
+        return Number(right.priority || 0) - Number(left.priority || 0)
+      }
       return 0
     })
   }, [data.items, isCollection, query, sort])
@@ -240,26 +397,52 @@ export default function LibraryPage({ kind = 'collection' }) {
     await load()
   }
 
+  async function updateWishlist(item, values) {
+    setMessage('')
+    if (values.target_price !== null && (!Number.isFinite(values.target_price) || values.target_price < 0)) {
+      setMessage('El precio objetivo debe ser un número igual o mayor que 0.')
+      return
+    }
+    const response = await fetch('/api/library/wishlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        print_id: item.print.id,
+        priority: values.priority,
+        target_price: values.target_price,
+        target_currency: values.target_currency,
+      }),
+    })
+    if (!response.ok) {
+      setMessage('No pudimos guardar el objetivo de esta Print.')
+      return
+    }
+    await load()
+  }
+
   return (
     <main>
       <TopNav />
-      <section className={`library-shell v10-library-shell ${isCollection ? 'v10-collection-shell' : 'v10-wishlist-shell'}`}>
+      <section className={`library-shell v10-library-shell ${isCollection ? 'v10-collection-shell' : 'v11-wishlist-shell'}`}>
         <header className="library-hero v10-library-hero">
           <div>
-            <span className="dri-kicker">{isCollection ? 'Portfolio físico' : 'Tu wishlist'}</span>
+            <span className="dri-kicker">{isCollection ? 'Portfolio físico' : 'Radar de compra'}</span>
             <h1>{isCollection ? 'Mi colección' : 'Wishlist'}</h1>
-            <p>{isCollection ? 'Cada posición corresponde a una Print física exacta. El total solo suma versiones con valoración conservadora Cardmarket verificable.' : 'Las versiones que quieres encontrar, sin mezclarlas con otras ediciones.'}</p>
+            <p>{isCollection ? 'Cada posición corresponde a una Print física exacta. El total solo suma versiones con valoración conservadora Cardmarket verificable.' : 'Sigue la Print física exacta que quieres, define tu objetivo y compáralo únicamente con su precio Cardmarket actual cuando la moneda coincida.'}</p>
             <div className="ux-library-actions">
               <Link href="/explorer" className="dri-btn dri-btn-primary">Buscar cartas</Link>
               <Link href={isCollection ? '/wishlist' : '/collection'} className="dri-btn dri-btn-ghost">{isCollection ? 'Ver wishlist' : 'Ver colección'}</Link>
             </div>
           </div>
 
-          <div className={`library-summary v10-library-summary ${isCollection ? 'is-collection' : ''}`}>
-            <div className="library-stat"><span>{isCollection ? 'Prints distintas' : 'En wishlist'}</span><strong>{totalVersions.toLocaleString('es-ES')}</strong></div>
+          <div className={`library-summary v10-library-summary ${isCollection ? 'is-collection' : 'is-wishlist'}`}>
+            <div className="library-stat"><span>{isCollection ? 'Prints distintas' : 'Prints seguidas'}</span><strong>{totalVersions.toLocaleString('es-ES')}</strong></div>
             {isCollection ? <div className="library-stat"><span>Cartas físicas</span><strong>{pieces.toLocaleString('es-ES')}</strong></div> : null}
             {isCollection ? <div className="library-stat v10-value-stat"><span>Valor conservador</span><strong>{money(data.known_value_eur || 0, 'EUR')}</strong></div> : null}
             {isCollection ? <div className="library-stat"><span>Cobertura valoración</span><strong>{coveragePercent}%</strong><small>{coverageCount} / {totalVersions}</small></div> : null}
+            {!isCollection ? <div className="library-stat"><span>Con precio actual</span><strong>{wishlistStats.priced.toLocaleString('es-ES')}</strong></div> : null}
+            {!isCollection ? <div className="library-stat"><span>Con objetivo</span><strong>{wishlistStats.targeted.toLocaleString('es-ES')}</strong></div> : null}
+            {!isCollection ? <div className="library-stat v11-reached-stat"><span>Objetivo alcanzado</span><strong>{wishlistStats.reached.toLocaleString('es-ES')}</strong></div> : null}
           </div>
         </header>
 
@@ -274,19 +457,26 @@ export default function LibraryPage({ kind = 'collection' }) {
               <span style={{ width: `${coveragePercent}%` }} />
             </div>
           </section>
-        ) : null}
+        ) : (
+          <section className="v11-wishlist-rule" aria-label="Regla de comparación de wishlist">
+            <strong>Comparación exacta, sin FX implícito.</strong>
+            <span>Solo marcamos un objetivo como alcanzado si esta Print tiene precio Cardmarket actual y usa la misma moneda que tu objetivo.</span>
+          </section>
+        )}
 
-        {isCollection && !loading && data.items?.length ? (
+        {!loading && data.items?.length ? (
           <div className="v10-library-toolbar">
             <label>
-              <span className="v10-sr-only">Filtrar colección</span>
+              <span className="v10-sr-only">{isCollection ? 'Filtrar colección' : 'Filtrar wishlist'}</span>
               <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Carta, set, número, idioma o Print ID…" />
             </label>
-            <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Ordenar colección">
+            <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label={isCollection ? 'Ordenar colección' : 'Ordenar wishlist'}>
               <option value="recent">Más recientes</option>
               <option value="name">Nombre A–Z</option>
-              <option value="value_desc">Valor conservador ↓</option>
-              <option value="quantity_desc">Cantidad ↓</option>
+              {isCollection ? <option value="value_desc">Valor conservador ↓</option> : null}
+              {isCollection ? <option value="quantity_desc">Cantidad ↓</option> : null}
+              {!isCollection ? <option value="priority_desc">Prioridad ↓</option> : null}
+              {!isCollection ? <option value="target_status">Objetivo / cercanía</option> : null}
             </select>
             <span>{visibleItems.length.toLocaleString('es-ES')} de {totalVersions.toLocaleString('es-ES')} Prints</span>
           </div>
@@ -307,16 +497,23 @@ export default function LibraryPage({ kind = 'collection' }) {
         {!loading && data.items?.length && !visibleItems.length ? (
           <div className="library-empty v10-filter-empty">
             <span className="dri-kicker">Sin coincidencias</span>
-            <h2>No encontramos esa Print en tu colección.</h2>
+            <h2>No encontramos esa Print en tu {isCollection ? 'colección' : 'wishlist'}.</h2>
             <p>Prueba otro nombre, set, idioma o número de coleccionista.</p>
             <button type="button" className="dri-btn dri-btn-ghost" onClick={() => setQuery('')}>Limpiar búsqueda</button>
           </div>
         ) : null}
 
         {!loading && visibleItems.length ? (
-          <div className="library-grid v10-library-grid">
+          <div className={`library-grid v10-library-grid ${!isCollection ? 'v11-wishlist-grid' : ''}`}>
             {visibleItems.map((item) => (
-              <LibraryCard key={item.id} item={item} kind={kind} onRemove={remove} onQuantity={changeQuantity} />
+              <LibraryCard
+                key={item.id}
+                item={item}
+                kind={kind}
+                onRemove={remove}
+                onQuantity={changeQuantity}
+                onWishlistUpdate={updateWishlist}
+              />
             ))}
           </div>
         ) : null}
