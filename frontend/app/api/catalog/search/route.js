@@ -1,63 +1,310 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url)
+const SEARCH_BATCH = 100
+const MAX_KIND_RESULTS = 5000
+const MAX_PAGE_SIZE = 50
+const MARKET_BATCH = 100
+const PUBLIC_CACHE_HEADERS = { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120' }
 
-  const upstream = await callInternalApi('/api/v1/search', {
-    params: {
-      q: searchParams.get('q') || '',
-      game: searchParams.get('game') || '',
-      type: searchParams.get('type') || '',
-      limit: searchParams.get('limit') || 30,
-      offset: searchParams.get('offset') || 0,
-    },
+function boundedInt(value, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(Math.max(parsed, minimum), maximum)
+}
+
+function toItems(payload) {
+  if (Array.isArray(payload)) return payload
+  return payload?.items || payload?.results || []
+}
+
+function normalizeV2Card(item = {}) {
+  const matched = item.matched_print || {}
+  const id = item.card_id || item.id
+  return {
+    type: 'card',
+    id,
+    card_id: id,
+    title: item.name || item.title,
+    name: item.name || item.title,
+    game: item.game,
+    set_code: matched.set_code || item.set_code || null,
+    set_name: matched.set_name || item.set_name || null,
+    collector_number: matched.collector_number || item.collector_number || null,
+    rarity: matched.rarity || item.rarity || null,
+    primary_image_url: matched.primary_image_url || item.primary_image_url || item.image_url || null,
+    variant_count: Number(item.variant_count || 0),
+    score: item.score ?? null,
+  }
+}
+
+function marketPrice(item) {
+  const raw = item?.market?.display_price
+  if (raw === null || raw === undefined || raw === '') return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+function compareNullableNumber(left, right, direction = 1) {
+  const a = left === null || left === undefined || left === '' ? null : Number(left)
+  const b = right === null || right === undefined || right === '' ? null : Number(right)
+  const validA = a !== null && Number.isFinite(a)
+  const validB = b !== null && Number.isFinite(b)
+  if (!validA && !validB) return 0
+  if (!validA) return 1
+  if (!validB) return -1
+  return (a - b) * direction
+}
+
+function compareText(left, right, direction = 1) {
+  return String(left || '').localeCompare(String(right || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  }) * direction
+}
+
+function sortRows(rows, sort) {
+  if (!sort || sort === 'relevance') return rows
+  return [...rows].sort((left, right) => {
+    if (sort === 'price_desc') return compareNullableNumber(marketPrice(left), marketPrice(right), -1)
+    if (sort === 'price_asc') return compareNullableNumber(marketPrice(left), marketPrice(right), 1)
+    if (sort === 'collector_desc') return compareText(left?.collector_number, right?.collector_number, -1)
+    if (sort === 'collector_asc') return compareText(left?.collector_number, right?.collector_number, 1)
+    if (sort === 'name_desc') return compareText(left?.title || left?.name, right?.title || right?.name, -1)
+    if (sort === 'name_asc') return compareText(left?.title || left?.name, right?.title || right?.name, 1)
+    return 0
   })
+}
 
-  if (!upstream.ok) {
-    const developerHint = getDeveloperErrorHint(upstream.payload, upstream.status)
+function uniqueRows(rows) {
+  const seen = new Set()
+  const output = []
+  for (const item of rows) {
+    const key = `${item?.type || 'unknown'}:${item?.id ?? item?.card_id ?? item?.set_code ?? item?.title}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(item)
+  }
+  return output
+}
 
-    return NextResponse.json(
-      {
-        error: 'catalog_search_failed',
-        message: getPublicErrorMessage(upstream.status),
-        ...(developerHint ? { developer_hint: developerHint } : {}),
-      },
-      { status: upstream.status },
-    )
+async function fetchAllLegacyRows({ q, game, type }) {
+  const rows = []
+  let offset = 0
+  let truncated = false
+
+  while (rows.length < MAX_KIND_RESULTS) {
+    const upstream = await callInternalApi('/api/v1/search', {
+      params: { q, game, type, limit: SEARCH_BATCH, offset },
+      timeoutMs: 20000,
+    })
+    if (!upstream.ok) return { ok: false, upstream, rows: [], truncated: false }
+
+    const batch = toItems(upstream.payload).filter((item) => !type || item?.type === type)
+    if (!batch.length) break
+
+    const before = rows.length
+    rows.push(...batch)
+    const deduped = uniqueRows(rows)
+    rows.length = 0
+    rows.push(...deduped)
+
+    if (rows.length === before) {
+      truncated = true
+      break
+    }
+
+    offset += batch.length
   }
 
-  const items = Array.isArray(upstream.payload) ? upstream.payload : upstream.payload?.items || []
-  const printIds = items
+  if (rows.length >= MAX_KIND_RESULTS) truncated = true
+  return { ok: true, rows: rows.slice(0, MAX_KIND_RESULTS), truncated }
+}
+
+async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 24, offset = 0 }) {
+  const first = await callInternalApi('/api/v2/search', {
+    params: { q, game, limit: requireAll ? SEARCH_BATCH : limit, offset: requireAll ? 0 : offset },
+    timeoutMs: 20000,
+  })
+  if (!first.ok) return { ok: false, upstream: first, rows: [], total: 0, truncated: false }
+
+  const payload = first.payload || {}
+  const exactTotal = Number(payload.total)
+  const canonicalMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)
+
+  if (!canonicalMode) {
+    const fallback = await fetchAllLegacyRows({ q, game, type: 'card' })
+    return fallback.ok
+      ? { ...fallback, rows: fallback.rows, total: fallback.rows.length, canonicalMode: false }
+      : fallback
+  }
+
+  if (!requireAll) {
+    return {
+      ok: true,
+      rows: toItems(payload).map(normalizeV2Card),
+      total: exactTotal,
+      totalPrints: Number(payload.total_prints || 0),
+      truncated: false,
+      canonicalMode: true,
+    }
+  }
+
+  const rows = toItems(payload).map(normalizeV2Card)
+  let nextOffset = Number(payload.next_offset)
+  while (payload.has_more !== false && Number.isFinite(nextOffset) && rows.length < MAX_KIND_RESULTS) {
+    const page = await callInternalApi('/api/v2/search', {
+      params: { q, game, limit: SEARCH_BATCH, offset: nextOffset },
+      timeoutMs: 20000,
+    })
+    if (!page.ok) return { ok: false, upstream: page, rows: [], total: 0, truncated: false }
+    const pageItems = toItems(page.payload).map(normalizeV2Card)
+    if (!pageItems.length) break
+    rows.push(...pageItems)
+    const following = Number(page.payload?.next_offset)
+    if (!page.payload?.has_more || !Number.isFinite(following) || following <= nextOffset) break
+    nextOffset = following
+  }
+
+  return {
+    ok: true,
+    rows: uniqueRows(rows).slice(0, MAX_KIND_RESULTS),
+    total: exactTotal,
+    totalPrints: Number(payload.total_prints || 0),
+    truncated: rows.length < exactTotal,
+    canonicalMode: true,
+  }
+}
+
+async function enrichPrintsWithMarket(rows) {
+  if (!rows.length) return rows
+  const ids = rows
     .filter((item) => item?.type === 'print' && Number.isInteger(Number(item?.id)))
     .map((item) => Number(item.id))
-    .slice(0, 100)
+  if (!ids.length) return rows
 
-  if (!printIds.length) {
-    return NextResponse.json({ items })
+  const chunks = []
+  for (let index = 0; index < ids.length; index += MARKET_BATCH) chunks.push(ids.slice(index, index + MARKET_BATCH))
+
+  const marketResults = await Promise.all(chunks.map((chunk) => callInternalApi('/api/v1/market/prints/summary', {
+    params: { ids: chunk.join(',') },
+    timeoutMs: 20000,
+  })))
+
+  const marketByPrint = new Map()
+  for (const result of marketResults) {
+    if (!result.ok) continue
+    for (const row of toItems(result.payload)) marketByPrint.set(Number(row.print_id), row)
   }
 
-  // Market enrichment is deliberately read-only and non-blocking. The upstream
-  // endpoint returns only prices already projected through accepted exact
-  // Cardmarket links; if it is unavailable, catalog search remains usable and
-  // we never substitute a price from a different physical printing.
-  const market = await callInternalApi('/api/v1/market/prints/summary', {
-    params: { ids: printIds.join(',') },
+  return rows.map((item) => {
+    if (item?.type !== 'print') return item
+    const market = marketByPrint.get(Number(item.id))
+    return market ? { ...item, market } : item
   })
+}
 
-  if (!market.ok) {
-    return NextResponse.json({ items })
-  }
+function applyPhysicalFilters(rows, { language, pricedOnly }) {
+  return rows.filter((item) => {
+    if (language && item?.type === 'print' && String(item?.language || '').toLowerCase() !== language) return false
+    if (pricedOnly && item?.type !== 'print') return false
+    if (pricedOnly && marketPrice(item) === null) return false
+    return true
+  })
+}
 
-  const marketByPrint = new Map(
-    (Array.isArray(market.payload?.items) ? market.payload.items : []).map((row) => [Number(row.print_id), row]),
+function responseError(upstream) {
+  const developerHint = getDeveloperErrorHint(upstream?.payload, upstream?.status)
+  return NextResponse.json(
+    {
+      error: 'catalog_search_failed',
+      message: getPublicErrorMessage(upstream?.status || 503),
+      ...(developerHint ? { developer_hint: developerHint } : {}),
+    },
+    { status: upstream?.status || 503 },
   )
+}
 
+export async function GET(request) {
+  const { searchParams } = new URL(request.url)
+  const q = String(searchParams.get('q') || '').trim()
+  const game = String(searchParams.get('game') || '').trim()
+  const type = ['card', 'print', 'set'].includes(searchParams.get('type')) ? searchParams.get('type') : ''
+  const language = String(searchParams.get('language') || '').trim().toLowerCase()
+  const pricedOnly = searchParams.get('priced') === '1'
+  const sort = String(searchParams.get('sort') || 'relevance')
+  const limit = boundedInt(searchParams.get('limit'), 24, 1, MAX_PAGE_SIZE)
+  const offset = boundedInt(searchParams.get('offset'), 0, 0, 100000)
+
+  if (!q) return NextResponse.json({ error: 'q_required', message: 'Escribe algo para buscar.' }, { status: 400 })
+
+  const needAllCards = type === '' || (type === 'card' && sort !== 'relevance')
+  const cardSourcePromise = fetchCanonicalCardSource({ q, game, requireAll: needAllCards, limit, offset })
+  const printSourcePromise = fetchAllLegacyRows({ q, game, type: 'print' })
+  const setSourcePromise = fetchAllLegacyRows({ q, game, type: 'set' })
+  const [cardsSource, printsSource, setsSource] = await Promise.all([cardSourcePromise, printSourcePromise, setSourcePromise])
+
+  for (const source of [cardsSource, printsSource, setsSource]) {
+    if (!source.ok) return responseError(source.upstream)
+  }
+
+  let cards = cardsSource.rows
+  let prints = printsSource.rows
+  let sets = setsSource.rows
+  const needsGlobalMarket = pricedOnly || sort === 'price_asc' || sort === 'price_desc'
+  if (needsGlobalMarket) prints = await enrichPrintsWithMarket(prints)
+
+  const physicalFilters = { language, pricedOnly }
+  const filteredPrints = applyPhysicalFilters(prints, physicalFilters)
+  const filteredCards = pricedOnly ? [] : cards
+  const filteredSets = pricedOnly ? [] : sets
+
+  const counts = {
+    card: cardsSource.canonicalMode ? Number(cardsSource.total || 0) : filteredCards.length,
+    print: filteredPrints.length,
+    set: filteredSets.length,
+    all: (pricedOnly ? 0 : (cardsSource.canonicalMode ? Number(cardsSource.total || 0) : filteredCards.length) + filteredSets.length) + filteredPrints.length,
+  }
+
+  let selectedRows
+  let selectedTotal
+  if (type === 'card') {
+    selectedRows = cards
+    selectedTotal = cardsSource.canonicalMode ? Number(cardsSource.total || 0) : cards.length
+  } else if (type === 'print') {
+    selectedRows = filteredPrints
+    selectedTotal = filteredPrints.length
+  } else if (type === 'set') {
+    selectedRows = filteredSets
+    selectedTotal = filteredSets.length
+  } else {
+    selectedRows = [...filteredCards, ...filteredPrints, ...filteredSets]
+    selectedTotal = counts.all
+  }
+
+  if (!(type === 'card' && cardsSource.canonicalMode && sort === 'relevance')) {
+    selectedRows = sortRows(selectedRows, sort)
+  }
+
+  let pageItems
+  if (type === 'card' && cardsSource.canonicalMode && sort === 'relevance') {
+    pageItems = selectedRows
+  } else {
+    pageItems = selectedRows.slice(offset, offset + limit)
+  }
+
+  if (!needsGlobalMarket) pageItems = await enrichPrintsWithMarket(pageItems)
+
+  const truncated = Boolean(cardsSource.truncated || printsSource.truncated || setsSource.truncated)
   return NextResponse.json({
-    items: items.map((item) => {
-      if (item?.type !== 'print') return item
-      const price = marketByPrint.get(Number(item.id))
-      return price ? { ...item, market: price } : item
-    }),
-  })
+    items: pageItems,
+    total: selectedTotal,
+    counts,
+    limit,
+    offset,
+    has_more: offset + pageItems.length < selectedTotal,
+    next_offset: offset + pageItems.length < selectedTotal ? offset + pageItems.length : null,
+    truncated,
+    integrity: truncated ? `La búsqueda alcanzó el límite de seguridad de ${MAX_KIND_RESULTS.toLocaleString()} resultados por tipo.` : null,
+  }, { headers: PUBLIC_CACHE_HEADERS })
 }
