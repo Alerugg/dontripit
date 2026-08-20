@@ -229,7 +229,11 @@ def exhaustive_name_page(
               ORDER BY pi.is_primary DESC, pi.id ASC
               LIMIT 1
             ) AS primary_image_url,
-            COUNT(*) OVER () AS variant_count
+            (
+              SELECT COUNT(*)::bigint
+              FROM prints pv
+              WHERE pv.card_id = mc.card_id
+            ) AS variant_count
           FROM prints p
           JOIN sets s ON s.id = p.set_id
           LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
