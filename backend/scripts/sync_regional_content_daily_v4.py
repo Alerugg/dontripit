@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""V4 regional collector for Pokemon EU using the official UK TCG surface.
+"""V4 regional collector for Pokemon EU using the official UK news surface.
 
-The UK Pokemon TCG landing is the English European-market counterpart of the
-working US TCG landing and is server-rendered for GitHub Actions. It is used as
-an index only. Each linked article must independently prove physical Pokemon TCG
-content; Pokemon TCG Live and Pokemon TCG Pocket are excluded.
+Pokemon's UK news index is server-rendered and exposes Trading Card Game
+articles under /uk/news/ and /uk/pokemon-news/. It is used as an index only.
+Each linked article must independently prove physical Pokemon TCG content;
+Pokemon TCG Live and Pokemon TCG Pocket are excluded. Dates are persisted only
+when they are explicit in official listing/article text.
 """
 
 from datetime import date
@@ -21,7 +22,7 @@ from scripts import sync_regional_content_daily_v2 as v2
 
 
 POKEMON_EU_KEY = "pokemon_eu_pokemon_uk"
-POKEMON_EU_URL = "https://www.pokemon.com/uk/pokemon-tcg/"
+POKEMON_EU_URL = "https://www.pokemon.com/uk/pokemon-news/"
 POKEMON_EU_NAME = "Pokemon UK – TCG official"
 POKEMON_EU_LOCALE = "en-GB"
 POKEMON_EU_REGION = "eu"
@@ -42,6 +43,15 @@ _DIGITAL_EXCLUSIONS = (
     "pokémon tcg pocket",
     "pokemon tcg pocket",
     "trading card game pocket",
+)
+_RELEASE_ANCHORS = (
+    "release date",
+    "available on",
+    "available ",
+    "arrives on",
+    "arrives ",
+    "releases on",
+    "launches on",
 )
 
 
@@ -64,6 +74,19 @@ def _is_physical_tcg_text(value: str) -> bool:
     )
 
 
+def _explicit_release_date(value: str | None) -> date | None:
+    text_value = regional._clean(value)
+    folded = text_value.casefold()
+    for anchor in _RELEASE_ANCHORS:
+        pos = folded.find(anchor)
+        if pos < 0:
+            continue
+        candidate = regional._date_from_text(text_value[pos : pos + 220])
+        if candidate is not None:
+            return candidate
+    return regional._release_date_from_text(text_value)
+
+
 def _listing_candidates(html: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     candidates: list[dict[str, Any]] = []
@@ -83,7 +106,7 @@ def _listing_candidates(html: str) -> list[dict[str, Any]]:
                 "title": title[:1000],
                 "context": context[:2500],
                 "published_date": regional._date_from_text(context),
-                "release_date": regional._release_date_from_text(context),
+                "release_date": _explicit_release_date(context),
             }
         )
         if len(candidates) >= POKEMON_EU_MAX_ITEMS * 3:
@@ -95,7 +118,7 @@ def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
     html = regional._fetch(http, POKEMON_EU_URL)
     candidates = _listing_candidates(html)
     if not candidates:
-        raise RuntimeError("Official Pokemon UK TCG landing yielded zero news candidates")
+        raise RuntimeError("Official Pokemon UK news index yielded zero news candidates")
 
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -113,7 +136,7 @@ def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
             continue
 
         published = candidate["published_date"] or regional._date_from_text(detail[:6000])
-        release = candidate["release_date"] or regional._release_date_from_text(detail)
+        release = candidate["release_date"] or _explicit_release_date(detail)
         kind = "release" if release is not None else regional._kind(
             candidate["title"], combined, None
         )
@@ -131,7 +154,7 @@ def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
             break
 
     if not rows:
-        raise RuntimeError("Official Pokemon UK TCG surface yielded zero verified physical TCG articles")
+        raise RuntimeError("Official Pokemon UK news index yielded zero verified physical TCG articles")
     rows.sort(
         key=lambda row: (
             row["published_date"] is not None,
@@ -158,7 +181,7 @@ def _record(item: dict[str, Any]) -> dict[str, Any]:
         "release_date": item["release_date"],
         "raw_json": {
             "official": True,
-            "regional_basis": "official_pokemon_uk_tcg_surface_for_eu_operational_region",
+            "regional_basis": "official_pokemon_uk_news_for_eu_operational_region",
             "feed_role": "physical_tcg_news_and_releases",
             "source_context": item["source_context"],
             "regions": [POKEMON_EU_REGION],
@@ -184,7 +207,7 @@ def collect_official_content(*, strict: bool = True) -> dict[str, Any]:
     payload = v2.collect_official_content(strict=strict)
     for report in payload.get("source_reports", []):
         if report.get("source") == POKEMON_EU_KEY:
-            report["regional_basis"] = "official_pokemon_uk_tcg_surface_for_eu_operational_region"
+            report["regional_basis"] = "official_pokemon_uk_news_for_eu_operational_region"
     return payload
 
 
