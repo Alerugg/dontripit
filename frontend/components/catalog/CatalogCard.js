@@ -10,6 +10,10 @@ function releaseCode(item) {
   return match?.[1] ? match[1].toUpperCase() : null
 }
 
+function setCode(item) {
+  return releaseCode(item) || item.set_code?.toUpperCase?.() || item.code?.toUpperCase?.() || item.set_code || item.code || null
+}
+
 function formatCurrency(value, currency = 'EUR') {
   const number = value === null || value === undefined || value === '' ? null : Number(value)
   if (number === null || !Number.isFinite(number)) return null
@@ -40,34 +44,23 @@ function formatMarketDate(value) {
 }
 
 function buildSubtitle(item) {
+  const collectorLabel = item.collector_number ? `#${item.collector_number}` : null
+
   if (item.type === 'card') {
-    const count = Number(item.variant_count || 0)
-    return count > 0
-      ? `${count.toLocaleString('es-ES')} impresión${count === 1 ? '' : 'es'} física${count === 1 ? '' : 's'} vinculada${count === 1 ? '' : 's'}`
-      : 'Carta canónica · el mercado pertenece a cada impresión física'
+    const identity = [collectorLabel, setCode(item), item.rarity].filter(Boolean).join(' · ')
+    if (identity) return identity
+    return 'Carta canónica · elige después la impresión física exacta'
   }
 
   if (item.type === 'set') {
-    const code = item.set_code || item.code
-    const count = Number(item.card_count ?? item.total_cards ?? item.cards_count)
-    if (Number.isFinite(count) && count > 0) {
-      return `${count.toLocaleString('es-ES')} carta${count === 1 ? '' : 's'} en el catálogo`
-    }
-    return code ? `Set ${String(code).toUpperCase()} · abre el set para ver sus cartas e impresiones` : 'Set del catálogo · abre para ver sus cartas e impresiones'
+    return [setCode(item), item.year || item.release_year, item.region].filter(Boolean).join(' · ') || 'Set del catálogo'
   }
 
-  const collectorLabel = item.collector_number ? `#${item.collector_number}` : null
-  const physicalName = item?.physical_release_names?.[0] || item?.physical_releases?.[0]?.name || null
-  const origin = item.set_name || item.summary_label || null
-  const physical = physicalName ? `Lanzamiento: ${physicalName}` : null
-  const originLabel = physicalName && origin ? `Origen: ${origin}` : origin
-
   return [
-    physical,
-    originLabel,
     collectorLabel,
+    setCode(item),
     item.language?.toUpperCase?.() || item.language,
-    item.variant_label,
+    item.region,
   ].filter(Boolean).join(' · ')
 }
 
@@ -75,17 +68,11 @@ function buildMetaChips(item) {
   if (item.type === 'card') return []
 
   if (item.type === 'set') {
-    return [
-      item.set_code?.toUpperCase?.() || item.code?.toUpperCase?.() || item.set_code || item.code,
-      item.year,
-      item.region,
-    ].filter(Boolean)
+    return [item.region].filter(Boolean)
   }
 
   return [
-    releaseCode(item) || item.set_code?.toUpperCase?.() || item.set_code,
     item.rarity,
-    item.language?.toUpperCase?.() || item.language,
     item.finish && item.finish !== 'default' ? item.finish : null,
     item.variant_label || item.variant,
   ].filter(Boolean)
@@ -115,10 +102,10 @@ function CardSignal({ item }) {
   return (
     <div className="v8-result-signal v8-result-card-signal">
       <div>
-        <span className="v8-result-signal-label">Cobertura física</span>
+        <span className="v8-result-signal-label">Impresiones físicas</span>
         <strong>{count > 0 ? count.toLocaleString('es-ES') : '—'}</strong>
       </div>
-      <span className="v8-result-signal-note">{count > 0 ? `impresión${count === 1 ? '' : 'es'}` : 'sin impresiones enlazadas'}</span>
+      <span className="v8-result-signal-note">{count > 0 ? 'Elige la versión exacta dentro de la carta' : 'Sin impresiones enlazadas'}</span>
     </div>
   )
 }
@@ -127,32 +114,43 @@ function PrintMarketSignal({ market }) {
   if (!market) {
     return (
       <div className="v8-result-signal v8-result-market is-empty">
-        <span className="v8-result-signal-label">Cardmarket exacto</span>
-        <strong>Sin precio actual</strong>
-        <span className="v8-result-signal-note">No mostramos estimaciones ni precios de otra edición.</span>
+        <span className="v8-result-signal-label">Precio exacto</span>
+        <strong>Sin precio seguro</strong>
+        <span className="v8-result-signal-note">No usamos otra edición como sustituto.</span>
       </div>
     )
   }
 
   return (
     <div className="v8-result-signal v8-result-market">
-      <span className="v8-result-signal-label">Cardmarket exacto</span>
+      <span className="v8-result-signal-label">Precio exacto · Cardmarket</span>
       <strong>{market.display}</strong>
       <span className="v8-result-signal-note">
-        {[market.low && market.low !== market.display ? `Low ${market.low}` : null, market.asOf ? `actualizado ${market.asOf}` : null].filter(Boolean).join(' · ') || 'precio vigente de esta impresión'}
+        {[market.low && market.low !== market.display ? `Low ${market.low}` : null, market.asOf ? `actualizado ${market.asOf}` : null].filter(Boolean).join(' · ') || 'Correspondencia de esta impresión'}
       </span>
     </div>
   )
 }
 
 function SetSignal({ item }) {
-  const code = item.set_code || item.code
+  const code = setCode(item)
   const count = Number(item.card_count ?? item.total_cards ?? item.cards_count)
   return (
     <div className="v8-result-signal v8-result-set-signal">
       <span className="v8-result-signal-label">Contenido del set</span>
-      <strong>{Number.isFinite(count) && count > 0 ? count.toLocaleString('es-ES') : (code ? String(code).toUpperCase() : 'Ver set')}</strong>
-      <span className="v8-result-signal-note">{Number.isFinite(count) && count > 0 ? `carta${count === 1 ? '' : 's'} catalogada${count === 1 ? '' : 's'}` : 'cartas e impresiones dentro'}</span>
+      <strong>{Number.isFinite(count) && count > 0 ? count.toLocaleString('es-ES') : (code || 'Ver set')}</strong>
+      <span className="v8-result-signal-note">{Number.isFinite(count) && count > 0 ? `${count === 1 ? 'carta catalogada' : 'cartas catalogadas'}` : 'Abre para ver cartas e impresiones'}</span>
+    </div>
+  )
+}
+
+function SetCover({ item, title }) {
+  const code = setCode(item)
+  return (
+    <div className="v13-set-cover" aria-hidden="true">
+      <span>{code || 'SET'}</span>
+      <strong>{title}</strong>
+      <small>{item.year || item.release_year || item.region || 'Don’tRipIt'}</small>
     </div>
   )
 }
@@ -179,24 +177,30 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
       data-result-type={item.type || 'card'}
     >
       <div className="catalog-image-wrap v8-result-image-wrap">
-        <FallbackImage
-          src={item.primary_image_url}
-          alt={title}
-          className="catalog-image"
-          placeholderClassName="catalog-placeholder image-fallback"
-          label={item.game || 'TCG'}
-          debug={debugImage}
-          debugLabel={item.game === 'onepiece' ? 'One Piece probe' : item.game === 'pokemon' ? 'Pokémon probe' : ''}
-        />
+        {item.type === 'set' ? (
+          <SetCover item={item} title={title} />
+        ) : (
+          <FallbackImage
+            src={item.primary_image_url}
+            alt={title}
+            className="catalog-image"
+            placeholderClassName="catalog-placeholder image-fallback"
+            label={item.game || 'TCG'}
+            debug={debugImage}
+            debugLabel={item.game === 'onepiece' ? 'One Piece probe' : item.game === 'pokemon' ? 'Pokémon probe' : ''}
+          />
+        )}
         <span className={`badge ${itemType.className} v8-result-type-badge`}>{itemType.label}</span>
+        <span className="v13-result-game-badge">{item.game || 'TCG'}</span>
       </div>
 
       <div className="catalog-card-content v8-result-content">
         <div className="catalog-card-head v8-result-head">
-          <div>
-            <p className="meta-game">{item.game || 'TCG'}</p>
-            <h3>{title}</h3>
+          <div className="v13-result-inline-identity">
+            <span className={`v13-inline-kind ${itemType.className}`}>{itemType.label}</span>
+            <span className="meta-game">{item.game || 'TCG'}</span>
           </div>
+          <h3>{title}</h3>
         </div>
 
         <p className="meta-subtitle v8-result-subtitle">{buildSubtitle(item)}</p>
@@ -207,13 +211,13 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
               <span key={String(meta)} className="catalog-meta-chip">{meta}</span>
             ))}
           </div>
-        ) : null}
+        ) : <div className="v8-result-meta" aria-hidden="true" />}
 
         <div className="catalog-card-footer v8-result-footer">
           {item.type === 'print' ? <PrintMarketSignal market={market} /> : null}
           {item.type === 'set' ? <SetSignal item={item} /> : null}
           {item.type !== 'print' && item.type !== 'set' ? <CardSignal item={item} /> : null}
-          <span className="v8-result-open">Abrir <span aria-hidden="true">→</span></span>
+          <span className="v8-result-open">Ver detalle <span aria-hidden="true">→</span></span>
         </div>
       </div>
     </Link>
