@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import TopNav from '../../../../components/layout/TopNav'
 import OnePieceSearchV2Experience from '../../../../components/searchV2/OnePieceSearchV2Experience'
-import { getGameConfig } from '../../../../lib/catalog/games'
+import { getGameConfig, isGameCatalogActive } from '../../../../lib/catalog/games'
 
 function withForcedAdvanced(searchParams = {}) {
   const next = new URLSearchParams()
@@ -20,7 +20,15 @@ function withForcedAdvanced(searchParams = {}) {
 export async function generateMetadata({ params }) {
   const { slug } = await params
   const game = getGameConfig(slug)
-  if (!game || game.slug === 'riftbound') return {}
+  if (!game) return {}
+  if (!isGameCatalogActive(game.slug)) {
+    return {
+      title: `${game.name} · Próximamente`,
+      description: game.description,
+      alternates: { canonical: `/games/${game.slug}` },
+      robots: { index: false, follow: true },
+    }
+  }
   return {
     title: `Búsqueda física avanzada · ${game.name}`,
     description: `Filtra impresiones físicas exactas de ${game.name} por atributos especializados.`,
@@ -35,7 +43,8 @@ export default async function AdvancedPrintSearchPage({ params, searchParams }) 
   const requestedSlug = String(slug || '').trim().toLowerCase()
   const game = getGameConfig(requestedSlug)
 
-  if (!game || game.slug === 'riftbound') notFound()
+  if (!game) notFound()
+  if (!isGameCatalogActive(game.slug)) redirect(`/games/${game.slug}`)
 
   if (requestedSlug !== game.slug || String(query?.advanced || '') !== '1') {
     const next = withForcedAdvanced(query)
