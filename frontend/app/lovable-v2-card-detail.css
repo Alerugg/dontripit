@@ -1,0 +1,294 @@
+/* P0.5 — Card detail is an exact-Print selection workspace. */
+.v9-card-detail {
+  display: grid !important;
+  grid-template-columns: minmax(250px, 330px) minmax(0, 1fr) !important;
+  gap: clamp(28px, 4.5vw, 58px) !important;
+  align-items: start !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.v9-card-media-column {
+  position: sticky;
+  top: 82px;
+  min-width: 0;
+}
+
+.v9-card-media {
+  display: grid;
+  place-items: center;
+  min-height: 430px;
+  padding: 22px !important;
+  border: 1px solid var(--dri-border) !important;
+  border-radius: 15px !important;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(139,92,246,.075), transparent 58%),
+    #09090b !important;
+  overflow: hidden;
+}
+
+.v9-card-media .detail-image {
+  display: block;
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 490px !important;
+  object-fit: contain !important;
+  filter: drop-shadow(0 18px 24px rgba(0,0,0,.35));
+}
+
+.v9-representative-note {
+  margin: 9px 4px 0;
+  color: var(--dri-faint);
+  font-size: .61rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.v9-card-content {
+  display: grid !important;
+  gap: 24px !important;
+  min-width: 0;
+}
+
+.v9-card-breadcrumbs {
+  margin: 0 !important;
+  color: var(--dri-faint) !important;
+  font-size: .67rem !important;
+}
+
+.v9-card-breadcrumbs a { color: var(--dri-muted) !important; }
+.v9-card-breadcrumbs a:hover { color: #c5b6f4 !important; }
+
+.v9-card-header {
+  display: grid;
+  gap: 12px;
+  padding: 0 0 22px;
+  border-bottom: 1px solid var(--dri-border);
+}
+
+.v9-card-kicker-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v9-identity-pill,
+.v9-game-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .58rem;
+  font-weight: 800;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.v9-identity-pill {
+  border: 1px solid rgba(155,116,247,.3);
+  color: #cbbcf7;
+  background: rgba(139,92,246,.095);
+}
+
+.v9-game-label {
+  border: 1px solid var(--dri-border);
+  color: var(--dri-muted);
+  background: rgba(255,255,255,.02);
+}
+
+.v9-card-header h1 {
+  max-width: 860px;
+  margin: 0 !important;
+  font-family: var(--font-display), sans-serif;
+  font-size: clamp(2.75rem, 6vw, 5.4rem) !important;
+  font-weight: 620 !important;
+  line-height: .96 !important;
+  letter-spacing: -.06em !important;
+}
+
+.v9-card-intro {
+  max-width: 720px;
+  margin: 0 !important;
+  color: var(--dri-muted) !important;
+  font-size: .9rem !important;
+  line-height: 1.65 !important;
+}
+
+.v9-card-intro strong { color: #d7d1df; font-weight: 650; }
+
+.v9-card-truth {
+  display: grid;
+  grid-template-columns: minmax(110px, .7fr) minmax(110px, .7fr) minmax(240px, 1.6fr);
+  gap: 8px;
+}
+
+.v9-card-stat,
+.v9-card-market-rule {
+  min-width: 0;
+  min-height: 92px;
+  padding: 12px 13px;
+  border: 1px solid var(--dri-border);
+  border-radius: 10px;
+  background: var(--dri-surface);
+}
+
+.v9-card-stat {
+  display: grid;
+  align-content: space-between;
+  gap: 9px;
+}
+
+.v9-card-stat span,
+.v9-card-market-rule > span {
+  color: var(--dri-faint);
+  font-size: .55rem;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.v9-card-stat strong {
+  color: #eeeaf2;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.55rem;
+  font-weight: 620;
+  letter-spacing: -.04em;
+}
+
+.v9-card-market-rule {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border-color: rgba(155,116,247,.2);
+  background: linear-gradient(135deg, rgba(139,92,246,.07), rgba(255,255,255,.012));
+}
+
+.v9-card-market-rule strong {
+  color: #d8cff2;
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.v9-card-market-rule small {
+  color: var(--dri-muted);
+  font-size: .61rem;
+  line-height: 1.4;
+}
+
+.v9-related-sets {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--dri-border);
+}
+
+.v9-related-sets-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.v9-related-sets-head h2 {
+  margin: 4px 0 0;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.4rem;
+  letter-spacing: -.035em;
+}
+
+.v9-related-sets-head > span {
+  color: var(--dri-faint);
+  font-size: .62rem;
+  font-weight: 750;
+}
+
+.v9-related-set-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.v9-related-set {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 9px 10px;
+  border: 1px solid var(--dri-border);
+  border-radius: 9px;
+  color: inherit;
+  background: rgba(255,255,255,.015);
+  text-decoration: none;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.v9-related-set:hover {
+  border-color: var(--dri-accent-border);
+  background: rgba(139,92,246,.05);
+}
+
+.v9-related-set:focus-visible {
+  outline: 2px solid #a98bf8;
+  outline-offset: 2px;
+}
+
+.v9-related-set strong {
+  color: #bca9f2;
+  font-size: .62rem;
+  letter-spacing: .035em;
+}
+
+.v9-related-set span {
+  min-width: 0;
+  overflow: hidden;
+  color: #9d97a5;
+  font-size: .66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v9-related-set i {
+  color: #625d68;
+  font-style: normal;
+}
+
+@media (max-width: 980px) {
+  .v9-card-detail {
+    grid-template-columns: minmax(210px, 270px) minmax(0, 1fr) !important;
+    gap: 28px !important;
+  }
+  .v9-card-media { min-height: 360px; padding: 16px !important; }
+  .v9-card-truth { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .v9-card-market-rule { grid-column: 1 / -1; min-height: 76px; }
+  .v9-related-set-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .v9-card-detail { display: block !important; }
+  .v9-card-media-column {
+    position: static;
+    width: min(270px, 78vw);
+    margin: 0 auto 28px;
+  }
+  .v9-card-media { min-height: 0; aspect-ratio: 5 / 7; }
+  .v9-card-content { gap: 20px !important; }
+  .v9-card-header h1 { font-size: clamp(2.45rem, 13vw, 4rem) !important; }
+  .v9-card-intro { font-size: .82rem !important; }
+}
+
+@media (max-width: 480px) {
+  .v9-card-truth { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .v9-card-stat,.v9-card-market-rule { padding: 10px; }
+  .v9-card-stat { min-height: 78px; }
+  .v9-card-market-rule { grid-column: 1 / -1; }
+  .v9-card-stat strong { font-size: 1.3rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v9-related-set { transition: none !important; }
+}
