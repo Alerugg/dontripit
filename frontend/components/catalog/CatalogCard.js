@@ -11,11 +11,22 @@ function releaseCode(item) {
 }
 
 function buildSubtitle(item) {
+  if (item.type === 'card') {
+    const count = Number(item.variant_count || 0)
+    return count > 0
+      ? `${count} impresión${count === 1 ? '' : 'es'} física${count === 1 ? '' : 's'} disponible${count === 1 ? '' : 's'}`
+      : 'Carta canónica · elige después la impresión física'
+  }
+
+  if (item.type === 'set') {
+    return item.summary_label || item.set_name || item.subtitle || 'Set del catálogo'
+  }
+
   const collectorLabel = item.collector_number ? `#${item.collector_number}` : null
   const physicalName = item?.physical_release_names?.[0] || item?.physical_releases?.[0]?.name || null
   const origin = item.set_name || item.summary_label || null
-  const physical = item.type === 'print' && physicalName ? `Lanzamiento: ${physicalName}` : null
-  const originLabel = item.type === 'print' && physicalName && origin ? `Origen: ${origin}` : origin
+  const physical = physicalName ? `Lanzamiento: ${physicalName}` : null
+  const originLabel = physicalName && origin ? `Origen: ${origin}` : origin
 
   return [
     physical,
@@ -23,14 +34,15 @@ function buildSubtitle(item) {
     collectorLabel,
     item.language?.toUpperCase?.() || item.language,
     item.variant_label,
-    item.variant_count ? `${item.variant_count} variante${item.variant_count === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ')
 }
 
 function buildMetaChips(item) {
+  if (item.type === 'card') return []
   return [
     releaseCode(item) || item.set_code?.toUpperCase?.() || item.set_code,
     item.rarity,
+    item.language?.toUpperCase?.() || item.language,
     item.finish && item.finish !== 'default' ? item.finish : null,
     item.year,
     item.type === 'print' && item.print_id ? `Print ${item.print_id}` : null,
@@ -72,6 +84,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         : '#'
   const itemType = resolveItemType(item)
   const marketPrice = formatMarketPrice(item)
+  const physicalCount = item.type === 'card' ? Number(item.variant_count || 0) : 0
 
   return (
     <Link href={href} className={`catalog-card ${view === 'list' ? 'list' : ''}`}>
@@ -96,7 +109,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
           <span className={`badge ${itemType.className}`}>{itemType.label}</span>
         </div>
 
-        <p className="meta-subtitle">{buildSubtitle(item) || 'Identidad física disponible'}</p>
+        <p className="meta-subtitle">{buildSubtitle(item)}</p>
 
         <div className="catalog-card-footer">
           <div className="catalog-meta-row">
@@ -105,7 +118,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
             ))}
             {marketPrice ? <span className="catalog-meta-chip">Cardmarket {marketPrice}</span> : null}
           </div>
-          {item.variant_count ? <span className="catalog-variant-pill">{item.variant_count} versiones</span> : null}
+          {physicalCount > 0 ? <span className="catalog-variant-pill">Ver {physicalCount} impresión{physicalCount === 1 ? '' : 'es'}</span> : null}
         </div>
       </div>
     </Link>
