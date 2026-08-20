@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from urllib.parse import quote
 
 import requests
 from sqlalchemy import select
 
-from app.models import Card, Game, Print, PrintIdentifier, PrintImage
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set, Source, SourceRecord
 
 
 @dataclass(frozen=True)
@@ -71,13 +72,7 @@ def _valid_image(http: requests.Session, url: str) -> bool:
 
 
 def _pokemon_exact_sources(session, missing: list[Print]) -> list[tuple[Print, str, str]]:
-    """Resolve certified TCGdex identity without crossing language namespaces.
-
-    EN may retain the legacy Print.tcgdex_id, but ES/JA physical identities are
-    deliberately language-scoped through PrintIdentifier(source='tcgdex:<lang>').
-    Never fall back from ES/JA to the global EN field because JA IDs can collide
-    with unrelated international cards.
-    """
+    """Resolve certified TCGdex identity without crossing language namespaces."""
     if not missing:
         return []
     print_ids = [int(row.id) for row in missing]
@@ -105,9 +100,34 @@ def _pokemon_exact_sources(session, missing: list[Print]) -> list[tuple[Print, s
     return resolved
 
 
+def _pokemon_source_record_images(session) -> dict[tuple[str, str], str]:
+    """Index exact TCGdex image bases already captured by the certified ingest.
+
+    Multilingual TCGdex records store `_language` in raw_json before checksum.
+    Older EN records may predate that field, so only those default to EN.
+    A conflicting image for the same language/id is excluded rather than chosen.
+    """
+    source = session.execute(select(Source).where(Source.name == "tcgdex_pokemon")).scalar_one_or_none()
+    if source is None:
+        return {}
+    rows = session.execute(select(SourceRecord.raw_json).where(SourceRecord.source_id == source.id)).scalars()
+    candidates: dict[tuple[str, str], set[str]] = {}
+    for payload in rows:
+        if not isinstance(payload, dict):
+            continue
+        source_id = str(payload.get("id") or "").strip()
+        image_base = str(payload.get("image") or "").strip().rstrip("/")
+        language = str(payload.get("_language") or "en").strip().lower()
+        if language not in {"en", "es", "ja"} or not source_id or not image_base:
+            continue
+        candidates.setdefault((language, source_id), set()).add(image_base)
+    return {key: next(iter(values)) for key, values in candidates.items() if len(values) == 1}
+
+
 def repair_pokemon_images(session) -> ImageRepairReport:
     missing = _missing(session, "pokemon")
     candidates = _pokemon_exact_sources(session, missing)
+    captured_images = _pokemon_source_record_images(session)
     http = requests.Session()
     http.headers.update({"User-Agent": "DontRipItCatalog/1.0", "Accept": "application/json"})
 
@@ -118,12 +138,14 @@ def repair_pokemon_images(session) -> ImageRepairReport:
     inserted = no_image = failures = 0
     for language, source_id in sorted(by_source):
         rows = by_source[(language, source_id)]
-        try:
-            payload = _get_json(http, f"https://api.tcgdex.net/v2/{language}/cards/{source_id}")
-        except requests.RequestException:
-            failures += len(rows)
-            continue
-        image_base = str((payload or {}).get("image") or "").strip()
+        image_base = captured_images.get((language, source_id), "")
+        if not image_base:
+            try:
+                payload = _get_json(http, f"https://api.tcgdex.net/v2/{language}/cards/{quote(source_id, safe='')}")
+            except requests.RequestException:
+                failures += len(rows)
+                continue
+            image_base = str((payload or {}).get("image") or "").strip().rstrip("/")
         if not image_base:
             no_image += len(rows)
             continue
@@ -167,6 +189,20 @@ def _scryfall_image(payload: dict) -> str | None:
     return None
 
 
+def _scryfall_exact_print_payload(http: requests.Session, *, set_code: str, collector_number: str) -> dict | None:
+    payload = _get_json(
+        http,
+        f"https://api.scryfall.com/cards/{quote(set_code.lower(), safe='')}/{quote(collector_number, safe='')}",
+    )
+    if not payload:
+        return None
+    if str(payload.get("set") or "").lower() != set_code.lower():
+        return None
+    if str(payload.get("collector_number") or "") != collector_number:
+        return None
+    return payload
+
+
 def repair_mtg_images(session) -> ImageRepairReport:
     missing = _missing(session, "mtg")
     candidates = [row for row in missing if (row.scryfall_id or "").strip()]
@@ -175,16 +211,37 @@ def repair_mtg_images(session) -> ImageRepairReport:
     by_source: dict[str, list[Print]] = {}
     for row in candidates:
         by_source.setdefault(str(row.scryfall_id).strip(), []).append(row)
+    set_ids = sorted({int(row.set_id) for row in candidates})
+    set_codes = {
+        int(set_id): str(code)
+        for set_id, code in session.execute(select(Set.id, Set.code).where(Set.id.in_(set_ids))).all()
+    } if set_ids else {}
+
     inserted = no_image = failures = 0
     for index, (source_id, rows) in enumerate(by_source.items()):
         if index:
             time.sleep(0.11)
         try:
-            payload = _get_json(http, f"https://api.scryfall.com/cards/{source_id}")
+            payload = _get_json(http, f"https://api.scryfall.com/cards/{quote(source_id, safe='')}")
         except requests.RequestException:
+            payload = None
             failures += len(rows)
-            continue
         image_url = _scryfall_image(payload or {})
+
+        if not image_url:
+            representative = rows[0]
+            set_code = set_codes.get(int(representative.set_id), "")
+            collector = str(representative.collector_number or "").strip()
+            if set_code and collector:
+                try:
+                    exact_payload = _scryfall_exact_print_payload(
+                        http, set_code=set_code, collector_number=collector
+                    )
+                except requests.RequestException:
+                    exact_payload = None
+                    failures += len(rows)
+                image_url = _scryfall_image(exact_payload or {})
+
         if not image_url or not _valid_image(http, image_url):
             no_image += len(rows)
             continue
