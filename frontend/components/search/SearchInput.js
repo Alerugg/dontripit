@@ -22,7 +22,7 @@ export default function SearchInput({
   const [dropdownWidth, setDropdownWidth] = useState(0)
   const hasSuggestions = suggestions.length > 0
   const cleanQuery = (value || '').trim()
-  const hasMeaningfulQuery = cleanQuery.length >= 1
+  const hasMeaningfulQuery = (value || '').trim().length >= 1
   const activeDescendant = isOpen && activeIndex >= 0 && suggestions[activeIndex]
     ? `${listId}-${activeIndex}`
     : undefined
