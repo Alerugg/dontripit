@@ -40,6 +40,7 @@ jobs:
               ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
               ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh'],
               ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
+              ['project-cardmarket-canonical-prices-v2.yml', 'Cardmarket exact canonical singles and sealed prices'],
               ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
               ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
             ];
