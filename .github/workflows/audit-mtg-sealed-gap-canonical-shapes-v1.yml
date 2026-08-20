@@ -1,0 +1,127 @@
+name: Audit MTG Sealed Gap Canonical Shapes V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-sealed-gap-canonical-shapes-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet psycopg2-binary
+      - name: Inspect equivalent canonical shapes READ ONLY
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          targets=('903128','903129','903175','903183')
+          dsn=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('Production database secret is missing')
+          conn=psycopg2.connect(dsn,connect_timeout=30,application_name='dontripit_mtg_sealed_gap_shapes_v1')
+          conn.set_session(readonly=True,autocommit=True)
+          out={'mode':'production_read_only','production_writes':0,'targets':[]}
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET statement_timeout='300s'")
+              c.execute('''
+                WITH mtg AS (SELECT id FROM games WHERE slug='mtg'), cap AS (
+                  SELECT max(last_seen_at) t FROM external_catalog_products e JOIN mtg ON mtg.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                )
+                SELECT e.id,e.external_id,e.name,e.category,e.category_id,e.expansion_external_id,e.date_added,
+                       e.website_path,e.raw_json,e.last_seen_at
+                FROM external_catalog_products e JOIN mtg ON mtg.id=e.game_id JOIN cap ON cap.t=e.last_seen_at
+                WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.external_id=ANY(%s)
+                ORDER BY e.external_id
+              ''',(list(targets),))
+              external=[dict(r) for r in c.fetchall()]
+              if {str(r['external_id']) for r in external} != set(targets):
+                  raise AssertionError({'expected':targets,'found':[r['external_id'] for r in external]})
+
+              for row in external:
+                  category=row['category']
+                  c.execute('''
+                    WITH mtg AS (SELECT id FROM games WHERE slug='mtg'), cap AS (
+                      SELECT max(last_seen_at) t FROM external_catalog_products e JOIN mtg ON mtg.id=e.game_id
+                      WHERE e.source='cardmarket' AND e.product_group='non_single'
+                    )
+                    SELECT p.product_type,pv.language,pv.region,pv.packaging,count(*) n,
+                           array_agg(e.external_id ORDER BY e.external_id)[:8] sample_external_ids,
+                           array_agg(e.name ORDER BY e.external_id)[:8] sample_names
+                    FROM external_catalog_products e JOIN mtg ON mtg.id=e.game_id JOIN cap ON cap.t=e.last_seen_at
+                    JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact')
+                    JOIN product_variants pv ON pv.id=l.product_variant_id
+                    JOIN products p ON p.id=pv.product_id AND p.game_id=e.game_id
+                    WHERE e.source='cardmarket' AND e.product_group='non_single' AND e.category=%s
+                    GROUP BY p.product_type,pv.language,pv.region,pv.packaging
+                    ORDER BY n DESC,p.product_type,pv.language,pv.region,pv.packaging
+                    LIMIT 20
+                  ''',(category,))
+                  shapes=[dict(r) for r in c.fetchall()]
+
+                  terms=[]
+                  name=str(row['name'])
+                  for term in ('Hobbit','Star Trek','Secret Lair','Marvelous Mathom','Prerelease Cards'):
+                      if term.lower() in name.lower():
+                          terms.append(term)
+                  related=[]
+                  for term in terms:
+                      c.execute('''
+                        SELECT p.id product_id,p.name,p.product_type,p.set_id,s.code set_code,s.name set_name,
+                               pv.id variant_id,pv.language,pv.region,pv.packaging,pv.sku,
+                               pi.external_id cardmarket_id
+                        FROM products p
+                        JOIN games g ON g.id=p.game_id AND g.slug='mtg'
+                        LEFT JOIN sets s ON s.id=p.set_id
+                        LEFT JOIN product_variants pv ON pv.product_id=p.id
+                        LEFT JOIN product_identifiers pi ON pi.product_variant_id=pv.id AND pi.source='cardmarket'
+                        WHERE lower(p.name) LIKE %s OR lower(coalesce(s.name,'')) LIKE %s
+                        ORDER BY p.id DESC,pv.id DESC LIMIT 30
+                      ''',(f'%{term.lower()}%',f'%{term.lower()}%'))
+                      related.extend([{'term':term,**dict(r)} for r in c.fetchall()])
+
+                  c.execute('''
+                    SELECT s.id,s.code,s.name,s.release_date
+                    FROM sets s JOIN games g ON g.id=s.game_id AND g.slug='mtg'
+                    WHERE lower(s.name) LIKE ANY(%s)
+                    ORDER BY s.release_date DESC NULLS LAST,s.id DESC LIMIT 30
+                  ''',([f'%{term.lower()}%' for term in terms] or ['%__no_match__%'],))
+                  sets=[dict(r) for r in c.fetchall()]
+
+                  out['targets'].append({
+                      'external':row,
+                      'category_canonical_shapes':shapes,
+                      'related_canonical_products':related,
+                      'related_sets':sets,
+                  })
+          finally:
+            conn.close()
+
+          Path('/tmp/mtg-sealed-gap-canonical-shapes-v1.json').write_text(json.dumps(out,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(out,indent=2,sort_keys=True,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-sealed-gap-canonical-shapes-v1-${{ github.run_id }}
+          path: /tmp/mtg-sealed-gap-canonical-shapes-v1.json
+          retention-days: 30
+          if-no-files-found: error
