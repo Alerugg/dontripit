@@ -29,37 +29,52 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile canonical regional pipeline
-        run: python -m py_compile app/jobs/regional_content.py scripts/dedupe_regional_content.py scripts/verify_ingest.py alembic/versions/20260810_32_add_regional_tcg_content.py
+
+      - name: Compile regional pipeline
+        run: |
+          python -m py_compile \
+            app/jobs/regional_content.py \
+            scripts/sync_regional_content_daily.py \
+            scripts/dedupe_regional_content.py \
+            alembic/versions/20260810_32_add_regional_tcg_content.py
+
+      - name: Gate official sources without database writes
+        run: |
+          python scripts/sync_regional_content_daily.py \
+            --dry-run \
+            --report /tmp/regional-dry-run.json
+
       - name: Apply content schema
         run: alembic upgrade head
-      - name: Fetch and persist canonical official regional feeds
+
+      - name: Persist canonical feeds and certify second-pass idempotency
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from app import db
-          from app.jobs.regional_content import CANONICAL_SOURCE_KEYS, ingest_official_regional_content
-          db.init_engine()
-          with db.SessionLocal() as session:
-              report = ingest_official_regional_content(session, strict=True)
-              session.commit()
-          if report['failed_sources'] or report['sources'] != len(CANONICAL_SOURCE_KEYS):
-              raise AssertionError(report)
-          Path('/tmp/regional-tcg-content.json').write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + '\n')
-          print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
-          PY
-      - name: Deduplicate current canonical regional titles
-        run: python scripts/dedupe_regional_content.py --window-hours 2 --apply --report /tmp/regional-dedupe-proof.json
-      - name: Verify regional ingest contract
-        run: python scripts/verify_ingest.py --window-hours 2 --report /tmp/regional-ingest-proof.json
+          python scripts/sync_regional_content_daily.py \
+            --apply \
+            --certify-two-pass \
+            --report /tmp/regional-two-pass-proof.json
+
+      - name: Remove historical duplicate titles only
+        run: |
+          python scripts/dedupe_regional_content.py \
+            --window-hours 24000 \
+            --apply \
+            --report /tmp/regional-dedupe-proof.json
+
+      - name: Verify durable regional database contract
+        run: |
+          python scripts/sync_regional_content_daily.py \
+            --verify-db \
+            --report /tmp/regional-db-proof.json
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: regional-tcg-content-${{ github.run_id }}
           path: |
-            /tmp/regional-tcg-content.json
+            /tmp/regional-dry-run.json
+            /tmp/regional-two-pass-proof.json
             /tmp/regional-dedupe-proof.json
-            /tmp/regional-ingest-proof.json
+            /tmp/regional-db-proof.json
           retention-days: 90
           if-no-files-found: warn
