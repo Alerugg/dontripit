@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import TopNav from '../../../../../components/layout/TopNav'
 import GameSetPage from '../../../../../components/games/GameSetPage'
 import { getGameConfig } from '../../../../../lib/catalog/games'
@@ -23,16 +23,22 @@ export async function generateMetadata({ params }) {
 
 export default async function SetPage({ params }) {
   const { slug, setCode } = await params
-  const game = getGameConfig(slug)
+  const requestedSlug = String(slug || '').trim().toLowerCase()
+  const normalizedSetCode = String(setCode || '').trim()
+  const game = getGameConfig(requestedSlug)
 
-  if (!game || !setCode) {
+  if (!game || !normalizedSetCode) {
     notFound()
+  }
+
+  if (requestedSlug !== game.slug) {
+    redirect(`/games/${game.slug}/sets/${encodeURIComponent(normalizedSetCode.toLowerCase())}`)
   }
 
   return (
     <main>
       <TopNav />
-      <GameSetPage gameSlug={slug} setCode={setCode} />
+      <GameSetPage gameSlug={game.slug} setCode={normalizedSetCode} />
     </main>
   )
 }

@@ -24,6 +24,7 @@ export async function generateMetadata({ params }) {
   return {
     title: `Búsqueda física avanzada · ${game.name}`,
     description: `Filtra impresiones físicas exactas de ${game.name} por atributos especializados.`,
+    alternates: { canonical: `/games/${game.slug}/advanced` },
     robots: { index: false, follow: true },
   }
 }
@@ -31,11 +32,12 @@ export async function generateMetadata({ params }) {
 export default async function AdvancedPrintSearchPage({ params, searchParams }) {
   const { slug } = await params
   const query = await searchParams
-  const game = getGameConfig(slug)
+  const requestedSlug = String(slug || '').trim().toLowerCase()
+  const game = getGameConfig(requestedSlug)
 
   if (!game || game.slug === 'riftbound') notFound()
 
-  if (String(query?.advanced || '') !== '1') {
+  if (requestedSlug !== game.slug || String(query?.advanced || '') !== '1') {
     const next = withForcedAdvanced(query)
     redirect(`/games/${game.slug}/advanced?${next.toString()}`)
   }
