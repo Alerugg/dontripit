@@ -1,12 +1,21 @@
 import { notFound, redirect } from 'next/navigation'
 import TopNav from '../../../../../components/layout/TopNav'
 import GameSetPage from '../../../../../components/games/GameSetPage'
-import { getGameConfig } from '../../../../../lib/catalog/games'
+import { getGameConfig, isGameCatalogActive } from '../../../../../lib/catalog/games'
 
 export async function generateMetadata({ params }) {
   const { slug, setCode } = await params
   const game = getGameConfig(slug)
   if (!game || !setCode) return {}
+
+  if (!isGameCatalogActive(game.slug)) {
+    return {
+      title: `${game.name} · Próximamente`,
+      description: game.description,
+      alternates: { canonical: `/games/${game.slug}` },
+      robots: { index: false, follow: true },
+    }
+  }
 
   const normalizedCode = String(setCode).trim().toUpperCase()
   const canonicalPath = `/games/${game.slug}/sets/${encodeURIComponent(String(setCode).trim().toLowerCase())}`
@@ -30,6 +39,8 @@ export default async function SetPage({ params }) {
   if (!game || !normalizedSetCode) {
     notFound()
   }
+
+  if (!isGameCatalogActive(game.slug)) redirect(`/games/${game.slug}`)
 
   if (requestedSlug !== game.slug) {
     redirect(`/games/${game.slug}/sets/${encodeURIComponent(normalizedSetCode.toLowerCase())}`)
