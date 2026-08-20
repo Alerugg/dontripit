@@ -1,0 +1,80 @@
+name: Certify Search V2 Exhaustive Pagination V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/search_v2/exhaustive_name_query.py'
+      - 'backend/app/scripts/audit_search_v2_exhaustive_pagination_v1.py'
+      - 'backend/tests/test_search_v2_api.py'
+      - '.github/workflows/certify-search-v2-exhaustive-pagination-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certify-search-v2-exhaustive-pagination-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Compile exhaustive search contract
+        run: |
+          python -m py_compile app/routes/search_v2.py
+          python -m py_compile app/search_v2/exhaustive_name_query.py
+          python -m py_compile app/scripts/audit_search_v2_exhaustive_pagination_v1.py
+      - name: Run Search V2 regression suite
+        run: |
+          pytest -q \
+            tests/test_search_v2_api.py \
+            tests/test_search_v2_filter_contracts.py \
+            tests/test_search_v2_performance.py \
+            tests/test_mtg_search_v2.py \
+            tests/test_yugioh_multilingual_search_v2.py
+      - name: Audit exhaustive live Pikachu and Luffy pagination
+        run: |
+          mkdir -p /tmp/search-v2-exhaustive-pagination-v1
+          python -m app.scripts.audit_search_v2_exhaustive_pagination_v1 \
+            --report /tmp/search-v2-exhaustive-pagination-v1/report.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/search-v2-exhaustive-pagination-v1/report.json'))
+          assert p['status']=='pass', p
+          assert p['production_writes']==0, p
+          cases={row['query']:row for row in p['cases']}
+          assert cases['Pikachu']['total_cards']==191, p
+          assert cases['Pikachu']['total_prints']==376, p
+          assert cases['Pikachu']['unique_card_ids']==191, p
+          assert cases['Pikachu']['variant_count_sum']==376, p
+          assert cases['Luffy']['total_cards']==87, p
+          assert cases['Luffy']['total_prints']==418, p
+          assert cases['Luffy']['unique_card_ids']==87, p
+          assert cases['Luffy']['variant_count_sum']==418, p
+          print(json.dumps(p,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-v2-exhaustive-pagination-v1-${{ github.run_id }}
+          path: /tmp/search-v2-exhaustive-pagination-v1/*
+          retention-days: 90
+          if-no-files-found: warn
