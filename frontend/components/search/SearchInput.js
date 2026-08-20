@@ -12,6 +12,7 @@ export default function SearchInput({
   onSuggestionSelect,
   placeholder,
   variant = 'default',
+  type = 'search',
 }) {
   const listId = useId()
   const wrapperRef = useRef(null)
@@ -117,7 +118,7 @@ export default function SearchInput({
     <div className={`search-input-shell search-input-shell-${variant} ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
       <div className={`search-input-row search-input-row-${variant}`} ref={inputRowRef}>
         <input
-          type="search"
+          type={type}
           role="combobox"
           value={value}
           onChange={handleChange}
