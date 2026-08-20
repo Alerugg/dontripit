@@ -32,58 +32,38 @@ const REGIONS = [
 
 export default function PublicHome() {
   const activeGames = GAME_CATALOG.filter((game) => game.slug !== 'riftbound')
-  const heroGames = activeGames.slice(0, 3)
 
   return (
-    <main className="canva-home">
+    <main className="canva-home v5-home">
       <TopNav />
 
-      <section className="canva-hero app-shell" aria-labelledby="home-title">
-        <div className="canva-ambient" aria-hidden="true">
-          <span className="canva-orb canva-orb-one" />
-          <span className="canva-orb canva-orb-two" />
-        </div>
+      <section className="v5-hero" aria-labelledby="home-title">
+        <div className="app-shell v5-hero-inner">
+          <span className="v5-hero-kicker"><i /> Infrastructure for TCG Markets</span>
+          <h1 id="home-title">
+            TCG Data.<br />
+            <em>Pricing.</em><br />
+            Liquidity.
+          </h1>
+          <p className="v5-hero-copy">
+            Don’tRipIt separa la carta canónica, la impresión física exacta y sus datos de mercado.
+            Busca primero lo que conoces; después eliges la edición real que tienes o quieres seguir.
+          </p>
 
-        <div className="canva-hero-copy">
-          <span className="canva-eyebrow"><i /> Catálogo TCG</span>
-          <h1 id="home-title">Tu colección empieza por encontrar <em>la versión correcta.</em></h1>
-          <p className="canva-hero-sub">Busca una carta, identifica la edición física exacta y guárdala con una referencia de mercado trazable cuando existe correspondencia segura con Cardmarket.</p>
-
-          <div className="canva-hero-search" id="search">
+          <div className="v5-hero-search" id="search">
             <HomeSearch />
           </div>
 
-          <div className="canva-hero-actions">
-            <Link href="/register" className="dri-btn dri-btn-primary canva-primary-cta">Crear mi colección</Link>
-            <Link href="/search" className="canva-secondary-link">Búsqueda avanzada →</Link>
+          <div className="v5-hero-actions">
+            <Link href="/explorer" className="dri-btn dri-btn-primary">Abrir explorador →</Link>
+            <Link href="/collection" className="dri-btn dri-btn-ghost">Ver mi colección</Link>
           </div>
 
-          <ul className="canva-proof" aria-label="Características del catálogo">
+          <ul className="v5-hero-proof" aria-label="Principios de Don’tRipIt">
             <li><b>✓</b> {activeGames.length} TCG activos</li>
-            <li><b>✓</b> Prints separados por edición</li>
-            <li><b>✓</b> Actualización diaria de datos</li>
+            <li><b>✓</b> Carta → impresión → mercado</li>
+            <li><b>✓</b> Precio solo con correspondencia segura</li>
           </ul>
-        </div>
-
-        <div className="canva-visual" aria-label="Vista previa de los catálogos activos">
-          <div className="canva-stack-glow" aria-hidden="true" />
-          {heroGames.map((game, index) => (
-            <Link
-              key={game.slug}
-              href={`/games/${game.slug}`}
-              className={`canva-preview-card canva-preview-card-${index + 1}`}
-              style={{ '--game-accent': game.accent }}
-            >
-              <span className="canva-preview-badge">Catálogo activo</span>
-              <div className="canva-preview-art">
-                <Image src={GAME_LOGOS[game.slug]} alt={game.name} width={240} height={100} sizes="(max-width: 760px) 120px, 180px" priority={index === 0} />
-              </div>
-              <div className="canva-preview-copy">
-                <strong>{game.name}</strong>
-                <small>Cartas · sets · versiones</small>
-              </div>
-            </Link>
-          ))}
         </div>
       </section>
 
@@ -121,7 +101,7 @@ export default function PublicHome() {
             <span className="canva-eyebrow">Catálogos</span>
             <h2>Elige tu TCG y entra directo al catálogo.</h2>
           </div>
-          <Link href="/search" className="canva-secondary-link">Buscar en todos →</Link>
+          <Link href="/explorer" className="canva-secondary-link">Buscar en todos →</Link>
         </div>
 
         <div className="canva-game-grid">
@@ -206,7 +186,7 @@ export default function PublicHome() {
         </div>
         <div className="canva-final-actions">
           <Link href="/register" className="dri-btn dri-btn-primary">Crear cuenta</Link>
-          <Link href="/search" className="dri-btn dri-btn-ghost">Explorar catálogo</Link>
+          <Link href="/explorer" className="dri-btn dri-btn-ghost">Explorar catálogo</Link>
         </div>
       </section>
 

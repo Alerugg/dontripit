@@ -8,13 +8,14 @@ import BrandMark from '../brand/BrandMark'
 const shopUrl = 'https://shop.dontripit.com'
 
 const publicNavItems = [
-  { href: '/#games', label: 'Explorar' },
+  { href: '/explorer', label: 'Explorador' },
+  { href: '/#games', label: 'Juegos' },
   { href: '/#how-it-works', label: 'Cómo funciona' },
-  { href: '/#releases', label: 'Lanzamientos' },
 ]
 
 const memberNavItems = [
-  { href: '/dashboard#buscar', label: 'Buscar' },
+  { href: '/explorer', label: 'Explorador' },
+  { href: '/dashboard', label: 'Dashboard' },
   { href: '/collection', label: 'Mi colección' },
   { href: '/wishlist', label: 'Wishlist' },
 ]
@@ -45,9 +46,9 @@ export default function TopNav() {
   const navItems = user ? memberNavItems : publicNavItems
 
   function isActive(item) {
-    if (!user) return false
-    if (item.href.startsWith('/dashboard')) return pathname === '/dashboard'
-    return pathname === item.href || pathname.startsWith(`${item.href}/`)
+    if (item.href.includes('#')) return false
+    const path = item.href
+    return pathname === path || pathname.startsWith(`${path}/`)
   }
 
   return (

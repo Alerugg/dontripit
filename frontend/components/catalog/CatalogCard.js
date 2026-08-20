@@ -39,11 +39,12 @@ function buildMetaChips(item) {
 
 function resolveItemType(item) {
   if (item.type === 'set') return { label: 'Set', className: 'badge-set' }
-  if (item.type === 'print') return { label: 'Versión', className: 'badge-print' }
+  if (item.type === 'print') return { label: 'Impresión', className: 'badge-print' }
   return { label: 'Carta', className: 'badge-card' }
 }
 
 function formatMarketPrice(item) {
+  if (item?.type !== 'print') return null
   const raw = item?.market?.display_price ?? item?.cardmarket_price
   const value = Number(raw)
   if (!Number.isFinite(value)) return null
