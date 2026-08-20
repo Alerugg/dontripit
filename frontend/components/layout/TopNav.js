@@ -46,8 +46,8 @@ export default function TopNav() {
   const navItems = user ? memberNavItems : publicNavItems
 
   function isActive(item) {
-    const path = item.href.split('#')[0]
-    if (path === '/') return pathname === '/'
+    if (item.href.includes('#')) return false
+    const path = item.href
     return pathname === path || pathname.startsWith(`${path}/`)
   }
 
