@@ -40,9 +40,10 @@ test('print detail presents four price concepts without collapsing them', () => 
 test('collection labels total as conservative and exposes valuation coverage', () => {
   const library = source('components/library/LibraryPage.js')
   const dashboard = source('components/dashboard/DashboardPage.js')
-  assert.match(library, /Valor conservador\*/)
+  assert.match(library, /Valor conservador/)
   assert.match(library, /valuation_coverage_count/)
-  assert.match(library, /Las cartas sin esa métrica no se estiman ni se suman/)
+  assert.match(library, /Cobertura exacta de valoración/)
+  assert.match(library, /Las versiones sin valor conservador no se estiman ni se suman/)
   assert.match(dashboard, /Valor conservador\*/)
   assert.match(dashboard, /valuation_coverage_count/)
 })
