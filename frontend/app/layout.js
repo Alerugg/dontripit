@@ -3,6 +3,7 @@ import './product-ui.css'
 import './auth-ui.css'
 import './canva-workspace.css'
 import './accessibility.css'
+import './lovable-v2.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 import { SITE_NAME, SITE_URL } from '../lib/site'
 
