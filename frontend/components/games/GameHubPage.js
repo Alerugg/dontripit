@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import CatalogExplorer from '../catalog/CatalogExplorer'
+import OnePieceSearchV2Experience from '../searchV2/OnePieceSearchV2Experience'
 import GameCollectionsList from './GameCollectionsList'
 import GameNewsGrid from './GameNewsGrid'
 import MarketProductShelf from './MarketProductShelf'
 import StatePanel from '../catalog/StatePanel'
 import { fetchMarketProductsByGame, fetchNewsByGame, fetchReleasesByGame, fetchSetsByGame } from '../../lib/catalog/client'
 import './GameExplorerPage.css'
+import './GameHubV2.css'
+import '../searchV2/FacetPicker.css'
 
 const GAME_HUB_COPY = {
   pokemon: {
@@ -144,6 +147,19 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             initialLanguage={initialExplorerState.language || ''}
             initialPricedOnly={Boolean(initialExplorerState.pricedOnly)}
           />
+
+          <details className="v6-advanced-search">
+            <summary>
+              <span className="v6-advanced-search-copy">
+                <strong>Búsqueda avanzada de impresiones</strong>
+                <small>Busca una carta sin perderte en el catálogo. Abre este panel solo cuando necesites filtrar la identidad física por atributos específicos de {game.name}.</small>
+              </span>
+              <span className="v6-advanced-search-chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div className="v6-advanced-search-body">
+              <OnePieceSearchV2Experience game={game} />
+            </div>
+          </details>
         </div>
 
         <div className="ux-game-secondary v6-game-secondary">
@@ -171,7 +187,7 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             <div className="ux-section-head">
               <div>
                 <span className="v6-eyebrow">Próximos lanzamientos</span>
-                <h2>Fechas verificadas</h2>
+                <h2>Fechas que sí están verificadas</h2>
                 <p>Región y fuente oficial, siempre visibles.</p>
               </div>
             </div>
