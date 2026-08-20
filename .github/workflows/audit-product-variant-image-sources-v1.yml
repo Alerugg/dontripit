@@ -31,26 +31,79 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Compile read-only source auditor
         run: python -m py_compile app/scripts/audit_product_variant_image_sources_v1.py
-      - name: Audit missing ProductVariant image provenance
+      - name: Prove the four post-baseline MTG gaps are PR 472 variants
         run: |
           mkdir -p /tmp/product-variant-image-sources-v1
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from sqlalchemy import text
+          from app import db
+
+          expected={'903128','903129','903175','903183'}
+          sql=text('''
+            SELECT pid.external_id,
+                   pv.id AS variant_id,
+                   p.name AS product_name,
+                   p.product_type,
+                   g.slug AS game,
+                   EXISTS (
+                     SELECT 1 FROM product_images pi WHERE pi.product_variant_id=pv.id
+                   ) AS has_image,
+                   ecvl.link_status,
+                   ecvl.confidence,
+                   ecvl.reviewed,
+                   ecvl.mapping_method
+            FROM product_identifiers pid
+            JOIN product_variants pv ON pv.id=pid.product_variant_id
+            JOIN products p ON p.id=pv.product_id
+            JOIN games g ON g.id=p.game_id
+            LEFT JOIN external_catalog_products ecp
+              ON ecp.source='cardmarket' AND ecp.external_id=pid.external_id
+            LEFT JOIN external_catalog_product_variant_links ecvl
+              ON ecvl.external_product_id=ecp.id AND ecvl.product_variant_id=pv.id
+            WHERE pid.source='cardmarket'
+              AND pid.external_id IN ('903128','903129','903175','903183')
+            ORDER BY pid.external_id
+          ''')
+          with db.SessionLocal() as session:
+              rows=[dict(row) for row in session.execute(sql).mappings().all()]
+          ids={str(row['external_id']) for row in rows}
+          assert ids==expected, rows
+          assert len(rows)==4, rows
+          assert all(row['game']=='mtg' for row in rows), rows
+          assert all(row['has_image'] is False for row in rows), rows
+          report={'status':'pass','production_writes':0,'expected_external_ids':sorted(expected),'rows':rows}
+          Path('/tmp/product-variant-image-sources-v1/pr472-new-mtg-gaps.json').write_text(
+              json.dumps(report,indent=2,sort_keys=True,default=str)+'\n'
+          )
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          PY
+      - name: Audit missing ProductVariant image provenance
+        run: |
           python -m app.scripts.audit_product_variant_image_sources_v1 \
             --report /tmp/product-variant-image-sources-v1/report.json \
             --sample-limit 10
           python - <<'PY'
           import json
           p=json.load(open('/tmp/product-variant-image-sources-v1/report.json'))
+          explain=json.load(open('/tmp/product-variant-image-sources-v1/pr472-new-mtg-gaps.json'))
           assert p['status']=='pass', p
           assert p['production_writes']==0, p
-          assert p['missing_product_variants']==13191, p
+          assert explain['status']=='pass', explain
+          # Previous baseline was 13,191 = MTG 5,040 + the other games below.
+          # PR #472 added exactly four certified MTG sealed ProductVariants; the
+          # preceding gate proves all four are now canonical and lack ProductImage.
+          assert p['missing_product_variants']==13195, p
           assert p['missing_by_game']=={
-              'mtg':5040,
+              'mtg':5044,
               'onepiece':753,
               'pokemon':5007,
               'yugioh':2391,
           }, p
           print(json.dumps({
               'missing':p['missing_by_game'],
+              'pr472_new_mtg_gaps':[row['external_id'] for row in explain['rows']],
               'identifiers':p['identifier_coverage_by_game'],
               'existing_image_sources':p['existing_product_image_sources_by_game'],
               'cardmarket_exact_1to1':p['current_cardmarket_exact_reviewed_one_to_one_missing_by_game'],
