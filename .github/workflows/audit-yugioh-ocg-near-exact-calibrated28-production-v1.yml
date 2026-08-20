@@ -1,0 +1,63 @@
+name: Audit Yu-Gi-Oh OCG Near Exact Calibrated28 Production V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_yugioh_ocg_near_exact_calibrated28_production_v1.py'
+      - '.github/workflows/audit-yugioh-ocg-near-exact-calibrated28-production-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      YGO_OCG_NEAR_EXACT_CALIBRATED28_PROOF_OUTPUT: /tmp/ygo-ocg-near-exact-calibrated28-production/report.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile writer and independent production proof
+        run: |
+          python -m py_compile app/scripts/apply_yugioh_ocg_near_exact_calibrated28_v1.py
+          python -m py_compile app/scripts/audit_yugioh_ocg_near_exact_calibrated28_production_v1.py
+      - name: READ ONLY certify 28 exact identities and prices
+        run: |
+          mkdir -p /tmp/ygo-ocg-near-exact-calibrated28-production
+          python -m app.scripts.audit_yugioh_ocg_near_exact_calibrated28_production_v1
+      - name: Require production proof PASS
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-ocg-near-exact-calibrated28-production/report.json'))
+          assert p['status']=='pass',p
+          assert p['production_writes']==0,p
+          assert p['stable_identity_sha256']=='82e3d0d449477c95c63fe2a97c380b3b55915607657a2b8bb9e2e0f54c72f65d',p
+          assert (p['accepted_links'],p['unique_products'],p['unique_prints'])==(28,28,28),p
+          assert p['sets']['STSP']['links']==20,p
+          assert p['sets']['SD37']['links']==8,p
+          assert p['pricing']['canonical_current_wrong_idProduct']==0,p
+          assert p['pricing']['canonical_current_exact_idProduct_prices']==p['pricing']['externally_priceable_links'],p
+          print(json.dumps({'exact_links':28,'STSP':20,'SD37':8,'externally_priceable':p['pricing']['externally_priceable_links'],'canonically_exact_priced':p['pricing']['canonical_current_exact_idProduct_prices'],'unpriced_external':p['pricing']['missing_external_current_price'],'wrong_idProduct':0},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-ocg-near-exact-calibrated28-production-v1-${{ github.run_id }}
+          path: /tmp/ygo-ocg-near-exact-calibrated28-production/report.json
+          retention-days: 90
+          if-no-files-found: error
