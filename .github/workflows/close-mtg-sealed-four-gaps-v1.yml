@@ -1,0 +1,107 @@
+name: Close MTG Sealed Four Gaps V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/mtg_sealed_gap_closure.py'
+      - 'backend/scripts/close_mtg_sealed_four_gaps.py'
+      - 'backend/tests/test_mtg_sealed_gap_closure.py'
+      - '.github/workflows/close-mtg-sealed-four-gaps-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/mtg_sealed_gap_closure.py'
+      - 'backend/scripts/close_mtg_sealed_four_gaps.py'
+      - 'backend/tests/test_mtg_sealed_gap_closure.py'
+      - '.github/workflows/close-mtg-sealed-four-gaps-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: close-mtg-sealed-four-gaps-v1
+  cancel-in-progress: false
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Require production database
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+      - name: Compile and test certified closure guards
+        run: |
+          python -m py_compile app/jobs/mtg_sealed_gap_closure.py scripts/close_mtg_sealed_four_gaps.py
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q tests/test_mtg_sealed_gap_closure.py
+      - name: Preflight four certified targets READ ONLY
+        run: |
+          python scripts/close_mtg_sealed_four_gaps.py \
+            --report /tmp/mtg-sealed-four-gaps-preflight.json
+      - name: Prove exact four-target preflight
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/mtg-sealed-four-gaps-preflight.json').read_text())
+          pre=report['preflight']
+          assert report['mode']=='dry_run',report
+          assert pre['target_count']==4,pre
+          assert pre['conflicts']==0,pre
+          assert pre['safe_to_apply']+pre['already_closed']==4,pre
+          assert pre['write_ready'],pre
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - name: Apply four canonical products and exact links
+        if: github.event_name != 'pull_request'
+        run: |
+          python scripts/close_mtg_sealed_four_gaps.py --apply \
+            --report /tmp/mtg-sealed-four-gaps-apply.json
+      - name: Project current MTG sealed prices through exact links
+        if: github.event_name != 'pull_request'
+        run: |
+          python scripts/project_cardmarket_product_link_prices.py --game mtg --apply \
+            --report /tmp/mtg-sealed-price-projection-after-gap-close.json
+      - name: Final four-target proof
+        if: github.event_name != 'pull_request'
+        run: |
+          python scripts/close_mtg_sealed_four_gaps.py \
+            --report /tmp/mtg-sealed-four-gaps-final.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/mtg-sealed-four-gaps-final.json').read_text())
+          pre=report['preflight']
+          assert pre['already_closed']==4,pre
+          assert pre['safe_to_apply']==0,pre
+          assert pre['conflicts']==0,pre
+          assert pre['write_ready'],pre
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtg-sealed-four-gaps-v1-${{ github.run_id }}
+          path: |
+            /tmp/mtg-sealed-four-gaps-preflight.json
+            /tmp/mtg-sealed-four-gaps-apply.json
+            /tmp/mtg-sealed-price-projection-after-gap-close.json
+            /tmp/mtg-sealed-four-gaps-final.json
+          retention-days: 90
+          if-no-files-found: warn
