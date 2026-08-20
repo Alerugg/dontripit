@@ -1,20 +1,26 @@
 import { notFound, redirect } from 'next/navigation'
 import { callInternalApi } from '../../../../../lib/catalog/internalApi'
-import { getGameConfig, normalizeGameSlug } from '../../../../../lib/catalog/games'
+import { getGameConfig, isGameCatalogActive, normalizeGameSlug } from '../../../../../lib/catalog/games'
 import { getCardHref } from '../../../../../lib/catalog/routes'
 
 export async function generateMetadata({ params }) {
   const { slug, cardId } = await params
   const routeGame = getGameConfig(String(slug || '').toLowerCase())
-  const upstream = cardId
-    ? await callInternalApi(`/api/v1/cards/${encodeURIComponent(cardId)}`)
-    : { ok: false, payload: null }
+
+  if (!routeGame || !cardId) return {}
+  if (!isGameCatalogActive(routeGame.slug)) {
+    return {
+      title: `${routeGame.name} · Próximamente`,
+      description: routeGame.description,
+      alternates: { canonical: `/games/${routeGame.slug}` },
+      robots: { index: false, follow: true },
+    }
+  }
+
+  const upstream = await callInternalApi(`/api/v1/cards/${encodeURIComponent(cardId)}`)
   const card = upstream.ok ? upstream.payload : null
   const payloadGameSlug = normalizeGameSlug(card?.game_slug || card?.game || '')
   const canonicalGame = getGameConfig(payloadGameSlug) || routeGame
-
-  if (!canonicalGame || !cardId) return {}
-
   const canonical = getCardHref(canonicalGame.slug, cardId)
   const name = card?.name || `Carta ${cardId}`
   const title = `${name} · ${canonicalGame.name}`
@@ -38,6 +44,7 @@ export default async function GameCardDetailLayout({ children, params }) {
   const game = getGameConfig(requestedSlug)
 
   if (!game || !cardId) notFound()
+  if (!isGameCatalogActive(game.slug)) redirect(`/games/${game.slug}`)
   if (requestedSlug !== game.slug) redirect(getCardHref(game.slug, cardId))
 
   return children
