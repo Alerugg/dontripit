@@ -3,31 +3,30 @@
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import OnePieceSearchV2Experience from '../searchV2/OnePieceSearchV2Experience'
+import CatalogExplorer from '../catalog/CatalogExplorer'
 import GameCollectionsList from './GameCollectionsList'
 import GameNewsGrid from './GameNewsGrid'
 import MarketProductShelf from './MarketProductShelf'
 import StatePanel from '../catalog/StatePanel'
 import { fetchMarketProductsByGame, fetchNewsByGame, fetchReleasesByGame, fetchSetsByGame } from '../../lib/catalog/client'
 import './GameExplorerPage.css'
-import '../searchV2/FacetPicker.css'
 
 const GAME_HUB_COPY = {
   pokemon: {
     logo: '/games/pokemon/pokemon_logo.png',
-    intro: 'Busca primero la carta. Después, solo si hace falta, elige set, rareza, idioma o variante física.',
+    intro: 'Busca primero la carta. Después baja a la impresión física exacta cuando idioma, acabado o variante realmente importen.',
   },
   magic: {
     logo: '/games/magic/magic_logo.png',
-    intro: 'Empieza por el nombre que conoces y baja a la impresión concreta cuando set, finish o idioma realmente importen.',
+    intro: 'Empieza por el nombre que conoces y separa carta, set e impresión física sin mezclar identidades de mercado.',
   },
   onepiece: {
     logo: '/games/onepiece/onepiece_logo.png',
-    intro: 'Encuentra Leaders, Characters, promos y variantes sin tener que descifrar primero toda la estructura del catálogo.',
+    intro: 'Busca Luffy, Zoro o un código. Primero verás las cartas que coinciden; después eliges la impresión física concreta.',
   },
   yugioh: {
     logo: '/games/yugioh/yugioh_logo.png',
-    intro: 'Busca la carta por nombre o código y afina después por set, rareza, atributo o edición concreta.',
+    intro: 'Busca por nombre o código y entra en la carta antes de elegir idioma, rareza, edición o variante física.',
   },
 }
 
@@ -48,7 +47,7 @@ function formatReleaseDate(item) {
   }
 }
 
-export default function GameHubPage({ game }) {
+export default function GameHubPage({ game, initialExplorerState = {} }) {
   const copy = GAME_HUB_COPY[game.slug] || { intro: game.description }
   const [collections, setCollections] = useState([])
   const [collectionsLoading, setCollectionsLoading] = useState(true)
@@ -70,18 +69,14 @@ export default function GameHubPage({ game }) {
     setMarketLoading(true)
 
     const collectionsRequest = fetchSetsByGame(game.slug, { limit: 50 })
-      .then((items) => {
-        if (!cancelled) setCollections(items)
-      })
+      .then((items) => { if (!cancelled) setCollections(items) })
       .catch((requestError) => {
         if (!cancelled) {
           setCollections([])
           setCollectionsError(requestError.message || 'No pudimos cargar los sets.')
         }
       })
-      .finally(() => {
-        if (!cancelled) setCollectionsLoading(false)
-      })
+      .finally(() => { if (!cancelled) setCollectionsLoading(false) })
 
     const releasesRequest = fetchReleasesByGame(game.slug, { limit: 8 })
       .then((items) => { if (!cancelled) setReleases(items) })
@@ -99,29 +94,34 @@ export default function GameHubPage({ game }) {
       .finally(() => { if (!cancelled) setNewsLoading(false) })
 
     Promise.allSettled([collectionsRequest, releasesRequest, marketRequest, newsRequest])
-
     return () => { cancelled = true }
   }, [game.slug])
 
   return (
-    <section className={`dri-game-hub dri-game-hub-${game.slug}`} style={{ '--game-accent': game.accent }}>
+    <section className={`dri-game-hub dri-game-hub-${game.slug} v6-game-hub`} style={{ '--game-accent': game.accent }}>
       <div className="app-shell dri-game-hub-shell">
-        <header className="v4-game-header">
-          <Link href="/#games" className="v4-back-link">← Todos los juegos</Link>
-          <div className="v4-game-header-main">
-            {copy.logo ? (
-              <div className="v4-game-header-logo">
-                <Image src={copy.logo} alt={game.name} width={280} height={100} sizes="240px" priority />
-              </div>
-            ) : <h1>{game.name}</h1>}
-            <div>
-              <span className="v4-overline"><i /> Catálogo Don’tRipIt</span>
-              <h1>Busca una carta sin perderte en el catálogo.</h1>
+        <header className="v6-game-hero">
+          <div className="v6-game-hero-topline">
+            <Link href="/#games" className="v6-back-link">← Todos los juegos</Link>
+            <span className="v6-live-pill"><i /> Catálogo activo</span>
+          </div>
+          <div className="v6-game-hero-main">
+            <div className="v6-game-brand">
+              {copy.logo ? (
+                <div className="v6-game-logo">
+                  <Image src={copy.logo} alt={game.name} width={300} height={108} sizes="260px" priority />
+                </div>
+              ) : <h1>{game.name}</h1>}
               <p>{copy.intro}</p>
             </div>
+            <div className="v6-game-thesis">
+              <span className="v6-eyebrow">Carta → impresión → mercado</span>
+              <h1>Encuentra primero la carta correcta.</h1>
+              <p>La búsqueda principal agrupa por carta. El precio aparece únicamente cuando abres una impresión física con referencia segura.</p>
+            </div>
           </div>
-          <nav className="v4-game-jumps" aria-label={`Secciones de ${game.name}`}>
-            <a href="#buscar">Buscar</a>
+          <nav className="v6-game-jumps" aria-label={`Secciones de ${game.name}`}>
+            <a href="#buscar">Explorar</a>
             <a href="#colecciones">Sets</a>
             <a href="#sellado">Sellado</a>
             <a href="#lanzamientos">Lanzamientos</a>
@@ -129,11 +129,24 @@ export default function GameHubPage({ game }) {
           </nav>
         </header>
 
-        <div id="buscar" className="dri-hub-anchor">
-          <OnePieceSearchV2Experience game={game} />
+        <div id="buscar" className="dri-hub-anchor v6-game-search">
+          <CatalogExplorer
+            scopedGame={game.slug}
+            heading={`Explorar ${game.name}`}
+            description="Busca por nombre, número o set. Cambia entre Cartas, Impresiones y Sets sin perder el contexto de la búsqueda."
+            kicker="Catálogo"
+            allowGameSelect={false}
+            compactSidebar
+            initialQuery={initialExplorerState.query || ''}
+            initialType={initialExplorerState.type || ''}
+            initialView={initialExplorerState.view || 'grid'}
+            initialSort={initialExplorerState.sort || 'relevance'}
+            initialLanguage={initialExplorerState.language || ''}
+            initialPricedOnly={Boolean(initialExplorerState.pricedOnly)}
+          />
         </div>
 
-        <div className="ux-game-secondary">
+        <div className="ux-game-secondary v6-game-secondary">
           <div id="colecciones" className="dri-hub-anchor">
             {collectionsLoading ? (
               <StatePanel title="Cargando sets" description={`Preparando los sets de ${game.name}.`} tone="muted" loading />
@@ -157,8 +170,8 @@ export default function GameHubPage({ game }) {
           <section id="lanzamientos" className="ux-upcoming-section dri-hub-anchor">
             <div className="ux-section-head">
               <div>
-                <span className="v4-overline"><i /> Próximos lanzamientos</span>
-                <h2>Fechas que sí están verificadas</h2>
+                <span className="v6-eyebrow">Próximos lanzamientos</span>
+                <h2>Fechas verificadas</h2>
                 <p>Región y fuente oficial, siempre visibles.</p>
               </div>
             </div>
@@ -168,13 +181,7 @@ export default function GameHubPage({ game }) {
             ) : releases.length ? (
               <div className="ux-upcoming-grid">
                 {releases.map((item) => (
-                  <a
-                    key={item.id}
-                    href={item.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ux-upcoming-card"
-                  >
+                  <a key={item.id} href={item.source_url} target="_blank" rel="noopener noreferrer" className="ux-upcoming-card">
                     <span>{formatReleaseDate(item)}</span>
                     <strong>{item.title}</strong>
                     <small>{REGION_LABELS[item.region] || item.region} · {item.source}</small>
@@ -185,7 +192,7 @@ export default function GameHubPage({ game }) {
             ) : (
               <div className="dri-soft-empty">
                 <strong>No hay una fecha futura que podamos verificar ahora mismo.</strong>
-                <p>No usaremos fechas antiguas del catálogo ni una fecha de otra región para rellenar este bloque.</p>
+                <p>No usamos fechas antiguas ni de otra región para rellenar este bloque.</p>
               </div>
             )}
           </section>
