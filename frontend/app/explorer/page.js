@@ -7,6 +7,11 @@ const VALID_VIEWS = new Set(['grid', 'list'])
 const VALID_SORTS = new Set(['relevance', 'price_desc', 'price_asc', 'collector_asc', 'collector_desc', 'name_asc', 'name_desc'])
 const VALID_LANGUAGES = new Set(['', 'en', 'es', 'ja', 'fr', 'de', 'it', 'pt'])
 
+function positivePage(value) {
+  const parsed = Number.parseInt(String(value || '1'), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
 export const metadata = {
   title: 'Explorador de catálogo',
   description: 'Busca cartas, impresiones físicas y sets de todos los TCG activos en Don’tRipIt.',
@@ -22,6 +27,7 @@ export default async function ExplorerPage({ searchParams }) {
   const language = VALID_LANGUAGES.has(params?.language || '') ? (params?.language || '') : ''
   const game = String(params?.game || '').trim()
   const pricedOnly = params?.priced === '1'
+  const page = positivePage(params?.page)
 
   return (
     <main className="v5-explorer-page">
@@ -39,6 +45,7 @@ export default async function ExplorerPage({ searchParams }) {
           initialLanguage={language}
           initialGame={game}
           initialPricedOnly={pricedOnly}
+          initialPage={page}
         />
       </div>
       <SiteFooter />
