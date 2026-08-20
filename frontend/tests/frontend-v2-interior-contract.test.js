@@ -60,13 +60,15 @@ test('result cards distinguish canonical Cards, exact Prints and Sets', () => {
   assert.doesNotMatch(card, /cardmarket_price/)
 })
 
-test('Card detail explains Card to Print to Market before version selection', () => {
+test('Card detail makes exact Print selection primary without inventing Card-level market data', () => {
   const detail = source('components/cards/CardDetailLayout.js')
   assert.match(detail, /Carta canónica/)
-  assert.match(detail, /1 · Carta canónica/)
-  assert.match(detail, /2 · Impresión física/)
-  assert.match(detail, /3 · Precio exacto/)
+  assert.match(detail, /Impresiones físicas/)
+  assert.match(detail, /Solo en la impresión exacta/)
+  assert.match(detail, /No agregamos precios de distintas ediciones, idiomas o acabados/)
+  assert.match(detail, /prints_pagination\?\.total/)
   assert.match(detail, /<CardVersionBrowser/)
+  assert.doesNotMatch(detail, /cardmarket_price|display_price|price_market/)
 })
 
 test('version browser routes every selectable physical identity to an exact Print', () => {
@@ -74,6 +76,8 @@ test('version browser routes every selectable physical identity to an exact Prin
   assert.match(browser, /getPrintHref\(representative\.print_id\)/)
   assert.match(browser, /getPrintHref\(exactPrint\.print_id\)/)
   assert.match(browser, /getPrintHref\(print\.print_id\)/)
+  assert.match(browser, /Abrir impresión exacta/)
+  assert.match(browser, /Selecciona idioma \/ impresión/)
 })
 
 test('the complete interior V2 stylesheet is loaded globally', () => {

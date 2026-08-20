@@ -38,7 +38,7 @@ function versionSearchText(version) {
 
 function versionMeta(version) {
   return [
-    version?.collector_number || null,
+    version?.collector_number ? `#${version.collector_number}` : null,
     version?.rarity || null,
     version?.is_foil ? 'Foil' : null,
     friendlyVariant(version?.variant),
@@ -54,7 +54,7 @@ function printsForLanguage(version, language) {
 
 function exactPrintLabel(print) {
   return [
-    print?.collector_number || null,
+    print?.collector_number ? `#${print.collector_number}` : null,
     print?.rarity || null,
     print?.is_foil ? 'Foil' : null,
     friendlyVariant(print?.variant),
@@ -79,7 +79,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
       .catch((requestError) => {
         if (!cancelled) {
           setPayload(null)
-          setError(requestError?.message || 'No pudimos cargar las versiones de esta carta.')
+          setError(requestError?.message || 'No pudimos cargar las impresiones de esta carta.')
         }
       })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -101,30 +101,40 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
 
   const displayedVersions = versions.slice(0, visibleCount)
 
-  if (loading) return <section className="panel-soft"><p className="detail-meta">Organizando versiones e idiomas físicos…</p></section>
-  if (error) return <section className="panel-soft"><p className="detail-meta">{error}</p></section>
+  if (loading) return <section className={styles.state}><p>Organizando versiones e impresiones físicas…</p></section>
+  if (error) return <section className={`${styles.state} ${styles.stateError}`}><p>{error}</p></section>
 
   const allLanguages = payload?.languages || []
+  const totalPrints = Number(payload?.print_count || 0)
+  const totalVersions = Number(payload?.version_count || (payload?.versions || []).length)
 
   return (
-    <section className={styles.browser}>
+    <section className={styles.browser} aria-labelledby="card-versions-title">
       <div className={styles.heading}>
         <div>
-          <p className="eyebrow">Versiones disponibles</p>
-          <h2>Elige la versión y el idioma</h2>
+          <p className="eyebrow">Impresiones físicas</p>
+          <h2 id="card-versions-title">Elige la edición exacta</h2>
+          <p className={styles.headingCopy}>Cada enlace de idioma termina en una Print concreta. El precio y Cardmarket se verifican después sobre esa identidad exacta.</p>
         </div>
-        <span className={styles.count}>{versions.length} versiones</span>
+        <div className={styles.counts} aria-label="Cobertura física">
+          <span><strong>{totalPrints.toLocaleString('es-ES')}</strong> prints</span>
+          <span><strong>{totalVersions.toLocaleString('es-ES')}</strong> versiones</span>
+          <span><strong>{allLanguages.length}</strong> idiomas</span>
+        </div>
       </div>
 
       <div className={styles.filters}>
-        <input
-          className={styles.search}
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Set, código, rareza o versión…"
-          aria-label="Filtrar versiones de esta carta"
-        />
+        <label className={styles.searchField}>
+          <span className={styles.srOnly}>Filtrar versiones de esta carta</span>
+          <input
+            className={styles.search}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Set, código, rareza o variante…"
+            aria-label="Filtrar versiones de esta carta"
+          />
+        </label>
         <div className={styles.languageStrip} aria-label={`Idiomas disponibles en ${cardName || 'esta carta'}`}>
           <button type="button" onClick={() => setLanguage('')} className={`${styles.languageButton} ${!language ? styles.languageButtonActive : ''}`}>Todos</button>
           {allLanguages.map((code) => (
@@ -135,9 +145,16 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
         </div>
       </div>
 
+      <div className={styles.resultSummary} aria-live="polite">
+        <span>{versions.length.toLocaleString('es-ES')} versión{versions.length === 1 ? '' : 'es'} visible{versions.length === 1 ? '' : 's'}</span>
+        {(query || language) ? <button type="button" onClick={() => { setQuery(''); setLanguage('') }}>Limpiar filtros</button> : null}
+      </div>
+
       <div className={styles.grid}>
         {displayedVersions.map((version) => {
-          const representative = version.representative_print || version.prints?.[0] || null
+          const exactPrints = version.prints || []
+          const representative = version.representative_print || exactPrints[0] || null
+          const singleExactPrint = exactPrints.length === 1 ? exactPrints[0] : null
           const versionTitle = version.set_name || version.set_code || version.cardmarket?.name || 'Versión física'
           const setCode = version.set_code ? String(version.set_code).toUpperCase() : null
           const representativeHref = representative?.print_id ? getPrintHref(representative.print_id) : null
@@ -155,39 +172,51 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
             <article key={version.key} className={styles.versionCard}>
               <div className={styles.mediaWrap}>
                 {representativeHref ? (
-                  <Link href={representativeHref} className={styles.mediaLink} aria-label={`Abrir ${versionTitle}`}>{image}</Link>
+                  <Link href={representativeHref} className={styles.mediaLink} aria-label={`Abrir impresión física de ${versionTitle}`}>{image}</Link>
                 ) : image}
-                {version.market_status === 'linked' ? <span className={styles.marketBadge}>Cardmarket</span> : null}
+                <span className={`${styles.identityBadge} ${version.market_status === 'linked' ? styles.identityLinked : styles.identityUnlinked}`}>
+                  {version.market_status === 'linked' ? 'Identidad Cardmarket enlazada' : 'Sin enlace Cardmarket exacto'}
+                </span>
               </div>
 
               <div className={styles.cardBody}>
                 <div className={styles.titleBlock}>
-                  {setCode ? <span className={styles.setCode}>{setCode}</span> : null}
+                  <div className={styles.titleMetaRow}>
+                    {setCode ? <span className={styles.setCode}>{setCode}</span> : null}
+                    <span className={styles.physicalCount}>{exactPrints.length} print{exactPrints.length === 1 ? '' : 's'}</span>
+                  </div>
                   <h3 title={versionTitle}>{versionTitle}</h3>
                   <p className={styles.meta}>{versionMeta(version) || 'Edición física identificada'}</p>
                 </div>
 
                 <div className={styles.languageBlock}>
-                  <span className={styles.languageLabel}>Disponible en</span>
+                  <span className={styles.languageLabel}>Selecciona idioma / impresión</span>
                   <div className={styles.languages}>
                     {(version.languages || []).map((item) => {
-                      const exactPrints = printsForLanguage(version, item.code)
-                      if (!exactPrints.length) return <span key={item.code} className={styles.languageChip}>{languageLabel(item.code)}</span>
-                      if (exactPrints.length === 1) {
-                        const exactPrint = exactPrints[0]
+                      const languagePrints = printsForLanguage(version, item.code)
+                      if (!languagePrints.length) return <span key={item.code} className={`${styles.languageChip} ${styles.languageChipMuted}`}>{languageLabel(item.code)}</span>
+                      if (languagePrints.length === 1) {
+                        const exactPrint = languagePrints[0]
                         return (
-                          <Link key={item.code} href={getPrintHref(exactPrint.print_id)} className={styles.languageChip} title={`Abrir ${languageLabel(item.code)}`}>
-                            {languageLabel(item.code)}
+                          <Link
+                            key={item.code}
+                            href={getPrintHref(exactPrint.print_id)}
+                            className={styles.languageChip}
+                            title={`Abrir Print ${exactPrint.print_id} · ${languageLabel(item.code)}`}
+                          >
+                            {languageLabel(item.code)} <span aria-hidden="true">→</span>
                           </Link>
                         )
                       }
                       return (
                         <details key={item.code} className={styles.languageDetails}>
-                          <summary className={styles.languageChip}>{languageLabel(item.code)} · {exactPrints.length}</summary>
+                          <summary className={styles.languageChip}>{languageLabel(item.code)} · {languagePrints.length}</summary>
                           <div className={styles.printChoices}>
-                            {exactPrints.map((print) => (
+                            <p>Elige la Print exacta</p>
+                            {languagePrints.map((print) => (
                               <Link key={print.print_id} href={getPrintHref(print.print_id)} className={styles.printChoice}>
-                                {exactPrintLabel(print) || `Versión ${languageLabel(item.code)}`}
+                                <span>{exactPrintLabel(print) || `Versión ${languageLabel(item.code)}`}</span>
+                                <small>Print {print.print_id} →</small>
                               </Link>
                             ))}
                           </div>
@@ -198,11 +227,14 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
                 </div>
 
                 <div className={styles.actions}>
-                  {version.cardmarket?.url ? (
-                    <a href={version.cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className={styles.cardmarketButton}>Ver en Cardmarket ↗</a>
+                  {singleExactPrint?.print_id ? (
+                    <Link href={getPrintHref(singleExactPrint.print_id)} className={styles.primaryAction}>Abrir impresión exacta →</Link>
                   ) : (
-                    <span className={styles.pendingButton}>Cardmarket pendiente</span>
+                    <span className={styles.selectionHint}>Elige un idioma arriba para abrir la impresión exacta.</span>
                   )}
+                  {version.cardmarket?.url ? (
+                    <a href={version.cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className={styles.referenceLink}>Referencia de producto Cardmarket ↗</a>
+                  ) : null}
                 </div>
               </div>
             </article>
@@ -216,7 +248,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
         </button>
       ) : null}
 
-      {!versions.length ? <div className={`${styles.empty} panel-soft`}>No hay versiones que coincidan con este filtro.</div> : null}
+      {!versions.length ? <div className={styles.empty}>No hay versiones que coincidan con este filtro.</div> : null}
     </section>
   )
 }
