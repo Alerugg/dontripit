@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import TopNav from '../../../components/layout/TopNav'
 import GameHubPage from '../../../components/games/GameHubPage'
 import RiftboundComingSoonPage from '../../../components/games/RiftboundComingSoonPage'
@@ -21,6 +21,18 @@ function positivePage(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
 }
 
+function searchString(searchParams = {}) {
+  const next = new URLSearchParams()
+  for (const [key, value] of Object.entries(searchParams || {})) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => next.append(key, String(item)))
+    } else if (value !== undefined && value !== null && value !== '') {
+      next.set(key, String(value))
+    }
+  }
+  return next.toString()
+}
+
 export async function generateMetadata({ params }) {
   const { slug } = await params
   const game = getGameConfig(slug)
@@ -41,9 +53,15 @@ export async function generateMetadata({ params }) {
 export default async function GamePage({ params, searchParams }) {
   const { slug } = await params
   const query = await searchParams
-  const game = getGameConfig(slug)
+  const requestedSlug = String(slug || '').trim().toLowerCase()
+  const game = getGameConfig(requestedSlug)
 
   if (!game) notFound()
+
+  if (requestedSlug !== game.slug) {
+    const queryString = searchString(query)
+    redirect(`/games/${game.slug}${queryString ? `?${queryString}` : ''}`)
+  }
 
   const initialExplorerState = {
     query: String(query?.q || '').trim(),
