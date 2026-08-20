@@ -1,15 +1,17 @@
 import { callInternalApi } from '../../../lib/catalog/internalApi'
 import { getGameConfig, normalizeGameSlug } from '../../../lib/catalog/games'
+import { getCardHref } from '../../../lib/catalog/routes'
 import { SITE_URL } from '../../../lib/site'
 
 export async function generateMetadata({ params }) {
   const { id } = await params
-  const upstream = await callInternalApi(`/api/v1/cards/${id}`)
+  const upstream = await callInternalApi(`/api/v1/cards/${encodeURIComponent(id)}`)
   const card = upstream.ok ? upstream.payload : null
   const name = card?.name || `Carta ${id}`
   const gameSlug = normalizeGameSlug(card?.game_slug || card?.game || '')
   const gameLabel = getGameConfig(gameSlug)?.name || card?.game || 'TCG'
-  const canonical = `${SITE_URL}/cards/${encodeURIComponent(id)}`
+  const canonicalPath = gameSlug ? getCardHref(gameSlug, id) : '/explorer'
+  const canonical = `${SITE_URL}${canonicalPath}`
   const title = `${name} · ${gameLabel}`
   const socialTitle = `${title} · Don’tRipIt`
   const description = `Consulta ${name} en ${gameLabel}: versiones físicas, sets relacionados y referencias verificables de mercado en Don’tRipIt.`

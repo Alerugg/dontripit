@@ -90,10 +90,14 @@ test('card and exact-print routes expose dynamic canonical metadata without dupl
   assert.match(source('app/prints/[id]/layout.js'), /collector_number/)
 })
 
-test('card loading state never points users at a guessed game', () => {
+test('legacy card route never points users at a guessed game', () => {
   const page = source('app/cards/[id]/page.js')
-  assert.match(page, /const backHref = card\?\.game \? getGameExplorerHref\(card\.game\) : '\/#games'/)
+  assert.match(page, /callInternalApi\(`\/api\/v1\/cards\/\$\{encodeURIComponent\(cardId\)\}`\)/)
+  assert.match(page, /normalizeGameSlug\(upstream\.payload\?\.game_slug \|\| upstream\.payload\?\.game \|\| ''\)/)
+  assert.match(page, /redirect\(getCardHref\(gameSlug, cardId\)\)/)
+  assert.match(page, /redirect\(explorerFallback\(cardId\)\)/)
   assert.doesNotMatch(page, /card\?\.game \|\| 'pokemon'/)
+  assert.doesNotMatch(page, /getCardHref\('pokemon'/)
 })
 
 test('federated result tabs use explicit zero counts, readable active state and mobile scrolling', () => {
