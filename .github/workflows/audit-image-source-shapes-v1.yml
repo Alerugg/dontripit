@@ -1,0 +1,178 @@
+name: Audit Image Source Shapes V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-image-source-shapes-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Audit exact image identities and public source responses READ ONLY
+        run: |
+          python - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          from urllib.parse import quote
+          import requests
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          dsn = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          assert dsn, 'production database secret missing'
+          http = requests.Session()
+          http.headers.update({'User-Agent':'DontRipItCatalogAudit/1.0','Accept':'application/json'})
+          out = {'pokemon':{}, 'mtg':{}}
+
+          with psycopg2.connect(dsn) as conn:
+            conn.set_session(readonly=True, autocommit=False)
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute('''
+                WITH missing AS (
+                  SELECT p.id, lower(coalesce(p.language,'en')) AS language,
+                         pi.external_id, s.code AS set_code, p.collector_number
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id AND g.slug='pokemon'
+                  JOIN sets s ON s.id=p.set_id
+                  JOIN print_identifiers pi ON pi.print_id=p.id
+                    AND pi.source=('tcgdex:' || lower(coalesce(p.language,'en')))
+                  WHERE NOT EXISTS (SELECT 1 FROM print_images x WHERE x.print_id=p.id)
+                )
+                SELECT language, count(*) AS n FROM missing GROUP BY language ORDER BY language
+              ''')
+              out['pokemon']['missing_exact_by_language'] = {r['language']: int(r['n']) for r in cur.fetchall()}
+
+              cur.execute("SELECT id FROM sources WHERE name='tcgdex_pokemon'")
+              source_row = cur.fetchone()
+              source_id = int(source_row['id']) if source_row else None
+              out['pokemon']['source_present'] = bool(source_id)
+
+              if source_id:
+                cur.execute('''
+                  SELECT
+                    coalesce(nullif(lower(raw_json->>'_language'),''),'en') AS language,
+                    count(*) AS records,
+                    count(*) FILTER (WHERE coalesce(raw_json->>'image','') <> '') AS with_image
+                  FROM source_records
+                  WHERE source_id=%s
+                  GROUP BY 1 ORDER BY 1
+                ''', (source_id,))
+                out['pokemon']['source_records_by_language'] = [
+                  {'language':r['language'], 'records':int(r['records']), 'with_image':int(r['with_image'])}
+                  for r in cur.fetchall()
+                ]
+
+              cur.execute('''
+                SELECT p.id AS print_id, lower(coalesce(p.language,'en')) AS language,
+                       pi.external_id, s.code AS set_code, p.collector_number
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id AND g.slug='pokemon'
+                JOIN sets s ON s.id=p.set_id
+                JOIN print_identifiers pi ON pi.print_id=p.id
+                  AND pi.source=('tcgdex:' || lower(coalesce(p.language,'en')))
+                WHERE NOT EXISTS (SELECT 1 FROM print_images x WHERE x.print_id=p.id)
+                ORDER BY language, p.id
+              ''')
+              all_pokemon = cur.fetchall()
+              samples=[]
+              for lang in ('en','es','ja'):
+                samples.extend([r for r in all_pokemon if r['language']==lang][:3])
+
+              for r in samples:
+                lang, ext = r['language'], str(r['external_id'])
+                item={k:(int(v) if k=='print_id' else str(v or '')) for k,v in r.items()}
+                if source_id:
+                  cur.execute('''
+                    SELECT raw_json FROM source_records
+                    WHERE source_id=%s AND raw_json->>'id'=%s
+                    ORDER BY id DESC LIMIT 5
+                  ''', (source_id, ext))
+                  sr=cur.fetchall()
+                  item['source_record_matches_any_lang']=len(sr)
+                  item['source_record_shapes']=[{
+                    'language': str((x['raw_json'] or {}).get('_language') or 'en'),
+                    'keys': sorted(list((x['raw_json'] or {}).keys())),
+                    'image': str((x['raw_json'] or {}).get('image') or '')
+                  } for x in sr]
+                url=f"https://api.tcgdex.net/v2/{lang}/cards/{quote(ext,safe='')}"
+                resp=http.get(url,timeout=20)
+                item['api_status']=resp.status_code
+                payload={}
+                try: payload=resp.json() if resp.ok else {}
+                except Exception: payload={}
+                item['api_returned_id']=str(payload.get('id') or '')
+                item['api_image']=str(payload.get('image') or '')
+                if item['api_image']:
+                  asset=item['api_image'].rstrip('/')+'/high.webp'
+                  rr=http.get(asset,timeout=20,stream=True)
+                  item['asset_status']=rr.status_code
+                  item['asset_content_type']=str(rr.headers.get('content-type') or '')
+                  rr.close()
+                out['pokemon'].setdefault('samples',[]).append(item)
+
+              cur.execute('''
+                SELECT p.id AS print_id, p.scryfall_id, s.code AS set_code,
+                       p.collector_number, p.variant, c.name
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id AND g.slug='mtg'
+                JOIN sets s ON s.id=p.set_id
+                WHERE NOT EXISTS (SELECT 1 FROM print_images x WHERE x.print_id=p.id)
+                ORDER BY p.id
+                LIMIT 8
+              ''')
+              mtg_samples=cur.fetchall()
+              out['mtg']['sample_count']=len(mtg_samples)
+              for r in mtg_samples:
+                item={k:(int(v) if k=='print_id' else str(v or '')) for k,v in r.items()}
+                sid=item['scryfall_id']
+                if sid:
+                  rr=http.get(f"https://api.scryfall.com/cards/{quote(sid,safe='')}",timeout=20)
+                  item['id_status']=rr.status_code
+                  try: p1=rr.json() if rr.ok else {}
+                  except Exception: p1={}
+                  item['id_returned_set']=str(p1.get('set') or '')
+                  item['id_returned_collector']=str(p1.get('collector_number') or '')
+                  item['id_has_image']=bool(p1.get('image_uris') or any((f or {}).get('image_uris') for f in (p1.get('card_faces') or []) if isinstance(f,dict)))
+                sc, cn=item['set_code'], item['collector_number']
+                rr=http.get(f"https://api.scryfall.com/cards/{quote(sc.lower(),safe='')}/{quote(cn,safe='')}",timeout=20)
+                item['set_collector_status']=rr.status_code
+                try: p2=rr.json() if rr.ok else {}
+                except Exception: p2={}
+                item['set_collector_returned_set']=str(p2.get('set') or '')
+                item['set_collector_returned_collector']=str(p2.get('collector_number') or '')
+                item['set_collector_has_image']=bool(p2.get('image_uris') or any((f or {}).get('image_uris') for f in (p2.get('card_faces') or []) if isinstance(f,dict)))
+                out['mtg'].setdefault('samples',[]).append(item)
+                time.sleep(0.12)
+
+          Path('/tmp/image-source-shapes-v1.json').write_text(json.dumps(out,indent=2,sort_keys=True),encoding='utf-8')
+          print(json.dumps(out,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-source-shapes-v1-${{ github.run_id }}
+          path: /tmp/image-source-shapes-v1.json
+          retention-days: 30
