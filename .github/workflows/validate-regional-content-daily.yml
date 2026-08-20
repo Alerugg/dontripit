@@ -1,0 +1,40 @@
+name: Validate Regional Content Daily
+
+on:
+  pull_request:
+    branches:
+      - catalog-v2
+    paths:
+      - 'backend/app/jobs/regional_content.py'
+      - 'backend/scripts/sync_regional_content_daily.py'
+      - 'backend/tests/test_regional_content_daily.py'
+      - '.github/workflows/sync-regional-tcg-content.yml'
+      - '.github/workflows/validate-regional-content-daily.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile regional code
+        run: |
+          python -m py_compile \
+            app/jobs/regional_content.py \
+            scripts/sync_regional_content_daily.py \
+            tests/test_regional_content_daily.py
+      - name: Run regional contract tests
+        run: pytest -q tests/test_regional_content_daily.py
