@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import CatalogExplorer from '../catalog/CatalogExplorer'
-import OnePieceSearchV2Experience from '../searchV2/OnePieceSearchV2Experience'
 import GameCollectionsList from './GameCollectionsList'
 import GameNewsGrid from './GameNewsGrid'
 import MarketProductShelf from './MarketProductShelf'
@@ -12,7 +11,6 @@ import StatePanel from '../catalog/StatePanel'
 import { fetchMarketProductsByGame, fetchNewsByGame, fetchReleasesByGame, fetchSetsByGame } from '../../lib/catalog/client'
 import './GameExplorerPage.css'
 import './GameHubV2.css'
-import '../searchV2/FacetPicker.css'
 
 const GAME_HUB_COPY = {
   pokemon: {
@@ -120,7 +118,7 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             <div className="v6-game-thesis">
               <span className="v6-eyebrow">Carta → impresión → mercado</span>
               <h1>Encuentra primero la carta correcta.</h1>
-              <p>La búsqueda principal agrupa por carta. El precio aparece únicamente cuando abres una impresión física con referencia segura.</p>
+              <p>Un único Explorer separa Cartas, Impresiones y Sets. El precio aparece únicamente en una impresión física con referencia segura.</p>
             </div>
           </div>
           <nav className="v6-game-jumps" aria-label={`Secciones de ${game.name}`}>
@@ -149,18 +147,16 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             initialPage={initialExplorerState.page || 1}
           />
 
-          <details className="v6-advanced-search">
-            <summary>
-              <span className="v6-advanced-search-copy">
-                <strong>Búsqueda avanzada de impresiones</strong>
-                <small>Busca una carta sin perderte en el catálogo. Abre este panel solo cuando necesites filtrar la identidad física por atributos específicos de {game.name}.</small>
-              </span>
-              <span className="v6-advanced-search-chevron" aria-hidden="true">⌄</span>
-            </summary>
-            <div className="v6-advanced-search-body">
-              <OnePieceSearchV2Experience game={game} />
+          <aside className="v12-advanced-tool" aria-label="Herramienta avanzada de impresiones">
+            <div>
+              <span className="v6-eyebrow">Herramienta especializada</span>
+              <strong>¿Necesitas atributos físicos muy concretos?</strong>
+              <p>Usa la búsqueda avanzada solo para rarezas, atributos y filtros propios de {game.name}. El Explorer de arriba sigue siendo la búsqueda principal.</p>
             </div>
-          </details>
+            <Link href={`/games/${game.slug}/advanced?advanced=1`} className="v12-advanced-tool-link">
+              Abrir filtros físicos avanzados →
+            </Link>
+          </aside>
         </div>
 
         <div className="ux-game-secondary v6-game-secondary">
