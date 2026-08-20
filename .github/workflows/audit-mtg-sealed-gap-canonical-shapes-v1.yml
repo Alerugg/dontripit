@@ -64,8 +64,8 @@ jobs:
                       WHERE e.source='cardmarket' AND e.product_group='non_single'
                     )
                     SELECT p.product_type,pv.language,pv.region,pv.packaging,count(*) n,
-                           array_agg(e.external_id ORDER BY e.external_id)[:8] sample_external_ids,
-                           array_agg(e.name ORDER BY e.external_id)[:8] sample_names
+                           (array_agg(e.external_id ORDER BY e.external_id))[1:8] sample_external_ids,
+                           (array_agg(e.name ORDER BY e.external_id))[1:8] sample_names
                     FROM external_catalog_products e JOIN mtg ON mtg.id=e.game_id JOIN cap ON cap.t=e.last_seen_at
                     JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.link_status IN ('accepted','mapped','exact')
                     JOIN product_variants pv ON pv.id=l.product_variant_id
