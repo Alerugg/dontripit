@@ -99,6 +99,35 @@ def test_normal_search_api_groups_physical_variants_by_card(client):
     assert payload["items"][0]["matched_print"]["collector_number"] == "OP05-119"
 
 
+def test_normal_search_api_exposes_stable_pagination_metadata(client):
+    with db.SessionLocal() as session:
+        _seed_search_v2(session)
+
+    response = _public_get(client, "/api/v2/search?q=Luffy&game=onepiece&limit=1&offset=0")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 1
+    assert payload["total"] == 1
+    assert payload["limit"] == 1
+    assert payload["offset"] == 0
+    assert payload["has_more"] is False
+    assert payload["next_offset"] is None
+
+
+def test_normal_search_api_accepts_offset_without_changing_suggest_contract(client):
+    with db.SessionLocal() as session:
+        _seed_search_v2(session)
+
+    response = _public_get(client, "/api/v2/search?q=Luffy&game=onepiece&limit=1&offset=1")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["items"] == []
+    assert payload["count"] == 0
+    assert payload["total"] == 1
+    assert payload["offset"] == 1
+    assert payload["has_more"] is False
+
+
 def test_search_suggest_contract_is_compact(client):
     with db.SessionLocal() as session:
         _seed_search_v2(session)
