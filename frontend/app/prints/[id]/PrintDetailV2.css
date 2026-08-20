@@ -1,0 +1,373 @@
+.v14-print-shell {
+  width: min(1220px, calc(100% - 40px));
+}
+
+.v14-print-page {
+  align-items: start;
+  gap: clamp(24px, 4vw, 52px);
+}
+
+.v14-media-column {
+  position: sticky;
+  top: 86px;
+  align-self: start;
+}
+
+.v14-print-media {
+  position: relative;
+  min-height: 500px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.085);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 50% 25%, rgba(139,92,246,.08), transparent 18rem),
+    #09090c;
+}
+
+.v14-print-media img {
+  max-height: 590px;
+  filter: drop-shadow(0 20px 30px rgba(0,0,0,.42));
+}
+
+.v14-print-id-media {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 5px 7px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 6px;
+  background: rgba(8,8,11,.88);
+  color: #948e9b;
+  font-size: .56rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.v14-image-warning {
+  margin: 9px 2px 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(245,158,11,.16);
+  border-radius: 8px;
+  background: rgba(245,158,11,.04);
+}
+
+.v14-print-content {
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+}
+
+.v14-exact-head {
+  padding: 5px 0 7px;
+}
+
+.v14-title-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.v14-exact-badge,
+.v14-print-id {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: .57rem;
+  font-weight: 850;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+
+.v14-exact-badge {
+  gap: 5px;
+  border: 1px solid rgba(110,231,183,.22);
+  background: rgba(16,185,129,.07);
+  color: #8deac8;
+}
+
+.v14-exact-badge i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 8px rgba(110,231,183,.4);
+}
+
+.v14-print-id {
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.025);
+  color: #7f7987;
+}
+
+.v14-exact-head h1 {
+  margin-bottom: 8px;
+}
+
+.v14-identity-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.v14-identity-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 29px;
+  padding: 5px 9px;
+  border: 1px solid rgba(255,255,255,.085);
+  border-radius: 7px;
+  background: #0c0c10;
+  color: #aaa4b1;
+  font-size: .65rem;
+  font-weight: 760;
+}
+
+.v14-identity-chip.is-accent {
+  border-color: rgba(155,116,247,.28);
+  background: rgba(139,92,246,.08);
+  color: #c6b6f2;
+}
+
+.v14-identity-rule {
+  max-width: 660px;
+  margin: 10px 0 0;
+  color: #746e7b;
+  font-size: .65rem;
+  line-height: 1.45;
+}
+
+.v14-exact-actions {
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 15px 16px;
+  border-radius: 11px;
+  background: linear-gradient(120deg, rgba(139,92,246,.065), rgba(255,255,255,.012));
+}
+
+.v14-exact-actions .detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 230px;
+}
+
+.v14-exact-actions .detail-actions small {
+  flex-basis: 100%;
+  color: #8d8794;
+  font-size: .58rem;
+  text-align: right;
+}
+
+.v14-market-panel {
+  display: grid;
+  gap: 13px;
+  padding: 17px;
+  border-color: rgba(255,255,255,.085);
+  border-radius: 12px;
+  background: #0d0d11;
+}
+
+.v14-market-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.v14-market-head h2 {
+  margin: 5px 0 0;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.35rem;
+  letter-spacing: -.035em;
+}
+
+.v14-market-primary {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.v14-market-primary > span {
+  color: #77717e;
+  font-size: .55rem;
+  font-weight: 750;
+}
+
+.v14-market-primary .ux-price-main {
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+
+.v14-market-state {
+  padding: 5px 7px;
+  border-radius: 6px;
+  font-size: .57rem;
+  font-weight: 800;
+}
+
+.v14-market-state.is-empty {
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.025);
+  color: #77717e;
+}
+
+.v14-price-grid {
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 6px;
+}
+
+.v14-price-grid .ux-price-metric {
+  min-height: 70px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 8px;
+  background: #09090c;
+}
+
+.v14-price-grid .ux-price-metric.is-featured {
+  border-color: rgba(155,116,247,.24);
+  background: rgba(139,92,246,.055);
+}
+
+.v14-market-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.v14-market-foot .detail-meta { margin: 0; }
+
+.v14-cardmarket-cta {
+  flex: 0 0 auto;
+  min-height: 34px;
+  font-size: .65rem;
+}
+
+.v14-market-unlinked {
+  width: fit-content;
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 7px;
+  color: #77717e;
+  background: #09090c;
+  font-size: .61rem;
+}
+
+.v14-price-method {
+  margin-top: 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+  border-radius: 0;
+  background: transparent;
+}
+
+.v14-price-method > summary {
+  padding: 9px 0 0;
+  font-size: .63rem;
+}
+
+.v14-price-method[open] > summary { border-bottom: 0; }
+.v14-price-method > .detail-meta { padding: 4px 0 0; }
+
+.v14-version-summary {
+  gap: 11px;
+  padding: 16px;
+  border-radius: 11px;
+}
+
+.v14-version-summary .dri-version-facts {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 0 14px;
+}
+
+.v14-version-summary .dri-version-fact {
+  padding: 8px 0;
+}
+
+.v14-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 11px;
+}
+
+.v14-section-heading h2 { margin: 5px 0 0; }
+.v14-section-heading > a { flex: 0 0 auto; color: #a99dbb; font-size: .62rem; font-weight: 760; }
+.v14-section-heading > a:hover { color: #fff; }
+.v14-section-heading > a:focus-visible { outline: 2px solid rgba(155,116,247,.55); outline-offset: 3px; border-radius: 3px; }
+
+.v14-card-text {
+  padding: 17px;
+  border-radius: 11px;
+}
+
+.v14-card-text > p:not(.eyebrow):not(.detail-meta) {
+  color: #c4beca;
+  font-size: .76rem;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.v14-card-text h3 {
+  margin: 16px 0 5px;
+  font-size: .78rem;
+}
+
+.v14-technical {
+  border-radius: 10px;
+}
+
+.v14-exact-navigation {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+@media (max-width: 1050px) {
+  .v14-media-column { position: static; }
+  .v14-print-media { min-height: 430px; }
+  .v14-version-summary .dri-version-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .v14-print-shell { width: min(100% - 24px, 1220px); }
+  .v14-print-page { gap: 18px; }
+  .v14-print-media { min-height: 360px; border-radius: 13px; }
+  .v14-print-media img { max-height: 450px; }
+  .v14-exact-actions { grid-template-columns: 1fr; align-items: stretch; }
+  .v14-exact-actions .detail-actions { justify-content: flex-start; min-width: 0; }
+  .v14-exact-actions .detail-actions small { text-align: left; }
+  .v14-price-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .v14-market-foot { align-items: stretch; flex-direction: column; }
+  .v14-cardmarket-cta { width: 100%; }
+  .v14-version-summary .dri-version-facts { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 460px) {
+  .v14-print-shell { width: min(100% - 20px, 1220px); }
+  .v14-title-kicker { gap: 5px; }
+  .v14-identity-chips { gap: 5px; }
+  .v14-identity-chip { min-height: 27px; padding-inline: 7px; font-size: .6rem; }
+  .v14-market-panel,.v14-version-summary,.v14-card-text { padding: 13px; }
+  .v14-market-head { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .v14-market-primary { justify-items: start; text-align: left; }
+  .v14-version-summary .dri-version-facts { grid-template-columns: 1fr; }
+  .v14-section-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v14-print-page *,
+  .v14-print-page *::before,
+  .v14-print-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
