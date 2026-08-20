@@ -129,9 +129,14 @@ export function fetchSetDetail(game, setCode, options = {}) {
   return request('/api/catalog/set-detail', {
     game: toApiGameSlug(game || ''),
     set_code: setCode,
+    kind: options.kind ?? 'card',
     q: options.q ?? '',
     sort: options.sort ?? 'number_asc',
-    limit: options.limit ?? 36,
+    language: options.language ?? '',
+    finish: options.finish ?? '',
+    rarity: options.rarity ?? '',
+    priced: options.pricedOnly ? 1 : '',
+    limit: options.limit ?? 24,
     offset: options.offset ?? 0,
   }, { ttlMs: FIVE_MINUTES })
 }
