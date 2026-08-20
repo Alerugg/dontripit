@@ -7,7 +7,9 @@ on:
     paths:
       - 'backend/app/jobs/regional_content.py'
       - 'backend/scripts/sync_regional_content_daily.py'
+      - 'backend/scripts/sync_regional_content_daily_v2.py'
       - 'backend/tests/test_regional_content_daily.py'
+      - 'backend/tests/test_regional_content_daily_v2.py'
       - '.github/workflows/sync-regional-tcg-content.yml'
       - '.github/workflows/validate-regional-content-daily.yml'
   workflow_dispatch:
@@ -35,6 +37,8 @@ jobs:
           python -m py_compile \
             app/jobs/regional_content.py \
             scripts/sync_regional_content_daily.py \
-            tests/test_regional_content_daily.py
+            scripts/sync_regional_content_daily_v2.py \
+            tests/test_regional_content_daily.py \
+            tests/test_regional_content_daily_v2.py
       - name: Run regional contract tests
-        run: pytest -q tests/test_regional_content_daily.py
+        run: pytest -q tests/test_regional_content_daily.py tests/test_regional_content_daily_v2.py
