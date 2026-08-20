@@ -125,8 +125,26 @@ def _detail_published_date(soup: BeautifulSoup, text_value: str) -> date | None:
     return regional._date_from_text(text_value[:5000])
 
 
+def _uk_http_session() -> requests.Session:
+    """Use source-local transport headers so V2's Spanish locale cannot alter UK DOM."""
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": regional.USER_AGENT,
+            "Accept-Language": "en-GB,en;q=0.9",
+        }
+    )
+    return session
+
+
 def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
-    html = regional._fetch(http, POKEMON_EU_URL)
+    # V2 owns the shared session for the other official feeds and currently
+    # configures it with an es-ES locale. Pokemon.com varies the rendered DOM
+    # by locale, so EU/UK must have a source-local session instead of inheriting
+    # that transport state. Keep the parameter for the V2 collector contract.
+    del http
+    uk_http = _uk_http_session()
+    html = regional._fetch(uk_http, POKEMON_EU_URL)
     candidates = _listing_candidates(html)
     if not candidates:
         raise RuntimeError("Official Pokemon UK news index yielded zero article URLs")
@@ -134,7 +152,7 @@ def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
         try:
-            detail_html = regional._fetch(http, candidate["item_url"])
+            detail_html = regional._fetch(uk_http, candidate["item_url"])
         except requests.RequestException:
             continue
         detail_soup = BeautifulSoup(detail_html, "html.parser")
