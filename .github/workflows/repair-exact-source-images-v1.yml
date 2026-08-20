@@ -1,0 +1,92 @@
+name: Repair Exact Source Images V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/repair_source_images.py'
+      - 'backend/scripts/repair_exact_source_images.py'
+      - 'backend/tests/test_repair_source_images.py'
+      - '.github/workflows/repair-exact-source-images-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/jobs/repair_source_images.py'
+      - 'backend/scripts/repair_exact_source_images.py'
+      - 'backend/tests/test_repair_source_images.py'
+      - '.github/workflows/repair-exact-source-images-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-exact-source-images-v1
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Require production database
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+      - name: Compile and test multilingual exact-source guards
+        run: |
+          python -m py_compile app/jobs/repair_source_images.py scripts/repair_exact_source_images.py
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q tests/test_repair_source_images.py
+      - name: Preflight exact source images READ ONLY
+        run: |
+          python scripts/repair_exact_source_images.py \
+            --report /tmp/exact-source-images-preflight.json
+      - name: Gate preflight safety
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/exact-source-images-preflight.json').read_text())
+          assert report['mode']=='dry_run',report
+          for game in ('pokemon','mtg'):
+              row=report['games'][game]
+              assert int(row['request_failures'])==0,(game,row)
+              assert int(row['inserted']) <= int(row['exact_source_ids']),(game,row)
+              assert int(row['missing_after']) == int(row['missing_before']) - int(row['inserted']),(game,row)
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - name: Apply exact verified image rows
+        if: github.event_name != 'pull_request'
+        run: |
+          python scripts/repair_exact_source_images.py --apply \
+            --report /tmp/exact-source-images-apply.json
+      - name: Prove post-apply missing-image state
+        if: github.event_name != 'pull_request'
+        run: |
+          python scripts/report_missing_images.py \
+            --json /tmp/missing-images-after-exact-source.json \
+            --csv /tmp/missing-images-after-exact-source.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-source-images-v1-${{ github.run_id }}
+          path: |
+            /tmp/exact-source-images-preflight.json
+            /tmp/exact-source-images-apply.json
+            /tmp/missing-images-after-exact-source.json
+            /tmp/missing-images-after-exact-source.csv
+          retention-days: 90
+          if-no-files-found: warn
