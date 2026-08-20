@@ -48,12 +48,16 @@ test('language and Cardmarket filters remain physical-print concepts and are app
   assert.match(route, /market\?\.display_price/)
 })
 
-test('result cards distinguish canonical Cards from exact physical Prints', () => {
+test('result cards distinguish canonical Cards, exact Prints and Sets', () => {
   const card = source('components/catalog/CatalogCard.js')
-  assert.match(card, /if \(item\.type === 'card'\)/)
-  assert.match(card, /impresión\$\{count === 1 \? '' : 'es'\} física/)
+  assert.match(card, /Carta canónica/)
+  assert.match(card, /Impresión exacta/)
+  assert.match(card, /Cobertura física/)
+  assert.match(card, /Cardmarket exacto/)
+  assert.match(card, /Contenido del set/)
   assert.match(card, /if \(item\?\.type !== 'print'\) return null/)
-  assert.match(card, /Cardmarket \{marketPrice\}/)
+  assert.match(card, /const raw = item\?\.market\?\.display_price/)
+  assert.doesNotMatch(card, /cardmarket_price/)
 })
 
 test('Card detail explains Card to Print to Market before version selection', () => {

@@ -45,10 +45,13 @@ test('explorer exposes counted canonical cards, exact prints, sets and numbered 
   assert.match(explorer, /searchCatalog\(\{/)
 })
 
-test('catalog cards only display a market amount for exact physical prints', () => {
+test('catalog result cards reserve market amounts for exact physical prints', () => {
   const card = source('components/catalog/CatalogCard.js')
   assert.match(card, /if \(item\?\.type !== 'print'\) return null/)
-  assert.match(card, /Cardmarket \{marketPrice\}/)
+  assert.match(card, /const raw = item\?\.market\?\.display_price/)
+  assert.doesNotMatch(card, /cardmarket_price/)
+  assert.match(card, /Cardmarket exacto/)
+  assert.match(card, /No mostramos estimaciones ni precios de otra edición/)
 })
 
 test('approved V2 hero and final design override are active', () => {
