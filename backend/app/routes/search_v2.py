@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
+from app.search_v2.exhaustive_name_query import exhaustive_name_page
 from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.mtg_advanced import advanced_mtg_search
 from app.search_v2.mtg_facet_values import mtg_facet_values
@@ -24,6 +25,7 @@ SEARCH_V2_ADVANCED_GAMES = {"onepiece", "pokemon", "yugioh", "mtg"}
 YUGIOH_DISPLAY_LANGUAGES = {"en", "es", "ja"}
 MAX_QUERY_LENGTH = 200
 MAX_SEARCH_LIMIT = 100
+MAX_SEARCH_OFFSET = 100_000
 MAX_FACET_LIMIT = 100
 
 
@@ -115,14 +117,77 @@ def search_v2():
         return jsonify({"error": "q is required"}), 400
     game = str(request.args.get("game") or "").strip().lower() or None
     limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=_access_limit(MAX_SEARCH_LIMIT))
+    offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=MAX_SEARCH_OFFSET)
     try:
         language = _yugioh_display_language(request.args.get("language")) if game == "yugioh" else None
     except ValueError as exc:
         return jsonify({"error": "invalid_language", "detail": str(exc)}), 400
 
     with db.SessionLocal() as session:
-        items = _normal_search_for_game(session, query=q, game=game, limit=limit, language=language)
-    return jsonify({"query": q, "game": game, "language": language or "all", "items": items, "count": len(items)})
+        # Canonical-name matches are intentionally strict and exhaustive. This
+        # prevents fuzzy candidates or a top-N cap from displacing real cards
+        # for common names such as Pikachu or Luffy. Yu-Gi-Oh language-scoped
+        # searches keep their localization-aware specialized path.
+        page = None
+        if language is None:
+            page = exhaustive_name_page(
+                session,
+                query=q,
+                game=game,
+                limit=limit,
+                offset=offset,
+            )
+
+        if page and page["total"] > 0:
+            return jsonify(
+                {
+                    "query": q,
+                    "game": game,
+                    "language": language or "all",
+                    "items": page["items"],
+                    "count": len(page["items"]),
+                    "total": page["total"],
+                    "total_prints": page["total_prints"],
+                    "limit": page["limit"],
+                    "offset": page["offset"],
+                    "has_more": page["has_more"],
+                    "next_offset": page["next_offset"],
+                    "pagination_mode": "canonical_name",
+                }
+            )
+
+        # Collector/structured/fuzzy searches preserve the existing ranking
+        # engine. Fetch one extra row so shallow pagination remains stable while
+        # advanced search remains the exhaustive path for structured filters.
+        fetch_limit = min(MAX_SEARCH_LIMIT, offset + limit + 1)
+        ranked = _normal_search_for_game(
+            session,
+            query=q,
+            game=game,
+            limit=fetch_limit,
+            language=language,
+        )
+        items = ranked[offset : offset + limit]
+        has_more = len(ranked) > offset + len(items)
+        next_offset = offset + len(items) if has_more else None
+        total = len(ranked) if not has_more else None
+
+    return jsonify(
+        {
+            "query": q,
+            "game": game,
+            "language": language or "all",
+            "items": items,
+            "count": len(items),
+            "total": total,
+            "total_prints": None,
+            "limit": limit,
+            "offset": offset,
+            "has_more": has_more,
+            "next_offset": next_offset,
+            "pagination_mode": "ranked_fallback",
+        }
+    )
 
 
 @search_v2_bp.get("/api/v2/search/suggest")
@@ -230,7 +295,7 @@ def search_v2_advanced():
                     body.get("offset"),
                     default=0,
                     minimum=0,
-                    maximum=100_000,
+                    maximum=MAX_SEARCH_OFFSET,
                 ),
             }
             if game == "yugioh":
