@@ -134,7 +134,9 @@ function PrintMarketSignal({ market }) {
 
 function SetSignal({ item }) {
   const code = setCode(item)
-  const count = Number(item.card_count ?? item.total_cards ?? item.cards_count)
+  const set = item?.set || null
+  const legacyCount = set?.card_count || item.card_count
+  const count = Number(legacyCount ?? item.total_cards ?? item.cards_count)
   return (
     <div className="v8-result-signal v8-result-set-signal">
       <span className="v8-result-signal-label">Contenido del set</span>
