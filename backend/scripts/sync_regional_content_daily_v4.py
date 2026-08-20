@@ -2,11 +2,10 @@ from __future__ import annotations
 
 """V4 regional collector for Pokemon EU using the official UK news surface.
 
-Pokemon's UK news index is server-rendered and exposes Trading Card Game
-articles under /uk/news/ and /uk/pokemon-news/. It is used as an index only.
-Each linked article must independently prove physical Pokemon TCG content;
-Pokemon TCG Live and Pokemon TCG Pocket are excluded. Dates are persisted only
-when they are explicit in official listing/article text.
+The official UK news page is used only as a URL index. Article identity,
+title, physical-TCG classification and dates are taken from each official
+detail page. Pokemon TCG Live and Pokemon TCG Pocket are excluded. No release
+date is inferred unless it appears explicitly in official article text.
 """
 
 from datetime import date
@@ -22,7 +21,7 @@ from scripts import sync_regional_content_daily_v2 as v2
 
 
 POKEMON_EU_KEY = "pokemon_eu_pokemon_uk"
-POKEMON_EU_URL = "https://www.pokemon.com/uk/pokemon-news/"
+POKEMON_EU_URL = "https://www.pokemon.com/uk/news"
 POKEMON_EU_NAME = "Pokemon UK – TCG official"
 POKEMON_EU_LOCALE = "en-GB"
 POKEMON_EU_REGION = "eu"
@@ -60,10 +59,7 @@ def _is_uk_article(url: str) -> bool:
     return (
         parsed.scheme == "https"
         and parsed.netloc.casefold() == "www.pokemon.com"
-        and (
-            parsed.path.startswith("/uk/news/")
-            or parsed.path.startswith("/uk/pokemon-news/")
-        )
+        and parsed.path.startswith("/uk/news/")
     )
 
 
@@ -88,6 +84,7 @@ def _explicit_release_date(value: str | None) -> date | None:
 
 
 def _listing_candidates(html: str) -> list[dict[str, Any]]:
+    """Discover official article URLs without relying on card DOM text."""
     soup = BeautifulSoup(html, "html.parser")
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -95,18 +92,11 @@ def _listing_candidates(html: str) -> list[dict[str, Any]]:
         absolute = urljoin(POKEMON_EU_URL, str(anchor.get("href") or "")).split("#", 1)[0]
         if absolute in seen or not _is_uk_article(absolute):
             continue
-        title = regional._title(anchor)
-        context = regional._context(anchor)
-        if not title:
-            continue
         seen.add(absolute)
         candidates.append(
             {
                 "item_url": absolute,
-                "title": title[:1000],
-                "context": context[:2500],
-                "published_date": regional._date_from_text(context),
-                "release_date": _explicit_release_date(context),
+                "listing_context": regional._context(anchor)[:2500],
             }
         )
         if len(candidates) >= POKEMON_EU_MAX_ITEMS * 3:
@@ -114,40 +104,64 @@ def _listing_candidates(html: str) -> list[dict[str, Any]]:
     return candidates
 
 
+def _detail_title(soup: BeautifulSoup) -> str:
+    heading = soup.find("h1")
+    if heading:
+        value = regional._clean(heading.get_text(" ", strip=True))
+        if value:
+            return value[:1000]
+    og = soup.find("meta", attrs={"property": "og:title"})
+    if og and og.get("content"):
+        return regional._clean(og.get("content"))[:1000]
+    return ""
+
+
+def _detail_published_date(soup: BeautifulSoup, text_value: str) -> date | None:
+    for time_tag in soup.find_all("time"):
+        value = time_tag.get("datetime") or time_tag.get_text(" ", strip=True)
+        parsed = regional._date_from_text(str(value or ""))
+        if parsed is not None:
+            return parsed
+    return regional._date_from_text(text_value[:5000])
+
+
 def fetch_pokemon_eu(http: requests.Session) -> list[dict[str, Any]]:
     html = regional._fetch(http, POKEMON_EU_URL)
     candidates = _listing_candidates(html)
     if not candidates:
-        raise RuntimeError("Official Pokemon UK news index yielded zero news candidates")
+        raise RuntimeError("Official Pokemon UK news index yielded zero article URLs")
 
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
         try:
             detail_html = regional._fetch(http, candidate["item_url"])
         except requests.RequestException:
-            # Do not classify an article without its official detail evidence.
             continue
         detail_soup = BeautifulSoup(detail_html, "html.parser")
+        title = _detail_title(detail_soup)
+        if not title:
+            continue
+        published = _detail_published_date(
+            detail_soup,
+            regional._clean(detail_soup.get_text(" ", strip=True)),
+        )
         for tag in detail_soup(["script", "style", "noscript"]):
             tag.decompose()
         detail = regional._clean(detail_soup.get_text(" ", strip=True))[:24000]
-        combined = f"{candidate['title']} {candidate['context']} {detail}"
+        combined = f"{title} {detail}"
         if not _is_physical_tcg_text(combined):
             continue
 
-        published = candidate["published_date"] or regional._date_from_text(detail[:6000])
-        release = candidate["release_date"] or _explicit_release_date(detail)
-        kind = "release" if release is not None else regional._kind(
-            candidate["title"], combined, None
-        )
+        release = _explicit_release_date(combined)
+        kind = "release" if release is not None else regional._kind(title, combined, None)
         rows.append(
             {
                 "item_url": candidate["item_url"],
-                "title": candidate["title"],
+                "title": title,
                 "published_date": published,
                 "release_date": release,
                 "kind": kind,
-                "source_context": candidate["context"][:1200],
+                "source_context": candidate["listing_context"][:1200],
             }
         )
         if len(rows) >= POKEMON_EU_MAX_ITEMS:
