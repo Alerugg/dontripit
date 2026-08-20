@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import CatalogResults from './ResultsGrid'
 import StatePanel from './StatePanel'
@@ -75,9 +75,11 @@ export default function CatalogExplorer({
   initialLanguage = '',
   initialGame = '',
   initialPricedOnly = false,
+  initialPage = 1,
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const filtersMounted = useRef(false)
   const [inputValue, setInputValue] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
   const [game, setGame] = useState(scopedGame || initialGame)
@@ -86,7 +88,7 @@ export default function CatalogExplorer({
   const [sort, setSort] = useState(initialSort)
   const [language, setLanguage] = useState(initialLanguage)
   const [pricedOnly, setPricedOnly] = useState(Boolean(initialPricedOnly))
-  const [page, setPage] = useState(0)
+  const [page, setPage] = useState(Math.max(0, Number(initialPage || 1) - 1))
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState({ card: 0, print: 0, set: 0, all: 0 })
@@ -103,6 +105,10 @@ export default function CatalogExplorer({
   }, [initialGame, scopedGame])
 
   useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true
+      return
+    }
     setPage(0)
   }, [submittedQuery, game, scopedGame, type, sort, language, pricedOnly])
 
@@ -205,6 +211,10 @@ export default function CatalogExplorer({
   const safePage = Math.min(page, pageCount - 1)
   const start = safePage * PAGE_SIZE
   const availableSorts = useMemo(() => SORT_OPTIONS.filter((option) => option.kinds.includes(type)), [type])
+
+  useEffect(() => {
+    if (page > safePage) setPage(safePage)
+  }, [page, safePage])
 
   const summaryText = useMemo(() => {
     if (!submittedQuery) return description
