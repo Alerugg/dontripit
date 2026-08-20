@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app import db
 from app.models import Card, Game, PriceSnapshot, PriceSource, Print, Set
+from app.routes import user_library
 from app.routes.user_library import _latest_price
 
 
@@ -34,7 +35,7 @@ def _seed_print(session) -> Print:
     return print_row
 
 
-def _snapshot(session, *, print_id: int, source: str, as_of: datetime, low=None, mid=None, market=None, last=None, finish="nonfoil"):
+def _legacy_snapshot(session, *, print_id: int, source: str, as_of: datetime, market=None):
     source_row = session.execute(select(PriceSource).where(PriceSource.name == source)).scalar_one_or_none()
     if source_row is None:
         source_row = PriceSource(name=source, currency="EUR")
@@ -46,32 +47,56 @@ def _snapshot(session, *, print_id: int, source: str, as_of: datetime, low=None,
         source_id=source_row.id,
         currency="EUR",
         as_of=as_of,
-        price_low=Decimal(str(low)) if low is not None else None,
-        price_mid=Decimal(str(mid)) if mid is not None else None,
         price_market=Decimal(str(market)) if market is not None else None,
-        price_last=Decimal(str(last)) if last is not None else None,
-        raw_json={"finish": finish},
+        raw_json={"finish": "nonfoil"},
     )
     session.add(row)
     session.flush()
     return row
 
 
-def test_cardmarket_conservative_value_beats_newer_non_cardmarket_trend(client):
+def _install_exact_projection(monkeypatch, *, print_id: int, finish: str = "nonfoil"):
+    monkeypatch.setattr(user_library, "_load_print_market_rows", lambda session, print_ids: [{"print_id": print_id}])
+    monkeypatch.setattr(
+        user_library,
+        "_build_print_market_payloads",
+        lambda rows, print_ids: {
+            print_id: {
+                "status": "priced",
+                "price": {
+                    "minimum": 3.0,
+                    "conservative": 7.5,
+                    "trend": 10.0,
+                    "average": 9.0,
+                    "currency": "EUR",
+                    "as_of": "2026-08-20T00:00:00+00:00",
+                    "finish": finish,
+                },
+            }
+        },
+    )
+
+
+def test_current_exact_cardmarket_projection_drives_conservative_portfolio(monkeypatch):
+    _install_exact_projection(monkeypatch, print_id=101)
+
+    price = _latest_price(object(), 101)
+
+    assert price["source"] == "cardmarket"
+    assert price["minimum"] == 3.0
+    assert price["conservative"] == 7.5
+    assert price["trend"] == 10.0
+    assert price["average"] == 9.0
+    assert price["value"] == 7.5
+    assert price["valuation_value"] == 7.5
+    assert price["portfolio_method"] == "cardmarket_low_ex_plus_or_foil_low"
+
+
+def test_legacy_or_non_cardmarket_snapshot_never_falls_back_into_current_exact_portfolio(client):
     now = datetime.now(timezone.utc)
     with db.SessionLocal() as session:
         print_row = _seed_print(session)
-        _snapshot(
-            session,
-            print_id=print_row.id,
-            source="cardmarket",
-            as_of=now - timedelta(hours=2),
-            low="3.00",
-            mid="7.50",
-            market="10.00",
-            last="9.00",
-        )
-        _snapshot(
+        _legacy_snapshot(
             session,
             print_id=print_row.id,
             source="other-market",
@@ -80,58 +105,16 @@ def test_cardmarket_conservative_value_beats_newer_non_cardmarket_trend(client):
         )
         session.commit()
 
-        price = _latest_price(session, print_row.id)
-        assert price["source"] == "cardmarket"
-        assert price["minimum"] == 3.0
-        assert price["conservative"] == 7.5
-        assert price["trend"] == 10.0
-        assert price["average"] == 9.0
-        assert price["value"] == 7.5
-        assert price["valuation_value"] == 7.5
-        assert price["portfolio_method"] == "cardmarket_low_ex_plus_or_foil_low"
+        # _latest_price deliberately reads only the current exact Cardmarket
+        # projection. Legacy PriceSnapshot rows and sibling markets are ignored.
+        assert _latest_price(session, print_row.id) is None
 
 
-def test_non_cardmarket_snapshot_can_display_but_never_enters_conservative_portfolio(client):
-    now = datetime.now(timezone.utc)
-    with db.SessionLocal() as session:
-        print_row = _seed_print(session)
-        _snapshot(
-            session,
-            print_id=print_row.id,
-            source="other-market",
-            as_of=now,
-            low="5.00",
-            mid="6.00",
-            market="8.00",
-            last="7.00",
-        )
-        session.commit()
+def test_current_exact_cardmarket_finish_is_preserved_for_user_facing_explanation(monkeypatch):
+    _install_exact_projection(monkeypatch, print_id=202, finish="foil")
 
-        price = _latest_price(session, print_row.id)
-        assert price["source"] == "other-market"
-        assert price["value"] == 8.0
-        assert price["valuation_value"] is None
-        assert price["conservative"] is None
-        assert price["portfolio_method"] is None
+    price = _latest_price(object(), 202)
 
-
-def test_cardmarket_finish_is_preserved_for_user_facing_explanation(client):
-    now = datetime.now(timezone.utc)
-    with db.SessionLocal() as session:
-        print_row = _seed_print(session)
-        _snapshot(
-            session,
-            print_id=print_row.id,
-            source="cardmarket",
-            as_of=now,
-            low="15.00",
-            mid="15.00",
-            market="19.00",
-            last="20.00",
-            finish="foil",
-        )
-        session.commit()
-
-        price = _latest_price(session, print_row.id)
-        assert price["finish"] == "foil"
-        assert price["conservative"] == 15.0
+    assert price["finish"] == "foil"
+    assert price["conservative"] == 7.5
+    assert price["source"] == "cardmarket"
