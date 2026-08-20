@@ -8,6 +8,7 @@ on:
       - 'backend/app/jobs/regional_content.py'
       - 'backend/scripts/sync_regional_content_daily.py'
       - 'backend/scripts/sync_regional_content_daily_v2.py'
+      - 'backend/scripts/sync_regional_content_daily_v3.py'
       - 'backend/tests/test_regional_content_daily.py'
       - 'backend/tests/test_regional_content_daily_v2.py'
       - '.github/workflows/sync-regional-tcg-content.yml'
@@ -40,6 +41,7 @@ jobs:
             app/jobs/regional_content.py \
             scripts/sync_regional_content_daily.py \
             scripts/sync_regional_content_daily_v2.py \
+            scripts/sync_regional_content_daily_v3.py \
             tests/test_regional_content_daily.py \
             tests/test_regional_content_daily_v2.py
       - name: Run regional contract tests
@@ -47,7 +49,7 @@ jobs:
       - name: Gate all official sources live without database access
         run: |
           unset DATABASE_URL DATABASE_URL_UNPOOLED
-          python scripts/sync_regional_content_daily_v2.py \
+          python scripts/sync_regional_content_daily_v3.py \
             --dry-run \
             --report /tmp/regional-live-source-proof.json
           python - <<'PY'
