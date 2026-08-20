@@ -15,12 +15,15 @@ test('game routes send legacy singles URLs to canonical Card results', () => {
   assert.match(page, /initialExplorerState/)
 })
 
-test('game hubs use the real catalog explorer instead of the legacy search experience', () => {
+test('game hubs use the real catalog explorer as primary and keep advanced print search secondary', () => {
   const hub = source('components/games/GameHubPage.js')
   assert.match(hub, /import CatalogExplorer from '\.\.\/catalog\/CatalogExplorer'/)
   assert.match(hub, /<CatalogExplorer/)
   assert.match(hub, /scopedGame=\{game\.slug\}/)
-  assert.doesNotMatch(hub, /OnePieceSearchV2Experience/)
+  assert.match(hub, /Búsqueda avanzada de impresiones/)
+  assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
+  assert.ok(hub.indexOf('<CatalogExplorer') < hub.indexOf('<OnePieceSearchV2Experience'), 'advanced physical search must remain after the primary V2 explorer')
+  assert.match(hub, /<details className="v6-advanced-search">/)
 })
 
 test('canonical Card search walks API offsets so Pikachu and Luffy are not silently capped at 100', () => {
