@@ -1,5 +1,6 @@
 name: Apply Yu-Gi-Oh OCG Near Exact Calibrated28 V1
 
+# Explicit production retrigger after installing the guarded 28-link writer.
 on:
   pull_request:
     branches: [catalog-v2]
