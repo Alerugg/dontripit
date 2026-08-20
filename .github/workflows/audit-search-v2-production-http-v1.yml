@@ -1,0 +1,117 @@
+name: Audit Search V2 Production HTTP V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-search-v2-production-http-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests==2.33.0
+      - name: Traverse production Search V2 pages
+        env:
+          BASE_URL: https://api.dontripit.com
+        run: |
+          mkdir -p /tmp/search-v2-production-http-v1
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import unicodedata
+          import re
+          from pathlib import Path
+          import requests
+
+          base=os.environ['BASE_URL'].rstrip('/')
+          cases=[
+              {'query':'Pikachu','game':'pokemon','cards':191,'prints':376},
+              {'query':'Luffy','game':'onepiece','cards':87,'prints':418},
+          ]
+          session=requests.Session()
+
+          def norm(value):
+              s=unicodedata.normalize('NFKD', str(value or ''))
+              s=''.join(ch for ch in s if not unicodedata.combining(ch)).lower()
+              s=re.sub(r'[^a-z0-9]+',' ',s)
+              return re.sub(r'\s+',' ',s).strip()
+
+          def get(params):
+              last=None
+              for attempt in range(3):
+                  r=session.get(base+'/api/v2/search',params=params,timeout=30)
+                  last=r
+                  if r.status_code==200:
+                      return r.json()
+                  if r.status_code==429:
+                      time.sleep(2+attempt)
+                      continue
+                  raise AssertionError((r.status_code,r.text[:500],params))
+              raise AssertionError((last.status_code,last.text[:500],params))
+
+          summaries=[]
+          for case in cases:
+              offset=0
+              ids=[]
+              variant_sum=0
+              offsets=[]
+              first_ids=None
+              while True:
+                  payload=get({'q':case['query'],'game':case['game'],'limit':50,'offset':offset})
+                  assert payload['pagination_mode']=='canonical_name', payload
+                  assert payload['total']==case['cards'], payload
+                  assert payload['total_prints']==case['prints'], payload
+                  assert payload['limit']==50, payload
+                  assert payload['offset']==offset, payload
+                  page_ids=[int(item['card_id']) for item in payload['items']]
+                  if first_ids is None:
+                      first_ids=page_ids
+                  assert all(norm(case['query']) in norm(item['name']) for item in payload['items']), payload
+                  ids.extend(page_ids)
+                  variant_sum += sum(int(item.get('variant_count') or 0) for item in payload['items'])
+                  offsets.append(offset)
+                  if payload['next_offset'] is None:
+                      assert payload['has_more'] is False, payload
+                      break
+                  assert payload['has_more'] is True, payload
+                  assert int(payload['next_offset']) == offset + len(page_ids), payload
+                  offset=int(payload['next_offset'])
+
+              repeat=get({'q':case['query'],'game':case['game'],'limit':50,'offset':0})
+              assert [int(item['card_id']) for item in repeat['items']] == first_ids, case
+              assert len(ids)==case['cards'], (case,len(ids))
+              assert len(set(ids))==case['cards'], (case,'duplicate ids')
+              assert variant_sum==case['prints'], (case,variant_sum)
+              summaries.append({
+                  'query':case['query'],
+                  'game':case['game'],
+                  'total_cards':case['cards'],
+                  'total_prints':case['prints'],
+                  'offsets':offsets,
+                  'unique_card_ids':len(set(ids)),
+                  'variant_count_sum':variant_sum,
+                  'stable_page_zero':True,
+                  'all_names_contain_query':True,
+              })
+
+          report={'status':'pass','production_writes':0,'base_url':base,'cases':summaries}
+          Path('/tmp/search-v2-production-http-v1/report.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-v2-production-http-v1-${{ github.run_id }}
+          path: /tmp/search-v2-production-http-v1/*
+          retention-days: 90
+          if-no-files-found: warn
