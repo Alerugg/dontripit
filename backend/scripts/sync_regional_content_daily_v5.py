@@ -4,10 +4,11 @@ from __future__ import annotations
 
 Production predates the current Alembic identity and still carries a unique
 legacy (source, url) constraint. V4 collection remains unchanged. This writer
-first resolves the current canonical identity and, only when production exposes
-those legacy columns, resolves the exact same source+URL row. A legacy row is
-adopted only when game and region match the incoming canonical record; any
-cross-game or cross-region collision fails closed.
+resolves both the current canonical identity and, only when production exposes
+those legacy columns, the exact same source+URL identity. Legacy columns are
+kept synchronized on every write so the historical constraint cannot reject
+otherwise-canonical rows. Any split identity or cross-game/cross-region
+collision fails closed.
 """
 
 from datetime import datetime, timezone
@@ -26,6 +27,13 @@ def _same_identity(current: dict[str, Any], record: dict[str, Any]) -> bool:
         str(current.get("source_key") or "") == str(record["source_key"])
         and str(current.get("region") or "") == str(record["region"])
         and str(current.get("item_url") or "") == str(record["item_url"])
+    )
+
+
+def _same_legacy_identity(current: dict[str, Any], record: dict[str, Any]) -> bool:
+    return (
+        str(current.get("source") or "") == str(record["source_key"])
+        and str(current.get("url") or "") == str(record["item_url"])
     )
 
 
@@ -54,11 +62,12 @@ def _find_current_row(
     expected_game_id: int,
     has_legacy_identity: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    select_fields = """
+    legacy_fields = ", source, url" if has_legacy_identity else ""
+    select_fields = f"""
         id, game_id, region, locale, kind, source_key, source_name, source_url,
-        item_url, title, published_date, release_date, raw_json
+        item_url, title, published_date, release_date, raw_json{legacy_fields}
     """
-    canonical = conn.execute(
+    canonical_row = conn.execute(
         text(
             f"""
             SELECT {select_fields}
@@ -74,43 +83,50 @@ def _find_current_row(
             "item_url": record["item_url"],
         },
     ).mappings().one_or_none()
-    if canonical is not None:
-        return dict(canonical), "canonical"
+    canonical = dict(canonical_row) if canonical_row is not None else None
 
-    if not has_legacy_identity:
-        return None, None
+    legacy_rows: list[Any] = []
+    if has_legacy_identity:
+        legacy_rows = conn.execute(
+            text(
+                f"""
+                SELECT {select_fields}
+                FROM regional_tcg_content
+                WHERE source = :source_key
+                  AND url = :item_url
+                """
+            ),
+            {
+                "source_key": record["source_key"],
+                "item_url": record["item_url"],
+            },
+        ).mappings().all()
+        if len(legacy_rows) > 1:
+            raise RuntimeError(
+                "Legacy regional identity is not unique for "
+                f"{record['source_key']} {record['item_url']}"
+            )
 
-    legacy_rows = conn.execute(
-        text(
-            f"""
-            SELECT {select_fields}
-            FROM regional_tcg_content
-            WHERE source = :source_key
-              AND url = :item_url
-            """
-        ),
-        {
-            "source_key": record["source_key"],
-            "item_url": record["item_url"],
-        },
-    ).mappings().all()
-    if len(legacy_rows) > 1:
+    legacy = dict(legacy_rows[0]) if legacy_rows else None
+    if canonical is not None and legacy is not None and int(canonical["id"]) != int(legacy["id"]):
         raise RuntimeError(
-            "Legacy regional identity is not unique for "
-            f"{record['source_key']} {record['item_url']}"
+            "Refusing split canonical/legacy regional identity: "
+            f"source={record['source_key']} region={record['region']} url={record['item_url']} "
+            f"canonical_id={canonical['id']} legacy_id={legacy['id']}"
         )
-    if not legacy_rows:
+
+    current = canonical or legacy
+    if current is None:
         return None, None
 
-    current = dict(legacy_rows[0])
     if int(current["game_id"]) != int(expected_game_id) or str(current["region"]) != str(record["region"]):
         raise RuntimeError(
-            "Refusing to adopt legacy regional row across canonical identity: "
+            "Refusing to adopt regional row across canonical identity: "
             f"source={record['source_key']} url={record['item_url']} "
             f"expected_game_id={expected_game_id} actual_game_id={current['game_id']} "
             f"expected_region={record['region']} actual_region={current['region']}"
         )
-    return current, "legacy"
+    return current, "canonical" if canonical is not None else "legacy"
 
 
 def apply_records(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -148,25 +164,38 @@ def apply_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             )
             target = v1._material_state(record, game_id=expected_game_id, current=current)
 
+            identity_params = {
+                "region": record["region"],
+                "source_key": record["source_key"],
+                "item_url": record["item_url"],
+            }
+            if has_legacy_identity:
+                identity_params.update(
+                    {
+                        "legacy_source": record["source_key"],
+                        "legacy_url": record["item_url"],
+                    }
+                )
+
             if current is None:
+                legacy_insert_columns = ", source, url" if has_legacy_identity else ""
+                legacy_insert_values = ", :legacy_source, :legacy_url" if has_legacy_identity else ""
                 conn.execute(
                     text(
-                        """
+                        f"""
                         INSERT INTO regional_tcg_content
                           (game_id, region, locale, kind, source_key, source_name, source_url,
                            item_url, title, published_date, release_date, raw_json,
-                           first_seen_at, last_seen_at)
+                           first_seen_at, last_seen_at{legacy_insert_columns})
                         VALUES
                           (:game_id, :region, :locale, :kind, :source_key, :source_name, :source_url,
                            :item_url, :title, :published_date, :release_date, CAST(:raw_json AS jsonb),
-                           :now, :now)
+                           :now, :now{legacy_insert_values})
                         """
                     ),
                     {
                         **target,
-                        "region": record["region"],
-                        "source_key": record["source_key"],
-                        "item_url": record["item_url"],
+                        **identity_params,
                         "raw_json": json.dumps(target["raw_json"], ensure_ascii=False, sort_keys=True),
                         "now": now,
                     },
@@ -174,13 +203,19 @@ def apply_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                 inserted += 1
                 continue
 
-            if v1._same_material(current, target) and _same_identity(current, record):
+            legacy_identity_matches = not has_legacy_identity or _same_legacy_identity(current, record)
+            if v1._same_material(current, target) and _same_identity(current, record) and legacy_identity_matches:
                 unchanged += 1
                 continue
 
+            legacy_update = (
+                ",\n                        source = :legacy_source,\n                        url = :legacy_url"
+                if has_legacy_identity
+                else ""
+            )
             conn.execute(
                 text(
-                    """
+                    f"""
                     UPDATE regional_tcg_content
                     SET game_id = :game_id,
                         region = :region,
@@ -194,16 +229,14 @@ def apply_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                         published_date = :published_date,
                         release_date = :release_date,
                         raw_json = CAST(:raw_json AS jsonb),
-                        last_seen_at = :now
+                        last_seen_at = :now{legacy_update}
                     WHERE id = :id
                     """
                 ),
                 {
                     **target,
+                    **identity_params,
                     "id": int(current["id"]),
-                    "region": record["region"],
-                    "source_key": record["source_key"],
-                    "item_url": record["item_url"],
                     "raw_json": json.dumps(target["raw_json"], ensure_ascii=False, sort_keys=True),
                     "now": now,
                 },

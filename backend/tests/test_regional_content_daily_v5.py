@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.sync_regional_content_daily_v5 import _find_current_row, _same_identity
+from scripts.sync_regional_content_daily_v5 import (
+    _find_current_row,
+    _same_identity,
+    _same_legacy_identity,
+)
 
 
 class _Mappings:
@@ -28,13 +32,14 @@ class _Result:
 class _FakeConn:
     dialect = SimpleNamespace(name="postgresql")
 
-    def __init__(self, legacy_rows):
+    def __init__(self, legacy_rows, canonical_rows=None):
         self.legacy_rows = legacy_rows
+        self.canonical_rows = canonical_rows or []
 
     def execute(self, statement, params=None):
         sql = str(statement)
         if "WHERE source_key =" in sql:
-            return _Result([])
+            return _Result(self.canonical_rows)
         if "WHERE source =" in sql:
             return _Result(self.legacy_rows)
         raise AssertionError(sql)
@@ -64,7 +69,18 @@ def _legacy_row(**overrides):
         "published_date": None,
         "release_date": None,
         "raw_json": {},
+        "source": "pokemon_eu_pokemon_uk",
+        "url": "https://www.pokemon.com/uk/news/example",
     }
+    row.update(overrides)
+    return row
+
+
+def _canonical_row(**overrides):
+    row = _legacy_row(
+        source_key="pokemon_eu_pokemon_uk",
+        item_url="https://www.pokemon.com/uk/news/example",
+    )
     row.update(overrides)
     return row
 
@@ -79,10 +95,11 @@ def test_exact_legacy_source_url_collision_is_adopted_only_for_same_game_and_reg
     assert origin == "legacy"
     assert current["id"] == 17
     assert _same_identity(current, _record()) is False
+    assert _same_legacy_identity(current, _record()) is True
 
 
 def test_legacy_collision_across_region_fails_closed():
-    with pytest.raises(RuntimeError, match="Refusing to adopt legacy regional row"):
+    with pytest.raises(RuntimeError, match="Refusing to adopt regional row"):
         _find_current_row(
             _FakeConn([_legacy_row(region="us")]),
             _record(),
@@ -92,10 +109,47 @@ def test_legacy_collision_across_region_fails_closed():
 
 
 def test_legacy_collision_across_game_fails_closed():
-    with pytest.raises(RuntimeError, match="Refusing to adopt legacy regional row"):
+    with pytest.raises(RuntimeError, match="Refusing to adopt regional row"):
         _find_current_row(
             _FakeConn([_legacy_row(game_id=99)]),
             _record(),
             expected_game_id=1,
             has_legacy_identity=True,
         )
+
+
+def test_same_row_can_satisfy_canonical_and_legacy_identity():
+    row = _canonical_row()
+    current, origin = _find_current_row(
+        _FakeConn([row], canonical_rows=[row]),
+        _record(),
+        expected_game_id=1,
+        has_legacy_identity=True,
+    )
+    assert origin == "canonical"
+    assert current["id"] == 17
+    assert _same_identity(current, _record()) is True
+    assert _same_legacy_identity(current, _record()) is True
+
+
+def test_split_canonical_and_legacy_identity_fails_closed():
+    with pytest.raises(RuntimeError, match="split canonical/legacy regional identity"):
+        _find_current_row(
+            _FakeConn([_legacy_row(id=18)], canonical_rows=[_canonical_row(id=17)]),
+            _record(),
+            expected_game_id=1,
+            has_legacy_identity=True,
+        )
+
+
+def test_stale_legacy_identity_is_detected_on_canonical_row():
+    row = _canonical_row(source="old-source", url="https://example.invalid/old")
+    current, origin = _find_current_row(
+        _FakeConn([], canonical_rows=[row]),
+        _record(),
+        expected_game_id=1,
+        has_legacy_identity=True,
+    )
+    assert origin == "canonical"
+    assert _same_identity(current, _record()) is True
+    assert _same_legacy_identity(current, _record()) is False
