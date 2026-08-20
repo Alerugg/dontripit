@@ -1,0 +1,206 @@
+name: Audit Sealed Live Closure V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-live-closure-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet psycopg2-binary
+      - name: Audit current Cardmarket sealed mappings and exact current prices READ ONLY
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ACTIVE=('mtg','onepiece','pokemon','yugioh')
+          ACCEPTED=('accepted','mapped','exact')
+          SEALED=(
+            'intro_pack','booster_pack','booster_box','deck_display','tournament_pack','fatpack',
+            'starter_deck','promo_product','preconstructed_deck','box_set','tin','theme_deck','blister',
+            'elite_trainer_box','trainer_kit','structure_deck','special_edition','collector_tin'
+          )
+          dsn=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('Production database secret is missing')
+
+          conn=psycopg2.connect(dsn,connect_timeout=30,application_name='dontripit_sealed_live_closure_v1')
+          conn.set_session(readonly=True,autocommit=False)
+          report={
+            'mode':'production_read_only',
+            'production_writes':0,
+            'active_games':list(ACTIVE),
+            'structural_gaps':[],
+            'coverage':{},
+            'integrity':{},
+          }
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+              c.execute("SET LOCAL statement_timeout='300s'")
+              c.execute('''
+                WITH captures AS (
+                  SELECT e.game_id,max(e.last_seen_at) captured_at
+                  FROM external_catalog_products e
+                  JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                  GROUP BY e.game_id
+                ), current_products AS (
+                  SELECT e.id,e.external_id,e.game_id,e.name,e.last_seen_at
+                  FROM external_catalog_products e
+                  JOIN captures x ON x.game_id=e.game_id AND x.captured_at=e.last_seen_at
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                ), cardinality AS (
+                  SELECT cp.id,count(DISTINCT l.product_variant_id) FILTER (WHERE l.link_status=ANY(%s)) accepted_count
+                  FROM current_products cp
+                  LEFT JOIN external_catalog_product_variant_links l ON l.external_product_id=cp.id
+                  GROUP BY cp.id
+                )
+                SELECT g.slug game,cp.id external_product_pk,cp.external_id,cp.name,cp.last_seen_at,
+                       coalesce(k.accepted_count,0) accepted_count
+                FROM current_products cp
+                JOIN cardinality k ON k.id=cp.id
+                JOIN games g ON g.id=cp.game_id
+                WHERE g.slug=ANY(%s) AND coalesce(k.accepted_count,0)<>1
+                ORDER BY g.slug,cp.external_id
+              ''',(list(ACTIVE),list(ACCEPTED),list(ACTIVE)))
+              report['structural_gaps']=[dict(r) for r in c.fetchall()]
+
+              c.execute("SELECT id FROM price_sources WHERE lower(name)='cardmarket' LIMIT 1")
+              row=c.fetchone()
+              if not row:
+                  raise RuntimeError('Cardmarket canonical price source is missing')
+              source_id=int(row['id'])
+
+              c.execute('''
+                WITH captures AS (
+                  SELECT e.game_id,max(e.last_seen_at) captured_at
+                  FROM external_catalog_products e
+                  JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                  GROUP BY e.game_id
+                ), price_captures AS (
+                  SELECT e.game_id,max(x.as_of) price_as_of
+                  FROM external_market_price_snapshots x
+                  JOIN external_catalog_products e ON e.id=x.external_product_id
+                  JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                  GROUP BY e.game_id
+                ), sealed AS (
+                  SELECT DISTINCT e.id external_product_id,e.external_id,g.slug,pv.id variant_id,p.product_type,
+                         cap.captured_at,pc.price_as_of
+                  FROM external_catalog_products e
+                  JOIN captures cap ON cap.game_id=e.game_id AND cap.captured_at=e.last_seen_at
+                  JOIN price_captures pc ON pc.game_id=e.game_id
+                  JOIN games g ON g.id=e.game_id
+                  JOIN external_catalog_product_variant_links l
+                    ON l.external_product_id=e.id AND l.link_status=ANY(%s)
+                  JOIN product_variants pv ON pv.id=l.product_variant_id
+                  JOIN products p ON p.id=pv.product_id AND p.game_id=e.game_id
+                  JOIN product_identifiers pi
+                    ON pi.product_variant_id=pv.id AND pi.source='cardmarket' AND pi.external_id=e.external_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                    AND g.slug=ANY(%s) AND p.product_type=ANY(%s)
+                )
+                SELECT s.slug,
+                  count(*) linked,
+                  count(*) FILTER (WHERE EXISTS (
+                    SELECT 1 FROM external_market_price_snapshots x
+                    WHERE x.external_product_id=s.external_product_id AND x.as_of=s.price_as_of
+                      AND greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0
+                  )) current_priceable,
+                  count(*) FILTER (WHERE NOT EXISTS (
+                    SELECT 1 FROM external_market_price_snapshots x
+                    WHERE x.external_product_id=s.external_product_id AND x.as_of=s.price_as_of
+                      AND greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0
+                  )) current_no_public_price,
+                  count(*) FILTER (WHERE EXISTS (
+                    SELECT 1 FROM external_market_price_snapshots x
+                    WHERE x.external_product_id=s.external_product_id AND x.as_of=s.price_as_of
+                      AND greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0
+                  ) AND EXISTS (
+                    SELECT 1 FROM price_snapshots ps
+                    WHERE ps.entity_type='product_variant' AND ps.entity_id=s.variant_id
+                      AND ps.source_id=%s AND ps.as_of=s.price_as_of
+                      AND greatest(coalesce(ps.price_low,0),coalesce(ps.price_mid,0),coalesce(ps.price_market,0),coalesce(ps.price_last,0))>0
+                  )) current_projected,
+                  count(*) FILTER (WHERE EXISTS (
+                    SELECT 1 FROM external_market_price_snapshots x
+                    WHERE x.external_product_id=s.external_product_id AND x.as_of=s.price_as_of
+                      AND greatest(coalesce(x.price_low,0),coalesce(x.price_mid,0),coalesce(x.price_market,0),coalesce(x.price_last,0),coalesce(x.avg1,0),coalesce(x.avg7,0),coalesce(x.avg30,0))>0
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM price_snapshots ps
+                    WHERE ps.entity_type='product_variant' AND ps.entity_id=s.variant_id
+                      AND ps.source_id=%s AND ps.as_of=s.price_as_of
+                      AND greatest(coalesce(ps.price_low,0),coalesce(ps.price_mid,0),coalesce(ps.price_market,0),coalesce(ps.price_last,0))>0
+                  )) current_price_gaps,
+                  max(s.captured_at) catalog_capture,max(s.price_as_of) price_capture
+                FROM sealed s
+                GROUP BY s.slug
+                ORDER BY s.slug
+              ''',(list(ACTIVE),list(ACTIVE),list(ACCEPTED),list(ACTIVE),list(SEALED),source_id,source_id))
+              rows=[dict(r) for r in c.fetchall()]
+              report['coverage']={r['slug']:{k:v for k,v in r.items() if k!='slug'} for r in rows}
+
+              c.execute('''
+                WITH captures AS (
+                  SELECT e.game_id,max(e.last_seen_at) captured_at
+                  FROM external_catalog_products e JOIN games g ON g.id=e.game_id
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                  GROUP BY e.game_id
+                ), current_links AS (
+                  SELECT e.id external_product_id,l.product_variant_id
+                  FROM external_catalog_products e
+                  JOIN captures x ON x.game_id=e.game_id AND x.captured_at=e.last_seen_at
+                  JOIN games g ON g.id=e.game_id
+                  JOIN external_catalog_product_variant_links l ON l.external_product_id=e.id AND l.link_status=ANY(%s)
+                  WHERE e.source='cardmarket' AND e.product_group='non_single' AND g.slug=ANY(%s)
+                )
+                SELECT
+                  (SELECT count(*) FROM (SELECT external_product_id FROM current_links GROUP BY external_product_id HAVING count(DISTINCT product_variant_id)>1) a) ambiguous_external,
+                  (SELECT count(*) FROM (SELECT product_variant_id FROM current_links GROUP BY product_variant_id HAVING count(DISTINCT external_product_id)>1) b) duplicate_variant
+              ''',(list(ACTIVE),list(ACCEPTED),list(ACTIVE)))
+              report['integrity']={k:int(v) for k,v in dict(c.fetchone()).items()}
+              conn.rollback()
+          finally:
+            conn.close()
+
+          totals={
+            'structural_gaps':len(report['structural_gaps']),
+            'linked':sum(int(v['linked']) for v in report['coverage'].values()),
+            'current_priceable':sum(int(v['current_priceable']) for v in report['coverage'].values()),
+            'current_no_public_price':sum(int(v['current_no_public_price']) for v in report['coverage'].values()),
+            'current_projected':sum(int(v['current_projected']) for v in report['coverage'].values()),
+            'current_price_gaps':sum(int(v['current_price_gaps']) for v in report['coverage'].values()),
+          }
+          report['totals']=totals
+          report['status']='pass' if not any(report['integrity'].values()) else 'fail'
+          Path('/tmp/sealed-live-closure-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print('SEALED_LIVE_CLOSURE_V1 '+json.dumps(report,indent=2,sort_keys=True,default=str))
+          if report['status']!='pass':
+              raise SystemExit('Sealed mapping integrity failure: '+repr(report['integrity']))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed-live-closure-v1-${{ github.run_id }}
+          path: /tmp/sealed-live-closure-v1.json
+          retention-days: 30
+          if-no-files-found: error
