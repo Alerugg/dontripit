@@ -15,7 +15,7 @@ test('Yu-Gi-Oh game route keeps one primary Explorer and retains Search V2 in th
   const advanced = source('app/games/[slug]/advanced/page.js')
 
   assert.match(page, /GameHubPage/)
-  assert.match(page, /game\.slug === 'riftbound'/)
+  assert.match(page, /isGameCatalogActive\(game\.slug\)/)
   assert.match(page, /<GameHubPage game=\{game\}/)
   assert.match(hub, /<CatalogExplorer/)
   assert.match(hub, /yugioh:/)
@@ -24,6 +24,7 @@ test('Yu-Gi-Oh game route keeps one primary Explorer and retains Search V2 in th
   assert.match(advanced, /OnePieceSearchV2Experience/)
   assert.match(advanced, /<OnePieceSearchV2Experience game=\{game\}/)
   assert.match(advanced, /next\.set\('advanced', '1'\)/)
+  assert.match(advanced, /isGameCatalogActive\(game\.slug\)/)
   assert.doesNotMatch(hub, /dri-hub-card-stack/)
 })
 
