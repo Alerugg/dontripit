@@ -33,9 +33,19 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
         </nav>
 
         <div className="detail-title-block">
-          <p className="eyebrow">{gameLabel}</p>
+          <p className="eyebrow">Carta canónica · {gameLabel}</p>
           <h1>{card.name}</h1>
-          <p className="detail-intro">Encuentra la edición correcta, elige su idioma físico y abre esa versión exacta o su ficha de Cardmarket.</p>
+          <p className="detail-intro">Esta ficha representa la carta. Debajo eliges una impresión física concreta; el precio solo existe cuando esa impresión está enlazada de forma segura con el mercado.</p>
+        </div>
+
+        <div className="detail-section-block panel-soft" aria-label="Jerarquía de identidad">
+          <p className="eyebrow">Cómo leer esta ficha</p>
+          <div className="chip-row" style={{ marginTop: 12 }}>
+            <span className="filter-chip active">1 · Carta canónica</span>
+            <span className="filter-chip">2 · Impresión física</span>
+            <span className="filter-chip">3 · Precio exacto</span>
+          </div>
+          <p className="detail-intro" style={{ marginTop: 12 }}>Idioma, acabado, variante, edición y Cardmarket pertenecen a la impresión física, no al nombre general de la carta.</p>
         </div>
 
         <CardVersionBrowser cardId={card.id} cardName={card.name} gameLabel={gameLabel} />

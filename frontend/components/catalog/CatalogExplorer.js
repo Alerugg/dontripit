@@ -10,7 +10,8 @@ import { searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
-const SEARCH_LIMIT = 100
+const SEARCH_BATCH = 100
+const MAX_CANONICAL_CARDS = 1000
 const PAGE_SIZE = 24
 
 const RESULT_TYPES = [
@@ -82,6 +83,39 @@ function pageWindow(current, total) {
   return values
 }
 
+async function loadCatalogResults(filters) {
+  // Canonical-card searches are the user-facing “show me every Pikachu/Luffy” flow.
+  // The API caps one response at 100 rows, so walk offsets until the result set ends.
+  if (filters.type === 'card') {
+    const combined = []
+    let offset = 0
+    let complete = false
+
+    while (combined.length < MAX_CANONICAL_CARDS) {
+      const batch = await searchCatalog({
+        ...filters,
+        limit: SEARCH_BATCH,
+        offset,
+      })
+      combined.push(...batch)
+      if (batch.length < SEARCH_BATCH) {
+        complete = true
+        break
+      }
+      offset += SEARCH_BATCH
+    }
+
+    return { items: combined, truncated: !complete }
+  }
+
+  const items = await searchCatalog({
+    ...filters,
+    limit: SEARCH_BATCH,
+    offset: 0,
+  })
+  return { items, truncated: items.length >= SEARCH_BATCH }
+}
+
 export default function CatalogExplorer({
   scopedGame = '',
   heading,
@@ -109,6 +143,7 @@ export default function CatalogExplorer({
   const [pricedOnly, setPricedOnly] = useState(Boolean(initialPricedOnly))
   const [page, setPage] = useState(0)
   const [items, setItems] = useState([])
+  const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [suggestions, setSuggestions] = useState([])
@@ -145,14 +180,13 @@ export default function CatalogExplorer({
     }
 
     loadSuggestions()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [debouncedInput, game, scopedGame])
 
   useEffect(() => {
     if (!submittedQuery) {
       setItems([])
+      setTruncated(false)
       setLoading(false)
       setError('')
       return undefined
@@ -163,18 +197,21 @@ export default function CatalogExplorer({
     async function loadSearchResults() {
       setLoading(true)
       setError('')
+      setTruncated(false)
       try {
-        const nextItems = await searchCatalog({
+        const result = await loadCatalogResults({
           q: submittedQuery,
           game: scopedGame || game,
           type,
-          limit: SEARCH_LIMIT,
-          offset: 0,
         })
-        if (!cancelled) setItems(nextItems)
+        if (!cancelled) {
+          setItems(result.items)
+          setTruncated(result.truncated)
+        }
       } catch (requestError) {
         if (!cancelled) {
           setItems([])
+          setTruncated(false)
           setError(requestError.message)
         }
       } finally {
@@ -183,9 +220,7 @@ export default function CatalogExplorer({
     }
 
     loadSearchResults()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [submittedQuery, game, scopedGame, type])
 
   useEffect(() => {
@@ -207,7 +242,10 @@ export default function CatalogExplorer({
 
   const filteredItems = useMemo(() => {
     const next = items.filter((item) => {
-      if (language && String(item?.language || '').toLowerCase() !== language) return false
+      // Language and price are physical-print filters. Never hide a canonical Card because it
+      // deliberately has no language or universal market price.
+      if (language && item?.type === 'print' && String(item?.language || '').toLowerCase() !== language) return false
+      if (pricedOnly && item?.type !== 'print') return false
       if (pricedOnly && marketPrice(item) == null) return false
       return true
     })
@@ -236,9 +274,10 @@ export default function CatalogExplorer({
   const summaryText = useMemo(() => {
     if (!submittedQuery) return description
     const count = filteredItems.length
-    const loadedNote = items.length >= SEARCH_LIMIT ? ` (primeras ${SEARCH_LIMIT} coincidencias)` : ''
-    return `${count} resultado${count === 1 ? '' : 's'}${loadedNote} para “${submittedQuery}”${currentGame ? ` en ${currentGameConfig?.name || currentGame}` : ''}.`
-  }, [description, submittedQuery, filteredItems.length, items.length, currentGame, currentGameConfig])
+    const scope = currentGame ? ` en ${currentGameConfig?.name || currentGame}` : ''
+    const loadNote = truncated ? ` · mostrando las primeras ${items.length} coincidencias seguras` : ''
+    return `${count} resultado${count === 1 ? '' : 's'} para “${submittedQuery}”${scope}${loadNote}.`
+  }, [description, submittedQuery, filteredItems.length, items.length, truncated, currentGame, currentGameConfig])
 
   const handleSuggestionSelect = (item) => {
     const title = item.title || item.name || ''
@@ -268,7 +307,10 @@ export default function CatalogExplorer({
     setType(nextType)
     setPage(0)
     if (nextType === 'card') setView('grid')
+    if (nextType !== 'print') setPricedOnly(false)
   }
+
+  const physicalFiltersActive = type === 'print' || type === ''
 
   return (
     <section className={`catalog-shell explorer-layout ${compactSidebar ? 'explorer-layout-compact' : ''}`}>
@@ -294,18 +336,19 @@ export default function CatalogExplorer({
         </div>
 
         <div className="filter-group">
-          <label className="filter-label">Idioma</label>
-          <select className="input" value={language} onChange={(event) => setLanguage(event.target.value)}>
+          <label className="filter-label">Idioma de impresión</label>
+          <select className="input" value={language} disabled={!physicalFiltersActive} onChange={(event) => setLanguage(event.target.value)}>
             {LANGUAGE_OPTIONS.map((option) => (
               <option key={option.value || 'all'} value={option.value}>{option.label}</option>
             ))}
           </select>
+          {!physicalFiltersActive ? <small className="v6-filter-hint">El idioma pertenece a la impresión física, no a la carta canónica.</small> : null}
         </div>
 
         <div className="filter-group">
           <label className="checkbox-row">
-            <input type="checkbox" checked={pricedOnly} onChange={(event) => setPricedOnly(event.target.checked)} />
-            <span>Solo resultados con precio Cardmarket exacto</span>
+            <input type="checkbox" checked={pricedOnly} disabled={!physicalFiltersActive} onChange={(event) => setPricedOnly(event.target.checked)} />
+            <span>Solo impresiones con precio Cardmarket exacto</span>
           </label>
         </div>
 
@@ -364,7 +407,7 @@ export default function CatalogExplorer({
           <div className="v5-result-summary" aria-live="polite">
             <span>
               Mostrando <strong>{start + 1}–{Math.min(start + PAGE_SIZE, filteredItems.length)}</strong> de <strong>{filteredItems.length}</strong>
-              {items.length >= SEARCH_LIMIT ? ` · primeras ${SEARCH_LIMIT} coincidencias cargadas` : ''}
+              {truncated ? ` · búsqueda limitada de forma segura a ${items.length}` : ''}
             </span>
             <span>{type ? RESULT_TYPES.find((item) => item.value === type)?.label : 'Todos los tipos'} · {view === 'grid' ? 'Cuadrícula' : 'Lista'}</span>
           </div>
@@ -376,7 +419,7 @@ export default function CatalogExplorer({
             description="Escribe un nombre como Pikachu o Luffy y pulsa Enter. Verás todas las cartas canónicas coincidentes; después puedes cambiar a impresiones o sets."
           />
         )}
-        {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo resultados y precios Cardmarket exactos para tu búsqueda." />}
+        {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo las identidades del catálogo para tu búsqueda." />}
         {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={error || 'Intenta de nuevo en unos segundos.'} error />}
         {submittedQuery && !loading && !error && filteredItems.length === 0 && <StatePanel title="Sin resultados por ahora" description="Prueba otro término, cambia los filtros o vuelve al explorador global." />}
         {!loading && !error && visibleItems.length > 0 && <CatalogResults items={visibleItems} view={view} />}

@@ -47,7 +47,7 @@ export default function PublicHome() {
           </h1>
           <p className="v5-hero-copy">
             Don’tRipIt separa la carta canónica, la impresión física exacta y sus datos de mercado.
-            Busca primero lo que conoces; después eliges la edición real que tienes o quieres seguir.
+            Encuentra la versión correcta sin mezclar ediciones, idiomas ni variantes; después eliges la edición real que tienes o quieres seguir.
           </p>
 
           <div className="v5-hero-search" id="search">

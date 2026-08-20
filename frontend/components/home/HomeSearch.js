@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import SearchInput from '../search/SearchInput'
 import { suggestCatalog } from '../../lib/catalog/client'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
+import './HomeSearchV2.css'
 
 function suggestionHref(item) {
   if (item?.type === 'print' && item.id) return getPrintHref(item.id)
@@ -72,6 +73,7 @@ export default function HomeSearch() {
   return (
     <div className="v5-home-search-wrap">
       <SearchInput
+        type="search"
         value={query}
         onChange={setQuery}
         onSubmit={submit}
@@ -81,7 +83,12 @@ export default function HomeSearch() {
         placeholder="Busca Pikachu, Luffy, Black Lotus, Dark Magician…"
         variant="hero"
       />
-      <small className="v4-search-hint">Enter busca todas las coincidencias · ↑↓ abre una sugerencia exacta</small>
+      <div className="v5-home-search-meta" aria-label="Alcance de búsqueda">
+        <button type="button" className="v5-home-search-scope" aria-pressed="true" aria-label="Buscar en todos los juegos" data-game="all">
+          Todos los TCG
+        </button>
+        <small className="v4-search-hint">Enter busca todas las coincidencias · ↑↓ abre una sugerencia exacta</small>
+      </div>
     </div>
   )
 }
