@@ -21,7 +21,10 @@ export default function SearchInput({
   const [dropdownWidth, setDropdownWidth] = useState(0)
   const hasSuggestions = suggestions.length > 0
   const cleanQuery = (value || '').trim()
-  const hasMeaningfulQuery = (value || '').trim().length >= 1
+  const hasMeaningfulQuery = cleanQuery.length >= 1
+  const activeDescendant = isOpen && activeIndex >= 0 && suggestions[activeIndex]
+    ? `${listId}-${activeIndex}`
+    : undefined
 
   useEffect(() => {
     if (!value?.trim()) {
@@ -114,18 +117,23 @@ export default function SearchInput({
     <div className={`search-input-shell search-input-shell-${variant} ${isOpen ? 'search-input-shell-open' : ''}`} ref={wrapperRef}>
       <div className={`search-input-row search-input-row-${variant}`} ref={inputRowRef}>
         <input
+          type="search"
+          role="combobox"
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onFocus={() => value?.trim() && setIsOpen(true)}
           placeholder={placeholder}
           className={`input search-input search-input-${variant}`}
+          aria-label="Buscar en el catálogo"
           aria-expanded={isOpen}
           aria-controls={listId}
+          aria-haspopup="listbox"
           aria-autocomplete="list"
+          aria-activedescendant={activeDescendant}
           autoComplete="off"
         />
-        <button type="button" className={`primary-btn search-submit search-submit-${variant}`} onClick={runFullSearch}>
+        <button type="button" className={`primary-btn search-submit search-submit-${variant}`} onClick={runFullSearch} aria-label="Buscar todos los resultados">
           Buscar
         </button>
       </div>
