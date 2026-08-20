@@ -6,29 +6,27 @@ import CatalogResults from './ResultsGrid'
 import StatePanel from './StatePanel'
 import SearchBar from './SearchBar'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
-import { searchCatalog, suggestCatalog } from '../../lib/catalog/client'
+import { searchCatalogPage as searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
-const SEARCH_BATCH = 100
-const MAX_CANONICAL_CARDS = 1000
 const PAGE_SIZE = 24
 
 const RESULT_TYPES = [
-  { value: 'card', label: 'Cartas' },
-  { value: 'print', label: 'Impresiones' },
-  { value: 'set', label: 'Sets' },
-  { value: '', label: 'Todos' },
+  { value: 'card', label: 'Cartas', countKey: 'card' },
+  { value: 'print', label: 'Impresiones', countKey: 'print' },
+  { value: 'set', label: 'Sets', countKey: 'set' },
+  { value: '', label: 'Todos', countKey: 'all' },
 ]
 
 const SORT_OPTIONS = [
-  { value: 'relevance', label: 'Relevancia' },
-  { value: 'price_desc', label: 'Precio: mayor a menor' },
-  { value: 'price_asc', label: 'Precio: menor a mayor' },
-  { value: 'collector_asc', label: 'Numeración: ascendente' },
-  { value: 'collector_desc', label: 'Numeración: descendente' },
-  { value: 'name_asc', label: 'Nombre: A–Z' },
-  { value: 'name_desc', label: 'Nombre: Z–A' },
+  { value: 'relevance', label: 'Relevancia', kinds: ['', 'card', 'print', 'set'] },
+  { value: 'price_desc', label: 'Precio exacto: mayor a menor', kinds: ['', 'print'] },
+  { value: 'price_asc', label: 'Precio exacto: menor a mayor', kinds: ['', 'print'] },
+  { value: 'collector_asc', label: 'Numeración: ascendente', kinds: ['', 'card', 'print'] },
+  { value: 'collector_desc', label: 'Numeración: descendente', kinds: ['', 'card', 'print'] },
+  { value: 'name_asc', label: 'Nombre: A–Z', kinds: ['', 'card', 'print', 'set'] },
+  { value: 'name_desc', label: 'Nombre: Z–A', kinds: ['', 'card', 'print', 'set'] },
 ]
 
 const LANGUAGE_OPTIONS = [
@@ -51,26 +49,6 @@ function resolveSuggestionHref(item) {
   return ''
 }
 
-function marketPrice(item) {
-  const value = Number(item?.market?.display_price)
-  return Number.isFinite(value) ? value : null
-}
-
-function compareNullableNumber(left, right, direction = 1) {
-  const a = left == null ? null : Number(left)
-  const b = right == null ? null : Number(right)
-  const aValid = Number.isFinite(a)
-  const bValid = Number.isFinite(b)
-  if (!aValid && !bValid) return 0
-  if (!aValid) return 1
-  if (!bValid) return -1
-  return (a - b) * direction
-}
-
-function compareText(left, right, direction = 1) {
-  return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' }) * direction
-}
-
 function pageWindow(current, total) {
   if (total <= 7) return Array.from({ length: total }, (_, index) => index)
   const values = [0]
@@ -81,39 +59,6 @@ function pageWindow(current, total) {
   if (to < total - 2) values.push('gap-right')
   values.push(total - 1)
   return values
-}
-
-async function loadCatalogResults(filters) {
-  // Canonical-card searches are the user-facing “show me every Pikachu/Luffy” flow.
-  // The API caps one response at 100 rows, so walk offsets until the result set ends.
-  if (filters.type === 'card') {
-    const combined = []
-    let offset = 0
-    let complete = false
-
-    while (combined.length < MAX_CANONICAL_CARDS) {
-      const batch = await searchCatalog({
-        ...filters,
-        limit: SEARCH_BATCH,
-        offset,
-      })
-      combined.push(...batch)
-      if (batch.length < SEARCH_BATCH) {
-        complete = true
-        break
-      }
-      offset += SEARCH_BATCH
-    }
-
-    return { items: combined, truncated: !complete }
-  }
-
-  const items = await searchCatalog({
-    ...filters,
-    limit: SEARCH_BATCH,
-    offset: 0,
-  })
-  return { items, truncated: items.length >= SEARCH_BATCH }
 }
 
 export default function CatalogExplorer({
@@ -143,7 +88,10 @@ export default function CatalogExplorer({
   const [pricedOnly, setPricedOnly] = useState(Boolean(initialPricedOnly))
   const [page, setPage] = useState(0)
   const [items, setItems] = useState([])
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState({ card: 0, print: 0, set: 0, all: 0 })
   const [truncated, setTruncated] = useState(false)
+  const [integrity, setIntegrity] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [suggestions, setSuggestions] = useState([])
@@ -186,7 +134,10 @@ export default function CatalogExplorer({
   useEffect(() => {
     if (!submittedQuery) {
       setItems([])
+      setTotal(0)
+      setCounts({ card: 0, print: 0, set: 0, all: 0 })
       setTruncated(false)
+      setIntegrity('')
       setLoading(false)
       setError('')
       return undefined
@@ -197,21 +148,31 @@ export default function CatalogExplorer({
     async function loadSearchResults() {
       setLoading(true)
       setError('')
-      setTruncated(false)
       try {
-        const result = await loadCatalogResults({
+        const result = await searchCatalog({
           q: submittedQuery,
           game: scopedGame || game,
           type,
+          language: (type === 'print' || type === '') ? language : '',
+          priced: (type === 'print' || type === '') && pricedOnly ? 1 : '',
+          sort,
+          limit: PAGE_SIZE,
+          offset: page * PAGE_SIZE,
         })
         if (!cancelled) {
           setItems(result.items)
+          setTotal(result.total)
+          setCounts(result.counts)
           setTruncated(result.truncated)
+          setIntegrity(result.integrity || '')
         }
       } catch (requestError) {
         if (!cancelled) {
           setItems([])
+          setTotal(0)
+          setCounts({ card: 0, print: 0, set: 0, all: 0 })
           setTruncated(false)
+          setIntegrity('')
           setError(requestError.message)
         }
       } finally {
@@ -221,7 +182,7 @@ export default function CatalogExplorer({
 
     loadSearchResults()
     return () => { cancelled = true }
-  }, [submittedQuery, game, scopedGame, type])
+  }, [submittedQuery, game, scopedGame, type, language, pricedOnly, sort, page])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -231,53 +192,26 @@ export default function CatalogExplorer({
     if (view !== 'grid') params.set('view', view)
     if (!scopedGame && game) params.set('game', game)
     if (sort !== 'relevance') params.set('sort', sort)
-    if (language) params.set('language', language)
-    if (pricedOnly) params.set('priced', '1')
+    if (language && (type === 'print' || type === '')) params.set('language', language)
+    if (pricedOnly && (type === 'print' || type === '')) params.set('priced', '1')
+    if (page > 0) params.set('page', String(page + 1))
     const next = params.toString()
     window.history.replaceState(window.history.state, '', next ? `${pathname}?${next}` : pathname)
-  }, [game, language, pathname, pricedOnly, scopedGame, sort, submittedQuery, type, view])
+  }, [game, language, page, pathname, pricedOnly, scopedGame, sort, submittedQuery, type, view])
 
   const currentGame = scopedGame || game
   const currentGameConfig = getGameConfig(currentGame)
-
-  const filteredItems = useMemo(() => {
-    const next = items.filter((item) => {
-      // Language and price are physical-print filters. Never hide a canonical Card because it
-      // deliberately has no language or universal market price.
-      if (language && item?.type === 'print' && String(item?.language || '').toLowerCase() !== language) return false
-      if (pricedOnly && item?.type !== 'print') return false
-      if (pricedOnly && marketPrice(item) == null) return false
-      return true
-    })
-
-    if (sort === 'relevance') return next
-
-    return [...next].sort((a, b) => {
-      if (sort === 'price_desc') return compareNullableNumber(marketPrice(a), marketPrice(b), -1)
-      if (sort === 'price_asc') return compareNullableNumber(marketPrice(a), marketPrice(b), 1)
-      if (sort === 'collector_desc') return compareText(a?.collector_number, b?.collector_number, -1)
-      if (sort === 'collector_asc') return compareText(a?.collector_number, b?.collector_number, 1)
-      if (sort === 'name_desc') return compareText(a?.title || a?.name, b?.title || b?.name, -1)
-      if (sort === 'name_asc') return compareText(a?.title || a?.name, b?.title || b?.name, 1)
-      return 0
-    })
-  }, [items, language, pricedOnly, sort])
-
-  const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const safePage = Math.min(page, pageCount - 1)
   const start = safePage * PAGE_SIZE
-  const visibleItems = useMemo(
-    () => filteredItems.slice(start, start + PAGE_SIZE),
-    [filteredItems, start],
-  )
+  const availableSorts = useMemo(() => SORT_OPTIONS.filter((option) => option.kinds.includes(type)), [type])
 
   const summaryText = useMemo(() => {
     if (!submittedQuery) return description
-    const count = filteredItems.length
     const scope = currentGame ? ` en ${currentGameConfig?.name || currentGame}` : ''
-    const loadNote = truncated ? ` · mostrando las primeras ${items.length} coincidencias seguras` : ''
-    return `${count} resultado${count === 1 ? '' : 's'} para “${submittedQuery}”${scope}${loadNote}.`
-  }, [description, submittedQuery, filteredItems.length, items.length, truncated, currentGame, currentGameConfig])
+    const loadNote = truncated ? ' · límite de seguridad alcanzado; no extrapolamos resultados' : ''
+    return `${total} resultado${total === 1 ? '' : 's'} para “${submittedQuery}”${scope}${loadNote}.`
+  }, [description, submittedQuery, total, truncated, currentGame, currentGameConfig])
 
   const handleSuggestionSelect = (item) => {
     const title = item.title || item.name || ''
@@ -299,6 +233,7 @@ export default function CatalogExplorer({
     if (!submittedQuery && !type) {
       setType('card')
       setView('grid')
+      setSort('relevance')
     }
     setSubmittedQuery(clean)
   }
@@ -307,7 +242,12 @@ export default function CatalogExplorer({
     setType(nextType)
     setPage(0)
     if (nextType === 'card') setView('grid')
-    if (nextType !== 'print') setPricedOnly(false)
+    if (nextType !== 'print' && nextType !== '') {
+      setPricedOnly(false)
+      setLanguage('')
+    }
+    const nextSorts = SORT_OPTIONS.filter((option) => option.kinds.includes(nextType))
+    if (!nextSorts.some((option) => option.value === sort)) setSort('relevance')
   }
 
   const physicalFiltersActive = type === 'print' || type === ''
@@ -329,7 +269,7 @@ export default function CatalogExplorer({
         <div className="filter-group">
           <label className="filter-label">Ordenar</label>
           <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
-            {SORT_OPTIONS.map((option) => (
+            {availableSorts.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
@@ -399,19 +339,22 @@ export default function CatalogExplorer({
               onClick={() => changeType(option.value)}
             >
               {option.label}
+              <span className="v7-result-count">{counts[option.countKey].toLocaleString()}</span>
             </button>
           ))}
         </div>
 
-        {submittedQuery && !loading && !error && filteredItems.length > 0 ? (
+        {submittedQuery && !loading && !error && total > 0 ? (
           <div className="v5-result-summary" aria-live="polite">
             <span>
-              Mostrando <strong>{start + 1}–{Math.min(start + PAGE_SIZE, filteredItems.length)}</strong> de <strong>{filteredItems.length}</strong>
-              {truncated ? ` · búsqueda limitada de forma segura a ${items.length}` : ''}
+              Mostrando <strong>{start + 1}–{Math.min(start + items.length, total)}</strong> de <strong>{total.toLocaleString()}</strong>
+              {truncated ? ' · límite de seguridad visible' : ''}
             </span>
             <span>{type ? RESULT_TYPES.find((item) => item.value === type)?.label : 'Todos los tipos'} · {view === 'grid' ? 'Cuadrícula' : 'Lista'}</span>
           </div>
         ) : null}
+
+        {integrity ? <div className="v7-integrity-note" role="status">{integrity}</div> : null}
 
         {!submittedQuery && (
           <StatePanel
@@ -419,12 +362,12 @@ export default function CatalogExplorer({
             description="Escribe un nombre como Pikachu o Luffy y pulsa Enter. Verás todas las cartas canónicas coincidentes; después puedes cambiar a impresiones o sets."
           />
         )}
-        {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo las identidades del catálogo para tu búsqueda." />}
+        {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Consultando la página exacta y los conteos completos de la búsqueda." />}
         {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={error || 'Intenta de nuevo en unos segundos.'} error />}
-        {submittedQuery && !loading && !error && filteredItems.length === 0 && <StatePanel title="Sin resultados por ahora" description="Prueba otro término, cambia los filtros o vuelve al explorador global." />}
-        {!loading && !error && visibleItems.length > 0 && <CatalogResults items={visibleItems} view={view} />}
+        {submittedQuery && !loading && !error && total === 0 && <StatePanel title="Sin resultados por ahora" description="Prueba otro término, cambia los filtros o vuelve al explorador global." />}
+        {!loading && !error && items.length > 0 && <CatalogResults items={items} view={view} />}
 
-        {!loading && !error && filteredItems.length > PAGE_SIZE && (
+        {!loading && !error && total > PAGE_SIZE && (
           <nav className="panel pagination-row" aria-label="Paginación de resultados">
             <button type="button" className="button button-secondary" disabled={safePage <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
               Anterior
