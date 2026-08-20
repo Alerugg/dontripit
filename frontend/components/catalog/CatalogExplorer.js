@@ -1,17 +1,24 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import CatalogResults from './ResultsGrid'
 import StatePanel from './StatePanel'
 import SearchBar from './SearchBar'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
-import { RESULT_TYPE_OPTIONS, searchCatalog, suggestCatalog } from '../../lib/catalog/client'
+import { searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
 const SEARCH_LIMIT = 100
 const PAGE_SIZE = 24
+
+const RESULT_TYPES = [
+  { value: 'card', label: 'Cartas' },
+  { value: 'print', label: 'Impresiones' },
+  { value: 'set', label: 'Sets' },
+  { value: '', label: 'Todos' },
+]
 
 const SORT_OPTIONS = [
   { value: 'relevance', label: 'Relevancia' },
@@ -63,6 +70,18 @@ function compareText(left, right, direction = 1) {
   return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' }) * direction
 }
 
+function pageWindow(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index)
+  const values = [0]
+  const from = Math.max(1, current - 1)
+  const to = Math.min(total - 2, current + 1)
+  if (from > 1) values.push('gap-left')
+  for (let index = from; index <= to; index += 1) values.push(index)
+  if (to < total - 2) values.push('gap-right')
+  values.push(total - 1)
+  return values
+}
+
 export default function CatalogExplorer({
   scopedGame = '',
   heading,
@@ -70,16 +89,24 @@ export default function CatalogExplorer({
   kicker,
   allowGameSelect = true,
   compactSidebar = false,
+  initialQuery = '',
+  initialType = '',
+  initialView = 'grid',
+  initialSort = 'relevance',
+  initialLanguage = '',
+  initialGame = '',
+  initialPricedOnly = false,
 }) {
   const router = useRouter()
-  const [inputValue, setInputValue] = useState('')
-  const [submittedQuery, setSubmittedQuery] = useState('')
-  const [game, setGame] = useState(scopedGame)
-  const [type, setType] = useState('')
-  const [view, setView] = useState('grid')
-  const [sort, setSort] = useState('relevance')
-  const [language, setLanguage] = useState('')
-  const [pricedOnly, setPricedOnly] = useState(false)
+  const pathname = usePathname()
+  const [inputValue, setInputValue] = useState(initialQuery)
+  const [submittedQuery, setSubmittedQuery] = useState(initialQuery)
+  const [game, setGame] = useState(scopedGame || initialGame)
+  const [type, setType] = useState(initialType)
+  const [view, setView] = useState(initialView)
+  const [sort, setSort] = useState(initialSort)
+  const [language, setLanguage] = useState(initialLanguage)
+  const [pricedOnly, setPricedOnly] = useState(Boolean(initialPricedOnly))
   const [page, setPage] = useState(0)
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
@@ -89,8 +116,8 @@ export default function CatalogExplorer({
   const debouncedInput = useDebouncedValue(inputValue.trim(), 220)
 
   useEffect(() => {
-    setGame(scopedGame)
-  }, [scopedGame])
+    setGame(scopedGame || initialGame)
+  }, [initialGame, scopedGame])
 
   useEffect(() => {
     setPage(0)
@@ -161,6 +188,20 @@ export default function CatalogExplorer({
     }
   }, [submittedQuery, game, scopedGame, type])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams()
+    if (submittedQuery) params.set('q', submittedQuery)
+    if (type) params.set('kind', type)
+    if (view !== 'grid') params.set('view', view)
+    if (!scopedGame && game) params.set('game', game)
+    if (sort !== 'relevance') params.set('sort', sort)
+    if (language) params.set('language', language)
+    if (pricedOnly) params.set('priced', '1')
+    const next = params.toString()
+    window.history.replaceState(window.history.state, '', next ? `${pathname}?${next}` : pathname)
+  }, [game, language, pathname, pricedOnly, scopedGame, sort, submittedQuery, type, view])
+
   const currentGame = scopedGame || game
   const currentGameConfig = getGameConfig(currentGame)
 
@@ -186,9 +227,10 @@ export default function CatalogExplorer({
 
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
   const safePage = Math.min(page, pageCount - 1)
+  const start = safePage * PAGE_SIZE
   const visibleItems = useMemo(
-    () => filteredItems.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [filteredItems, safePage],
+    () => filteredItems.slice(start, start + PAGE_SIZE),
+    [filteredItems, start],
   )
 
   const summaryText = useMemo(() => {
@@ -212,22 +254,25 @@ export default function CatalogExplorer({
     if (title) setSubmittedQuery(title)
   }
 
+  const submitFullSearch = () => {
+    const clean = inputValue.trim()
+    if (!clean) return
+    if (!submittedQuery && !type) {
+      setType('card')
+      setView('grid')
+    }
+    setSubmittedQuery(clean)
+  }
+
+  const changeType = (nextType) => {
+    setType(nextType)
+    setPage(0)
+    if (nextType === 'card') setView('grid')
+  }
+
   return (
     <section className={`catalog-shell explorer-layout ${compactSidebar ? 'explorer-layout-compact' : ''}`}>
-      <aside className="catalog-sidebar panel">
-        <div className="filter-group">
-          <label className="filter-label">Buscar cartas / prints / sets</label>
-          <SearchBar
-            value={inputValue}
-            onChange={setInputValue}
-            onSubmit={() => setSubmittedQuery(inputValue.trim())}
-            suggestions={suggestions}
-            suggestionsLoading={suggestionsLoading}
-            onSuggestionSelect={handleSuggestionSelect}
-            placeholder={currentGame ? `Busca dentro de ${currentGameConfig?.name || currentGame}` : 'Busca por carta, colección, set code...'}
-          />
-        </div>
-
+      <aside className="catalog-sidebar panel" aria-label="Filtros del catálogo">
         {allowGameSelect && (
           <div className="filter-group">
             <label className="filter-label">Juego</label>
@@ -238,15 +283,6 @@ export default function CatalogExplorer({
             </select>
           </div>
         )}
-
-        <div className="filter-group">
-          <label className="filter-label">Tipo de resultado</label>
-          <select className="input" value={type} onChange={(event) => setType(event.target.value)}>
-            {RESULT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value || 'all'} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
 
         <div className="filter-group">
           <label className="filter-label">Ordenar</label>
@@ -269,7 +305,7 @@ export default function CatalogExplorer({
         <div className="filter-group">
           <label className="checkbox-row">
             <input type="checkbox" checked={pricedOnly} onChange={(event) => setPricedOnly(event.target.checked)} />
-            <span>Solo impresiones con precio Cardmarket exacto</span>
+            <span>Solo resultados con precio Cardmarket exacto</span>
           </label>
         </div>
 
@@ -297,10 +333,47 @@ export default function CatalogExplorer({
           <p>{summaryText}</p>
         </header>
 
+        <div className="v5-explorer-search">
+          <SearchBar
+            value={inputValue}
+            onChange={setInputValue}
+            onSubmit={submitFullSearch}
+            suggestions={suggestions}
+            suggestionsLoading={suggestionsLoading}
+            onSuggestionSelect={handleSuggestionSelect}
+            placeholder={currentGame ? `Busca dentro de ${currentGameConfig?.name || currentGame}` : 'Pikachu, Luffy, Black Lotus, Dark Magician…'}
+          />
+        </div>
+
+        <div className="v5-result-tabs" role="tablist" aria-label="Tipo de resultado">
+          {RESULT_TYPES.map((option) => (
+            <button
+              key={option.value || 'all'}
+              type="button"
+              role="tab"
+              aria-selected={type === option.value}
+              className={`v5-result-tab ${type === option.value ? 'is-active' : ''}`}
+              onClick={() => changeType(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {submittedQuery && !loading && !error && filteredItems.length > 0 ? (
+          <div className="v5-result-summary" aria-live="polite">
+            <span>
+              Mostrando <strong>{start + 1}–{Math.min(start + PAGE_SIZE, filteredItems.length)}</strong> de <strong>{filteredItems.length}</strong>
+              {items.length >= SEARCH_LIMIT ? ` · primeras ${SEARCH_LIMIT} coincidencias cargadas` : ''}
+            </span>
+            <span>{type ? RESULT_TYPES.find((item) => item.value === type)?.label : 'Todos los tipos'} · {view === 'grid' ? 'Cuadrícula' : 'Lista'}</span>
+          </div>
+        ) : null}
+
         {!submittedQuery && (
           <StatePanel
             title={currentGame ? `Empieza a explorar ${currentGameConfig?.name || currentGame}` : 'Empieza a explorar el catálogo'}
-            description="Escribe tu término y pulsa Buscar o Enter para cargar resultados completos sin perder el foco del juego actual."
+            description="Escribe un nombre como Pikachu o Luffy y pulsa Enter. Verás todas las cartas canónicas coincidentes; después puedes cambiar a impresiones o sets."
           />
         )}
         {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Estamos trayendo resultados y precios Cardmarket exactos para tu búsqueda." />}
@@ -313,7 +386,22 @@ export default function CatalogExplorer({
             <button type="button" className="button button-secondary" disabled={safePage <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
               Anterior
             </button>
-            <span>Página {safePage + 1} de {pageCount}</span>
+            {pageWindow(safePage, pageCount).map((value) => (
+              typeof value === 'string' ? (
+                <span key={value} aria-hidden="true">…</span>
+              ) : (
+                <button
+                  key={value}
+                  type="button"
+                  className={`v5-page-number ${safePage === value ? 'is-active' : ''}`}
+                  aria-label={`Página ${value + 1}`}
+                  aria-current={safePage === value ? 'page' : undefined}
+                  onClick={() => setPage(value)}
+                >
+                  {value + 1}
+                </button>
+              )
+            ))}
             <button type="button" className="button button-secondary" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>
               Siguiente
             </button>
