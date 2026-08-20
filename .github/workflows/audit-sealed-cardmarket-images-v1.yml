@@ -38,11 +38,11 @@ jobs:
           pip install 'Pillow==11.3.0'
       - name: Compile read-only probe
         run: python -m py_compile app/scripts/audit_sealed_cardmarket_images_v1.py
-      - name: Probe exact Cardmarket product pages and first-party images
+      - name: Probe exact Cardmarket S3 images and browser delivery
         run: |
           mkdir -p /tmp/sealed-cardmarket-images-v1
           python -m app.scripts.audit_sealed_cardmarket_images_v1 \
-            --sample-per-type 2 \
+            --sample-per-type 5 \
             --report /tmp/sealed-cardmarket-images-v1/report.json
           python - <<'PY'
           import json
@@ -50,12 +50,19 @@ jobs:
           assert p['status']=='pass', p
           assert p['production_writes']==0, p
           assert p['control_cardmarket_s3']['valid'] is True, p['control_cardmarket_s3']
-          assert p['sample_rows'] > 0, p
+          assert all(v['valid'] for v in p['control_delivery_profiles'].values()), p['control_delivery_profiles']
+          assert p['sample_rows'] > 72, p['sample_rows']
+          assert p['resolved_exact_product_images'] > 0, p
+          assert p['resolved_not_browser_deliverable_images']==0, p['browser_unsafe_candidates']
+          assert p['resolved_browser_deliverable_images']==p['resolved_exact_product_images'], p
+          assert len(p['duplicate_hash_groups_across_distinct_products'])==0, p['duplicate_hash_groups_across_distinct_products']
           print(json.dumps({
-              'control':p['control_cardmarket_s3'],
+              'control_profiles':p['control_delivery_profiles'],
               'sample_rows':p['sample_rows'],
               'probe_counts':p['probe_counts'],
               'resolved':p['resolved_exact_product_images'],
+              'browser_deliverable':p['resolved_browser_deliverable_images'],
+              'browser_unsafe':p['resolved_not_browser_deliverable_images'],
               'by_game':p['by_game'],
               'duplicate_hash_groups':len(p['duplicate_hash_groups_across_distinct_products']),
           },indent=2,sort_keys=True))
