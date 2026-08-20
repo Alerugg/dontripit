@@ -15,15 +15,19 @@ test('game routes send legacy singles URLs to canonical Card results', () => {
   assert.match(page, /initialExplorerState/)
 })
 
-test('game hubs use the real catalog explorer as primary and keep advanced print search secondary', () => {
+test('game hubs use one CatalogExplorer and route advanced physical filters to a dedicated tool', () => {
   const hub = source('components/games/GameHubPage.js')
+  const advanced = source('app/games/[slug]/advanced/page.js')
   assert.match(hub, /import CatalogExplorer from '\.\.\/catalog\/CatalogExplorer'/)
   assert.match(hub, /<CatalogExplorer/)
   assert.match(hub, /scopedGame=\{game\.slug\}/)
-  assert.match(hub, /Búsqueda avanzada de impresiones/)
-  assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
-  assert.ok(hub.indexOf('<CatalogExplorer') < hub.indexOf('<OnePieceSearchV2Experience'), 'advanced physical search must remain after the primary V2 explorer')
-  assert.match(hub, /<details className="v6-advanced-search">/)
+  assert.doesNotMatch(hub, /import OnePieceSearchV2Experience/)
+  assert.doesNotMatch(hub, /<details className="v6-advanced-search">/)
+  assert.match(hub, /\/games\/\$\{game\.slug\}\/advanced\?advanced=1/)
+  assert.match(hub, /Abrir filtros físicos avanzados/)
+  assert.match(advanced, /OnePieceSearchV2Experience/)
+  assert.match(advanced, /next\.set\('advanced', '1'\)/)
+  assert.match(advanced, /Volver al Explorer de/)
 })
 
 test('canonical Card search uses server-side Search V2 totals and page offsets instead of a browser 100-row cap', () => {
