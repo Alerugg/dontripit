@@ -1,56 +1,31 @@
-'use client'
+import { notFound, redirect } from 'next/navigation'
+import { callInternalApi } from '../../../lib/catalog/internalApi'
+import { normalizeGameSlug } from '../../../lib/catalog/games'
+import { getCardHref } from '../../../lib/catalog/routes'
 
-import { use, useEffect, useState } from 'react'
-import Link from 'next/link'
-import TopNav from '../../../components/layout/TopNav'
-import StatePanel from '../../../components/catalog/StatePanel'
-import CardDetailLayout from '../../../components/cards/CardDetailLayout'
-import { fetchCardById } from '../../../lib/catalog/client'
-import { getGameExplorerHref } from '../../../lib/catalog/routes'
+function explorerFallback(cardId) {
+  const search = new URLSearchParams()
+  if (cardId) search.set('q', cardId)
+  search.set('kind', 'card')
+  search.set('view', 'grid')
+  return `/explorer?${search.toString()}`
+}
 
-export default function CardDetailPage({ params }) {
-  const { id } = use(params)
-  const [card, setCard] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+export default async function LegacyCardDetailPage({ params }) {
+  const { id } = await params
+  const cardId = String(id || '').trim()
 
-  useEffect(() => {
-    let cancelled = false
+  if (!cardId) redirect(explorerFallback(''))
 
-    async function loadCard() {
-      setLoading(true)
-      setError('')
+  const upstream = await callInternalApi(`/api/v1/cards/${encodeURIComponent(cardId)}`)
 
-      try {
-        const payload = await fetchCardById(id)
-        if (!cancelled) setCard(payload)
-      } catch (requestError) {
-        if (!cancelled) {
-          setCard(null)
-          setError(requestError.message)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
+  if (!upstream.ok) {
+    if (upstream.status === 404) notFound()
+    redirect(explorerFallback(cardId))
+  }
 
-    loadCard()
-    return () => {
-      cancelled = true
-    }
-  }, [id])
+  const gameSlug = normalizeGameSlug(upstream.payload?.game_slug || upstream.payload?.game || '')
+  if (!gameSlug) redirect(explorerFallback(cardId))
 
-  const backHref = card?.game ? getGameExplorerHref(card.game) : '/#games'
-
-  return (
-    <main>
-      <TopNav />
-      <section className="detail-shell">
-        <Link href={backHref} className="back-link">← Volver al catálogo</Link>
-        {loading && <StatePanel title="Cargando carta" description="Preparando carta, sets y variantes." />}
-        {!loading && error && <StatePanel title="No pudimos cargar la carta" description={error} error />}
-        {!loading && !error && card && <CardDetailLayout card={card} />}
-      </section>
-    </main>
-  )
+  redirect(getCardHref(gameSlug, cardId))
 }
