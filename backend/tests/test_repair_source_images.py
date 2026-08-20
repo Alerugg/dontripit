@@ -1,8 +1,8 @@
 from sqlalchemy import select
 
 from app import db
-from app.jobs.repair_source_images import _pokemon_exact_sources
-from app.models import Card, Game, Print, PrintIdentifier, Set
+from app.jobs.repair_source_images import _pokemon_exact_sources, _pokemon_source_record_images
+from app.models import Card, Game, Print, PrintIdentifier, Set, Source, SourceRecord
 
 
 def _seed_print(session, *, language: str, legacy_tcgdex_id: str | None = None):
@@ -62,3 +62,45 @@ def test_en_can_use_legacy_exact_tcgdex_id(client):
         assert [(row.id, lang, source_id) for row, lang, source_id in resolved] == [
             (en.id, "en", "en-exact")
         ]
+
+
+def test_captured_source_records_are_language_scoped_and_conflicts_are_excluded(client):
+    with db.SessionLocal() as session:
+        source = Source(name="tcgdex_pokemon", description="test")
+        session.add(source)
+        session.flush()
+        session.add_all(
+            [
+                SourceRecord(
+                    source_id=source.id,
+                    checksum="a" * 64,
+                    raw_json={"id": "same-id", "_language": "es", "image": "https://assets.tcgdex.net/es/a"},
+                ),
+                SourceRecord(
+                    source_id=source.id,
+                    checksum="b" * 64,
+                    raw_json={"id": "same-id", "_language": "ja", "image": "https://assets.tcgdex.net/ja/b"},
+                ),
+                SourceRecord(
+                    source_id=source.id,
+                    checksum="c" * 64,
+                    raw_json={"id": "legacy-en", "image": "https://assets.tcgdex.net/en/c"},
+                ),
+                SourceRecord(
+                    source_id=source.id,
+                    checksum="d" * 64,
+                    raw_json={"id": "conflict", "_language": "es", "image": "https://assets.tcgdex.net/es/d1"},
+                ),
+                SourceRecord(
+                    source_id=source.id,
+                    checksum="e" * 64,
+                    raw_json={"id": "conflict", "_language": "es", "image": "https://assets.tcgdex.net/es/d2"},
+                ),
+            ]
+        )
+        session.flush()
+        images = _pokemon_source_record_images(session)
+        assert images[("es", "same-id")] == "https://assets.tcgdex.net/es/a"
+        assert images[("ja", "same-id")] == "https://assets.tcgdex.net/ja/b"
+        assert images[("en", "legacy-en")] == "https://assets.tcgdex.net/en/c"
+        assert ("es", "conflict") not in images
