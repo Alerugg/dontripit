@@ -9,17 +9,21 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('Pokémon game route uses the shared search-first hub without losing Search V2', () => {
+test('Pokémon game route keeps one primary Explorer and retains Search V2 in the advanced tool', () => {
   const page = source('app/games/[slug]/page.js')
   const hub = source('components/games/GameHubPage.js')
+  const advanced = source('app/games/[slug]/advanced/page.js')
 
   assert.match(page, /GameHubPage/)
   assert.match(page, /game\.slug === 'riftbound'/)
   assert.match(page, /<GameHubPage game=\{game\}/)
-  assert.match(hub, /OnePieceSearchV2Experience/)
-  assert.match(hub, /<OnePieceSearchV2Experience game=\{game\}/)
+  assert.match(hub, /<CatalogExplorer/)
   assert.match(hub, /pokemon:/)
-  assert.match(hub, /Busca una carta sin perderte en el catálogo/)
+  assert.match(hub, /\/games\/\$\{game\.slug\}\/advanced\?advanced=1/)
+  assert.doesNotMatch(hub, /<OnePieceSearchV2Experience/)
+  assert.match(advanced, /OnePieceSearchV2Experience/)
+  assert.match(advanced, /<OnePieceSearchV2Experience game=\{game\}/)
+  assert.match(advanced, /next\.set\('advanced', '1'\)/)
   assert.doesNotMatch(hub, /dri-hub-card-stack/)
 })
 
