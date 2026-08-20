@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'backend/app/scripts/audit_yugioh_cardmarket_print_images_v1.py'
+      - 'backend/app/scripts/probe_yugioh_cardmarket_print_images_v1.py'
       - '.github/workflows/audit-yugioh-cardmarket-print-images-v1.yml'
   workflow_dispatch:
 
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -33,8 +34,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Compile read-only auditor
-        run: python -m py_compile app/scripts/audit_yugioh_cardmarket_print_images_v1.py
+      - name: Compile read-only image auditors
+        run: |
+          python -m py_compile app/scripts/audit_yugioh_cardmarket_print_images_v1.py
+          python -m py_compile app/scripts/probe_yugioh_cardmarket_print_images_v1.py
       - name: Audit current exact reviewed Cardmarket identities behind missing images
         run: |
           mkdir -p /tmp/ygo-cardmarket-print-images-v1
@@ -54,6 +57,25 @@ jobs:
               'eligible_exact_reviewed_one_to_one':p['eligible_one_to_one'],
               'identity_conflicts':p['exact_reviewed_identity_conflicts'],
               'by_language':p['eligible_by_language'],
+          },indent=2))
+          PY
+      - name: Probe first-party Cardmarket image for each exact physical product
+        run: |
+          python -m app.scripts.probe_yugioh_cardmarket_print_images_v1 \
+            --input /tmp/ygo-cardmarket-print-images-v1/eligible.csv \
+            --report /tmp/ygo-cardmarket-print-images-v1/probe.json \
+            --csv /tmp/ygo-cardmarket-print-images-v1/probe.csv
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-cardmarket-print-images-v1/probe.json'))
+          assert p['status']=='pass', p
+          assert p['production_writes']==0, p
+          assert 0 <= p['valid_exact_product_images'] <= p['input_exact_reviewed_one_to_one'], p
+          print(json.dumps({
+              'exact_identities':p['input_exact_reviewed_one_to_one'],
+              'valid_first_party_product_images':p['valid_exact_product_images'],
+              'probe_counts':p['probe_counts'],
+              'tokens':p['resolved_by_directory_token'],
           },indent=2))
           PY
       - uses: actions/upload-artifact@v4
