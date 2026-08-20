@@ -1,0 +1,65 @@
+name: Audit Yu-Gi-Oh Cardmarket Print Images V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_yugioh_cardmarket_print_images_v1.py'
+      - '.github/workflows/audit-yugioh-cardmarket-print-images-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-yugioh-cardmarket-print-images-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Compile read-only auditor
+        run: python -m py_compile app/scripts/audit_yugioh_cardmarket_print_images_v1.py
+      - name: Audit current exact reviewed Cardmarket identities behind missing images
+        run: |
+          mkdir -p /tmp/ygo-cardmarket-print-images-v1
+          python -m app.scripts.audit_yugioh_cardmarket_print_images_v1 \
+            --report /tmp/ygo-cardmarket-print-images-v1/report.json \
+            --csv /tmp/ygo-cardmarket-print-images-v1/eligible.csv \
+            --sample-limit 200
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/ygo-cardmarket-print-images-v1/report.json'))
+          assert p['status']=='pass', p
+          assert p['production_writes']==0, p
+          assert p['missing_print_images_total'] >= p['eligible_one_to_one'] >= 0, p
+          assert p['eligible_one_to_one'] == p['exact_reviewed_one_to_one_current_missing'], p
+          print(json.dumps({
+              'missing':p['missing_print_images_total'],
+              'eligible_exact_reviewed_one_to_one':p['eligible_one_to_one'],
+              'identity_conflicts':p['exact_reviewed_identity_conflicts'],
+              'by_language':p['eligible_by_language'],
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yugioh-cardmarket-print-images-v1-${{ github.run_id }}
+          path: /tmp/ygo-cardmarket-print-images-v1/*
+          retention-days: 90
+          if-no-files-found: warn
