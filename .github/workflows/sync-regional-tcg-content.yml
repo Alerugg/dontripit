@@ -9,6 +9,7 @@ on:
       - 'backend/scripts/sync_regional_content_daily.py'
       - 'backend/scripts/sync_regional_content_daily_v2.py'
       - 'backend/scripts/sync_regional_content_daily_v3.py'
+      - 'backend/scripts/sync_regional_content_daily_v4.py'
       - 'backend/scripts/dedupe_regional_content.py'
       - '.github/workflows/sync-regional-tcg-content.yml'
   workflow_dispatch:
@@ -48,12 +49,13 @@ jobs:
             scripts/sync_regional_content_daily.py \
             scripts/sync_regional_content_daily_v2.py \
             scripts/sync_regional_content_daily_v3.py \
+            scripts/sync_regional_content_daily_v4.py \
             scripts/dedupe_regional_content.py \
             alembic/versions/20260810_32_add_regional_tcg_content.py
 
       - name: Gate official sources without database writes
         run: |
-          python scripts/sync_regional_content_daily_v3.py \
+          python scripts/sync_regional_content_daily_v4.py \
             --dry-run \
             --report /tmp/regional-dry-run.json
 
@@ -62,7 +64,7 @@ jobs:
 
       - name: Persist canonical feeds and certify second-pass idempotency
         run: |
-          python scripts/sync_regional_content_daily_v3.py \
+          python scripts/sync_regional_content_daily_v4.py \
             --apply \
             --certify-two-pass \
             --report /tmp/regional-two-pass-proof.json
@@ -70,7 +72,7 @@ jobs:
       - name: Retire superseded Pokemon EU source rows on catalog push only
         if: github.event_name == 'push' && github.ref_name == 'catalog-v2'
         run: |
-          python scripts/sync_regional_content_daily_v3.py \
+          python scripts/sync_regional_content_daily_v4.py \
             --cleanup-deprecated \
             --report /tmp/regional-source-migration.json
 
@@ -83,7 +85,7 @@ jobs:
 
       - name: Verify durable regional database contract
         run: |
-          python scripts/sync_regional_content_daily_v3.py \
+          python scripts/sync_regional_content_daily_v4.py \
             --verify-db \
             --report /tmp/regional-db-proof.json
 
