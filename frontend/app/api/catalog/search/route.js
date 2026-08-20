@@ -88,20 +88,30 @@ function uniqueRows(rows) {
   return output
 }
 
+function legacyBatchSize(q) {
+  const length = String(q || '').trim().length
+  if (length <= 1) return 12
+  if (length === 2) return 24
+  return SEARCH_BATCH
+}
+
 async function fetchAllLegacyRows({ q, game, type }) {
   const rows = []
+  const batchSize = legacyBatchSize(q)
   let offset = 0
   let truncated = false
+  let consecutiveEmptyPages = 0
 
-  while (rows.length < MAX_KIND_RESULTS) {
+  while (rows.length < MAX_KIND_RESULTS && consecutiveEmptyPages < 2) {
     const upstream = await callInternalApi('/api/v1/search', {
-      params: { q, game, type, limit: SEARCH_BATCH, offset },
+      params: { q, game, type, limit: batchSize, offset },
       timeoutMs: 20000,
     })
     if (!upstream.ok) return { ok: false, upstream, rows: [], truncated: false }
 
     const batch = toItems(upstream.payload).filter((item) => !type || item?.type === type)
-    if (!batch.length) break
+    if (!batch.length) consecutiveEmptyPages += 1
+    else consecutiveEmptyPages = 0
 
     const before = rows.length
     rows.push(...batch)
@@ -109,12 +119,11 @@ async function fetchAllLegacyRows({ q, game, type }) {
     rows.length = 0
     rows.push(...deduped)
 
-    if (rows.length === before) {
+    offset += batchSize
+    if (batch.length && rows.length === before) {
       truncated = true
       break
     }
-
-    offset += batch.length
   }
 
   if (rows.length >= MAX_KIND_RESULTS) truncated = true
@@ -135,7 +144,7 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
   if (!canonicalMode) {
     const fallback = await fetchAllLegacyRows({ q, game, type: 'card' })
     return fallback.ok
-      ? { ...fallback, rows: fallback.rows, total: fallback.rows.length, canonicalMode: false }
+      ? { ...fallback, total: fallback.rows.length, canonicalMode: false }
       : fallback
   }
 
@@ -151,8 +160,9 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
   }
 
   const rows = toItems(payload).map(normalizeV2Card)
-  let nextOffset = Number(payload.next_offset)
-  while (payload.has_more !== false && Number.isFinite(nextOffset) && rows.length < MAX_KIND_RESULTS) {
+  let currentPayload = payload
+  let nextOffset = Number(currentPayload.next_offset)
+  while (currentPayload.has_more !== false && Number.isFinite(nextOffset) && rows.length < MAX_KIND_RESULTS) {
     const page = await callInternalApi('/api/v2/search', {
       params: { q, game, limit: SEARCH_BATCH, offset: nextOffset },
       timeoutMs: 20000,
@@ -161,8 +171,9 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
     const pageItems = toItems(page.payload).map(normalizeV2Card)
     if (!pageItems.length) break
     rows.push(...pageItems)
-    const following = Number(page.payload?.next_offset)
-    if (!page.payload?.has_more || !Number.isFinite(following) || following <= nextOffset) break
+    currentPayload = page.payload || {}
+    const following = Number(currentPayload.next_offset)
+    if (!currentPayload.has_more || !Number.isFinite(following) || following <= nextOffset) break
     nextOffset = following
   }
 
@@ -177,11 +188,11 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
 }
 
 async function enrichPrintsWithMarket(rows) {
-  if (!rows.length) return rows
+  if (!rows.length) return { rows, complete: true, failedUpstream: null }
   const ids = rows
     .filter((item) => item?.type === 'print' && Number.isInteger(Number(item?.id)))
     .map((item) => Number(item.id))
-  if (!ids.length) return rows
+  if (!ids.length) return { rows, complete: true, failedUpstream: null }
 
   const chunks = []
   for (let index = 0; index < ids.length; index += MARKET_BATCH) chunks.push(ids.slice(index, index + MARKET_BATCH))
@@ -190,6 +201,7 @@ async function enrichPrintsWithMarket(rows) {
     params: { ids: chunk.join(',') },
     timeoutMs: 20000,
   })))
+  const failedUpstream = marketResults.find((result) => !result.ok) || null
 
   const marketByPrint = new Map()
   for (const result of marketResults) {
@@ -197,11 +209,15 @@ async function enrichPrintsWithMarket(rows) {
     for (const row of toItems(result.payload)) marketByPrint.set(Number(row.print_id), row)
   }
 
-  return rows.map((item) => {
-    if (item?.type !== 'print') return item
-    const market = marketByPrint.get(Number(item.id))
-    return market ? { ...item, market } : item
-  })
+  return {
+    rows: rows.map((item) => {
+      if (item?.type !== 'print') return item
+      const market = marketByPrint.get(Number(item.id))
+      return market ? { ...item, market } : item
+    }),
+    complete: !failedUpstream,
+    failedUpstream,
+  }
 }
 
 function applyPhysicalFilters(rows, { language, pricedOnly }) {
@@ -239,10 +255,11 @@ export async function GET(request) {
   if (!q) return NextResponse.json({ error: 'q_required', message: 'Escribe algo para buscar.' }, { status: 400 })
 
   const needAllCards = type === '' || (type === 'card' && sort !== 'relevance')
-  const cardSourcePromise = fetchCanonicalCardSource({ q, game, requireAll: needAllCards, limit, offset })
-  const printSourcePromise = fetchAllLegacyRows({ q, game, type: 'print' })
-  const setSourcePromise = fetchAllLegacyRows({ q, game, type: 'set' })
-  const [cardsSource, printsSource, setsSource] = await Promise.all([cardSourcePromise, printSourcePromise, setSourcePromise])
+  const [cardsSource, printsSource, setsSource] = await Promise.all([
+    fetchCanonicalCardSource({ q, game, requireAll: needAllCards, limit, offset }),
+    fetchAllLegacyRows({ q, game, type: 'print' }),
+    fetchAllLegacyRows({ q, game, type: 'set' }),
+  ])
 
   for (const source of [cardsSource, printsSource, setsSource]) {
     if (!source.ok) return responseError(source.upstream)
@@ -250,20 +267,23 @@ export async function GET(request) {
 
   let cards = cardsSource.rows
   let prints = printsSource.rows
-  let sets = setsSource.rows
+  const sets = setsSource.rows
   const needsGlobalMarket = pricedOnly || sort === 'price_asc' || sort === 'price_desc'
-  if (needsGlobalMarket) prints = await enrichPrintsWithMarket(prints)
+  if (needsGlobalMarket) {
+    const enriched = await enrichPrintsWithMarket(prints)
+    if (!enriched.complete) return responseError(enriched.failedUpstream)
+    prints = enriched.rows
+  }
 
-  const physicalFilters = { language, pricedOnly }
-  const filteredPrints = applyPhysicalFilters(prints, physicalFilters)
+  const filteredPrints = applyPhysicalFilters(prints, { language, pricedOnly })
   const filteredCards = pricedOnly ? [] : cards
   const filteredSets = pricedOnly ? [] : sets
-
+  const cardCount = cardsSource.canonicalMode ? Number(cardsSource.total || 0) : filteredCards.length
   const counts = {
-    card: cardsSource.canonicalMode ? Number(cardsSource.total || 0) : filteredCards.length,
+    card: pricedOnly ? 0 : cardCount,
     print: filteredPrints.length,
-    set: filteredSets.length,
-    all: (pricedOnly ? 0 : (cardsSource.canonicalMode ? Number(cardsSource.total || 0) : filteredCards.length) + filteredSets.length) + filteredPrints.length,
+    set: pricedOnly ? 0 : filteredSets.length,
+    all: (pricedOnly ? 0 : cardCount + filteredSets.length) + filteredPrints.length,
   }
 
   let selectedRows
@@ -282,18 +302,13 @@ export async function GET(request) {
     selectedTotal = counts.all
   }
 
-  if (!(type === 'card' && cardsSource.canonicalMode && sort === 'relevance')) {
-    selectedRows = sortRows(selectedRows, sort)
-  }
+  if (!(type === 'card' && cardsSource.canonicalMode && sort === 'relevance')) selectedRows = sortRows(selectedRows, sort)
 
   let pageItems
-  if (type === 'card' && cardsSource.canonicalMode && sort === 'relevance') {
-    pageItems = selectedRows
-  } else {
-    pageItems = selectedRows.slice(offset, offset + limit)
-  }
+  if (type === 'card' && cardsSource.canonicalMode && sort === 'relevance') pageItems = selectedRows
+  else pageItems = selectedRows.slice(offset, offset + limit)
 
-  if (!needsGlobalMarket) pageItems = await enrichPrintsWithMarket(pageItems)
+  if (!needsGlobalMarket) pageItems = (await enrichPrintsWithMarket(pageItems)).rows
 
   const truncated = Boolean(cardsSource.truncated || printsSource.truncated || setsSource.truncated)
   return NextResponse.json({
