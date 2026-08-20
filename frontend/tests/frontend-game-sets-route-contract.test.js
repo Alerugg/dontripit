@@ -8,8 +8,9 @@ const source = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
 test('set directory uses the shared canonical game catalog instead of a hardcoded mtg UI slug', () => {
   const page = source('app/games/[slug]/sets/page.js')
-  assert.match(page, /import \{ getGameConfig \} from/)
+  assert.match(page, /import \{ getGameConfig, isGameCatalogActive \} from/)
   assert.match(page, /const game = getGameConfig\(requestedSlug\)/)
+  assert.match(page, /if \(!isGameCatalogActive\(game\.slug\)\) redirect\(`\/games\/\$\{game\.slug\}`\)/)
   assert.doesNotMatch(page, /const GAMES =/)
   assert.doesNotMatch(page, /mtg:\s*\{ slug: 'mtg'/)
 })
