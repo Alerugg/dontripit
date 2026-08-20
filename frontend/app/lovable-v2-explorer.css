@@ -1,0 +1,28 @@
+/* Explorer-specific V2 details. Kept small and isolated until the design-system consolidation pass. */
+.v5-result-tab .v7-result-count {
+  display: inline-flex;
+  min-width: 1.35rem;
+  justify-content: center;
+  margin-left: .4rem;
+  padding: .08rem .38rem;
+  border-radius: 999px;
+  color: var(--dri-faint, #696470);
+  background: rgba(255,255,255,.035);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .61rem;
+  font-variant-numeric: tabular-nums;
+}
+.v5-result-tab.is-active .v7-result-count {
+  color: #d8cef4;
+  background: rgba(139,92,246,.13);
+}
+.v7-integrity-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(251,191,36,.2);
+  border-radius: 8px;
+  color: #c9bea1;
+  background: rgba(251,191,36,.05);
+  font-size: .69rem;
+  line-height: 1.5;
+}

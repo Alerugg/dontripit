@@ -26,21 +26,26 @@ test('game hubs use the real catalog explorer as primary and keep advanced print
   assert.match(hub, /<details className="v6-advanced-search">/)
 })
 
-test('canonical Card search walks API offsets so Pikachu and Luffy are not silently capped at 100', () => {
+test('canonical Card search uses server-side Search V2 totals and page offsets instead of a browser 100-row cap', () => {
   const explorer = source('components/catalog/CatalogExplorer.js')
-  assert.match(explorer, /const SEARCH_BATCH = 100/)
-  assert.match(explorer, /const MAX_CANONICAL_CARDS = 1000/)
-  assert.match(explorer, /if \(filters\.type === 'card'\)/)
-  assert.match(explorer, /while \(combined\.length < MAX_CANONICAL_CARDS\)/)
-  assert.match(explorer, /offset \+= SEARCH_BATCH/)
-  assert.match(explorer, /combined\.push\(\.\.\.batch\)/)
+  const route = source('app/api/catalog/search/route.js')
+  assert.match(explorer, /searchCatalogPage as searchCatalog/)
+  assert.match(explorer, /limit: PAGE_SIZE/)
+  assert.match(explorer, /offset: page \* PAGE_SIZE/)
+  assert.doesNotMatch(explorer, /MAX_CANONICAL_CARDS/)
+  assert.match(route, /callInternalApi\('\/api\/v2\/search'/)
+  assert.match(route, /pagination_mode === 'canonical_name'/)
+  assert.match(route, /total: exactTotal/)
 })
 
-test('language and Cardmarket filters remain physical-print concepts', () => {
+test('language and Cardmarket filters remain physical-print concepts and are applied server-side', () => {
   const explorer = source('components/catalog/CatalogExplorer.js')
-  assert.match(explorer, /language && item\?\.type === 'print'/)
-  assert.match(explorer, /pricedOnly && item\?\.type !== 'print'/)
+  const route = source('app/api/catalog/search/route.js')
+  assert.match(explorer, /physicalFiltersActive = type === 'print' \|\| type === ''/)
   assert.match(explorer, /El idioma pertenece a la impresión física, no a la carta canónica/)
+  assert.match(route, /language && item\?\.type === 'print'/)
+  assert.match(route, /pricedOnly && item\?\.type !== 'print'/)
+  assert.match(route, /market\?\.display_price/)
 })
 
 test('result cards distinguish canonical Cards from exact physical Prints', () => {

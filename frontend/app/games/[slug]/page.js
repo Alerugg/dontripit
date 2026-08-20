@@ -16,6 +16,11 @@ function normalizeLegacyKind(value) {
   return ''
 }
 
+function positivePage(value) {
+  const parsed = Number.parseInt(String(value || '1'), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
 export async function generateMetadata({ params }) {
   const { slug } = await params
   const game = getGameConfig(slug)
@@ -47,6 +52,7 @@ export default async function GamePage({ params, searchParams }) {
     sort: VALID_SORTS.has(query?.sort) ? query.sort : 'relevance',
     language: VALID_LANGUAGES.has(query?.language || '') ? (query?.language || '') : '',
     pricedOnly: query?.priced === '1',
+    page: positivePage(query?.page),
   }
 
   return (

@@ -48,13 +48,47 @@ async function request(path, params, { ttlMs = 0 } = {}) {
   return promise
 }
 
-export async function searchCatalog(filters = {}) {
+export async function searchCatalogPage(filters = {}) {
   const payload = await request('/api/catalog/search', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
   })
 
-  return Array.isArray(payload) ? payload : payload?.items || []
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      total: payload.length,
+      counts: { card: 0, print: 0, set: 0, all: payload.length },
+      limit: Number(filters.limit || payload.length || 24),
+      offset: Number(filters.offset || 0),
+      has_more: false,
+      next_offset: null,
+      truncated: false,
+      integrity: null,
+    }
+  }
+
+  return {
+    items: payload?.items || payload?.results || [],
+    total: Number(payload?.total ?? 0),
+    counts: {
+      card: Number(payload?.counts?.card ?? 0),
+      print: Number(payload?.counts?.print ?? 0),
+      set: Number(payload?.counts?.set ?? 0),
+      all: Number(payload?.counts?.all ?? payload?.total ?? 0),
+    },
+    limit: Number(payload?.limit ?? filters.limit ?? 24),
+    offset: Number(payload?.offset ?? filters.offset ?? 0),
+    has_more: Boolean(payload?.has_more),
+    next_offset: payload?.next_offset ?? null,
+    truncated: Boolean(payload?.truncated),
+    integrity: payload?.integrity || null,
+  }
+}
+
+export async function searchCatalog(filters = {}) {
+  const payload = await searchCatalogPage(filters)
+  return payload.items
 }
 
 export async function suggestCatalog(filters = {}) {
@@ -92,13 +126,13 @@ export function fetchPrintPhysicalReleases(id) {
 }
 
 export async function fetchGamePrints(filters = {}) {
-  const payload = await request('/api/catalog/search', {
+  const payload = await searchCatalogPage({
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
     type: 'print',
   })
 
-  return Array.isArray(payload) ? payload : payload?.items || []
+  return payload.items
 }
 
 export async function fetchSetsPage(game, options = {}) {

@@ -5,6 +5,7 @@ import './canva-workspace.css'
 import './accessibility.css'
 import './lovable-v2.css'
 import './lovable-v2-interior.css'
+import './lovable-v2-explorer.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 import { SITE_NAME, SITE_URL } from '../lib/site'
 
