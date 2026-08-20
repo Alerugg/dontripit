@@ -6,7 +6,7 @@ import time
 import requests
 from sqlalchemy import select
 
-from app.models import Card, Game, Print, PrintImage
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ def _get_json(http: requests.Session, url: str, *, attempts: int = 3) -> dict | 
 
 
 def _valid_image(http: requests.Session, url: str) -> bool:
+    response = None
     try:
         response = http.get(url, timeout=20, stream=True)
         if response.status_code != 200:
@@ -65,36 +66,82 @@ def _valid_image(http: requests.Session, url: str) -> bool:
     except requests.RequestException:
         return False
     finally:
-        try:
-            response.close()  # type: ignore[name-defined]
-        except Exception:
-            pass
+        if response is not None:
+            response.close()
+
+
+def _pokemon_exact_sources(session, missing: list[Print]) -> list[tuple[Print, str, str]]:
+    """Resolve certified TCGdex identity without crossing language namespaces.
+
+    EN may retain the legacy Print.tcgdex_id, but ES/JA physical identities are
+    deliberately language-scoped through PrintIdentifier(source='tcgdex:<lang>').
+    Never fall back from ES/JA to the global EN field because JA IDs can collide
+    with unrelated international cards.
+    """
+    if not missing:
+        return []
+    print_ids = [int(row.id) for row in missing]
+    identifiers = session.execute(
+        select(PrintIdentifier.print_id, PrintIdentifier.source, PrintIdentifier.external_id).where(
+            PrintIdentifier.print_id.in_(print_ids),
+            PrintIdentifier.source.in_(("tcgdex:en", "tcgdex:es", "tcgdex:ja")),
+        )
+    ).all()
+    by_print: dict[int, dict[str, str]] = {}
+    for print_id, source, external_id in identifiers:
+        by_print.setdefault(int(print_id), {})[str(source)] = str(external_id)
+
+    resolved: list[tuple[Print, str, str]] = []
+    for row in missing:
+        language = str(row.language or "en").strip().lower()
+        if language not in {"en", "es", "ja"}:
+            continue
+        source = f"tcgdex:{language}"
+        source_id = str((by_print.get(int(row.id), {}) or {}).get(source) or "").strip()
+        if not source_id and language == "en":
+            source_id = str(row.tcgdex_id or "").strip()
+        if source_id:
+            resolved.append((row, language, source_id))
+    return resolved
 
 
 def repair_pokemon_images(session) -> ImageRepairReport:
     missing = _missing(session, "pokemon")
-    candidates = [row for row in missing if (row.tcgdex_id or "").strip()]
+    candidates = _pokemon_exact_sources(session, missing)
     http = requests.Session()
     http.headers.update({"User-Agent": "DontRipItCatalog/1.0", "Accept": "application/json"})
+
+    by_source: dict[tuple[str, str], list[Print]] = {}
+    for row, language, source_id in candidates:
+        by_source.setdefault((language, source_id), []).append(row)
+
     inserted = no_image = failures = 0
-    for row in candidates:
-        source_id = str(row.tcgdex_id).strip()
+    for language, source_id in sorted(by_source):
+        rows = by_source[(language, source_id)]
         try:
-            payload = _get_json(http, f"https://api.tcgdex.net/v2/en/cards/{source_id}")
+            payload = _get_json(http, f"https://api.tcgdex.net/v2/{language}/cards/{source_id}")
         except requests.RequestException:
-            failures += 1
+            failures += len(rows)
             continue
         image_base = str((payload or {}).get("image") or "").strip()
         if not image_base:
-            no_image += 1
+            no_image += len(rows)
             continue
         image_url = f"{image_base}/high.webp"
         if not _valid_image(http, image_url):
-            no_image += 1
+            no_image += len(rows)
             continue
-        if session.execute(select(PrintImage.id).where(PrintImage.print_id == row.id)).first() is None:
-            session.add(PrintImage(print_id=row.id, url=image_url, is_primary=True, source="tcgdex"))
-            inserted += 1
+        for row in rows:
+            if session.execute(select(PrintImage.id).where(PrintImage.print_id == row.id)).first() is None:
+                session.add(
+                    PrintImage(
+                        print_id=row.id,
+                        url=image_url,
+                        is_primary=True,
+                        source=f"tcgdex:{language}",
+                    )
+                )
+                inserted += 1
     session.flush()
     after = len(_missing(session, "pokemon"))
     return ImageRepairReport("pokemon", len(missing), len(candidates), inserted, no_image, failures, after)
