@@ -5,6 +5,19 @@ import HomeSearch from './HomeSearch'
 import HomeRevealV3 from './HomeRevealV3'
 import { GAME_CATALOG } from '../../lib/catalog/games'
 
+const HERO_PRINTS = [
+  '/images/home/hero-onepiece-back.svg',
+  '/images/home/hero-pokemon-back.svg',
+  '/images/home/hero-magic-back.svg',
+]
+
+const GAME_LOGOS = {
+  pokemon: '/games/pokemon/pokemon_logo.png',
+  magic: '/games/magic/magic_logo.png',
+  onepiece: '/games/onepiece/onepiece_logo.png',
+  yugioh: '/games/yugioh/yugioh_logo.png',
+}
+
 const PRINT_OBJECTS = [
   ['Original', 'Set · idioma · normal'],
   ['Holo', 'Mismo nombre · otro acabado'],
@@ -64,9 +77,11 @@ export default function PublicHome() {
           </div>
 
           <div className="v17-print-scene" aria-hidden="true">
-            {[0, 1, 2].map((index) => (
-              <div key={index} className={`v17-floating-print is-${index + 1}`}>
-                <div className="v17-floating-art" />
+            {HERO_PRINTS.map((src, index) => (
+              <div key={src} className={`v17-floating-print is-${index + 1}`}>
+                <div className="v17-floating-art">
+                  <img src={src} alt="" />
+                </div>
                 <span>PRINT {String(index + 1).padStart(2, '0')}</span>
               </div>
             ))}
@@ -148,13 +163,12 @@ export default function PublicHome() {
                 href={`/games/${game.slug}`}
                 className={`v17-game-panel is-${index + 1}`}
                 style={{ '--game-accent': game.accent }}
+                aria-label={`Entrar en ${shortGameName(game)}`}
               >
-                <span className="v17-game-code">{game.slug === 'onepiece' ? 'OP' : game.slug === 'yugioh' ? 'YGO' : game.slug === 'pokemon' ? 'PKM' : 'MTG'}</span>
-                <i className="v17-game-bg-code" aria-hidden="true">{game.slug === 'onepiece' ? 'OP' : game.slug === 'yugioh' ? 'YGO' : game.slug === 'pokemon' ? 'PKM' : 'MTG'}</i>
-                <div>
-                  <strong>{shortGameName(game)}</strong>
-                  <small>Entrar →</small>
-                </div>
+                <span className="v17-game-brand" aria-hidden="true">
+                  <img className={`v17-game-logo is-${game.slug}`} src={GAME_LOGOS[game.slug]} alt="" />
+                </span>
+                <strong className="v17-game-name">{shortGameName(game)}</strong>
               </Link>
             ))}
           </div>
