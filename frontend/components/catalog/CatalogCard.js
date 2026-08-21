@@ -85,15 +85,15 @@ function resolveItemType(item) {
 }
 
 function exactMarket(item) {
-  if (item?.type !== 'print') return null
-  const raw = item?.market?.display_price
-  const display = formatCurrency(raw, item?.market?.currency || 'EUR')
+  const source = item?.type === 'print' ? item?.market : item?.type === 'card' ? item?.card_market : null
+  const raw = source?.display_price
+  const display = formatCurrency(raw, source?.currency || 'EUR')
   if (!display) return null
 
   return {
     display,
-    low: formatCurrency(item?.market?.price_low, item?.market?.currency || 'EUR'),
-    asOf: formatMarketDate(item?.market?.as_of),
+    low: formatCurrency(source?.price_low, source?.currency || 'EUR'),
+    asOf: formatMarketDate(source?.as_of),
   }
 }
 
@@ -195,6 +195,11 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         )}
         <span className={`badge ${itemType.className} v8-result-type-badge`}>{itemType.label}</span>
         <span className="v13-result-game-badge">{item.game || 'TCG'}</span>
+        {item.type === 'card' && market ? (
+          <span className="v14-card-price-corner" title="Precio exacto de la impresión física mostrada">
+            {market.display}
+          </span>
+        ) : null}
       </div>
 
       <div className="catalog-card-content v8-result-content">
