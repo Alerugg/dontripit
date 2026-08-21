@@ -369,7 +369,7 @@ export default function CatalogExplorer({
               onClick={() => changeType(option.value)}
             >
               {option.label}
-              <span className="v7-result-count">{counts[option.countKey].toLocaleString('es-ES')}</span>
+              <span className="v7-result-count">{counts[option.countKey].toLocaleString()}</span>
             </button>
           ))}
         </div>
