@@ -45,13 +45,17 @@ export default function HomeSearch() {
     }
 
     let cancelled = false
+    const controller = new AbortController()
     const timer = setTimeout(async () => {
       setLoading(true)
       try {
-        const rows = await suggestCatalog({ q: clean, game: selectedGame, limit: 8 })
+        const rows = await suggestCatalog(
+          { q: clean, game: selectedGame, limit: 8 },
+          { signal: controller.signal },
+        )
         if (!cancelled) setSuggestions(rows || [])
-      } catch {
-        if (!cancelled) setSuggestions([])
+      } catch (requestError) {
+        if (!cancelled && requestError?.name !== 'AbortError') setSuggestions([])
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -59,6 +63,7 @@ export default function HomeSearch() {
 
     return () => {
       cancelled = true
+      controller.abort()
       clearTimeout(timer)
     }
   }, [query, selectedGame])
