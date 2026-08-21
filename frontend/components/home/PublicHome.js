@@ -3,6 +3,8 @@ import Link from 'next/link'
 import TopNav from '../layout/TopNav'
 import SiteFooter from '../layout/SiteFooter'
 import HomeSearch from './HomeSearch'
+import HomeRevealV3 from './HomeRevealV3'
+import HomeIdentityStoryV3 from './HomeIdentityStoryV3'
 import { GAME_CATALOG } from '../../lib/catalog/games'
 
 const GAME_LOGOS = {
@@ -11,24 +13,6 @@ const GAME_LOGOS = {
   onepiece: '/games/onepiece/onepiece_logo.png',
   yugioh: '/games/yugioh/yugioh_logo.png',
 }
-
-const WORKFLOW = [
-  { step: '01', label: 'Buscar', title: 'Encuentra la carta', copy: 'Empieza por nombre, número o set. El catálogo te lleva hasta la identidad correcta.' },
-  { step: '02', label: 'Seleccionar', title: 'Elige la versión física', copy: 'Set, idioma, acabado, rareza y variante permanecen separados para no mezclar impresiones.' },
-  { step: '03', label: 'Guardar', title: 'Colección o wishlist', copy: 'Añade exactamente la edición que tienes o la que estás buscando desde tu cuenta.' },
-]
-
-const TRUST_POINTS = [
-  ['Identidad', 'Versión física exacta', 'Set · idioma · acabado · variante'],
-  ['Mercado', 'Precio verificable', 'Cardmarket con fuente y fecha cuando existe enlace exacto'],
-  ['Portfolio', 'Sin inventar valor', 'Las versiones sin precio seguro no se estiman'],
-]
-
-const REGIONS = [
-  ['EU', 'Europa', 'Fuentes oficiales regionales'],
-  ['US', 'Estados Unidos', 'Fuentes oficiales regionales'],
-  ['JP', 'Japón', 'Fuentes oficiales regionales'],
-]
 
 const IDENTITY_LEDGER = [
   {
@@ -55,11 +39,51 @@ const IDENTITY_LEDGER = [
   },
 ]
 
+const PRINCIPLES = [
+  {
+    kind: 'identity',
+    eyebrow: 'IDENTIDAD',
+    title: 'La impresión exacta',
+    copy: 'Set, idioma, acabado y variante. La unidad real que compras y guardas.',
+  },
+  {
+    kind: 'market',
+    eyebrow: 'INTEGRIDAD',
+    title: 'Mercado con fuente',
+    copy: 'Solo mostramos mercado cuando la correspondencia es segura.',
+  },
+  {
+    kind: 'multi',
+    eyebrow: 'MULTI-TCG',
+    title: 'Una lógica común',
+    copy: 'Cada juego conserva su identidad sin romper el modelo Card → Print → Market.',
+  },
+]
+
+const PRINT_EXAMPLES = [
+  ['EN', 'Holo', 'Estándar'],
+  ['ES', 'Reverse Holo', 'Estándar'],
+  ['JP', 'Normal', 'Paralela'],
+  ['DE', 'Foil', 'Promo'],
+]
+
+const PORTFOLIO_ROWS = [
+  ['EN', 'Holo', 'Precio seguro', 'safe'],
+  ['ES', 'Reverse Holo', 'En revisión', 'review'],
+  ['JP', 'Paralela', 'Sin precio seguro', 'empty'],
+]
+
+const REGIONS = [
+  ['EU', 'Europa', 'Noticias y lanzamientos oficiales de la región'],
+  ['US', 'Estados Unidos', 'Fuentes oficiales regionales separadas'],
+  ['JP', 'Japón', 'Procedencia japonesa visible y verificable'],
+]
+
 export default function PublicHome() {
   const activeGames = GAME_CATALOG.filter((game) => game.slug !== 'riftbound')
 
   return (
-    <main className="canva-home v5-home">
+    <main className="canva-home v5-home v16-home">
       <TopNav />
 
       <section className="v15-hero" aria-labelledby="home-title">
@@ -117,128 +141,169 @@ export default function PublicHome() {
         </div>
       </section>
 
-      <section className="canva-signal-strip" aria-label="Qué ofrece Don’tRipIt">
-        <div className="app-shell canva-signal-grid">
-          <div><strong>{activeGames.length}</strong><span>juegos activos</span></div>
-          <div><strong>Exacta</strong><span>identidad física</span></div>
-          <div><strong>Cardmarket</strong><span>referencia de mercado</span></div>
-          <div><strong>Regional</strong><span>fuente y procedencia visibles</span></div>
-        </div>
-      </section>
-
-      <section className="canva-section app-shell" id="how-it-works">
-        <div className="canva-section-head">
-          <div>
-            <span className="canva-eyebrow">Proceso</span>
-            <h2>Tres pasos. Sin perderte entre versiones.</h2>
-          </div>
-          <p>La navegación sigue el orden natural de un coleccionista: carta primero, impresión exacta después.</p>
-        </div>
-        <div className="canva-steps">
-          {WORKFLOW.map((item) => (
-            <article key={item.step} className="canva-step">
-              <span>{item.step} · {item.label}</span>
-              <h3>{item.title}</h3>
-              <p>{item.copy}</p>
-            </article>
+      <section className="v16-principles" aria-label="Principios de Don’tRipIt">
+        <div className="v16-principles-line" aria-hidden="true" />
+        <div className="app-shell v16-principles-grid">
+          {PRINCIPLES.map((item, index) => (
+            <HomeRevealV3 key={item.eyebrow} delay={index * 80} className="v16-principle">
+              <div className={`v16-principle-glyph is-${item.kind}`} aria-hidden="true">
+                <i /><b /><span />
+              </div>
+              <div>
+                <small>{item.eyebrow}</small>
+                <strong>{item.title}</strong>
+                <p>{item.copy}</p>
+              </div>
+            </HomeRevealV3>
           ))}
         </div>
       </section>
 
-      <section className="canva-section app-shell" id="games">
-        <div className="canva-section-head canva-section-head-inline">
-          <div>
-            <span className="canva-eyebrow">Catálogos</span>
-            <h2>Elige tu TCG y entra directo al catálogo.</h2>
+      <HomeRevealV3 as="section" className="v16-section v16-story-section" id="how-it-works">
+        <div className="app-shell">
+          <div className="v16-section-heading">
+            <span>Cómo funciona</span>
+            <h2>Tres capas. Una sola verdad.</h2>
+            <p>Recorre la cadena y mira qué cambia en cada paso.</p>
           </div>
-          <Link href="/explorer" className="canva-secondary-link">Buscar en todos →</Link>
+          <HomeIdentityStoryV3 />
         </div>
+      </HomeRevealV3>
 
-        <div className="canva-game-grid">
-          {activeGames.map((game) => (
-            <Link key={game.slug} href={`/games/${game.slug}`} className="canva-game-card" style={{ '--game-accent': game.accent }}>
-              <span className="canva-game-state">Catálogo activo</span>
-              <div className="canva-game-logo">
-                <Image src={GAME_LOGOS[game.slug]} alt={game.name} width={250} height={90} sizes="(max-width: 620px) 150px, 190px" />
-              </div>
-              <div className="canva-game-copy">
-                <strong>{game.name}</strong>
-                <p>{game.description}</p>
-                <span>Explorar →</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="canva-section app-shell">
-        <div className="canva-section-head">
-          <div>
-            <span className="canva-eyebrow">Tu portfolio</span>
-            <h2>Todo lo que guardas, por edición exacta.</h2>
+      <HomeRevealV3 as="section" className="v16-section v16-edition-section">
+        <div className="app-shell v16-split">
+          <div className="v16-edition-copy">
+            <span>Identidad vs objeto</span>
+            <h2>Una carta no es<br />una <em>edición</em>.</h2>
+            <p>El nombre identifica. La impresión define. Dos objetos con el mismo nombre pueden ser versiones físicas completamente distintas.</p>
+            <Link href="/explorer" className="v16-text-link">Ver la diferencia en el explorador →</Link>
           </div>
-          <p>La cuenta usa la misma identidad física que el catálogo. Colección, wishlist y valoración no mezclan versiones distintas.</p>
-        </div>
 
-        <div className="canva-portfolio">
-          <div className="canva-portfolio-main">
-            <div className="canva-portfolio-tabs" aria-label="Herramientas de cuenta">
-              <span className="is-active">Colección</span>
-              <span>Wishlist</span>
-              <span>Progreso</span>
+          <div className="v16-edition-demo" aria-label="Ejemplo conceptual de carta e impresiones">
+            <div className="v16-canonical-demo">
+              <span>CARD</span>
+              <div className="v16-demo-card" aria-hidden="true"><i /><b /><small /></div>
+              <p>Una identidad.<br />Sin precio propio.</p>
             </div>
-            <span className="canva-eyebrow">Una sola cuenta</span>
-            <h3>Construye un inventario que represente lo que realmente tienes.</h3>
-            <p>Guarda cantidades y versiones exactas. Cuando una impresión tiene precio seguro, Don’tRipIt puede incorporarlo sin extrapolar otras variantes.</p>
-            <Link href="/register" className="dri-btn dri-btn-primary">Crear cuenta gratis</Link>
+            <div className="v16-print-demo">
+              <header><span>PRINTS</span><small>OBJETOS DISTINTOS</small></header>
+              <ul>
+                {PRINT_EXAMPLES.map(([lang, finish, variant]) => (
+                  <li key={lang}><b>{lang}</b><strong>{finish}</strong><small>{variant}</small></li>
+                ))}
+              </ul>
+              <p>Cada fila representa una identidad física diferente.</p>
+            </div>
+          </div>
+        </div>
+      </HomeRevealV3>
+
+      <HomeRevealV3 as="section" className="v16-section v16-games-section" id="games">
+        <div className="app-shell">
+          <div className="v16-section-heading v16-heading-row">
+            <div>
+              <span>Catálogos</span>
+              <h2>Cada TCG, su propio terreno.</h2>
+            </div>
+            <Link href="/explorer" className="v16-text-link">Buscar en todos →</Link>
           </div>
 
-          <div className="canva-trust-list">
-            {TRUST_POINTS.map(([label, title, copy]) => (
-              <div key={label} className="canva-trust-row">
-                <span>{label}</span>
-                <div><strong>{title}</strong><small>{copy}</small></div>
-                <b aria-hidden="true">✓</b>
-              </div>
+          <div className="v16-game-list">
+            {activeGames.map((game, index) => (
+              <HomeRevealV3 key={game.slug} delay={index * 70}>
+                <Link href={`/games/${game.slug}`} className="v16-game-row" style={{ '--game-accent': game.accent }}>
+                  <div className="v16-game-mark">
+                    <Image src={GAME_LOGOS[game.slug]} alt="" width={260} height={96} sizes="(max-width: 700px) 130px, 190px" />
+                  </div>
+                  <div className="v16-game-row-copy">
+                    <small>CATÁLOGO ACTIVO</small>
+                    <strong>{game.name}</strong>
+                    <p>{game.description}</p>
+                  </div>
+                  <b aria-hidden="true">↗</b>
+                </Link>
+              </HomeRevealV3>
             ))}
           </div>
         </div>
-      </section>
+      </HomeRevealV3>
 
-      <section className="canva-section app-shell" id="releases">
-        <div className="canva-section-head">
-          <div>
-            <span className="canva-eyebrow">Contenido regional</span>
-            <h2>Noticias y lanzamientos con fuente oficial.</h2>
+      <HomeRevealV3 as="section" className="v16-section v16-portfolio-section">
+        <div className="app-shell v16-split v16-portfolio-split">
+          <div className="v16-portfolio-copy">
+            <span>Colección y wishlist</span>
+            <h2>Guarda la impresión.<br />No la suposición.</h2>
+            <p>Cada entrada conserva su identidad exacta. Si una impresión no tiene un precio seguro, sigue visible pero no se inventa una valoración.</p>
+            <div className="v16-inline-links">
+              <Link href="/collection">Colección →</Link>
+              <Link href="/wishlist">Wishlist →</Link>
+              <Link href="/dashboard">Dashboard →</Link>
+            </div>
           </div>
-          <p>Las fuentes se mantienen separadas por región y cada elemento publicado conserva fecha y procedencia verificables.</p>
-        </div>
-        <div className="canva-region-grid">
-          {REGIONS.map(([code, title, copy]) => (
-            <article key={code} className="canva-region-card">
-              <span>{code}</span>
-              <strong>{title}</strong>
-              <small>{copy}</small>
-            </article>
-          ))}
-          <article className="canva-region-card canva-region-card-accent">
-            <span>INTEGRIDAD</span>
-            <strong>Sin fechas inventadas</strong>
-            <small>Solo se publica lo que llega de las fuentes activas verificadas.</small>
-          </article>
-        </div>
-      </section>
 
-      <section className="canva-final-cta app-shell">
-        <div>
-          <span className="canva-eyebrow"><i /> Don’tRipIt</span>
-          <h2>Una carta. Una versión exacta. Una colección limpia.</h2>
+          <div className="v16-portfolio-demo" aria-label="Esquema conceptual de portfolio">
+            <header><span>PORTFOLIO</span><small>ESQUEMA CONCEPTUAL</small></header>
+            <ul>
+              {PORTFOLIO_ROWS.map(([lang, finish, state, kind]) => (
+                <li key={lang}>
+                  <b>{lang}</b>
+                  <div><strong>{finish}</strong><small>Impresión física exacta</small></div>
+                  <span className={`is-${kind}`}>{state}</span>
+                  <i className={kind === 'safe' ? 'has-value' : ''} aria-label={kind === 'safe' ? 'Valor disponible con fuente' : 'Sin valor publicado'} />
+                </li>
+              ))}
+            </ul>
+            <footer><span>Valor conservador</span><strong>Solo impresiones con precio seguro</strong></footer>
+          </div>
         </div>
-        <div className="canva-final-actions">
-          <Link href="/register" className="dri-btn dri-btn-primary">Crear cuenta</Link>
-          <Link href="/explorer" className="dri-btn dri-btn-ghost">Explorar catálogo</Link>
+      </HomeRevealV3>
+
+      <HomeRevealV3 as="section" className="v16-trust-band">
+        <div className="v16-trust-pattern" aria-hidden="true" />
+        <div className="app-shell v16-trust-inner">
+          <h2>Sin precio inventado.<span>Ni uno.</span></h2>
+          <div className="v16-trust-rules">
+            <div><small>NUNCA</small><p>rellenamos un hueco con una estimación.</p></div>
+            <div><small>SIEMPRE</small><p>mostramos procedencia cuando hay un dato.</p></div>
+            <div><small>EXPLÍCITO</small><p>si falta certeza, decimos que falta.</p></div>
+          </div>
         </div>
-      </section>
+      </HomeRevealV3>
+
+      <HomeRevealV3 as="section" className="v16-section v16-radar-section" id="releases">
+        <div className="app-shell">
+          <div className="v16-section-heading">
+            <span>Radar regional</span>
+            <h2>Lo oficial, por región.</h2>
+            <p>Noticias y lanzamientos conservan su procedencia en vez de mezclarse en un único feed sin contexto.</p>
+          </div>
+
+          <div className="v16-radar-grid">
+            {REGIONS.map(([code, title, copy], index) => (
+              <HomeRevealV3 key={code} delay={index * 80} className="v16-radar-card">
+                <header><strong>{code}</strong><small>{title}</small></header>
+                <div className="v16-radar-signal" aria-hidden="true"><i /><b /><span /></div>
+                <p>{copy}</p>
+                <small>Fuente y procedencia visibles</small>
+              </HomeRevealV3>
+            ))}
+          </div>
+        </div>
+      </HomeRevealV3>
+
+      <HomeRevealV3 as="section" className="v16-final">
+        <div className="v16-final-grid" aria-hidden="true" />
+        <div className="v16-final-glow" aria-hidden="true" />
+        <div className="app-shell v16-final-inner">
+          <span><i /> Don’tRipIt</span>
+          <h2>Empieza por el nombre.<br />Termina en la <em>versión exacta</em>.</h2>
+          <p>Busca una carta y deja que el catálogo haga el trabajo difícil de separar sus impresiones.</p>
+          <div className="v16-final-actions">
+            <a href="#search" className="dri-btn dri-btn-primary">Buscar una carta ↑</a>
+            <Link href="/explorer" className="dri-btn dri-btn-ghost">Explorar catálogo</Link>
+          </div>
+        </div>
+      </HomeRevealV3>
 
       <SiteFooter />
     </main>
