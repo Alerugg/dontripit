@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   test:
@@ -27,6 +28,7 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
       - name: Compile changed backend modules
+        id: compile
         working-directory: backend
         run: |
           python -m py_compile \
@@ -35,6 +37,7 @@ jobs:
             app/routes/set_ui.py \
             app/search_v2/legacy_search_hot_path.py
       - name: Run performance and search contracts
+        id: contracts
         working-directory: backend
         env:
           DATABASE_URL: sqlite+pysqlite:///:memory:
@@ -44,3 +47,28 @@ jobs:
             tests/test_search_v2_api.py \
             tests/test_search_api.py \
             tests/test_set_ui.py
+      - name: Publish performance gate status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          CONTRACT_OUTCOME: ${{ steps.contracts.outcome }}
+        run: |
+          python - <<'PY' >/tmp/status.json
+          import json, os
+          ok = os.environ.get('COMPILE_OUTCOME') == 'success' and os.environ.get('CONTRACT_OUTCOME') == 'success'
+          print(json.dumps({
+              'state': 'success' if ok else 'failure',
+              'context': 'search-performance-gate',
+              'description': f"compile={os.environ.get('COMPILE_OUTCOME')} tests={os.environ.get('CONTRACT_OUTCOME')}"[:140],
+          }))
+          PY
+          curl --fail-with-body -sS -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/statuses/$COMMIT_SHA" \
+            --data-binary @/tmp/status.json
