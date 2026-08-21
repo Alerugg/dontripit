@@ -80,6 +80,23 @@ jobs:
               json.dump(payload, f, indent=2, default=str)
           print(json.dumps(payload, indent=2, default=str))
           PY
+      - name: Require production trigram support
+        id: index_gate
+        run: |
+          python - <<'PY'
+          import json
+          with open('/tmp/search-perf-audit/report.json') as f:
+              report = json.load(f)
+          trigram_indexes = [
+              row for row in report.get('indexes', [])
+              if 'gin_trgm_ops' in str(row.get('indexdef', '')).lower()
+          ]
+          if not report.get('has_pg_trgm'):
+              raise SystemExit('pg_trgm extension is absent in production')
+          if not trigram_indexes:
+              raise SystemExit('No gin_trgm_ops search index exists in production')
+          print(f'PASS pg_trgm=true trigram_indexes={len(trigram_indexes)}')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -93,22 +110,12 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          INDEX_GATE_OUTCOME: ${{ steps.index_gate.outcome }}
         run: |
           python - <<'PY' >/tmp/status.json
           import json, os
-          ok = os.environ.get('AUDIT_OUTCOME') == 'success'
-          description = f"read-only audit={os.environ.get('AUDIT_OUTCOME')}"
-          if ok:
-              try:
-                  with open('/tmp/search-perf-audit/report.json') as f:
-                      report = json.load(f)
-                  trgm = 'yes' if report.get('has_pg_trgm') else 'no'
-                  trgm_indexes = sum('gin_trgm_ops' in str(row.get('indexdef','')).lower() for row in report.get('indexes', []))
-                  cards = report.get('counts', {}).get('cards', '?')
-                  profiles = report.get('counts', {}).get('card_search_profiles', '?')
-                  description = f"pg_trgm={trgm} trigram_indexes={trgm_indexes} cards={cards} profiles={profiles}"
-              except Exception as exc:
-                  description = f"audit=success report_parse={type(exc).__name__}"
+          ok = os.environ.get('AUDIT_OUTCOME') == 'success' and os.environ.get('INDEX_GATE_OUTCOME') == 'success'
+          description = f"audit={os.environ.get('AUDIT_OUTCOME')} trigram_gate={os.environ.get('INDEX_GATE_OUTCOME')}"
           print(json.dumps({
               'state': 'success' if ok else 'failure',
               'context': 'search-neon-index-audit',
