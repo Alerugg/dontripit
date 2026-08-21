@@ -251,8 +251,46 @@ export async function GET(request) {
   const sort = String(searchParams.get('sort') || 'relevance')
   const limit = boundedInt(searchParams.get('limit'), 24, 1, MAX_PAGE_SIZE)
   const offset = boundedInt(searchParams.get('offset'), 0, 0, 100000)
+  const includeCounts = searchParams.get('include_counts') !== '0'
+  const countsOnly = searchParams.get('counts_only') === '1'
 
   if (!q) return NextResponse.json({ error: 'q_required', message: 'Escribe algo para buscar.' }, { status: 400 })
+
+  const fastCardPage = !includeCounts
+    && !countsOnly
+    && type === 'card'
+    && sort === 'relevance'
+    && !language
+    && !pricedOnly
+
+  if (fastCardPage) {
+    const cardsSource = await fetchCanonicalCardSource({ q, game, requireAll: false, limit, offset })
+    if (!cardsSource.ok) return responseError(cardsSource.upstream)
+
+    const selectedRows = cardsSource.canonicalMode
+      ? cardsSource.rows
+      : cardsSource.rows.slice(offset, offset + limit)
+    const selectedTotal = Number(cardsSource.total || cardsSource.rows.length)
+    const truncated = Boolean(cardsSource.truncated)
+
+    return NextResponse.json({
+      items: selectedRows,
+      total: selectedTotal,
+      counts: {
+        card: selectedTotal,
+        print: null,
+        set: null,
+        all: null,
+      },
+      counts_complete: false,
+      limit,
+      offset,
+      has_more: offset + selectedRows.length < selectedTotal,
+      next_offset: offset + selectedRows.length < selectedTotal ? offset + selectedRows.length : null,
+      truncated,
+      integrity: truncated ? `La búsqueda alcanzó el límite de seguridad de ${MAX_KIND_RESULTS.toLocaleString()} resultados por tipo.` : null,
+    }, { headers: PUBLIC_CACHE_HEADERS })
+  }
 
   const needAllCards = type === '' || (type === 'card' && sort !== 'relevance')
   const [cardsSource, printsSource, setsSource] = await Promise.all([
@@ -285,6 +323,17 @@ export async function GET(request) {
     set: pricedOnly ? 0 : filteredSets.length,
     all: (pricedOnly ? 0 : cardCount + filteredSets.length) + filteredPrints.length,
   }
+  const truncated = Boolean(cardsSource.truncated || printsSource.truncated || setsSource.truncated)
+  const integrity = truncated ? `La búsqueda alcanzó el límite de seguridad de ${MAX_KIND_RESULTS.toLocaleString()} resultados por tipo.` : null
+
+  if (countsOnly) {
+    return NextResponse.json({
+      counts,
+      counts_complete: true,
+      truncated,
+      integrity,
+    }, { headers: PUBLIC_CACHE_HEADERS })
+  }
 
   let selectedRows
   let selectedTotal
@@ -310,16 +359,16 @@ export async function GET(request) {
 
   if (!needsGlobalMarket) pageItems = (await enrichPrintsWithMarket(pageItems)).rows
 
-  const truncated = Boolean(cardsSource.truncated || printsSource.truncated || setsSource.truncated)
   return NextResponse.json({
     items: pageItems,
     total: selectedTotal,
     counts,
+    counts_complete: true,
     limit,
     offset,
     has_more: offset + pageItems.length < selectedTotal,
     next_offset: offset + pageItems.length < selectedTotal ? offset + pageItems.length : null,
     truncated,
-    integrity: truncated ? `La búsqueda alcanzó el límite de seguridad de ${MAX_KIND_RESULTS.toLocaleString()} resultados por tipo.` : null,
+    integrity,
   }, { headers: PUBLIC_CACHE_HEADERS })
 }
