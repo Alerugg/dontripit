@@ -1,0 +1,99 @@
+name: One Piece Canonical CI
+
+on:
+  push:
+    branches:
+      - main
+      - catalog-v2
+      - 'fix/**'
+    paths:
+      - 'backend/app/ingest/connectors/onepiece*.py'
+      - 'backend/tests/test_onepiece*.py'
+      - '.github/workflows/onepiece-canonical-ci.yml'
+  pull_request:
+    branches:
+      - main
+      - catalog-v2
+    paths:
+      - 'backend/app/ingest/connectors/onepiece*.py'
+      - 'backend/tests/test_onepiece*.py'
+      - '.github/workflows/onepiece-canonical-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: One Piece identity and canonical regression suite
+        run: >-
+          pytest -q
+          tests/test_onepiece_canonical_connector.py
+          tests/test_onepiece_v2_identity.py
+          tests/test_onepiece_legacy_policy_jp.py
+
+  official-source-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Verify Bandai Global EN, Asia EN and JP promo coverage
+        env:
+          ONEPIECE_INGEST_SOURCE: remote
+          ONEPIECE_HTTP_TIMEOUT: '30'
+        run: |
+          python - <<'PY'
+          from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
+
+          connector = OnePieceCanonicalConnector()
+          payloads = [
+              connector._load_official_cardlist_remote(),
+              connector._load_official_asia_en_cardlist_remote(),
+              connector._load_official_jp_cardlist_remote(),
+          ]
+          audit = connector._annotate_regional_promo_audit(payloads)
+          by_region = {
+              payload.get('region'): sorted(connector._promo_collectors(payload))
+              for payload in payloads
+          }
+          for payload in payloads:
+              region = payload.get('region')
+              promos = by_region[region]
+              print(
+                  f"region={region} cards={len(payload.get('cards') or [])} "
+                  f"prints={sum(len(card.get('prints') or []) for card in payload.get('cards') or [])} "
+                  f"promos={len(promos)} promo_tail={promos[-15:]}"
+              )
+          print(f"regional_promo_audit={audit}")
+
+          union = set().union(*(set(rows) for rows in by_region.values()))
+          if 'P-150' not in union:
+              raise SystemExit(
+                  'P-150 is absent from all three official Bandai card-list sources; '
+                  'do not ship regional ingestion as a claimed P-150 fix.'
+              )
+          print('P-150 official-source coverage: OK')
+          PY
