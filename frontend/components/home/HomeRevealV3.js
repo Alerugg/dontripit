@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-export default function HomeRevealV3({ children, className = '', delay = 0, as = 'div' }) {
+export default function HomeRevealV3({ children, className = '', delay = 0, as = 'div', style, ...props }) {
   const ref = useRef(null)
   const [visible, setVisible] = useState(false)
 
@@ -29,7 +29,8 @@ export default function HomeRevealV3({ children, className = '', delay = 0, as =
     <Tag
       ref={ref}
       className={`v16-reveal ${visible ? 'is-visible' : ''} ${className}`.trim()}
-      style={{ '--v16-delay': `${delay}ms` }}
+      style={{ ...style, '--v16-delay': `${delay}ms` }}
+      {...props}
     >
       {children}
     </Tag>
