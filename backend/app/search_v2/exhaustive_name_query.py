@@ -131,6 +131,12 @@ def exhaustive_name_page(
     Canonical ``cards`` are the source of truth. Search profiles may enrich and
     rank a Card, but a missing/stale profile is never allowed to hide a real
     canonical Card. This is what makes common-name searches exhaustive.
+
+    PostgreSQL deliberately performs one matched-card pass. Totals are carried
+    with window aggregates and representative Print/image enrichment happens
+    only after LIMIT/OFFSET. The previous implementation rebuilt the same
+    matched-card CTE twice and evaluated extra Print work before returning a
+    24-row page.
     """
     q_norm = normalize_search_text(query)
     if not q_norm:
@@ -138,9 +144,6 @@ def exhaustive_name_page(
     if session.bind.dialect.name != "postgresql":
         return _sqlite_page(session, query=query, game=game, limit=limit, offset=offset)
 
-    # The fallback pattern only exists for canonical Cards that are absent from
-    # card_search_profiles. Inter-token '%' also tolerates punctuation such as
-    # Monkey.D.Luffy. Indexed Cards retain the fully normalized profile match.
     canonical_fallback = "%" + "%".join(q_norm.split()) + "%"
     params = {
         "game": str(game or "").strip().lower(),
@@ -184,38 +187,44 @@ def exhaustive_name_page(
           )
     """
 
-    count_sql = text(
-        f"""
-        WITH matched_cards AS MATERIALIZED (
-          {matched_cards_cte}
-        )
-        SELECT
-          COUNT(*)::bigint AS total_cards,
-          COALESCE((
-            SELECT COUNT(*)::bigint
-            FROM prints p
-            JOIN matched_cards mc ON mc.card_id = p.card_id
-          ), 0)::bigint AS total_prints
-        FROM matched_cards
-        """
-    )
-    counts = session.execute(count_sql, params).mappings().one()
-    total = int(counts["total_cards"] or 0)
-    total_prints = int(counts["total_prints"] or 0)
-    if total == 0:
-        return _empty(limit, offset)
-
     page_sql = text(
         f"""
         WITH matched_cards AS MATERIALIZED (
           {matched_cards_cte}
+        ),
+        card_stats AS MATERIALIZED (
+          SELECT
+            mc.*,
+            (
+              SELECT COUNT(*)::bigint
+              FROM prints pv
+              WHERE pv.card_id = mc.card_id
+            ) AS variant_count
+          FROM matched_cards mc
+        ),
+        paged_cards AS MATERIALIZED (
+          SELECT
+            c.id AS card_id,
+            c.card_key,
+            c.name,
+            g.slug AS game,
+            cs.attributes_json,
+            cs.score,
+            cs.variant_count,
+            COUNT(*) OVER ()::bigint AS total_cards,
+            COALESCE(SUM(cs.variant_count) OVER (), 0)::bigint AS total_prints
+          FROM card_stats cs
+          JOIN cards c ON c.id = cs.card_id
+          JOIN games g ON g.id = c.game_id
+          ORDER BY cs.score DESC, lower(c.name) ASC, c.id ASC
+          LIMIT :limit OFFSET :offset
         )
         SELECT
-          c.id AS card_id,
-          c.card_key,
-          c.name,
-          g.slug AS game,
-          mc.attributes_json,
+          pc.card_id,
+          pc.card_key,
+          pc.name,
+          pc.game,
+          pc.attributes_json,
           chosen.print_id,
           chosen.set_code,
           chosen.set_name,
@@ -225,11 +234,11 @@ def exhaustive_name_page(
           chosen.exact_variant,
           chosen.variant_family,
           chosen.primary_image_url,
-          chosen.variant_count,
-          mc.score
-        FROM matched_cards mc
-        JOIN cards c ON c.id = mc.card_id
-        JOIN games g ON g.id = c.game_id
+          pc.variant_count,
+          pc.score,
+          pc.total_cards,
+          pc.total_prints
+        FROM paged_cards pc
         JOIN LATERAL (
           SELECT
             p.id AS print_id,
@@ -246,27 +255,59 @@ def exhaustive_name_page(
               WHERE pi.print_id = p.id
               ORDER BY pi.is_primary DESC, pi.id ASC
               LIMIT 1
-            ) AS primary_image_url,
-            (
-              SELECT COUNT(*)::bigint
-              FROM prints pv
-              WHERE pv.card_id = mc.card_id
-            ) AS variant_count
+            ) AS primary_image_url
           FROM prints p
           JOIN sets s ON s.id = p.set_id
           LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
-          WHERE p.card_id = mc.card_id
+          WHERE p.card_id = pc.card_id
           ORDER BY
             CASE WHEN lower(COALESCE(p.variant, '')) IN ('default', 'base', '') THEN 0 ELSE 1 END,
             (psp.print_id IS NOT NULL) DESC,
             p.id ASC
           LIMIT 1
         ) chosen ON TRUE
-        ORDER BY mc.score DESC, lower(c.name) ASC, c.id ASC
-        LIMIT :limit OFFSET :offset
+        ORDER BY pc.score DESC, lower(pc.name) ASC, pc.card_id ASC
         """
     )
     rows = session.execute(page_sql, params).mappings().all()
+
+    if not rows:
+        if offset == 0:
+            return _empty(limit, offset)
+        # An out-of-range offset is unusual for the UI but still has to preserve
+        # the API's exact totals. Only this edge case pays for a count-only pass.
+        count_sql = text(
+            f"""
+            WITH matched_cards AS MATERIALIZED (
+              {matched_cards_cte}
+            )
+            SELECT
+              COUNT(*)::bigint AS total_cards,
+              COALESCE(SUM((
+                SELECT COUNT(*)::bigint
+                FROM prints pv
+                WHERE pv.card_id = mc.card_id
+              )), 0)::bigint AS total_prints
+            FROM matched_cards mc
+            """
+        )
+        counts = session.execute(count_sql, params).mappings().one()
+        total = int(counts["total_cards"] or 0)
+        total_prints = int(counts["total_prints"] or 0)
+        if total == 0:
+            return _empty(limit, offset)
+        return {
+            "items": [],
+            "total": total,
+            "total_prints": total_prints,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+            "next_offset": None,
+        }
+
+    total = int(rows[0]["total_cards"] or 0)
+    total_prints = int(rows[0]["total_prints"] or 0)
     items = [
         {
             "type": "card",
