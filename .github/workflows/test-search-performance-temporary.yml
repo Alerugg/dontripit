@@ -35,7 +35,8 @@ jobs:
             app/auth/middleware.py \
             app/main.py \
             app/routes/set_ui.py \
-            app/search_v2/legacy_search_hot_path.py
+            app/search_v2/legacy_search_hot_path.py \
+            app/search_v2/exhaustive_name_query.py
       - name: Run performance and search contracts
         id: contracts
         working-directory: backend
