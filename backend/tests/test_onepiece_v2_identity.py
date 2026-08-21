@@ -53,6 +53,19 @@ def test_v2_parser_accepts_families_and_preserves_exact_suffix():
     assert rows[4]["variant_family"] == "reprint"
 
 
+def test_v2_parser_accepts_current_p150_promo_without_special_case():
+    connector = OnePieceV2Connector()
+    rows = connector._parse_official_cards_page(
+        _modal("P-150", "Kuzan", "P", "/images/cardlist/card/P-150.png"),
+        base_url=BASE_URL,
+    )
+    assert len(rows) == 1
+    assert rows[0]["collector_number"] == "P-150"
+    assert rows[0]["set_code"] == "P"
+    assert rows[0]["variant"] == "default"
+    assert connector._logical_card_key(rows[0]["collector_number"]) == "onepiece:p-150"
+
+
 def test_v2_parser_extracts_official_effect_and_card_fields():
     connector = OnePieceV2Connector()
     rows = connector._parse_official_cards_page(_modal_with_text(), base_url=BASE_URL)
