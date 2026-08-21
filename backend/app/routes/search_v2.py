@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
+from app.search_v2.exact_identifier import exact_structured_identifier_search
 from app.search_v2.exhaustive_name_query import exhaustive_name_page
 from app.search_v2.facet_values import onepiece_facet_values
 from app.search_v2.mtg_advanced import advanced_mtg_search
@@ -76,7 +77,7 @@ def _yugioh_display_language(value) -> str | None:
     return ",".join(normalized_values) or None
 
 
-def _normal_search_for_game(session, *, query: str, game: str | None, limit: int, language: str | None = None):
+def _exact_identifier_for_game(session, *, query: str, game: str | None, limit: int):
     exact_onepiece = exact_onepiece_collector_search(
         session,
         query=query,
@@ -85,6 +86,23 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
     )
     if exact_onepiece is not None:
         return exact_onepiece
+    return exact_structured_identifier_search(
+        session,
+        query=query,
+        game=game,
+        limit=limit,
+    )
+
+
+def _normal_search_for_game(session, *, query: str, game: str | None, limit: int, language: str | None = None):
+    exact_identifier = _exact_identifier_for_game(
+        session,
+        query=query,
+        game=game,
+        limit=limit,
+    )
+    if exact_identifier is not None:
+        return exact_identifier
     if game == "pokemon":
         return normal_pokemon_search(session, query=query, limit=limit)
     if game == "yugioh":
@@ -124,6 +142,38 @@ def search_v2():
         return jsonify({"error": "invalid_language", "detail": str(exc)}), 400
 
     with db.SessionLocal() as session:
+        # Structured identifiers are the cheapest and most deterministic path.
+        # Resolve them before canonical-name/fuzzy search so codes such as
+        # P-135 or base1-4 never return unrelated text matches.
+        exact_fetch_limit = min(MAX_SEARCH_LIMIT, offset + limit + 1)
+        exact = _exact_identifier_for_game(
+            session,
+            query=q,
+            game=game,
+            limit=exact_fetch_limit,
+        )
+        if exact is not None:
+            items = exact[offset : offset + limit]
+            has_more = len(exact) > offset + len(items)
+            next_offset = offset + len(items) if has_more else None
+            total = len(exact) if not has_more else None
+            return jsonify(
+                {
+                    "query": q,
+                    "game": game,
+                    "language": language or "all",
+                    "items": items,
+                    "count": len(items),
+                    "total": total,
+                    "total_prints": None,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": has_more,
+                    "next_offset": next_offset,
+                    "pagination_mode": "exact_identifier",
+                }
+            )
+
         # Canonical-name matches are intentionally strict and exhaustive. This
         # prevents fuzzy candidates or a top-N cap from displacing real cards
         # for common names such as Pikachu or Luffy. Yu-Gi-Oh language-scoped
