@@ -15,7 +15,22 @@ function toQuery(params = {}) {
   return query ? `?${query}` : ''
 }
 
-async function request(path, params, { ttlMs = 0 } = {}) {
+function optionalNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizeCounts(payload = {}, fallbackTotal = null) {
+  return {
+    card: optionalNumber(payload?.counts?.card),
+    print: optionalNumber(payload?.counts?.print),
+    set: optionalNumber(payload?.counts?.set),
+    all: optionalNumber(payload?.counts?.all, fallbackTotal),
+  }
+}
+
+async function request(path, params, { ttlMs = 0, signal } = {}) {
   const url = `${path}${toQuery(params)}`
   const now = Date.now()
 
@@ -27,6 +42,7 @@ async function request(path, params, { ttlMs = 0 } = {}) {
   const promise = fetch(url, {
     method: 'GET',
     cache: 'no-store',
+    signal,
   }).then(async (response) => {
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
@@ -48,17 +64,18 @@ async function request(path, params, { ttlMs = 0 } = {}) {
   return promise
 }
 
-export async function searchCatalogPage(filters = {}) {
+export async function searchCatalogPage(filters = {}, options = {}) {
   const payload = await request('/api/catalog/search', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
-  })
+  }, options)
 
   if (Array.isArray(payload)) {
     return {
       items: payload,
       total: payload.length,
       counts: { card: 0, print: 0, set: 0, all: payload.length },
+      counts_complete: true,
       limit: Number(filters.limit || payload.length || 24),
       offset: Number(filters.offset || 0),
       has_more: false,
@@ -68,15 +85,12 @@ export async function searchCatalogPage(filters = {}) {
     }
   }
 
+  const total = Number(payload?.total ?? 0)
   return {
     items: payload?.items || payload?.results || [],
-    total: Number(payload?.total ?? 0),
-    counts: {
-      card: Number(payload?.counts?.card ?? 0),
-      print: Number(payload?.counts?.print ?? 0),
-      set: Number(payload?.counts?.set ?? 0),
-      all: Number(payload?.counts?.all ?? payload?.total ?? 0),
-    },
+    total,
+    counts: normalizeCounts(payload, total),
+    counts_complete: payload?.counts_complete !== false,
     limit: Number(payload?.limit ?? filters.limit ?? 24),
     offset: Number(payload?.offset ?? filters.offset ?? 0),
     has_more: Boolean(payload?.has_more),
@@ -86,16 +100,32 @@ export async function searchCatalogPage(filters = {}) {
   }
 }
 
-export async function searchCatalog(filters = {}) {
-  const payload = await searchCatalogPage(filters)
+export async function fetchCatalogCounts(filters = {}, options = {}) {
+  const payload = await request('/api/catalog/search', {
+    ...filters,
+    game: toApiGameSlug(filters?.game || ''),
+    counts_only: 1,
+    include_counts: 1,
+  }, options)
+
+  return {
+    counts: normalizeCounts(payload),
+    counts_complete: payload?.counts_complete !== false,
+    truncated: Boolean(payload?.truncated),
+    integrity: payload?.integrity || null,
+  }
+}
+
+export async function searchCatalog(filters = {}, options = {}) {
+  const payload = await searchCatalogPage(filters, options)
   return payload.items
 }
 
-export async function suggestCatalog(filters = {}) {
+export async function suggestCatalog(filters = {}, options = {}) {
   const payload = await request('/api/catalog/suggest', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
-  })
+  }, options)
 
   return Array.isArray(payload) ? payload : payload?.items || []
 }

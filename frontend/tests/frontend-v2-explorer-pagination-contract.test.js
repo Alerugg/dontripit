@@ -19,12 +19,14 @@ test('Explorer requests one truthful server page instead of sorting the first 10
   assert.doesNotMatch(explorer, /filteredItems\.slice/)
 })
 
-test('catalog search BFF exhausts print and set pages and uses exhaustive Search V2 canonical-card totals', () => {
+test('catalog search BFF preserves exhaustive counts while allowing a fast canonical-card first page', () => {
   const route = source('app/api/catalog/search/route.js')
   assert.match(route, /fetchAllLegacyRows/)
   assert.match(route, /offset \+= batchSize/)
   assert.match(route, /callInternalApi\('\/api\/v2\/search'/)
   assert.match(route, /pagination_mode === 'canonical_name'/)
+  assert.match(route, /const fastCardPage = !includeCounts/)
+  assert.match(route, /counts_complete: false/)
   assert.match(route, /counts = \{/)
   assert.match(route, /card: pricedOnly \? 0 : cardCount/)
   assert.match(route, /print: filteredPrints\.length/)
@@ -39,13 +41,15 @@ test('exact-price filtering and price sorting fail closed if current Cardmarket 
   assert.doesNotMatch(route, /cardmarket_price/)
 })
 
-test('Explorer result tabs show real counts returned by the BFF', () => {
+test('Explorer result tabs show exact BFF counts once the background count request completes', () => {
   const explorer = source('components/catalog/CatalogExplorer.js')
   assert.match(explorer, /countKey: 'card'/)
   assert.match(explorer, /countKey: 'print'/)
   assert.match(explorer, /countKey: 'set'/)
   assert.match(explorer, /countKey: 'all'/)
-  assert.match(explorer, /counts\[option\.countKey\]\.toLocaleString\(\)/)
+  assert.match(explorer, /formatCount\(counts\[option\.countKey\]\)/)
+  assert.match(explorer, /fetchCatalogCounts/)
+  assert.match(explorer, /setCounts\(exactCounts\.counts\)/)
 })
 
 test('Explorer pagination is shareable and restored on global and scoped game routes', () => {
