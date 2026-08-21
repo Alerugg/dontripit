@@ -1,5 +1,6 @@
 'use client'
 
+import './CardDetailV2.css'
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import CardVersionBrowser from './CardVersionBrowser'
