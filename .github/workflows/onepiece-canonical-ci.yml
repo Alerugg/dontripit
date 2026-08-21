@@ -10,6 +10,7 @@ on:
       - 'backend/app/ingest/connectors/onepiece*.py'
       - 'backend/tests/test_onepiece*.py'
       - '.github/workflows/onepiece-canonical-ci.yml'
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
   pull_request:
     branches:
       - main
@@ -18,6 +19,7 @@ on:
       - 'backend/app/ingest/connectors/onepiece*.py'
       - 'backend/tests/test_onepiece*.py'
       - '.github/workflows/onepiece-canonical-ci.yml'
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
 
 permissions:
   contents: read
