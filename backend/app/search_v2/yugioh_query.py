@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from app.search_v2.normalization import normalize_language, normalize_search_text
+from app.search_v2.yugioh_exact_collector import exact_yugioh_collector_search
 
 
 SUPPORTED_DISPLAY_LANGUAGES = {"en", "es", "ja"}
@@ -45,6 +46,17 @@ def normal_yugioh_search(
     if not q:
         return []
     display_language = _display_language(language)
+
+    exact = exact_yugioh_collector_search(
+        session,
+        query=q,
+        game="yugioh",
+        limit=limit,
+        language=display_language,
+    )
+    if exact is not None:
+        return exact
+
     q_norm = normalize_search_text(q)
     q_code = q_norm.replace(" ", "-")
     q_raw = q.casefold()
