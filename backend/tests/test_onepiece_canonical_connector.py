@@ -1,5 +1,44 @@
+from sqlalchemy import select
+
+from app import db
+from app.ingest.base import IngestStats
 from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
 from app.ingest.registry import get_connector
+from app.models import Card, Print
+
+
+def _promo_payload(*, collector: str, name: str, language: str, region: str, image_url: str) -> dict:
+    return {
+        "source": "onepiece_official_v2",
+        "language": language,
+        "region": region,
+        "sets": [{"id": "p", "code": "P", "name": "Promotion Cards"}],
+        "releases": [],
+        "cards": [
+            {
+                "id": f"onepiece:{collector.lower()}",
+                "name": name,
+                "collector_number": collector,
+                "prints": [
+                    {
+                        "id": collector,
+                        "identity_key": f"{collector.lower()}:{language}:default",
+                        "set_code": "P",
+                        "collector_number": collector,
+                        "rarity": "P",
+                        "variant": "default",
+                        "variant_family": "default",
+                        "image_url": image_url,
+                        "details": {},
+                        "release_appearances": [],
+                        "alternate_source_images": [],
+                        "alternate_source_details": [],
+                    }
+                ],
+            }
+        ],
+        "diagnostics": {},
+    }
 
 
 def test_registry_uses_canonical_onepiece_connector():
@@ -26,6 +65,98 @@ def test_canonical_remote_load_uses_only_official_v2(monkeypatch):
 
     assert connector._load_remote(limit=12) is expected
     assert calls == {"official": 1, "punk": 0}
+
+
+def test_remote_load_federates_global_asia_and_japan_and_audits_promos(monkeypatch):
+    connector = OnePieceCanonicalConnector()
+    global_en = _promo_payload(
+        collector="P-149",
+        name="Global Promo",
+        language="en",
+        region="global-en",
+        image_url="https://en.onepiece-cardgame.com/P-149.png",
+    )
+    asia_en = _promo_payload(
+        collector="P-150",
+        name="Kuzan",
+        language="en",
+        region="asia-en",
+        image_url="https://asia-en.onepiece-cardgame.com/P-150.png",
+    )
+    jp = _promo_payload(
+        collector="P-151",
+        name="日本語プロモ",
+        language="ja",
+        region="jp",
+        image_url="https://www.onepiece-cardgame.com/P-151.png",
+    )
+
+    monkeypatch.setattr(connector, "_load_official_cardlist_remote", lambda *, limit=None: global_en)
+    monkeypatch.setattr(connector, "_load_official_asia_en_cardlist_remote", lambda *, limit=None: asia_en)
+    monkeypatch.setattr(connector, "_load_official_jp_cardlist_remote", lambda *, limit=None: jp)
+
+    loaded = connector.load(fixture=False, limit=20)
+    assert [path.name for path, _payload, _checksum in loaded] == [
+        "onepiece_official_global_en.json",
+        "onepiece_official_asia_en.json",
+        "onepiece_official_jp.json",
+    ]
+    audit = loaded[0][1]["diagnostics"]["regional_promo_audit"]
+    assert audit["global_en_count"] == 1
+    assert audit["asia_en_count"] == 1
+    assert audit["jp_count"] == 1
+    assert audit["regional_only_vs_global"] == ["P-150", "P-151"]
+    assert audit["asia_only_vs_global"] == ["P-150"]
+    assert audit["jp_only_vs_global"] == ["P-151"]
+
+
+def test_regional_promo_upsert_keeps_card_key_identity_and_language_prints(client):
+    connector = OnePieceCanonicalConnector()
+    stats = IngestStats()
+    global_en = _promo_payload(
+        collector="P-100",
+        name="Kuzan",
+        language="en",
+        region="global-en",
+        image_url="https://en.onepiece-cardgame.com/P-100.png",
+    )
+    asia_en = _promo_payload(
+        collector="P-150",
+        name="Kuzan",
+        language="en",
+        region="asia-en",
+        image_url="https://asia-en.onepiece-cardgame.com/P-150.png",
+    )
+    jp = _promo_payload(
+        collector="P-150",
+        name="クザン",
+        language="ja",
+        region="jp",
+        image_url="https://www.onepiece-cardgame.com/P-150.png",
+    )
+
+    with db.SessionLocal() as session:
+        connector.upsert(session, global_en, stats)
+        connector.upsert(session, asia_en, stats)
+        connector.upsert(session, jp, stats)
+        session.commit()
+
+        cards = session.execute(
+            select(Card).where(Card.card_key.in_(["onepiece:p-100", "onepiece:p-150"])).order_by(Card.card_key)
+        ).scalars().all()
+        assert [(row.card_key, row.name) for row in cards] == [
+            ("onepiece:p-100", "Kuzan"),
+            ("onepiece:p-150", "Kuzan"),
+        ]
+
+        p150 = next(row for row in cards if row.card_key == "onepiece:p-150")
+        prints = session.execute(
+            select(Print).where(Print.card_id == p150.id).order_by(Print.language)
+        ).scalars().all()
+        assert [(row.collector_number, row.language, row.variant) for row in prints] == [
+            ("P-150", "en", "default"),
+            ("P-150", "ja", "default"),
+        ]
 
 
 def test_release_code_parser_handles_all_canonical_product_families():
