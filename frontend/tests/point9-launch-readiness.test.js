@@ -118,7 +118,9 @@ test('federated result tabs use explicit zero counts, readable active state and 
 
 test('collector-first home stays truthful and does not import mock prices', () => {
   const home = source('components/home/PublicHome.js')
-  assert.match(home, /la versión correcta/)
+  assert.match(home, /impresión física exacta/)
+  assert.match(home, /correspondencia es segura/)
+  assert.match(home, /Sin mapeo exacto no mostramos precio/)
   assert.match(home, /activeGames\.length/)
   assert.match(home, /Cardmarket/)
   assert.match(home, /Sin fechas inventadas/)
@@ -128,12 +130,16 @@ test('collector-first home stays truthful and does not import mock prices', () =
 
 test('launch front has explicit responsive layouts for home, game hubs and dashboard', () => {
   const home = source('app/canva-workspace.css')
+  const hero = source('app/lovable-v2-hero.css')
   const hub = source('components/games/GameExplorerPage.css')
   const dashboard = source('components/dashboard/DashboardPage.css')
   assert.match(home, /@media \(max-width: 860px\)/)
   assert.match(home, /@media \(max-width: 680px\)/)
   assert.match(home, /@media \(max-width: 430px\)/)
   assert.match(home, /prefers-reduced-motion/)
+  assert.match(hero, /@media \(max-width: 980px\)/)
+  assert.match(hero, /@media \(max-width: 620px\)/)
+  assert.match(hero, /prefers-reduced-motion/)
   assert.match(hub, /@media \(max-width: 720px\)/)
   assert.match(hub, /overflow-x: auto/)
   assert.match(dashboard, /@media \(max-width: 680px\)/)
