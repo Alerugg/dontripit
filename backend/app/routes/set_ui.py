@@ -242,12 +242,11 @@ def list_set_ui_prints():
             """
 
             if release:
-                base_from = f"""
+                base_scope_from = """
                     FROM print_releases pr
                     JOIN prints p ON p.id=pr.print_id
                     JOIN cards c ON c.id=p.card_id
                     JOIN sets s ON s.id=p.set_id
-                    {market_join}
                     WHERE pr.release_id=:release_id
                 """
                 params = {"release_id": release["id"], "q": f"%{q}%", "limit": limit, "offset": offset}
@@ -261,11 +260,10 @@ def list_set_ui_prints():
                     "release_region": release.get("region"),
                 }
             else:
-                base_from = f"""
+                base_scope_from = """
                     FROM prints p
                     JOIN cards c ON c.id=p.card_id
                     JOIN sets s ON s.id=p.set_id
-                    {market_join}
                     WHERE p.set_id=:set_id
                 """
                 params = {"set_id": canonical_set["id"], "q": f"%{q}%", "limit": limit, "offset": offset}
@@ -276,12 +274,26 @@ def list_set_ui_prints():
                     "set_region": canonical_set["region"],
                 }
 
-            rows_sql = text(f"{common_select} {base_from} {q_clause} {price_clause} ORDER BY {order_sql} LIMIT :limit OFFSET :offset")
-            count_sql = text(f"SELECT COUNT(*) {base_from} {q_clause} {price_clause}")
-            unfiltered_sql = text(f"SELECT COUNT(*) {base_from}")
+            # The row payload needs current Cardmarket data. Plain counts do not.
+            # Keeping the lateral market lookup out of COUNT(*) removes two
+            # expensive per-print price-resolution passes from the common set
+            # page path. Only has_price=true needs market data in the filtered
+            # count predicate.
+            rows_from = base_scope_from.replace(
+                "WHERE ",
+                f"{market_join}\n                    WHERE ",
+                1,
+            )
+            rows_sql = text(f"{common_select} {rows_from} {q_clause} {price_clause} ORDER BY {order_sql} LIMIT :limit OFFSET :offset")
             rows = session.execute(rows_sql, params).mappings().all()
-            total = int(session.execute(count_sql, params).scalar_one())
-            unfiltered_total = int(session.execute(unfiltered_sql, params).scalar_one())
+
+            if not q and not has_price:
+                unfiltered_total = int(session.execute(text(f"SELECT COUNT(*) {base_scope_from}"), params).scalar_one())
+                total = unfiltered_total
+            else:
+                count_from = rows_from if has_price else base_scope_from
+                total = int(session.execute(text(f"SELECT COUNT(*) {count_from} {q_clause} {price_clause}"), params).scalar_one())
+                unfiltered_total = int(session.execute(text(f"SELECT COUNT(*) {base_scope_from}"), params).scalar_one())
     except SQLAlchemyError:
         return jsonify({"error": "set_checklist_unavailable"}), 503
 
