@@ -12,6 +12,7 @@ import './lovable-v2-shell.css'
 import './lovable-v2-home-dashboard.css'
 import './lovable-v2-hero.css'
 import './lovable-v3-home.css'
+import './lovable-v4-home-editorial.css'
 import { Manrope, Space_Grotesk } from 'next/font/google'
 import { SITE_NAME, SITE_URL } from '../lib/site'
 
