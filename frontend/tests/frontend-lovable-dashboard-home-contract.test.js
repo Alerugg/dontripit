@@ -19,7 +19,7 @@ test('Dashboard remains an account workspace backed by real account/library APIs
   assert.match(css, /\.v13-search-workspace[\s\S]*background:\s*#0d0d10/)
 })
 
-test('Home uses the approved identity-first A+ hero without changing the search workflow', () => {
+test('Home keeps the approved identity-first A+ hero and search workflow', () => {
   const home = source('components/home/PublicHome.js')
   const layout = source('app/layout.js')
   const heroCss = source('app/lovable-v2-hero.css')
@@ -41,22 +41,53 @@ test('Home uses the approved identity-first A+ hero without changing the search 
   assert.match(heroCss, /\.v15-identity-ledger\s*\{/)
 })
 
-test('Home avoids unsupported cadence and fabricated valuation promises', () => {
+test('Home V3 turns secondary sections into concise editorial storytelling', () => {
+  const home = source('components/home/PublicHome.js')
+  const story = source('components/home/HomeIdentityStoryV3.js')
+  const layout = source('app/layout.js')
+  const css = source('app/lovable-v3-home.css')
+
+  assert.match(home, /v16-principles/)
+  assert.match(home, /Tres capas\. Una sola verdad\./)
+  assert.match(home, /Una carta no es/)
+  assert.match(home, /Cada TCG, su propio terreno\./)
+  assert.match(home, /Guarda la impresión/)
+  assert.match(home, /Sin precio inventado/)
+  assert.match(home, /Lo oficial, por región\./)
+  assert.match(home, /Termina en la <em>versión exacta<\/em>/)
+  assert.match(home, /<HomeIdentityStoryV3 \/>/)
+  assert.match(story, /role="tablist"/)
+  assert.match(story, /aria-selected=\{isActive\}/)
+  assert.match(story, /Correspondencia exacta/)
+  assert.match(layout, /import '\.\/lovable-v3-home\.css'/)
+  assert.match(css, /\.v16-story-workspace/)
+  assert.match(css, /\.v16-game-row/)
+  assert.match(css, /\.v16-portfolio-demo/)
+})
+
+test('Home V3 stays truthful without fabricated price or cadence claims', () => {
   const home = source('components/home/PublicHome.js')
   assert.doesNotMatch(home, />24h</)
   assert.doesNotMatch(home, /se actualiza a diario/)
-  assert.match(home, /fuente y procedencia visibles/)
-  assert.match(home, /Sin fechas inventadas/)
-  assert.match(home, /Las versiones sin precio seguro no se estiman/)
+  assert.doesNotMatch(home, /312,40|68,95|3\.240|12480|Pikachu · Reverse/)
+  assert.match(home, /Sin precio seguro/)
+  assert.match(home, /Valor conservador/)
   assert.match(home, /mercado solo cuando la correspondencia es segura/)
+  assert.match(home, /Sin mapeo exacto no mostramos precio/)
 })
 
-test('Dashboard/Home parity includes mobile and reduced-motion handling', () => {
+test('Dashboard and Home V3 include mobile and reduced-motion handling', () => {
   const dashboardCss = source('app/lovable-v2-home-dashboard.css')
   const heroCss = source('app/lovable-v2-hero.css')
+  const homeCss = source('app/lovable-v3-home.css')
+  const reveal = source('components/home/HomeRevealV3.js')
+
   assert.match(dashboardCss, /@media \(max-width:\s*760px\)/)
-  assert.match(dashboardCss, /@media \(prefers-reduced-motion:\s*reduce\)/)
   assert.match(heroCss, /@media \(max-width:\s*980px\)/)
-  assert.match(heroCss, /@media \(max-width:\s*620px\)/)
   assert.match(heroCss, /@media \(prefers-reduced-motion:\s*reduce\)/)
+  assert.match(homeCss, /@media \(max-width:\s*760px\)/)
+  assert.match(homeCss, /@media \(max-width:\s*470px\)/)
+  assert.match(homeCss, /@media \(prefers-reduced-motion:\s*reduce\)/)
+  assert.match(reveal, /prefers-reduced-motion: reduce/)
+  assert.match(reveal, /IntersectionObserver/)
 })
