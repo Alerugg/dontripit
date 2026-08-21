@@ -1,5 +1,6 @@
 name: Certify Sealed Cardmarket Proxy Images V2
 
+# Production trigger: materialize the already-certified exact Cardmarket proxy manifest.
 on:
   pull_request:
     branches: [catalog-v2]
