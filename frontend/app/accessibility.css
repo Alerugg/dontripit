@@ -5,21 +5,55 @@
   z-index: 9999;
   transform: translateY(-160%);
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
   color: #111;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
-  font-weight: 700;
+  font-weight: 800;
   text-decoration: none;
 }
 
 .dri-skip-link:focus-visible {
   transform: translateY(0);
+  outline: 3px solid #8b5cf6;
+  outline-offset: 3px;
 }
 
-:where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 3px solid currentColor;
+#main-content:focus {
+  outline: none;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #a98bf8;
   outline-offset: 3px;
+}
+
+:where(button, input, select, textarea):disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+@media (prefers-contrast: more) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline-width: 3px;
+  }
+
+  .panel,
+  .panel-soft,
+  .dri-nav,
+  .catalog-card {
+    border-color: rgba(255,255,255,.22) !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  .dri-skip-link {
+    border: 1px solid ButtonText;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
