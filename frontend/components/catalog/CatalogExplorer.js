@@ -6,7 +6,7 @@ import CatalogResults from './ResultsGrid'
 import StatePanel from './StatePanel'
 import SearchBar from './SearchBar'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
-import { searchCatalogPage as searchCatalog, suggestCatalog } from '../../lib/catalog/client'
+import { fetchCatalogCounts, searchCatalogPage as searchCatalog, suggestCatalog } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
@@ -59,6 +59,10 @@ function pageWindow(current, total) {
   if (to < total - 2) values.push('gap-right')
   values.push(total - 1)
   return values
+}
+
+function formatCount(value) {
+  return Number.isFinite(value) ? value.toLocaleString('es-ES') : '…'
 }
 
 function ExplorerFilters({
@@ -173,21 +177,28 @@ export default function CatalogExplorer({
     }
 
     let cancelled = false
+    const controller = new AbortController()
 
     async function loadSuggestions() {
       setSuggestionsLoading(true)
       try {
-        const nextSuggestions = await suggestCatalog({ q: debouncedInput, game: scopedGame || game, limit: 8 })
+        const nextSuggestions = await suggestCatalog(
+          { q: debouncedInput, game: scopedGame || game, limit: 8 },
+          { signal: controller.signal },
+        )
         if (!cancelled) setSuggestions(nextSuggestions)
-      } catch {
-        if (!cancelled) setSuggestions([])
+      } catch (requestError) {
+        if (!cancelled && requestError?.name !== 'AbortError') setSuggestions([])
       } finally {
         if (!cancelled) setSuggestionsLoading(false)
       }
     }
 
     loadSuggestions()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [debouncedInput, game, scopedGame])
 
   useEffect(() => {
@@ -203,44 +214,70 @@ export default function CatalogExplorer({
     }
 
     let cancelled = false
+    const controller = new AbortController()
 
     async function loadSearchResults() {
+      const deferCounts = type === 'card' && sort === 'relevance' && !language && !pricedOnly
+      const filters = {
+        q: submittedQuery,
+        game: scopedGame || game,
+        type,
+        language: (type === 'print' || type === '') ? language : '',
+        priced: (type === 'print' || type === '') && pricedOnly ? 1 : '',
+        sort,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      }
+
       setLoading(true)
       setError('')
+      setCounts({ card: null, print: null, set: null, all: null })
+
       try {
         const result = await searchCatalog({
-          q: submittedQuery,
-          game: scopedGame || game,
-          type,
-          language: (type === 'print' || type === '') ? language : '',
-          priced: (type === 'print' || type === '') && pricedOnly ? 1 : '',
-          sort,
-          limit: PAGE_SIZE,
-          offset: page * PAGE_SIZE,
-        })
-        if (!cancelled) {
-          setItems(result.items)
-          setTotal(result.total)
-          setCounts(result.counts)
-          setTruncated(result.truncated)
-          setIntegrity(result.integrity || '')
+          ...filters,
+          include_counts: deferCounts ? 0 : 1,
+        }, { signal: controller.signal })
+
+        if (cancelled) return
+
+        setItems(result.items)
+        setTotal(result.total)
+        setCounts(result.counts)
+        setTruncated(result.truncated)
+        setIntegrity(result.integrity || '')
+        setLoading(false)
+
+        if (!result.counts_complete) {
+          try {
+            const exactCounts = await fetchCatalogCounts(filters, { signal: controller.signal })
+            if (!cancelled) {
+              setCounts(exactCounts.counts)
+              setTruncated(exactCounts.truncated)
+              setIntegrity(exactCounts.integrity || '')
+            }
+          } catch (countError) {
+            if (countError?.name === 'AbortError') return
+          }
         }
       } catch (requestError) {
-        if (!cancelled) {
-          setItems([])
-          setTotal(0)
-          setCounts({ card: 0, print: 0, set: 0, all: 0 })
-          setTruncated(false)
-          setIntegrity('')
-          setError(requestError.message)
-        }
+        if (cancelled || requestError?.name === 'AbortError') return
+        setItems([])
+        setTotal(0)
+        setCounts({ card: 0, print: 0, set: 0, all: 0 })
+        setTruncated(false)
+        setIntegrity('')
+        setError(requestError.message)
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
 
     loadSearchResults()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [submittedQuery, game, scopedGame, type, language, pricedOnly, sort, page])
 
   useEffect(() => {
@@ -341,7 +378,7 @@ export default function CatalogExplorer({
               <span>“{submittedQuery}”</span>
               <i aria-hidden="true">·</i>
               <strong>{total.toLocaleString('es-ES')} resultados</strong>
-              <small>{counts.card.toLocaleString('es-ES')} cartas · {counts.print.toLocaleString('es-ES')} impresiones · {counts.set.toLocaleString('es-ES')} sets</small>
+              <small>{formatCount(counts.card)} cartas · {formatCount(counts.print)} impresiones · {formatCount(counts.set)} sets</small>
             </p>
           ) : null}
         </header>
@@ -369,7 +406,7 @@ export default function CatalogExplorer({
               onClick={() => changeType(option.value)}
             >
               {option.label}
-              <span className="v7-result-count">{counts[option.countKey].toLocaleString()}</span>
+              <span className="v7-result-count">{formatCount(counts[option.countKey])}</span>
             </button>
           ))}
         </div>
@@ -423,7 +460,7 @@ export default function CatalogExplorer({
               description="Escribe un nombre como Pikachu o Luffy y pulsa Enter. Verás todas las cartas canónicas coincidentes; después puedes cambiar a impresiones o sets."
             />
           )}
-          {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Consultando la página exacta y los conteos completos de la búsqueda." />}
+          {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Consultando la página exacta de resultados." />}
           {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={`${error || 'Intenta de nuevo en unos segundos.'} No mostramos datos parciales para evitar información incorrecta.`} error />}
           {submittedQuery && !loading && !error && total === 0 && <StatePanel title="Sin resultados por ahora" description="Prueba otro término, cambia los filtros o vuelve al explorador global." />}
           {!loading && !error && items.length > 0 && <CatalogResults items={items} view={view} />}
