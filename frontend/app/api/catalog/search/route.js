@@ -33,6 +33,8 @@ function normalizeV2Card(item = {}) {
     collector_number: matched.collector_number || item.collector_number || null,
     rarity: matched.rarity || item.rarity || null,
     primary_image_url: matched.primary_image_url || item.primary_image_url || item.image_url || null,
+    matched_print_id: matched.print_id ?? matched.id ?? null,
+    card_market: matched.market || null,
     variant_count: Number(item.variant_count || 0),
     score: item.score ?? null,
   }
@@ -220,6 +222,39 @@ async function enrichPrintsWithMarket(rows) {
   }
 }
 
+async function enrichCardsWithMatchedPrintMarket(rows) {
+  if (!rows.length) return { rows, complete: true }
+
+  const ids = [...new Set(rows
+    .filter((item) => item?.type === 'card' && !item?.card_market && Number.isInteger(Number(item?.matched_print_id)))
+    .map((item) => Number(item.matched_print_id)))]
+
+  if (!ids.length) return { rows, complete: true }
+
+  const chunks = []
+  for (let index = 0; index < ids.length; index += MARKET_BATCH) chunks.push(ids.slice(index, index + MARKET_BATCH))
+
+  const marketResults = await Promise.all(chunks.map((chunk) => callInternalApi('/api/v1/market/prints/summary', {
+    params: { ids: chunk.join(',') },
+    timeoutMs: 20000,
+  })))
+
+  const marketByPrint = new Map()
+  for (const result of marketResults) {
+    if (!result.ok) continue
+    for (const row of toItems(result.payload)) marketByPrint.set(Number(row.print_id), row)
+  }
+
+  return {
+    rows: rows.map((item) => {
+      if (item?.type !== 'card' || item?.card_market) return item
+      const market = marketByPrint.get(Number(item.matched_print_id))
+      return market ? { ...item, card_market: market } : item
+    }),
+    complete: marketResults.every((result) => result.ok),
+  }
+}
+
 function applyPhysicalFilters(rows, { language, pricedOnly }) {
   return rows.filter((item) => {
     if (language && item?.type === 'print' && String(item?.language || '').toLowerCase() !== language) return false
@@ -267,9 +302,11 @@ export async function GET(request) {
     const cardsSource = await fetchCanonicalCardSource({ q, game, requireAll: false, limit, offset })
     if (!cardsSource.ok) return responseError(cardsSource.upstream)
 
-    const selectedRows = cardsSource.canonicalMode
+    let selectedRows = cardsSource.canonicalMode
       ? cardsSource.rows
       : cardsSource.rows.slice(offset, offset + limit)
+    selectedRows = (await enrichCardsWithMatchedPrintMarket(selectedRows)).rows
+
     const selectedTotal = Number(cardsSource.total || cardsSource.rows.length)
     const truncated = Boolean(cardsSource.truncated)
 
@@ -358,6 +395,7 @@ export async function GET(request) {
   else pageItems = selectedRows.slice(offset, offset + limit)
 
   if (!needsGlobalMarket) pageItems = (await enrichPrintsWithMarket(pageItems)).rows
+  pageItems = (await enrichCardsWithMatchedPrintMarket(pageItems)).rows
 
   return NextResponse.json({
     items: pageItems,
