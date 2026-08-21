@@ -33,8 +33,9 @@ test('clean interior system is centered, sans, dark and does not target Home com
 
 test('card result price is optional and only reads exact matched-print market', () => {
   const card = read('components/catalog/CatalogCard.js')
-  assert.match(card, /item\?\.type === 'card' \? item\?\.card_market/)
-  assert.match(card, /item\.type === 'card' && market/)
+  assert.match(card, /function cardCornerMarket/)
+  assert.match(card, /item\?\.card_market/)
+  assert.match(card, /item\.type === 'card' && cardMarket/)
   assert.match(card, /v14-card-price-corner/)
   assert.match(card, /Precio exacto de la impresión física mostrada/)
   assert.doesNotMatch(card, /v14-card-price-corner[^]*Sin precio actual/)
