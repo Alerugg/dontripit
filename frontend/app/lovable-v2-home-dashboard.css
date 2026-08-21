@@ -1,0 +1,204 @@
+/* V2.2 — Dashboard + Home secondary surfaces. The approved Home hero is intentionally untouched. */
+
+/* Dashboard: operational account workspace */
+.v13-dashboard {
+  width: min(1220px, calc(100% - 40px));
+  padding-top: 30px;
+  padding-bottom: 72px;
+}
+.v13-dashboard-head { padding-bottom: 20px; }
+.v13-dashboard-head h1 {
+  max-width: 700px;
+  font-size: clamp(2.35rem, 4.6vw, 4.25rem);
+  font-weight: 620;
+}
+.v13-dashboard-head p { max-width: 660px; color: #817b88; }
+.v13-overview {
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.075);
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v13-overview .ux-stat {
+  min-height: 86px;
+  border-color: rgba(255,255,255,.06);
+  background: transparent;
+}
+.v13-overview .ux-stat:hover { background: rgba(255,255,255,.025); }
+.v13-overview .ux-stat > span { color: #716b78; }
+.v13-overview .ux-stat > strong { color: #eeeaf1; font-variant-numeric: tabular-nums; }
+.v13-value-stat { background: rgba(139,92,246,.025) !important; }
+.v13-value-stat strong { color: #cdbff1 !important; }
+
+.v13-search-workspace {
+  margin-top: 12px;
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v13-search-workspace .ux-search-copy h2 { font-size: clamp(1.55rem, 2.8vw, 2.15rem); }
+.v13-search-workspace .ux-game-tab {
+  min-height: 32px;
+  border-radius: 6px;
+  font-size: .61rem;
+}
+.v13-search-workspace .ux-game-tab.is-active {
+  border-color: rgba(155,116,247,.28);
+  background: rgba(139,92,246,.075);
+  color: #e4dcf8;
+}
+.v13-search-workspace .ux-main-search {
+  min-height: 50px;
+  border: 1px solid rgba(255,255,255,.085);
+  border-radius: 8px;
+  background: #09090c;
+}
+
+.v13-personal-grid { margin-top: 42px; }
+.v13-personal-panel,
+.v13-pulse-section {
+  border-radius: 11px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v13-recent-print,
+.v13-radar-card,
+.v13-pulse-column { background: #09090c; }
+.v13-recent-print:hover,
+.v13-radar-card:hover { background: #0c0c10; }
+.v13-radar-priority {
+  border-color: rgba(155,116,247,.18);
+  background: rgba(139,92,246,.055);
+}
+.v13-catalog-section { margin-top: 46px; }
+.v13-game-grid .ux-game-card {
+  min-height: 118px;
+  border-radius: 9px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v13-dashboard .ux-account-section { margin-top: 52px; }
+
+/* Home below the hero: editorial / infrastructure surfaces, not gaming cards. */
+.v5-home .canva-signal-strip {
+  border-block: 1px solid rgba(255,255,255,.065);
+  background: #0b0b0e;
+}
+.v5-home .canva-signal-grid > div {
+  min-height: 76px;
+  padding-block: 16px;
+  border-color: rgba(255,255,255,.055);
+}
+.v5-home .canva-signal-grid strong {
+  color: #eeeaf1;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: -.025em;
+}
+.v5-home .canva-signal-grid span { color: #716b78; font-size: .57rem; }
+
+.v5-home .canva-section { padding-top: 68px; padding-bottom: 68px; }
+.v5-home .canva-section + .canva-section { border-top: 1px solid rgba(255,255,255,.055); }
+.v5-home .canva-section-head { gap: 28px; }
+.v5-home .canva-section-head h2 {
+  max-width: 760px;
+  color: #f2eff4;
+  font-family: var(--font-display), sans-serif;
+  font-size: clamp(1.8rem, 3.4vw, 3rem);
+  line-height: 1;
+  letter-spacing: -.05em;
+}
+.v5-home .canva-section-head > p { max-width: 520px; color: #7c7583; font-size: .72rem; line-height: 1.55; }
+.v5-home .canva-eyebrow { color: #8f72d7; font-size: .54rem; letter-spacing: .085em; }
+
+.v5-home .canva-steps { gap: 8px; }
+.v5-home .canva-step {
+  min-height: 176px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 9px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v5-home .canva-step > span { color: #77717e; font-size: .54rem; }
+.v5-home .canva-step h3 { color: #ece8ef; font-size: 1rem; }
+.v5-home .canva-step p { color: #79727f; font-size: .68rem; line-height: 1.55; }
+
+.v5-home .canva-game-grid { gap: 8px; }
+.v5-home .canva-game-card {
+  min-height: 220px;
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 10px;
+  background: #0d0d10;
+  box-shadow: none;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.v5-home .canva-game-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(155,116,247,.2);
+  background: #101014;
+}
+.v5-home .canva-game-state { color: #77717e; background: transparent; border-color: rgba(255,255,255,.07); }
+.v5-home .canva-game-logo { min-height: 76px; }
+.v5-home .canva-game-logo img { max-height: 68px; }
+.v5-home .canva-game-copy strong { color: #eeebf0; font-size: 1rem; }
+.v5-home .canva-game-copy p { color: #77717e; font-size: .65rem; line-height: 1.5; }
+.v5-home .canva-game-copy > span { color: #a690df; font-size: .6rem; }
+
+.v5-home .canva-portfolio {
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v5-home .canva-portfolio-main { background: transparent; }
+.v5-home .canva-portfolio-tabs { border-bottom-color: rgba(255,255,255,.06); }
+.v5-home .canva-portfolio-tabs span { color: #716b78; }
+.v5-home .canva-portfolio-tabs .is-active { color: #d4c8f4; }
+.v5-home .canva-trust-row { border-color: rgba(255,255,255,.06); background: transparent; }
+.v5-home .canva-trust-row > span { color: #716b78; }
+.v5-home .canva-trust-row strong { color: #d8d3dc; }
+.v5-home .canva-trust-row small { color: #746e7b; }
+
+.v5-home .canva-region-grid { gap: 8px; }
+.v5-home .canva-region-card {
+  min-height: 126px;
+  padding: 15px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 9px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v5-home .canva-region-card-accent { border-color: rgba(155,116,247,.18); background: rgba(139,92,246,.035); }
+.v5-home .canva-region-card > span { color: #77717e; }
+.v5-home .canva-region-card strong { color: #ddd8e1; }
+.v5-home .canva-region-card small { color: #716b78; }
+
+.v5-home .canva-final-cta {
+  margin-top: 12px;
+  margin-bottom: 68px;
+  padding: 26px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px;
+  background: #0d0d10;
+  box-shadow: none;
+}
+.v5-home .canva-final-cta h2 { color: #f0edf2; font-family: var(--font-display), sans-serif; letter-spacing: -.045em; }
+
+@media (max-width: 760px) {
+  .v13-dashboard { width: min(100% - 24px, 1220px); padding-top: 22px; }
+  .v13-personal-grid { margin-top: 34px; }
+  .v5-home .canva-section { padding-top: 50px; padding-bottom: 50px; }
+  .v5-home .canva-section-head { gap: 12px; }
+  .v5-home .canva-game-card { min-height: 190px; }
+  .v5-home .canva-final-cta { margin-bottom: 50px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v5-home .canva-game-card { transition: none; }
+  .v5-home .canva-game-card:hover { transform: none; }
+}
