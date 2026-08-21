@@ -102,10 +102,12 @@ function CardSignal({ item }) {
   return (
     <div className="v8-result-signal v8-result-card-signal">
       <div>
-        <span className="v8-result-signal-label">Impresiones físicas</span>
+        <span className="v8-result-signal-label">Cobertura física</span>
         <strong>{count > 0 ? count.toLocaleString('es-ES') : '—'}</strong>
       </div>
-      <span className="v8-result-signal-note">{count > 0 ? 'Elige la versión exacta dentro de la carta' : 'Sin impresiones enlazadas'}</span>
+      <span className="v8-result-signal-note">
+        {count > 0 ? 'Elige la impresión exacta: el mercado pertenece a cada impresión física' : 'Sin impresiones enlazadas'}
+      </span>
     </div>
   )
 }
@@ -114,16 +116,16 @@ function PrintMarketSignal({ market }) {
   if (!market) {
     return (
       <div className="v8-result-signal v8-result-market is-empty">
-        <span className="v8-result-signal-label">Precio exacto</span>
-        <strong>Sin precio seguro</strong>
-        <span className="v8-result-signal-note">No usamos otra edición como sustituto.</span>
+        <span className="v8-result-signal-label">Cardmarket exacto</span>
+        <strong>Sin precio actual</strong>
+        <span className="v8-result-signal-note">No mostramos estimaciones ni precios de otra edición.</span>
       </div>
     )
   }
 
   return (
     <div className="v8-result-signal v8-result-market">
-      <span className="v8-result-signal-label">Precio exacto · Cardmarket</span>
+      <span className="v8-result-signal-label">Cardmarket exacto</span>
       <strong>{market.display}</strong>
       <span className="v8-result-signal-note">
         {[market.low && market.low !== market.display ? `Low ${market.low}` : null, market.asOf ? `actualizado ${market.asOf}` : null].filter(Boolean).join(' · ') || 'Correspondencia de esta impresión'}
@@ -135,8 +137,7 @@ function PrintMarketSignal({ market }) {
 function SetSignal({ item }) {
   const code = setCode(item)
   const set = item?.set || null
-  const legacyCount = set?.card_count || item.card_count
-  const count = Number(legacyCount ?? item.total_cards ?? item.cards_count)
+  const count = Number(item.card_count ?? item.total_cards ?? item.cards_count ?? set?.card_count)
   return (
     <div className="v8-result-signal v8-result-set-signal">
       <span className="v8-result-signal-label">Contenido del set</span>
