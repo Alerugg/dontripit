@@ -16,3 +16,22 @@ test('all launch legal pages remain public for signed-out visitors', () => {
     assert.match(proxy, new RegExp(`['\"]${route.replace('/', '\\/')}['\"]`))
   }
 })
+
+test('auth proxy protects known private areas without swallowing unknown routes', () => {
+  const proxy = source('proxy.js')
+
+  for (const route of ['/dashboard', '/collection', '/wishlist', '/console', '/profile']) {
+    assert.match(proxy, new RegExp(`['\"]${route.replace('/', '\\/')}['\"]`))
+  }
+
+  assert.match(proxy, /if \(!hasSession && isPrivatePath\(pathname\)\)/)
+  assert.doesNotMatch(proxy, /!hasSession && !isPublicPath\(pathname\)/)
+  assert.match(proxy, /Unknown routes must reach Next\.js/)
+})
+
+test('the application owns a branded not-found experience', () => {
+  const notFound = source('app/not-found.js')
+  assert.match(notFound, /404 · Fuera de catálogo/)
+  assert.match(notFound, /href="\/explorer"/)
+  assert.match(notFound, /href="\/"/)
+})
