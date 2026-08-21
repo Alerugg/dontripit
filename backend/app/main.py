@@ -31,6 +31,7 @@ from app.routes.prices import prices_bp
 from app.routes.set_ui import set_ui_bp
 from app.routes.user_auth import user_auth_bp
 from app.routes.user_library import user_library_bp
+from app.search_v2.legacy_search_hot_path import install_legacy_search_hot_path
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 def create_app(database_url: str | None = None) -> Flask:
     init_engine(database_url)
+    install_legacy_search_hot_path()
     local_internal_api_key = os.getenv("INTERNAL_API_KEY", "").strip()
     if local_internal_api_key:
         try:
