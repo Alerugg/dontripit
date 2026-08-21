@@ -94,7 +94,7 @@ export default function PublicHome() {
         </div>
       </section>
 
-      <HomeRevealV3 as="section" className="v17-gallery-section">
+      <HomeRevealV3 as="section" className="v17-gallery-section" id="how-it-works">
         <div className="app-shell">
           <header className="v17-number-head">
             <b>01</b>
