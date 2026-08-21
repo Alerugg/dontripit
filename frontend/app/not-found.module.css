@@ -1,0 +1,148 @@
+.page {
+  min-height: 100vh;
+  background: var(--bg-0);
+}
+
+.hero {
+  position: relative;
+  min-height: 68vh;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.65fr);
+  align-items: center;
+  gap: clamp(2rem, 7vw, 7rem);
+  padding: clamp(5rem, 10vw, 9rem) max(24px, calc((100vw - 1180px) / 2));
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image:
+    linear-gradient(var(--border-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-soft) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.content,
+.mark {
+  position: relative;
+  z-index: 1;
+}
+
+.code {
+  display: inline-flex;
+  margin-bottom: 1.25rem;
+  color: var(--accent-cold);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.content h1 {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(3.3rem, 8vw, 7rem);
+  line-height: 0.9;
+  letter-spacing: -0.07em;
+}
+
+.content p {
+  max-width: 620px;
+  margin: 1.6rem 0 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.7;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 2rem;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.8rem 1.25rem;
+  font-weight: 800;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.primary {
+  color: #0b0a10;
+  background: var(--text);
+}
+
+.secondary {
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.primary:hover,
+.secondary:hover {
+  transform: translateY(-1px);
+}
+
+.secondary:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-1);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(248, 247, 255, 0.11);
+  font-family: var(--font-space-grotesk), sans-serif;
+  font-size: clamp(7rem, 18vw, 16rem);
+  font-weight: 800;
+  line-height: 0.7;
+  letter-spacing: -0.12em;
+  user-select: none;
+}
+
+.mark i {
+  width: 0.52em;
+  height: 0.72em;
+  margin: 0 0.03em;
+  border: 0.07em solid rgba(124, 58, 237, 0.42);
+  border-radius: 0.12em;
+  box-shadow: 0 0 70px rgba(124, 58, 237, 0.25);
+}
+
+@media (max-width: 820px) {
+  .hero {
+    min-height: 72vh;
+    grid-template-columns: 1fr;
+    padding-top: 6rem;
+  }
+
+  .mark {
+    position: absolute;
+    right: -0.12em;
+    bottom: 0.12em;
+    opacity: 0.7;
+  }
+
+  .content {
+    max-width: 620px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary,
+  .secondary {
+    transition: none;
+  }
+}
