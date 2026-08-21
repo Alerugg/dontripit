@@ -76,10 +76,12 @@ jobs:
 
       - name: Persist canonical feeds and certify second-pass idempotency
         run: |
+          set -o pipefail
           python scripts/sync_regional_content_daily_v5.py \
             --apply \
             --certify-two-pass \
-            --report /tmp/regional-two-pass-proof.json
+            --report /tmp/regional-two-pass-proof.json \
+            2>&1 | tee /tmp/regional-apply.log
 
       - name: Retire superseded Pokemon EU source rows on catalog push only
         if: github.event_name == 'push' && github.ref_name == 'catalog-v2'
@@ -107,6 +109,7 @@ jobs:
           name: regional-tcg-content-${{ github.run_id }}
           path: |
             /tmp/regional-dry-run.json
+            /tmp/regional-apply.log
             /tmp/regional-two-pass-proof.json
             /tmp/regional-source-migration.json
             /tmp/regional-dedupe-proof.json
