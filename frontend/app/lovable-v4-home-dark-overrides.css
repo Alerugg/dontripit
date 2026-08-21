@@ -1,0 +1,43 @@
+.v17-gallery-section{background:#25222d;color:#f5f3f8;border-top:1px solid rgba(255,255,255,.07);border-bottom:1px solid rgba(255,255,255,.07)}
+.v17-gallery-section .v17-number-head{border-color:rgba(255,255,255,.10)}
+.v17-gallery-section .v17-number-head>b{color:#b59af6}
+.v17-gallery-section .v17-number-head span{color:#938ba0}
+.v17-gallery-section .v17-object-card{border-color:rgba(255,255,255,.12);background:#312d39;box-shadow:0 28px 60px rgba(0,0,0,.22)}
+.v17-gallery-section .v17-object-card>span{color:#9d95a6}
+.v17-gallery-section .v17-object-card>i{background:linear-gradient(160deg,#554f5f,#201d26)}
+.v17-gallery-section .v17-object-card.is-tone-1>i{background:linear-gradient(160deg,rgba(139,92,246,.55),#221e2a)}
+.v17-gallery-section .v17-object-card.is-tone-2>i{background:linear-gradient(160deg,#615a6d,#211e27)}
+.v17-gallery-section .v17-object-card.is-tone-3>i{background:linear-gradient(160deg,#695c78,#221e29)}
+.v17-gallery-section .v17-object-gallery figcaption strong{color:#f5f3f8}
+.v17-gallery-section .v17-object-gallery figcaption small{color:#9a92a5}
+
+.v17-portfolio-section{position:relative;background:#1b151f;color:#f5f3f8;border-top:1px solid rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.06)}
+.v17-portfolio-section:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:48px 48px;opacity:.6}
+.v17-portfolio-section .app-shell{position:relative}
+.v17-portfolio-copy>b{color:#b59af6}
+.v17-portfolio-copy h2{color:#f6f4f8}
+.v17-portfolio-copy p{color:#aaa2b0}
+.v17-portfolio-copy a{border-color:rgba(255,255,255,.17);color:#f3eff8;background:transparent}
+.v17-portfolio-copy a:first-child{border-color:#8b5cf6;background:#8b5cf6;color:#fff}
+.v17-portfolio-sheet{border-color:rgba(255,255,255,.12);background:#261f2a;box-shadow:0 38px 80px rgba(0,0,0,.30)}
+.v17-portfolio-sheet header,.v17-portfolio-sheet footer{color:#9f96a6}
+.v17-portfolio-sheet header{border-color:rgba(255,255,255,.08)}
+.v17-portfolio-sheet footer{background:#201a24;border-top:1px solid rgba(255,255,255,.07)}
+.v17-portfolio-sheet li{border-color:rgba(255,255,255,.07)}
+.v17-portfolio-sheet li>div strong{color:#f5f3f8}
+.v17-portfolio-sheet li>div small{color:#938b9b}
+.v17-portfolio-sheet li>span{color:#b7afbd}
+.v17-portfolio-sheet li>b{background:repeating-linear-gradient(90deg,#4a4250 0 4px,transparent 4px 8px)}
+
+.v17-closing{position:relative;overflow:hidden;background:#09080d;color:#f5f3f8;border-top:1px solid rgba(255,255,255,.07)}
+.v17-closing:before{content:"";position:absolute;left:50%;bottom:-280px;width:620px;height:620px;transform:translateX(-50%);border-radius:50%;background:rgba(139,92,246,.18);filter:blur(150px);pointer-events:none}
+.v17-closing:after{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:46px 46px}
+.v17-closing .app-shell{position:relative;z-index:1}
+.v17-closing h2{color:#f7f4fb}
+.v17-closing h2 em{color:#a889ef;font-style:italic}
+.v17-closing>div>div>p,.v17-closing-grid>div>p{color:#a39baa}
+.v17-closing-grid>div:last-child{padding:28px;border:1px solid rgba(255,255,255,.10);background:rgba(35,31,41,.62);backdrop-filter:blur(14px)}
+.v17-closing nav a{border-color:rgba(255,255,255,.16);color:#f4f1f8;background:transparent}
+.v17-closing nav a:first-child{border-color:#8b5cf6;background:#8b5cf6;color:#fff}
+
+@media (prefers-reduced-motion:reduce){.v17-closing:before{filter:blur(150px)}}
