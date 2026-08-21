@@ -1,0 +1,62 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+
+const ROOT = path.resolve(__dirname, '..')
+const source = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8')
+
+test('Dashboard remains an account workspace backed by real account/library APIs', () => {
+  const dashboard = source('components/dashboard/DashboardPage.js')
+  const css = source('app/lovable-v2-home-dashboard.css')
+
+  assert.match(dashboard, /fetch\('\/api\/auth\/me'/)
+  assert.match(dashboard, /fetch\('\/api\/library\/collection'/)
+  assert.match(dashboard, /fetch\('\/api\/library\/wishlist'/)
+  assert.match(dashboard, /Valor conservador\*/)
+  assert.match(dashboard, /El resto no se estima/)
+  assert.match(css, /\.v13-dashboard[\s\S]*width:\s*min\(1220px/)
+  assert.match(css, /\.v13-search-workspace[\s\S]*background:\s*#0d0d10/)
+})
+
+test('Home uses the approved identity-first A+ hero without changing the search workflow', () => {
+  const home = source('components/home/PublicHome.js')
+  const layout = source('app/layout.js')
+  const heroCss = source('app/lovable-v2-hero.css')
+
+  assert.match(home, /<section className="v15-hero"/)
+  assert.match(home, /Encuentra la carta\.<br \/>/)
+  assert.match(home, /<em>Elige la exacta\.<\/em>/)
+  assert.match(home, /Cada carta puede tener decenas de ediciones/)
+  assert.match(home, /<HomeSearch \/>/)
+  assert.match(home, /Explorar catálogo →/)
+  assert.match(home, /href="#how-it-works"/)
+  assert.match(home, /CARD → PRINT → MARKET/)
+  assert.match(home, /Sin mapeo exacto no mostramos precio/)
+  assert.doesNotMatch(home, /TCG Data\./)
+  assert.doesNotMatch(home, /<em>Pricing\.<\/em>/)
+  assert.doesNotMatch(home, /Liquidity\./)
+  assert.match(layout, /import '\.\/lovable-v2-hero\.css'/)
+  assert.match(heroCss, /\.v15-hero\s*\{/)
+  assert.match(heroCss, /\.v15-identity-ledger\s*\{/)
+})
+
+test('Home avoids unsupported cadence and fabricated valuation promises', () => {
+  const home = source('components/home/PublicHome.js')
+  assert.doesNotMatch(home, />24h</)
+  assert.doesNotMatch(home, /se actualiza a diario/)
+  assert.match(home, /fuente y procedencia visibles/)
+  assert.match(home, /Sin fechas inventadas/)
+  assert.match(home, /Las versiones sin precio seguro no se estiman/)
+  assert.match(home, /mercado solo cuando la correspondencia es segura/)
+})
+
+test('Dashboard/Home parity includes mobile and reduced-motion handling', () => {
+  const dashboardCss = source('app/lovable-v2-home-dashboard.css')
+  const heroCss = source('app/lovable-v2-hero.css')
+  assert.match(dashboardCss, /@media \(max-width:\s*760px\)/)
+  assert.match(dashboardCss, /@media \(prefers-reduced-motion:\s*reduce\)/)
+  assert.match(heroCss, /@media \(max-width:\s*980px\)/)
+  assert.match(heroCss, /@media \(max-width:\s*620px\)/)
+  assert.match(heroCss, /@media \(prefers-reduced-motion:\s*reduce\)/)
+})

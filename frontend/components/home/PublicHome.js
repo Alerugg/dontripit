@@ -30,6 +30,31 @@ const REGIONS = [
   ['JP', 'Japón', 'Fuentes oficiales regionales'],
 ]
 
+const IDENTITY_LEDGER = [
+  {
+    step: '01',
+    label: 'Carta',
+    tag: 'CANÓNICA',
+    title: 'La identidad que conoces',
+    copy: 'Nombre, número, set y rareza. Aquí todavía no existe un precio universal.',
+  },
+  {
+    step: '02',
+    label: 'Impresión',
+    tag: 'OBJETO FÍSICO',
+    title: 'La versión que realmente tienes',
+    copy: 'Idioma, acabado, variante y región convierten la carta en una impresión física exacta.',
+    accent: true,
+  },
+  {
+    step: '03',
+    label: 'Mercado',
+    tag: 'FUENTE SEGURA',
+    title: 'El precio de esa impresión',
+    copy: 'Mostramos mercado únicamente cuando existe una correspondencia exacta y verificable.',
+  },
+]
+
 export default function PublicHome() {
   const activeGames = GAME_CATALOG.filter((game) => game.slug !== 'riftbound')
 
@@ -37,33 +62,58 @@ export default function PublicHome() {
     <main className="canva-home v5-home">
       <TopNav />
 
-      <section className="v5-hero" aria-labelledby="home-title">
-        <div className="app-shell v5-hero-inner">
-          <span className="v5-hero-kicker"><i /> Infrastructure for TCG Markets</span>
-          <h1 id="home-title">
-            TCG Data.<br />
-            <em>Pricing.</em><br />
-            Liquidity.
-          </h1>
-          <p className="v5-hero-copy">
-            Don’tRipIt separa la carta canónica, la impresión física exacta y sus datos de mercado.
-            Encuentra la versión correcta sin mezclar ediciones, idiomas ni variantes; después eliges la edición real que tienes o quieres seguir.
-          </p>
+      <section className="v15-hero" aria-labelledby="home-title">
+        <div className="v15-hero-grid-etch" aria-hidden="true" />
+        <div className="v15-hero-glow" aria-hidden="true" />
 
-          <div className="v5-hero-search" id="search">
-            <HomeSearch />
+        <div className="app-shell v15-hero-grid">
+          <div className="v15-hero-copy">
+            <span className="v15-hero-kicker"><i /> Infraestructura de datos para TCG</span>
+            <h1 id="home-title">
+              Encuentra la carta.<br />
+              <em>Elige la exacta.</em>
+            </h1>
+            <p className="v15-hero-lead">
+              Cada carta puede tener decenas de ediciones. Don’tRipIt te lleva desde la carta que conoces hasta la impresión física exacta —set, idioma, acabado y variante— y muestra mercado solo cuando la correspondencia es segura.
+            </p>
+
+            <div className="v15-hero-search" id="search">
+              <HomeSearch />
+            </div>
+
+            <div className="v15-hero-actions" aria-label="Acciones principales">
+              <Link href="/explorer" className="v15-hero-action v15-hero-action-primary">Explorar catálogo →</Link>
+              <a href="#how-it-works" className="v15-hero-action">Cómo funciona</a>
+            </div>
           </div>
 
-          <div className="v5-hero-actions">
-            <Link href="/explorer" className="dri-btn dri-btn-primary">Abrir explorador →</Link>
-            <Link href="/collection" className="dri-btn dri-btn-ghost">Ver mi colección</Link>
-          </div>
+          <aside className="v15-identity-ledger" aria-label="Cadena Carta, impresión y mercado">
+            <div className="v15-ledger-head">
+              <span>Cadena de identidad</span>
+              <small>CARD → PRINT → MARKET</small>
+            </div>
 
-          <ul className="v5-hero-proof" aria-label="Principios de Don’tRipIt">
-            <li><b>✓</b> {activeGames.length} TCG activos</li>
-            <li><b>✓</b> Carta → impresión → mercado</li>
-            <li><b>✓</b> Precio solo con correspondencia segura</li>
-          </ul>
+            <ol className="v15-ledger-list">
+              {IDENTITY_LEDGER.map((item) => (
+                <li key={item.step} className={item.accent ? 'is-accent' : ''}>
+                  <span className="v15-ledger-step">{item.step}</span>
+                  <div className="v15-ledger-body">
+                    <div className="v15-ledger-labels">
+                      <strong>{item.label}</strong>
+                      <small>{item.tag}</small>
+                    </div>
+                    <h2>{item.title}</h2>
+                    <p>{item.copy}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            <div className="v15-ledger-note">
+              <i aria-hidden="true" />
+              <span>Sin mapeo exacto no mostramos precio. Nunca estimamos valores de otra edición.</span>
+            </div>
+          </aside>
         </div>
       </section>
 
@@ -72,7 +122,7 @@ export default function PublicHome() {
           <div><strong>{activeGames.length}</strong><span>juegos activos</span></div>
           <div><strong>Exacta</strong><span>identidad física</span></div>
           <div><strong>Cardmarket</strong><span>referencia de mercado</span></div>
-          <div><strong>24h</strong><span>proceso de actualización</span></div>
+          <div><strong>Regional</strong><span>fuente y procedencia visibles</span></div>
         </div>
       </section>
 
@@ -161,7 +211,7 @@ export default function PublicHome() {
             <span className="canva-eyebrow">Contenido regional</span>
             <h2>Noticias y lanzamientos con fuente oficial.</h2>
           </div>
-          <p>El proceso regional se actualiza a diario y mantiene separadas las fuentes de Europa, Estados Unidos y Japón.</p>
+          <p>Las fuentes se mantienen separadas por región y cada elemento publicado conserva fecha y procedencia verificables.</p>
         </div>
         <div className="canva-region-grid">
           {REGIONS.map(([code, title, copy]) => (
@@ -172,7 +222,7 @@ export default function PublicHome() {
             </article>
           ))}
           <article className="canva-region-card canva-region-card-accent">
-            <span>DIARIO</span>
+            <span>INTEGRIDAD</span>
             <strong>Sin fechas inventadas</strong>
             <small>Solo se publica lo que llega de las fuentes activas verificadas.</small>
           </article>
