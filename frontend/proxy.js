@@ -26,9 +26,21 @@ const PUBLIC_PREFIXES = [
   '/play/',
 ]
 
+const PRIVATE_PREFIXES = [
+  '/dashboard',
+  '/collection',
+  '/wishlist',
+  '/console',
+  '/profile',
+]
+
 function isPublicPath(pathname) {
   return PUBLIC_PATHS.has(pathname)
     || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+}
+
+function isPrivatePath(pathname) {
+  return PRIVATE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
 export function proxy(request) {
@@ -39,12 +51,16 @@ export function proxy(request) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  if (!hasSession && !isPublicPath(pathname)) {
+  if (isPublicPath(pathname)) return NextResponse.next()
+
+  if (!hasSession && isPrivatePath(pathname)) {
     const target = new URL('/register', request.url)
     target.searchParams.set('next', `${pathname}${request.nextUrl.search || ''}`)
     return NextResponse.redirect(target)
   }
 
+  // Unknown routes must reach Next.js so it can return a real 404 instead of
+  // masquerading as the registration page with a 200 response.
   return NextResponse.next()
 }
 
