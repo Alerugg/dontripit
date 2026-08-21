@@ -97,10 +97,22 @@ jobs:
           python - <<'PY' >/tmp/status.json
           import json, os
           ok = os.environ.get('AUDIT_OUTCOME') == 'success'
+          description = f"read-only audit={os.environ.get('AUDIT_OUTCOME')}"
+          if ok:
+              try:
+                  with open('/tmp/search-perf-audit/report.json') as f:
+                      report = json.load(f)
+                  trgm = 'yes' if report.get('has_pg_trgm') else 'no'
+                  trgm_indexes = sum('gin_trgm_ops' in str(row.get('indexdef','')).lower() for row in report.get('indexes', []))
+                  cards = report.get('counts', {}).get('cards', '?')
+                  profiles = report.get('counts', {}).get('card_search_profiles', '?')
+                  description = f"pg_trgm={trgm} trigram_indexes={trgm_indexes} cards={cards} profiles={profiles}"
+              except Exception as exc:
+                  description = f"audit=success report_parse={type(exc).__name__}"
           print(json.dumps({
               'state': 'success' if ok else 'failure',
               'context': 'search-neon-index-audit',
-              'description': f"read-only production index audit={os.environ.get('AUDIT_OUTCOME')}"[:140],
+              'description': description[:140],
           }))
           PY
           curl --fail-with-body -sS -L \
