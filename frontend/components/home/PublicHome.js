@@ -7,8 +7,8 @@ import { GAME_CATALOG } from '../../lib/catalog/games'
 
 const HERO_PRINTS = [
   '/images/home/hero-onepiece-back.svg',
-  '/images/home/hero-magic-back.svg',
   '/images/home/hero-pokemon-back.svg',
+  '/images/home/hero-magic-back.svg',
 ]
 
 const GAME_LOGOS = {
