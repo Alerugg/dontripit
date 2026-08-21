@@ -27,7 +27,7 @@ export default function SiteFooter() {
         <div className="dri-footer-column">
           <strong>Don’tRipIt</strong>
           <Link href="/#how-it-works">Cómo funciona</Link>
-          <Link href="/#releases">Lanzamientos</Link>
+          <Link href="/#games">Catálogos</Link>
           <a href="https://shop.dontripit.com" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
           <Link href="/register">Crear cuenta</Link>
         </div>
