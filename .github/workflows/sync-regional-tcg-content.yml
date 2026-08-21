@@ -74,14 +74,29 @@ jobs:
       - name: Apply content schema
         run: alembic upgrade head
 
-      - name: Persist canonical feeds and certify second-pass idempotency
+      - name: Persist certified snapshot and certify second-pass idempotency
         run: |
           set -o pipefail
-          python scripts/sync_regional_content_daily_v5.py \
-            --apply \
-            --certify-two-pass \
-            --report /tmp/regional-two-pass-proof.json \
-            2>&1 | tee /tmp/regional-apply.log
+          python - --apply --certify-two-pass --report /tmp/regional-two-pass-proof.json 2>&1 <<'PY' | tee /tmp/regional-apply.log
+          import json
+          from pathlib import Path
+
+          from scripts import sync_regional_content_daily_v5 as v5
+
+          snapshot = json.loads(Path('/tmp/regional-dry-run.json').read_text(encoding='utf-8'))
+          if snapshot.get('mode') != 'dry-run':
+              raise RuntimeError('Regional apply snapshot is not a certified dry-run report')
+          if snapshot.get('failed_sources'):
+              raise RuntimeError(f"Regional apply snapshot contains failed sources: {snapshot['failed_sources']}")
+          if int(snapshot.get('canonical_sources', -1)) != len(v5.v1.CANONICAL_SOURCE_KEYS):
+              raise RuntimeError('Regional apply snapshot canonical source count changed')
+          if not isinstance(snapshot.get('records'), list) or not snapshot['records']:
+              raise RuntimeError('Regional apply snapshot contains no certified records')
+
+          collection = {key: value for key, value in snapshot.items() if key != 'mode'}
+          v5.v1.collect_official_content = lambda *, strict=True: collection
+          raise SystemExit(v5.v1.main())
+          PY
 
       - name: Retire superseded Pokemon EU source rows on catalog push only
         if: github.event_name == 'push' && github.ref_name == 'catalog-v2'
