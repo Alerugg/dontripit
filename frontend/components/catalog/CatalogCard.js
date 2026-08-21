@@ -86,8 +86,8 @@ function resolveItemType(item) {
 
 function exactMarket(item) {
   if (item?.type !== 'print') return null
+  const raw = item?.market?.display_price
   const market = item?.market
-  const raw = market?.display_price
   const display = formatCurrency(raw, market?.currency || 'EUR')
   if (!display) return null
 
