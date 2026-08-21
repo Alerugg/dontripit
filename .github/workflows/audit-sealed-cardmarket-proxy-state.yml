@@ -1,0 +1,151 @@
+name: Audit Sealed Cardmarket Proxy State
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-cardmarket-proxy-state.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+
+      - name: Read-only sealed image state audit
+        run: |
+          mkdir -p /tmp/sealed-state-audit
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, text
+
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not url:
+              raise RuntimeError('DATABASE_URL_UNPOOLED or DATABASE_URL is required')
+          engine=create_engine(url, pool_pre_ping=True)
+
+          STRICT_CTE='''
+          WITH latest AS (
+            SELECT game_id, MAX(last_seen_at) AS latest_seen
+            FROM external_catalog_products
+            WHERE source = 'cardmarket' AND product_group = 'non_single'
+            GROUP BY game_id
+          ), strict_raw AS (
+            SELECT
+              l.product_variant_id AS variant_id,
+              e.external_id,
+              e.category_id,
+              e.game_id,
+              COUNT(*) OVER(PARTITION BY l.external_product_id) AS variants_per_external,
+              COUNT(*) OVER(PARTITION BY l.product_variant_id) AS externals_per_variant
+            FROM external_catalog_product_variant_links l
+            JOIN external_catalog_products e ON e.id = l.external_product_id
+            JOIN latest x ON x.game_id = e.game_id AND x.latest_seen = e.last_seen_at
+            WHERE e.source = 'cardmarket'
+              AND e.product_group = 'non_single'
+              AND l.link_status IN ('accepted','mapped','exact')
+              AND l.confidence = 'exact'
+              AND l.reviewed = TRUE
+          ), strict AS (
+            SELECT variant_id, external_id, category_id, game_id
+            FROM strict_raw
+            WHERE variants_per_external = 1 AND externals_per_variant = 1
+          )
+          '''
+
+          def scalar(conn, sql, params=None):
+              return conn.execute(text(sql), params or {}).scalar()
+          def rows(conn, sql, params=None):
+              return [dict(r) for r in conn.execute(text(sql), params or {}).mappings().all()]
+
+          with engine.connect() as conn:
+              report={}
+              report['strict_exact_variants']=scalar(conn, STRICT_CTE+' SELECT COUNT(*) FROM strict')
+              report['strict_with_any_image']=scalar(conn, STRICT_CTE+''' SELECT COUNT(DISTINCT s.variant_id) FROM strict s JOIN product_images pi ON pi.product_variant_id=s.variant_id''')
+              report['strict_without_image']=scalar(conn, STRICT_CTE+''' SELECT COUNT(*) FROM strict s WHERE NOT EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_variant_id=s.variant_id)''')
+              report['strict_with_exact_proxy_source']=scalar(conn, STRICT_CTE+''' SELECT COUNT(DISTINCT s.variant_id) FROM strict s JOIN product_images pi ON pi.product_variant_id=s.variant_id WHERE pi.source='cardmarket_exact_proxy_v1' ''')
+              report['strict_with_other_image_source']=scalar(conn, STRICT_CTE+''' SELECT COUNT(DISTINCT s.variant_id) FROM strict s JOIN product_images pi ON pi.product_variant_id=s.variant_id WHERE COALESCE(pi.source,'') <> 'cardmarket_exact_proxy_v1' ''')
+
+              report['exact_proxy_rows']=scalar(conn, "SELECT COUNT(*) FROM product_images WHERE source='cardmarket_exact_proxy_v1'")
+              report['exact_proxy_variants']=scalar(conn, "SELECT COUNT(DISTINCT product_variant_id) FROM product_images WHERE source='cardmarket_exact_proxy_v1'")
+              report['exact_proxy_urls']=scalar(conn, "SELECT COUNT(DISTINCT url) FROM product_images WHERE source='cardmarket_exact_proxy_v1'")
+              report['exact_proxy_non_primary']=scalar(conn, "SELECT COUNT(*) FROM product_images WHERE source='cardmarket_exact_proxy_v1' AND is_primary IS NOT TRUE")
+              report['exact_proxy_bad_proxy_urls']=scalar(conn, "SELECT COUNT(*) FROM product_images WHERE source='cardmarket_exact_proxy_v1' AND url !~ '^https://api\\.dontripit\\.com/media/product-variants/[0-9]+/cardmarket-image$'")
+              report['exact_proxy_duplicate_variant_groups']=scalar(conn, "SELECT COUNT(*) FROM (SELECT product_variant_id FROM product_images WHERE source='cardmarket_exact_proxy_v1' GROUP BY product_variant_id HAVING COUNT(*)>1) d")
+              report['exact_proxy_duplicate_url_groups']=scalar(conn, "SELECT COUNT(*) FROM (SELECT url FROM product_images WHERE source='cardmarket_exact_proxy_v1' GROUP BY url HAVING COUNT(*)>1) d")
+              report['exact_proxy_unexpected_games']=rows(conn, '''
+                SELECT g.slug AS game, COUNT(*) AS rows
+                FROM product_images pi
+                JOIN product_variants pv ON pv.id=pi.product_variant_id
+                JOIN products p ON p.id=pv.product_id
+                JOIN games g ON g.id=p.game_id
+                WHERE pi.source='cardmarket_exact_proxy_v1'
+                  AND g.slug NOT IN ('magic-the-gathering','pokemon','yu-gi-oh')
+                GROUP BY g.slug ORDER BY g.slug
+              ''')
+              report['exact_proxy_games']=rows(conn, '''
+                SELECT g.slug AS game, COUNT(*) AS rows
+                FROM product_images pi
+                JOIN product_variants pv ON pv.id=pi.product_variant_id
+                JOIN products p ON p.id=pv.product_id
+                JOIN games g ON g.id=p.game_id
+                WHERE pi.source='cardmarket_exact_proxy_v1'
+                GROUP BY g.slug ORDER BY g.slug
+              ''')
+              report['strict_image_sources']=rows(conn, STRICT_CTE+'''
+                SELECT COALESCE(pi.source,'<null>') AS source,
+                       COUNT(*) AS rows,
+                       COUNT(DISTINCT pi.product_variant_id) AS variants
+                FROM strict s JOIN product_images pi ON pi.product_variant_id=s.variant_id
+                GROUP BY COALESCE(pi.source,'<null>')
+                ORDER BY variants DESC, source
+              ''')
+              report['known_variants']=rows(conn, '''
+                SELECT pv.id AS variant_id, g.slug AS game, p.name AS product_name,
+                       pi.id AS image_id, pi.url, pi.is_primary, pi.source, pi.created_at
+                FROM product_variants pv
+                JOIN products p ON p.id=pv.product_id
+                JOIN games g ON g.id=p.game_id
+                LEFT JOIN product_images pi ON pi.product_variant_id=pv.id
+                WHERE pv.id IN (36155,35143)
+                ORDER BY pv.id, pi.id
+              ''')
+
+          report['gate']='PASS' if (
+              report['exact_proxy_rows'] == report['exact_proxy_variants'] == report['exact_proxy_urls']
+              and report['exact_proxy_non_primary']==0
+              and report['exact_proxy_bad_proxy_urls']==0
+              and report['exact_proxy_duplicate_variant_groups']==0
+              and report['exact_proxy_duplicate_url_groups']==0
+              and not report['exact_proxy_unexpected_games']
+          ) else 'FAIL'
+          path='/tmp/sealed-state-audit/report.json'
+          with open(path,'w') as f:
+              json.dump(report,f,indent=2,sort_keys=True,default=str)
+          print(json.dumps(report,indent=2,sort_keys=True,default=str))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed-cardmarket-proxy-state-${{ github.run_id }}
+          path: /tmp/sealed-state-audit/report.json
+          retention-days: 90
+          if-no-files-found: error
