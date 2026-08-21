@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import SearchInput from '../search/SearchInput'
 import { suggestCatalog } from '../../lib/catalog/client'
+import { ACTIVE_GAME_CATALOG } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 import './HomeSearchV2.css'
 
@@ -18,11 +19,22 @@ function suggestionHref(item) {
   return ''
 }
 
+function scopedSearchHref(game, query) {
+  const suffix = query ? `?q=${encodeURIComponent(query)}&kind=card&view=grid` : ''
+  return game ? `/games/${game}${suffix}` : `/explorer${suffix}`
+}
+
 export default function HomeSearch() {
   const router = useRouter()
   const [query, setQuery] = useState('')
+  const [selectedGame, setSelectedGame] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(false)
+
+  const selectedConfig = useMemo(
+    () => ACTIVE_GAME_CATALOG.find((game) => game.slug === selectedGame) || null,
+    [selectedGame],
+  )
 
   useEffect(() => {
     const clean = query.trim()
@@ -36,7 +48,7 @@ export default function HomeSearch() {
     const timer = setTimeout(async () => {
       setLoading(true)
       try {
-        const rows = await suggestCatalog({ q: clean, limit: 8 })
+        const rows = await suggestCatalog({ q: clean, game: selectedGame, limit: 8 })
         if (!cancelled) setSuggestions(rows || [])
       } catch {
         if (!cancelled) setSuggestions([])
@@ -49,15 +61,16 @@ export default function HomeSearch() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [query])
+  }, [query, selectedGame])
+
+  function chooseGame(game) {
+    setSelectedGame(game)
+    setSuggestions([])
+  }
 
   function submit() {
     const clean = query.trim()
-    if (!clean) {
-      router.push('/explorer')
-      return
-    }
-    router.push(`/explorer?q=${encodeURIComponent(clean)}&kind=card&view=grid`)
+    router.push(scopedSearchHref(selectedGame, clean))
   }
 
   function selectSuggestion(item) {
@@ -67,27 +80,66 @@ export default function HomeSearch() {
       return
     }
     const clean = String(item?.title || item?.name || query || '').trim()
-    if (clean) router.push(`/explorer?q=${encodeURIComponent(clean)}&kind=card&view=grid`)
+    if (clean) router.push(scopedSearchHref(selectedGame, clean))
   }
 
   return (
-    <div className="v5-home-search-wrap">
-      <SearchInput
-        type="search"
-        value={query}
-        onChange={setQuery}
-        onSubmit={submit}
-        suggestions={suggestions}
-        suggestionsLoading={loading}
-        onSuggestionSelect={selectSuggestion}
-        placeholder="Busca Pikachu, Luffy, Black Lotus, Dark Magician…"
-        variant="hero"
-      />
-      <div className="v5-home-search-meta" aria-label="Alcance de búsqueda">
-        <button type="button" className="v5-home-search-scope" aria-pressed="true" aria-label="Buscar en todos los juegos" data-game="all">
-          Todos los TCG
+    <div className="v17-home-search-wrap">
+      <div className="v17-home-search-shell">
+        <div className="v17-home-search-games" role="group" aria-label="Elegir juego para la búsqueda">
+          <button
+            type="button"
+            className={`v17-game-scope ${selectedGame === '' ? 'is-active' : ''}`}
+            aria-pressed={selectedGame === ''}
+            aria-label="Buscar en todos los juegos"
+            data-game="all"
+            onClick={() => chooseGame('')}
+          >
+            Todos
+          </button>
+          {ACTIVE_GAME_CATALOG.map((game) => (
+            <button
+              key={game.slug}
+              type="button"
+              className={`v17-game-scope ${selectedGame === game.slug ? 'is-active' : ''}`}
+              aria-pressed={selectedGame === game.slug}
+              aria-label={`Buscar solo en ${game.name}`}
+              data-game={game.slug}
+              onClick={() => chooseGame(game.slug)}
+              style={{ '--scope-accent': game.accent }}
+            >
+              <i aria-hidden="true" />
+              {game.name === 'Magic: The Gathering' ? 'Magic' : game.name === 'ONE PIECE Card Game' ? 'One Piece' : game.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="v17-home-search-input">
+          <SearchInput
+            type="search"
+            value={query}
+            onChange={setQuery}
+            onSubmit={submit}
+            suggestions={suggestions}
+            suggestionsLoading={loading}
+            onSuggestionSelect={selectSuggestion}
+            placeholder="Pikachu, Luffy, Black Lotus, Dark Magician…"
+            variant="hero"
+          />
+        </div>
+      </div>
+
+      <div className="v17-home-search-meta" aria-label="Alcance de búsqueda">
+        <small>
+          Buscando en <strong>{selectedConfig?.name || 'todos los TCG'}</strong>
+        </small>
+        <button
+          type="button"
+          className="v17-home-hub-link"
+          onClick={() => router.push(selectedGame ? `/games/${selectedGame}` : '/explorer')}
+        >
+          {selectedConfig ? `Abrir hub de ${selectedConfig.name} →` : 'Abrir explorador →'}
         </button>
-        <small className="v4-search-hint">Enter busca todas las coincidencias · ↑↓ abre una sugerencia exacta</small>
       </div>
     </div>
   )

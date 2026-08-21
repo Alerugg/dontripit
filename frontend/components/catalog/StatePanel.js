@@ -4,8 +4,10 @@ export default function StatePanel({ title, description, error = false, tone = '
   return (
     <section
       className={`state-panel-v2 panel state-panel-${tone} ${error ? 'is-error' : ''} ${loading ? 'is-loading' : ''}`}
-      role={loading ? 'status' : undefined}
-      aria-live={loading ? 'polite' : undefined}
+      role={error ? 'alert' : loading ? 'status' : undefined}
+      aria-live={error ? 'assertive' : loading ? 'polite' : undefined}
+      aria-atomic={error || loading ? 'true' : undefined}
+      aria-busy={loading ? 'true' : undefined}
     >
       {loading ? <span className="dri-loading-spinner" aria-hidden="true" /> : null}
       <div>

@@ -7,18 +7,22 @@ import BrandMark from '../brand/BrandMark'
 
 const shopUrl = 'https://shop.dontripit.com'
 
-const publicNavItems = [
-  { href: '/explorer', label: 'Explorador' },
-  { href: '/#games', label: 'Juegos' },
-  { href: '/#how-it-works', label: 'Cómo funciona' },
+const games = [
+  ['pokemon', 'Pokémon'],
+  ['onepiece', 'One Piece'],
+  ['magic', 'Magic'],
+  ['yugioh', 'Yu-Gi-Oh'],
+  ['riftbound', 'Riftbound'],
 ]
 
-const memberNavItems = [
-  { href: '/explorer', label: 'Explorador' },
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/collection', label: 'Mi colección' },
-  { href: '/wishlist', label: 'Wishlist' },
-]
+function Menu({ label, children }) {
+  return (
+    <details className="dri-nav-menu">
+      <summary>{label}</summary>
+      <div className="dri-nav-menu-popover">{children}</div>
+    </details>
+  )
+}
 
 export default function TopNav() {
   const pathname = usePathname()
@@ -43,11 +47,7 @@ export default function TopNav() {
     window.location.assign('/')
   }
 
-  const navItems = user ? memberNavItems : publicNavItems
-
-  function isActive(item) {
-    if (item.href.includes('#')) return false
-    const path = item.href
+  function isActive(path) {
     return pathname === path || pathname.startsWith(`${path}/`)
   }
 
@@ -59,11 +59,23 @@ export default function TopNav() {
         </Link>
 
         <nav className="dri-nav-links" aria-label="Navegación principal">
-          {navItems.map((item) => (
-            <Link key={item.href} href={item.href} className={`dri-nav-link ${isActive(item) ? 'is-active' : ''}`}>
-              {item.label}
-            </Link>
-          ))}
+          <Link href="/explorer" className={`dri-nav-link ${isActive('/explorer') ? 'is-active' : ''}`}>Explorar</Link>
+          <Menu label="Juegos">
+            {games.map(([slug, label]) => (
+              <Link key={slug} href={`/games/${slug}`}>
+                <span>{label}</span>
+                <small>Hub</small>
+              </Link>
+            ))}
+          </Menu>
+          {user ? <Link href="/dashboard" className={`dri-nav-link ${isActive('/dashboard') ? 'is-active' : ''}`}>Panel</Link> : null}
+          {user ? (
+            <Menu label="Mi cartera">
+              <Link href="/collection"><span>Colección</span><small>Portfolio</small></Link>
+              <Link href="/wishlist"><span>Wishlist</span><small>Radar</small></Link>
+              <Link href="/dashboard"><span>Dashboard</span><small>Cuenta</small></Link>
+            </Menu>
+          ) : null}
           <a href={shopUrl} className="dri-nav-link" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
         </nav>
 
@@ -83,6 +95,7 @@ export default function TopNav() {
           className={`dri-menu-toggle ${open ? 'is-open' : ''}`}
           aria-label={open ? 'Cerrar menú' : 'Abrir menú'}
           aria-expanded={open}
+          aria-controls="dri-mobile-nav"
           onClick={() => setOpen((current) => !current)}
         >
           <span />
@@ -91,11 +104,13 @@ export default function TopNav() {
       </div>
 
       {open ? (
-        <div className="dri-mobile-menu">
+        <div className="dri-mobile-menu" id="dri-mobile-nav">
           <div className="app-shell dri-mobile-menu-inner">
-            {navItems.map((item) => (
-              <Link key={item.href} href={item.href} onClick={() => setOpen(false)}>{item.label}</Link>
-            ))}
+            <Link href="/explorer" onClick={() => setOpen(false)}>Explorar</Link>
+            {games.map(([slug, label]) => <Link key={slug} href={`/games/${slug}`} onClick={() => setOpen(false)}>{label}</Link>)}
+            {user ? <Link href="/dashboard" onClick={() => setOpen(false)}>Panel</Link> : null}
+            {user ? <Link href="/collection" onClick={() => setOpen(false)}>Colección</Link> : null}
+            {user ? <Link href="/wishlist" onClick={() => setOpen(false)}>Wishlist</Link> : null}
             <a href={shopUrl} target="_blank" rel="noopener noreferrer">Tienda ↗</a>
             <div className="dri-mobile-menu-actions">
               {user ? (

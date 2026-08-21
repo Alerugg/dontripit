@@ -1,0 +1,81 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+
+const ROOT = path.resolve(__dirname, '..')
+const source = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8')
+
+test('Dashboard remains an account workspace backed by real account/library APIs', () => {
+  const dashboard = source('components/dashboard/DashboardPage.js')
+  const css = source('app/lovable-v2-home-dashboard.css')
+
+  assert.match(dashboard, /fetch\('\/api\/auth\/me'/)
+  assert.match(dashboard, /fetch\('\/api\/library\/collection'/)
+  assert.match(dashboard, /fetch\('\/api\/library\/wishlist'/)
+  assert.match(dashboard, /Valor conservador\*/)
+  assert.match(dashboard, /El resto no se estima/)
+  assert.match(css, /\.v13-dashboard[\s\S]*width:\s*min\(1220px/)
+  assert.match(css, /\.v13-search-workspace[\s\S]*background:\s*#0d0d10/)
+})
+
+test('Home uses the chosen Editorial Gallery direction with a visual cover and real search', () => {
+  const home = source('components/home/PublicHome.js')
+  const layout = source('app/layout.js')
+  const css = source('app/lovable-v4-home-editorial.css')
+
+  assert.match(home, /className="v17-cover"/)
+  assert.match(home, /La misma carta\.<br \/>/)
+  assert.match(home, /<em>Objetos<\/em> distintos\./)
+  assert.match(home, /Aterriza en la impresión física exacta/)
+  assert.match(home, /<HomeSearch \/>/)
+  assert.match(home, /Objetos físicos/)
+  assert.match(home, /Si no hay correspondencia segura/)
+  assert.match(home, /Tu colección/)
+  assert.match(home, /Fuente y procedencia visibles/)
+  assert.match(layout, /import '\.\/lovable-v4-home-editorial\.css'/)
+  assert.match(css, /\.v17-cover\s*\{/)
+  assert.match(css, /\.v17-object-gallery/)
+  assert.match(css, /\.v17-game-gallery/)
+  assert.match(css, /\.v17-portfolio-sheet/)
+})
+
+test('Home search integrates active TCG scope and routes scoped searches to the game hub', () => {
+  const search = source('components/home/HomeSearch.js')
+  const css = source('components/home/HomeSearchV2.css')
+
+  assert.match(search, /ACTIVE_GAME_CATALOG/)
+  assert.match(search, /suggestCatalog\(\{ q: clean, game: selectedGame, limit: 8 \}\)/)
+  assert.match(search, /`\/games\/\$\{game\}\$\{suffix\}`/)
+  assert.match(search, /aria-pressed=\{selectedGame === game\.slug\}/)
+  assert.match(search, /data-game=\{game\.slug\}/)
+  assert.match(search, /Abrir hub de/)
+  assert.doesNotMatch(search, /riftbound/i)
+  assert.match(css, /\.v17-home-search-games/)
+  assert.match(css, /overflow-x:\s*auto/)
+})
+
+test('Editorial Home stays truthful without fabricated valuation or cadence claims', () => {
+  const home = source('components/home/PublicHome.js')
+  assert.doesNotMatch(home, />24h</)
+  assert.doesNotMatch(home, /se actualiza a diario/)
+  assert.doesNotMatch(home, /312,40|68,95|3\.240|12480|Pikachu · Reverse/)
+  assert.match(home, /Sin precio seguro/)
+  assert.match(home, /Valor conservador/)
+  assert.match(home, /Cardmarket solo aparece cuando el mapeo es verificable/)
+  assert.match(home, /Sin mapeo exacto no mostramos precio/)
+})
+
+test('Editorial Home includes mobile and reduced-motion handling', () => {
+  const dashboardCss = source('app/lovable-v2-home-dashboard.css')
+  const homeCss = source('app/lovable-v4-home-editorial.css')
+  const reveal = source('components/home/HomeRevealV3.js')
+
+  assert.match(dashboardCss, /@media \(max-width:\s*760px\)/)
+  assert.match(homeCss, /@media\(max-width:980px\)/)
+  assert.match(homeCss, /@media\(max-width:680px\)/)
+  assert.match(homeCss, /@media\(max-width:430px\)/)
+  assert.match(homeCss, /@media\(prefers-reduced-motion:reduce\)/)
+  assert.match(reveal, /prefers-reduced-motion: reduce/)
+  assert.match(reveal, /IntersectionObserver/)
+})

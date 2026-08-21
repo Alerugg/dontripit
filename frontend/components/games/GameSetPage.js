@@ -1,6 +1,7 @@
 'use client'
 
 import './GameSetPage.css'
+import './GameSetPageV2.css'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import ResultsGrid from '../catalog/ResultsGrid'
