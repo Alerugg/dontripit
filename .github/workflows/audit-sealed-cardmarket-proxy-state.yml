@@ -98,7 +98,7 @@ jobs:
                 JOIN products p ON p.id=pv.product_id
                 JOIN games g ON g.id=p.game_id
                 WHERE pi.source='cardmarket_exact_proxy_v1'
-                  AND g.slug NOT IN ('magic-the-gathering','pokemon','yu-gi-oh')
+                  AND g.slug NOT IN ('mtg','onepiece','pokemon','yugioh')
                 GROUP BY g.slug ORDER BY g.slug
               ''')
               report['exact_proxy_games']=rows(conn, '''
