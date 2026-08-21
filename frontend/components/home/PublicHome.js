@@ -18,13 +18,6 @@ const GAME_LOGOS = {
   yugioh: '/games/yugioh/yugioh_logo.png',
 }
 
-const PRINT_OBJECTS = [
-  ['Original', 'Set · idioma · normal'],
-  ['Holo', 'Mismo nombre · otro acabado'],
-  ['Reverse', 'Otra variante física'],
-  ['Paralela', 'Otra región · otro idioma'],
-]
-
 const PORTFOLIO_ROWS = [
   ['Mapeado', 'safe'],
   ['En revisión', 'review'],
@@ -109,33 +102,6 @@ export default function PublicHome() {
         </div>
       </section>
 
-      <HomeRevealV3 as="section" className="v17-gallery-section">
-        <div className="app-shell">
-          <header className="v17-number-head">
-            <b>01</b>
-            <div>
-              <h2>Objetos físicos</h2>
-              <span>Identidad ≠ edición</span>
-            </div>
-          </header>
-
-          <div className="v17-object-gallery">
-            {PRINT_OBJECTS.map(([label, meta], index) => (
-              <figure key={label} className={index % 2 ? 'is-offset' : ''}>
-                <div className={`v17-object-card is-tone-${index}`} aria-hidden="true">
-                  <span>0{index + 1}</span>
-                  <i />
-                </div>
-                <figcaption>
-                  <strong>{label}</strong>
-                  <small>{meta}</small>
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-        </div>
-      </HomeRevealV3>
-
       <HomeRevealV3 as="section" className="v17-truth-section">
         <div className="v17-truth-grid" aria-hidden="true" />
         <div className="v17-truth-glow" aria-hidden="true" />
@@ -149,7 +115,7 @@ export default function PublicHome() {
       <HomeRevealV3 as="section" className="v17-games-section" id="games">
         <div className="app-shell">
           <header className="v17-number-head v17-number-head-dark">
-            <b>02</b>
+            <b>01</b>
             <div>
               <h2>Salas</h2>
               <span>Cuatro catálogos activos</span>
@@ -178,7 +144,7 @@ export default function PublicHome() {
       <HomeRevealV3 as="section" className="v17-portfolio-section">
         <div className="app-shell v17-portfolio-grid">
           <div className="v17-portfolio-copy">
-            <b>03</b>
+            <b>02</b>
             <h2>Tu colección,<br />impresión a impresión.</h2>
             <p>Solo se valora lo que tiene correspondencia segura.</p>
             <div>
@@ -214,19 +180,6 @@ export default function PublicHome() {
         </div>
         <p>Fuente y procedencia visibles · Sin fechas inventadas</p>
       </section>
-
-      <HomeRevealV3 as="section" className="v17-closing">
-        <div className="app-shell v17-closing-grid">
-          <h2>Colecciona<br />con precisión.</h2>
-          <div>
-            <p>Empieza por un nombre. Termina en la impresión correcta.</p>
-            <nav aria-label="Acciones finales">
-              <a href="#search">Buscar una carta ↑</a>
-              <Link href="/explorer">Explorar catálogo</Link>
-            </nav>
-          </div>
-        </div>
-      </HomeRevealV3>
 
       <SiteFooter />
     </main>
