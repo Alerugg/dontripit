@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import time
 
@@ -11,6 +12,9 @@ from app import db
 from app.auth.service import consume_request_quota, current_period_ym, find_active_key, touch_last_used
 from app.models import ApiPlan, ApiRequestMetric
 from app.rate_limit import clear_memory_rate_limits, consume_rate_limit
+
+
+logger = logging.getLogger(__name__)
 
 
 class _LegacyRateWindows:
@@ -328,21 +332,59 @@ def register_api_product_middleware(flask_app: Flask) -> None:
     def append_api_headers(response):
         path = request.path
         if path.startswith("/api/"):
-            latency_ms = int((time.perf_counter() - getattr(g, "request_started", time.perf_counter())) * 1000)
-            try:
-                with db.SessionLocal() as session:
-                    session.add(
-                        ApiRequestMetric(
-                            endpoint=path,
-                            status_code=response.status_code,
-                            latency_ms=max(latency_ms, 0),
-                            period_ym=current_period_ym(),
-                            api_key_prefix=getattr(g, "api_key_prefix", None),
+            latency_ms = max(
+                int((time.perf_counter() - getattr(g, "request_started", time.perf_counter())) * 1000),
+                0,
+            )
+            response.headers["Server-Timing"] = f"app;dur={latency_ms}"
+            response.headers["X-App-Response-Time-Ms"] = str(latency_ms)
+
+            meta = getattr(g, "api_meta", None) or {}
+            q_len = len(str(request.args.get("q") or "")) if path in {
+                "/api/search",
+                "/api/v1/search",
+                "/api/search/suggest",
+                "/api/v1/search/suggest",
+                "/api/v1/set-ui/prints",
+            } else None
+            logger.info(
+                "api_request_complete method=%s path=%s status=%s duration_ms=%s content_length=%s plan=%s q_len=%s vercel_id=%s",
+                request.method,
+                path,
+                response.status_code,
+                latency_ms,
+                response.content_length,
+                meta.get("plan"),
+                q_len,
+                request.headers.get("X-Vercel-Id"),
+            )
+
+            # A synchronous metrics INSERT+COMMIT adds another Neon round-trip
+            # after the actual catalog query and before Flask can return the
+            # response. On Vercel this materially increases user-visible TTFB,
+            # especially on mobile. Production observability is emitted above as
+            # structured runtime logs; DB metrics can still be explicitly enabled
+            # for diagnostics, while local/legacy environments preserve the
+            # historical behavior by default.
+            persist_db_metrics = _as_bool(
+                os.getenv("API_REQUEST_METRICS_DB_ENABLED"),
+                default=not bool(os.getenv("VERCEL")),
+            )
+            if persist_db_metrics:
+                try:
+                    with db.SessionLocal() as session:
+                        session.add(
+                            ApiRequestMetric(
+                                endpoint=path,
+                                status_code=response.status_code,
+                                latency_ms=latency_ms,
+                                period_ym=current_period_ym(),
+                                api_key_prefix=getattr(g, "api_key_prefix", None),
+                            )
                         )
-                    )
-                    session.commit()
-            except Exception:
-                pass
+                        session.commit()
+                except Exception:
+                    pass
 
         meta = getattr(g, "api_meta", None)
         if not meta:
