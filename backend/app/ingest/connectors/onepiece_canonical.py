@@ -325,6 +325,33 @@ class OnePieceCanonicalConnector(OnePieceV2Connector):
             for name, payload in zip(names, payloads, strict=True)
         ]
 
+    def _ensure_official_card_keys(self, session, payload: dict, stats: IngestStats) -> None:
+        """Pre-seed official Card keys so generic legacy name fallback cannot merge identities."""
+
+        if str(payload.get("source") or "") != "onepiece_official_v2":
+            return
+        game = self._ensure_game(session, stats)
+        rows = [
+            (str(item.get("id") or "").strip().lower(), str(item.get("name") or "").strip())
+            for item in payload.get("cards") or []
+        ]
+        rows = [(key, name) for key, name in rows if key and name]
+        if not rows:
+            return
+        keys = [key for key, _name in rows]
+        existing_keys = set(
+            session.execute(
+                select(Card.card_key).where(Card.game_id == game.id, Card.card_key.in_(keys))
+            ).scalars().all()
+        )
+        for card_key, card_name in rows:
+            if card_key in existing_keys:
+                continue
+            session.add(Card(game_id=game.id, name=card_name, card_key=card_key))
+            session.flush()
+            existing_keys.add(card_key)
+            stats.records_inserted += 1
+
     def _preserve_preferred_canonical_names(self, session, payload: dict) -> dict:
         """Prevent lower-priority regional sources from overwriting preferred names.
 
@@ -377,6 +404,56 @@ class OnePieceCanonicalConnector(OnePieceV2Connector):
         copied["sets"] = copied_sets
         return copied
 
+    def _sanitize_lower_priority_prints(self, session, payload: dict) -> dict:
+        """Keep regional source ids/images from stealing higher-priority EN ownership."""
+
+        region = str(payload.get("region") or "global-en").strip().lower()
+        if region == "global-en":
+            return payload
+
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        existing_en: set[tuple[str, str, str]] = set()
+        if game is not None and region == "asia-en":
+            existing_en = {
+                (
+                    str(set_code or "").strip().lower(),
+                    normalize_collector_number(collector),
+                    normalize_variant(variant),
+                )
+                for set_code, collector, variant in session.execute(
+                    select(Set.code, Print.collector_number, Print.variant)
+                    .join(Print, Print.set_id == Set.id)
+                    .where(Set.game_id == game.id, Print.language == "en")
+                ).all()
+            }
+
+        copied = dict(payload)
+        copied_cards = []
+        for card in payload.get("cards") or []:
+            card_copy = dict(card)
+            copied_prints = []
+            for print_row in card.get("prints") or []:
+                print_copy = dict(print_row)
+                # The generic writer has one legacy PrintIdentifier namespace.
+                # Regional ids would collide across languages, so only the
+                # highest-priority global source owns that legacy identifier.
+                print_copy["id"] = None
+                if region == "asia-en":
+                    identity = (
+                        str(print_copy.get("set_code") or "").strip().lower(),
+                        normalize_collector_number(print_copy.get("collector_number")),
+                        normalize_variant(print_copy.get("variant")),
+                    )
+                    if identity in existing_en:
+                        # Do not replace a global-English primary image with the
+                        # lower-priority Asia mirror for the same physical print.
+                        print_copy["image_url"] = ""
+                copied_prints.append(print_copy)
+            card_copy["prints"] = copied_prints
+            copied_cards.append(card_copy)
+        copied["cards"] = copied_cards
+        return copied
+
     def _assert_promo_materialized(self, session, payload: dict) -> None:
         expected: set[tuple[str, str]] = set()
         for card in payload.get("cards") or []:
@@ -419,7 +496,9 @@ class OnePieceCanonicalConnector(OnePieceV2Connector):
         )
 
     def upsert(self, session, payload: dict, stats: IngestStats, **kwargs) -> dict:
+        self._ensure_official_card_keys(session, payload, stats)
         prepared = self._preserve_preferred_canonical_names(session, payload)
+        prepared = self._sanitize_lower_priority_prints(session, prepared)
         touched = super().upsert(session, prepared, stats, **kwargs)
         self._assert_promo_materialized(session, prepared)
         return touched
