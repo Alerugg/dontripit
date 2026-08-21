@@ -72,7 +72,7 @@ export default function PublicHome() {
           <div><strong>{activeGames.length}</strong><span>juegos activos</span></div>
           <div><strong>Exacta</strong><span>identidad física</span></div>
           <div><strong>Cardmarket</strong><span>referencia de mercado</span></div>
-          <div><strong>24h</strong><span>proceso de actualización</span></div>
+          <div><strong>Regional</strong><span>fuente y procedencia visibles</span></div>
         </div>
       </section>
 
@@ -161,7 +161,7 @@ export default function PublicHome() {
             <span className="canva-eyebrow">Contenido regional</span>
             <h2>Noticias y lanzamientos con fuente oficial.</h2>
           </div>
-          <p>El proceso regional se actualiza a diario y mantiene separadas las fuentes de Europa, Estados Unidos y Japón.</p>
+          <p>Las fuentes se mantienen separadas por región y cada elemento publicado conserva fecha y procedencia verificables.</p>
         </div>
         <div className="canva-region-grid">
           {REGIONS.map(([code, title, copy]) => (
@@ -172,7 +172,7 @@ export default function PublicHome() {
             </article>
           ))}
           <article className="canva-region-card canva-region-card-accent">
-            <span>DIARIO</span>
+            <span>INTEGRIDAD</span>
             <strong>Sin fechas inventadas</strong>
             <small>Solo se publica lo que llega de las fuentes activas verificadas.</small>
           </article>
