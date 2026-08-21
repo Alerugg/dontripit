@@ -18,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      TARGET_REF: ${{ github.ref_name }}
+      # GitHub schedules only the default-branch workflow. Production catalog
+      # work lives on catalog-v2, so never derive this target from github.ref_name.
+      TARGET_REF: catalog-v2
     steps:
       - name: Dispatch the production children sequentially
         uses: actions/github-script@v7
@@ -30,9 +32,8 @@ jobs:
             const targetRef = process.env.TARGET_REF;
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-            // This workflow is the only owner of the daily production schedule.
-            // Every production child below is workflow_dispatch-only and executes
-            // the exact ref dispatched by this orchestrator. Riftbound remains excluded.
+            // This default-branch workflow owns the daily schedule, while every
+            // production child executes the exact catalog-v2 ref. Riftbound remains excluded.
             // MTG canonical source writes remain deliberately excluded until the
             // finish-aware incremental writer is certified. Cardmarket MTG catalog,
             // exact accepted links and canonical prices remain refreshed below.
