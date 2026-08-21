@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   audit:
@@ -149,3 +150,37 @@ jobs:
           path: /tmp/sealed-state-audit/report.json
           retention-days: 90
           if-no-files-found: error
+
+      - name: Publish read-only audit status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY' >/tmp/sealed-audit-status.json
+          import json, os
+          from pathlib import Path
+          state='success' if os.environ['JOB_STATUS']=='success' else 'failure'
+          description='sealed production state audit failed'
+          p=Path('/tmp/sealed-state-audit/report.json')
+          if p.exists():
+              r=json.loads(p.read_text())
+              description=(f"strict={r.get('strict_exact_variants',0)} exact={r.get('exact_proxy_rows',0)} "
+                           f"missing={r.get('strict_without_image',0)} gate={r.get('gate','?')}")[:140]
+          print(json.dumps({
+              'state':state,
+              'context':'sealed-images-production-audit',
+              'description':description,
+              'target_url':os.environ['RUN_URL'],
+          }))
+          PY
+          curl --fail-with-body -sS -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/statuses/$COMMIT_SHA" \
+            --data-binary @/tmp/sealed-audit-status.json
