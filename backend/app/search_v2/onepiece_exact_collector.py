@@ -30,9 +30,10 @@ def exact_onepiece_collector_search(
     Normal/name search may group them for usability, but a pure collector-code
     lookup must not collapse those editions into a single result.
 
-    The canonical ``card_key`` is deliberately the lookup anchor here rather than
-    a rebuildable Search V2 normalization field. Search projections can change;
-    the certified Card identity is the durable source of truth.
+    Physical ``Print`` rows anchored by the durable canonical ``Card.card_key``
+    are the source of truth. ``PrintSearchProfile`` is joined only as optional
+    enrichment, so a newly ingested physical print is immediately discoverable
+    even if the rebuildable Search V2 projection has not caught up yet.
 
     ``None`` means the query is not a pure One Piece collector-code lookup and
     regular logical-card search should continue. An empty list is a valid exact
@@ -53,11 +54,11 @@ def exact_onepiece_collector_search(
     canonical_card_key = f"onepiece:{collector}"
 
     stmt = (
-        select(PrintSearchProfile, Print, Card, Set, Game)
-        .join(Print, Print.id == PrintSearchProfile.print_id)
-        .join(Card, Card.id == PrintSearchProfile.card_id)
+        select(Print, Card, Set, Game, PrintSearchProfile)
+        .join(Card, Card.id == Print.card_id)
         .join(Set, Set.id == Print.set_id)
-        .join(Game, Game.id == PrintSearchProfile.game_id)
+        .join(Game, Game.id == Card.game_id)
+        .outerjoin(PrintSearchProfile, PrintSearchProfile.print_id == Print.id)
         .where(
             Game.slug == "onepiece",
             Card.card_key == canonical_card_key,
@@ -65,14 +66,14 @@ def exact_onepiece_collector_search(
         .order_by(
             Set.release_date.asc().nullslast(),
             Set.code.asc(),
-            PrintSearchProfile.exact_variant.asc().nullslast(),
+            Print.variant.asc().nullslast(),
             Print.id.asc(),
         )
         .limit(row_limit)
     )
 
     results: list[dict] = []
-    for profile, print_row, card, set_row, game_row in session.execute(stmt).all():
+    for print_row, card, set_row, game_row, profile in session.execute(stmt).all():
         image_url = session.execute(
             select(PrintImage.url)
             .where(PrintImage.print_id == print_row.id)
@@ -93,11 +94,19 @@ def exact_onepiece_collector_search(
                 "collector_number": print_row.collector_number,
                 "language": print_row.language,
                 "rarity": print_row.rarity,
-                "exact_variant": profile.exact_variant,
-                "variant_family": profile.variant_family,
+                "exact_variant": (
+                    profile.exact_variant
+                    if profile is not None and profile.exact_variant
+                    else print_row.variant
+                ),
+                "variant_family": (
+                    profile.variant_family
+                    if profile is not None and profile.variant_family
+                    else ("default" if str(print_row.variant or "default") == "default" else print_row.variant)
+                ),
                 "primary_image_url": image_url,
-                "releases": profile.release_names_json or [],
-                "attributes": profile.attributes_json or {},
+                "releases": profile.release_names_json or [] if profile is not None else [],
+                "attributes": profile.attributes_json or {} if profile is not None else {},
                 "score": 1.0,
             }
         )
