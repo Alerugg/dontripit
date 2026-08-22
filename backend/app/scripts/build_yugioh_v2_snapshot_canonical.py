@@ -77,16 +77,39 @@ SOURCE_PRINT_EXCLUSIONS: dict[tuple[str, str], dict] = {
     },
 }
 
-EXPECTED_FIXED = {
+# YGOPRODeck is a live source. These historical certified counts are lower bounds,
+# not immutable snapshots: official catalog growth must pass while an accidental
+# truncated response must still fail closed.
+SOURCE_MINIMUMS = {
     "source_cards": 14480,
-    "canonical_cards": 14479,
     "releases": 1032,
-    "cards_without_print_evidence": 490,
-    "noisy_rarity_rows": 206,
-    "no_hyphen_family_fallback_rows": 12,
-    "source_card_aliases_merged": 1,
-    "excluded_source_print_rows": 9,
 }
+
+# These counts describe explicit curated policy in this file and therefore remain
+# exact. If an alias or quarantine decision changes, it requires a reviewed code
+# change rather than being silently accepted as upstream growth.
+EXPECTED_STATIC = {
+    "source_card_aliases_merged": len(CARD_ALIAS_TO_CANONICAL),
+    "excluded_source_print_rows": len(SOURCE_PRINT_EXCLUSIONS),
+}
+
+
+def _assert_minimum(label: str, actual: int, minimum: int) -> None:
+    if actual < minimum:
+        raise AssertionError(
+            f"Snapshot source minimum failed: {label}={actual} minimum={minimum}"
+        )
+
+
+def _assert_snapshot_gates(counts: dict[str, int]) -> None:
+    for key, minimum in SOURCE_MINIMUMS.items():
+        _assert_minimum(key, int(counts[key]), minimum)
+    for key, expected in EXPECTED_STATIC.items():
+        actual = int(counts[key])
+        if actual != expected:
+            raise AssertionError(
+                f"Snapshot static gate moved: {key}={actual} expected={expected}"
+            )
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -195,10 +218,8 @@ def run(*, output_dir: Path) -> dict:
         else ""
     )
 
-    if len(source_cards) != EXPECTED_FIXED["source_cards"]:
-        raise AssertionError(f"Source Card count moved: {len(source_cards)}")
-    if len(releases) != EXPECTED_FIXED["releases"]:
-        raise AssertionError(f"Official release count moved: {len(releases)}")
+    _assert_minimum("source_cards", len(source_cards), SOURCE_MINIMUMS["source_cards"])
+    _assert_minimum("releases", len(releases), SOURCE_MINIMUMS["releases"])
 
     source_cards_by_id = {_clean(card.get("id")): card for card in source_cards}
     if len(source_cards_by_id) != len(source_cards):
@@ -225,8 +246,6 @@ def run(*, output_dir: Path) -> dict:
     canonical_groups: dict[str, list[dict]] = defaultdict(list)
     for source_card in source_cards:
         canonical_groups[_canonical_card_id(source_card.get("id"))].append(source_card)
-    if len(canonical_groups) != EXPECTED_FIXED["canonical_cards"]:
-        raise AssertionError(f"Canonical Card grouping moved: {len(canonical_groups)}")
 
     # Family fallback evidence is built only from accepted rows.
     explicit_families: dict[str, Counter[str]] = defaultdict(Counter)
@@ -251,7 +270,7 @@ def run(*, output_dir: Path) -> dict:
     missing_exclusion_keys = sorted(set(SOURCE_PRINT_EXCLUSIONS) - set(exclusion_hits))
     if missing_exclusion_keys:
         raise AssertionError(f"Configured source conflict rows disappeared: {missing_exclusion_keys}")
-    if sum(exclusion_hits.values()) != EXPECTED_FIXED["excluded_source_print_rows"]:
+    if sum(exclusion_hits.values()) != EXPECTED_STATIC["excluded_source_print_rows"]:
         raise AssertionError(
             f"Excluded raw source row count moved: {sum(exclusion_hits.values())}"
         )
@@ -562,7 +581,7 @@ def run(*, output_dir: Path) -> dict:
         if not accepted_print_for_card:
             cards_without_print_evidence += 1
 
-    if len(source_conflict_rows) != EXPECTED_FIXED["excluded_source_print_rows"]:
+    if len(source_conflict_rows) != EXPECTED_STATIC["excluded_source_print_rows"]:
         raise AssertionError(
             f"Source conflict quarantine count moved: {len(source_conflict_rows)}"
         )
@@ -691,11 +710,7 @@ def run(*, output_dir: Path) -> dict:
         "excluded_source_print_rows": len(source_conflict_rows),
         "deduplicated_source_print_rows": deduplicated_source_print_rows,
     }
-    for key, expected in EXPECTED_FIXED.items():
-        if counts[key] != expected:
-            raise AssertionError(
-                f"Snapshot fixed gate moved: {key}={counts[key]} expected={expected}"
-            )
+    _assert_snapshot_gates(counts)
 
     files = {
         "sets.jsonl": set_rows,
@@ -724,13 +739,14 @@ def run(*, output_dir: Path) -> dict:
             "official_release_rows": len(releases),
         },
         "counts": counts,
-        "expected_fixed_gates": EXPECTED_FIXED,
+        "source_minimum_gates": SOURCE_MINIMUMS,
+        "expected_static_gates": EXPECTED_STATIC,
         "snapshot_bytes_uncompressed": sum(bytes_by_file.values()),
         "bytes_by_file": bytes_by_file,
         "identity_policy": {
             "card": "canonical source Card id after explicit high-confidence source-alias merge",
             "card_aliases": CARD_ALIAS_TO_CANONICAL,
-            "set": "collector-number family; 12 DB1 no-hyphen rows use unanimous same-release fallback without rewriting the raw code",
+            "set": "collector-number family; no-hyphen rows use unanimous same-release fallback without rewriting the raw code",
             "print": "canonical Card id + raw full collector code + canonical human rarity; raw rarity/rareness-code aliases remain provenance",
             "release": "unique official cardsets.php release name",
             "source_conflicts": "proven bad source card-to-code assignments are quarantined, never silently repaired",
