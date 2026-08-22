@@ -13,6 +13,24 @@ import './PrintDetailPage.css'
 
 const DEFAULT_DISPLAY_LOCALE = 'es-ES'
 
+function normalizeLocaleTag(value) {
+  const raw = String(value || '').trim().split('@')[0].replace(/_/g, '-')
+  if (!raw) return DEFAULT_DISPLAY_LOCALE
+  try {
+    const canonical = Intl.getCanonicalLocales(raw)
+    if (canonical?.[0]) return canonical[0]
+  } catch {
+    const base = raw.split('-')[0]
+    try {
+      const canonicalBase = Intl.getCanonicalLocales(base)
+      if (canonicalBase?.[0]) return canonicalBase[0]
+    } catch {
+      return DEFAULT_DISPLAY_LOCALE
+    }
+  }
+  return DEFAULT_DISPLAY_LOCALE
+}
+
 function MetaLine({ label, value }) {
   if (!value && value !== false && value !== 0) return null
   return <div className="dri-version-fact"><span>{label}</span><strong>{String(value)}</strong></div>
@@ -24,15 +42,50 @@ function IdentityChip({ children, accent = false }) {
 }
 
 function money(value, currency = 'EUR', locale = DEFAULT_DISPLAY_LOCALE) {
-  if (value === null || value === undefined) return '—'
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  const safeLocale = normalizeLocaleTag(locale)
   try {
-    return new Intl.NumberFormat(locale || DEFAULT_DISPLAY_LOCALE, {
+    return new Intl.NumberFormat(safeLocale, {
       style: 'currency',
       currency,
       maximumFractionDigits: 2,
-    }).format(Number(value))
+    }).format(number)
   } catch {
-    return `${value} ${currency}`
+    try {
+      return new Intl.NumberFormat(DEFAULT_DISPLAY_LOCALE, {
+        style: 'currency',
+        currency,
+        maximumFractionDigits: 2,
+      }).format(number)
+    } catch {
+      return `${number.toFixed(2)} ${currency}`
+    }
+  }
+}
+
+function formatMarketDate(value, locale = DEFAULT_DISPLAY_LOCALE) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const safeLocale = normalizeLocaleTag(locale)
+  try {
+    return new Intl.DateTimeFormat(safeLocale, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }).format(date)
+  } catch {
+    try {
+      return new Intl.DateTimeFormat(DEFAULT_DISPLAY_LOCALE, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }).format(date)
+    } catch {
+      return date.toISOString().slice(0, 10)
+    }
   }
 }
 
@@ -54,63 +107,56 @@ function friendlyVariant(value) {
 }
 
 function PriceMetric({ label, value, currency, locale, featured = false }) {
-  if (value === null || value === undefined) return null
+  const display = money(value, currency, locale)
+  if (!display) return null
   return (
     <div className={`ux-price-metric ${featured ? 'is-featured' : ''}`}>
       <span>{label}</span>
-      <strong>{money(value, currency, locale)}</strong>
+      <strong>{display}</strong>
     </div>
   )
 }
 
 function PriceBlock({ price, cardmarket, locale }) {
-  if (!price) {
-    return (
-      <section className="panel-soft identifiers ux-price-panel v14-market-panel">
-        <div className="v14-market-head">
-          <div>
-            <p className="eyebrow">Mercado exacto</p>
-            <h2>Cardmarket</h2>
-          </div>
-          <span className="v14-market-state is-empty">Sin precio actual</span>
-        </div>
-        <p className="detail-meta"><strong>Sin Price Guide actual.</strong> No reutilizamos el precio de otra edición: solo mostramos la contraparte exacta cuando existe en Cardmarket.</p>
-        {cardmarket?.url ? (
-          <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn v14-cardmarket-cta">
-            Ver esta Print en Cardmarket ↗
-          </a>
-        ) : (
-          <span className="v14-market-unlinked">Sin enlace Cardmarket exacto disponible</span>
-        )}
-      </section>
-    )
-  }
+  if (!price) return null
 
   const currency = price.currency || 'EUR'
-  const hasConservative = price.conservative !== null && price.conservative !== undefined
+  const primaryValue = price.trend ?? price.average ?? price.conservative ?? price.minimum
+  const primaryDisplay = money(primaryValue, currency, locale)
+  if (!primaryDisplay) return null
+  const primaryLabel = price.trend !== null && price.trend !== undefined
+    ? 'Precio de mercado'
+    : price.average !== null && price.average !== undefined
+      ? 'Media actual'
+      : 'Valor disponible'
+  const updated = formatMarketDate(price.as_of, locale)
 
   return (
-    <section className="panel-soft identifiers ux-price-panel v14-market-panel">
-      <div className="ux-price-heading v14-market-head">
+    <section className="panel-soft identifiers ux-price-panel v14-market-panel v15-print-market-panel">
+      <div className="ux-price-heading v14-market-head v15-print-market-head">
         <div>
           <p className="eyebrow">Mercado exacto</p>
           <h2>Cardmarket</h2>
         </div>
-        <div className="v14-market-primary">
-          <span>{hasConservative ? 'Valor conservador' : 'Price Guide actual'}</span>
-          {hasConservative ? <strong className="ux-price-main">{money(price.conservative, currency, locale)}</strong> : null}
+        <div className="v14-market-primary v15-print-market-primary">
+          <span>{primaryLabel}</span>
+          <strong className="ux-price-main">{primaryDisplay}</strong>
+          <small>Esta Print física · no otra edición</small>
         </div>
       </div>
 
       <div className="ux-price-grid v14-price-grid">
-        <PriceMetric label="Mínimo" value={price.minimum} currency={currency} locale={locale} />
-        <PriceMetric label="Conservador" value={price.conservative} currency={currency} locale={locale} featured />
-        <PriceMetric label="Tendencia" value={price.trend} currency={currency} locale={locale} />
-        <PriceMetric label="Media" value={price.average} currency={currency} locale={locale} />
+        <PriceMetric label="Low" value={price.minimum} currency={currency} locale={locale} />
+        <PriceMetric label="Media 1d" value={price.avg1} currency={currency} locale={locale} />
+        <PriceMetric label="Media 7d" value={price.avg7} currency={currency} locale={locale} featured />
+        <PriceMetric label="Media 30d" value={price.avg30} currency={currency} locale={locale} />
       </div>
 
       <div className="v14-market-foot">
-        <p className="detail-meta">{price.as_of ? `Actualizado ${new Date(price.as_of).toLocaleDateString(locale || DEFAULT_DISPLAY_LOCALE)}` : 'Precio de la versión comercial vinculada.'}</p>
+        <p className="detail-meta">
+          {updated ? `Actualizado ${updated}` : 'Price Guide de la versión comercial vinculada.'}
+          {price.price_variant ? ` · ${friendlyVariant(price.price_variant) || price.price_variant}` : ''}
+        </p>
         {cardmarket?.url ? (
           <a href={cardmarket.url} target="_blank" rel="noopener noreferrer sponsored" className="dri-btn v14-cardmarket-cta">
             Ver esta Print en Cardmarket ↗
@@ -119,8 +165,8 @@ function PriceBlock({ price, cardmarket, locale }) {
       </div>
 
       <details className="dri-technical dri-price-method v14-price-method">
-        <summary>Cómo se calcula</summary>
-        <p className="detail-meta">El valor conservador usa Low Price EX+ para versiones no foil y Foil Low para versiones foil cuando Cardmarket publica esa métrica. No reutilizamos el precio de otra edición.</p>
+        <summary>Cómo leer estos precios</summary>
+        <p className="detail-meta">El precio principal prioriza la métrica de mercado publicada para esta contraparte exacta. Low y medias se muestran por separado. No reutilizamos el precio de otra edición, idioma o acabado.</p>
       </details>
     </section>
   )
@@ -128,7 +174,7 @@ function PriceBlock({ price, cardmarket, locale }) {
 
 function resolveBrowserLocale() {
   if (typeof navigator === 'undefined') return DEFAULT_DISPLAY_LOCALE
-  return navigator.languages?.[0] || navigator.language || DEFAULT_DISPLAY_LOCALE
+  return normalizeLocaleTag(navigator.languages?.[0] || navigator.language || DEFAULT_DISPLAY_LOCALE)
 }
 
 export default function PrintDetailPage({ params }) {
@@ -153,7 +199,9 @@ export default function PrintDetailPage({ params }) {
         const [payload, releaseResponse, priceResponse] = await Promise.all([
           fetchPrintById(id, { locale }),
           fetchPrintPhysicalReleases(id).catch(() => ({ physical_releases: [] })),
-          fetch(`/api/prices/print/${id}`, { cache: 'no-store' }).then((response) => response.ok ? response.json() : { price: null, cardmarket: null }).catch(() => ({ price: null, cardmarket: null })),
+          fetch(`/api/prices/print/${id}`, { cache: 'no-store' })
+            .then((response) => response.ok ? response.json() : { price: null, cardmarket: null })
+            .catch(() => ({ price: null, cardmarket: null })),
         ])
         if (!cancelled) {
           setPrintDetail(payload)
@@ -167,7 +215,7 @@ export default function PrintDetailPage({ params }) {
           setPhysicalReleases([])
           setPrice(null)
           setCardmarket(null)
-          setError(requestError.message)
+          setError(requestError?.message || 'No pudimos cargar esta impresión.')
         }
       } finally {
         if (!cancelled) setLoading(false)
