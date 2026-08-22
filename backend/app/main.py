@@ -31,6 +31,7 @@ from app.routes.prices import prices_bp
 from app.routes.set_ui import set_ui_bp
 from app.routes.user_auth import user_auth_bp
 from app.routes.user_library import user_library_bp
+from app.search_v2.http_fast_path import install_search_http_fast_path
 from app.search_v2.legacy_search_hot_path import install_legacy_search_hot_path
 
 
@@ -78,6 +79,9 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(admin_seed_bp)
     flask_app.register_blueprint(prices_bp)
     register_api_product_middleware(flask_app)
+    # Register after auth/rate limiting so a fast-path response cannot bypass
+    # the API product guard. Only read-only name searches are intercepted.
+    install_search_http_fast_path(flask_app)
 
     @flask_app.errorhandler(HTTPException)
     def handle_http_error(error: HTTPException):
