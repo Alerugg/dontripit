@@ -55,14 +55,16 @@ test('clean interior system is centered, sans, dark and does not target Home com
   assert.doesNotMatch(css, /\.v5-home/)
 })
 
-test('card result price is optional and only reads exact matched-print market', () => {
+test('card result price is optional and only reads verified exact matched-print market', () => {
   const card = read('components/catalog/CatalogCard.js')
   assert.match(card, /function cardCornerMarket/)
   assert.match(card, /item\?\.card_market/)
-  assert.match(card, /item\.type === 'card' && cardMarket/)
-  assert.match(card, /v14-card-price-corner/)
-  assert.match(card, /Precio exacto de la impresión física mostrada/)
-  assert.doesNotMatch(card, /v14-card-price-corner[^]*Sin precio actual/)
+  assert.match(card, /market\.mapping_confidence !== 'exact'/)
+  assert.match(card, /Precio de impresión exacta/)
+  assert.match(card, /v15-result-price-card/)
+  assert.match(card, /if \(!market\) return null/)
+  assert.doesNotMatch(card, /Sin precio actual/)
+  assert.doesNotMatch(card, />N\/D</)
 })
 
 test('search BFF enriches cards from the matched physical print only', () => {
