@@ -9,6 +9,14 @@ on:
       - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
       - 'backend/app/ingest/connectors/onepiece*.py'
       - 'backend/app/ingest/registry.py'
+  pull_request:
+    types: [closed]
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
+      - 'backend/app/ingest/connectors/onepiece*.py'
+      - 'backend/app/ingest/registry.py'
 
 permissions:
   contents: read
@@ -19,6 +27,7 @@ concurrency:
 
 jobs:
   onepiece:
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
