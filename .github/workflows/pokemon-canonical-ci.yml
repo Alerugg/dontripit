@@ -1,0 +1,100 @@
+name: Pokemon Canonical CI
+
+on:
+  push:
+    branches:
+      - main
+      - catalog-v2
+      - 'fix/**'
+    paths:
+      - 'backend/app/ingest/connectors/tcgdex_pokemon*.py'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/tests/test_tcgdex*.py'
+      - '.github/workflows/pokemon-canonical-ci.yml'
+      - '.github/workflows/refresh-pokemon-canonical-v2.yml'
+  pull_request:
+    branches:
+      - main
+      - catalog-v2
+    paths:
+      - 'backend/app/ingest/connectors/tcgdex_pokemon*.py'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/tests/test_tcgdex*.py'
+      - '.github/workflows/pokemon-canonical-ci.yml'
+      - '.github/workflows/refresh-pokemon-canonical-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Compile physical writer and production parity proof
+        run: |
+          python -m py_compile \
+            app/ingest/connectors/tcgdex_pokemon.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/scripts/prove_pokemon_tcgdex_parity.py
+      - name: Pokemon multilingual physical regression suite
+        env:
+          PYTHONPATH: .
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q \
+            tests/test_tcgdex_multilingual.py \
+            tests/test_tcgdex_physical_scope.py
+
+  official-source-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Verify current TCGdex EN ES JA physical catalogs and promo anchor
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from app.scripts.prove_pokemon_tcgdex_parity import (
+              KNOWN_PROMO_ANCHORS,
+              LANGUAGES,
+              _source_manifest,
+          )
+          from app.ingest.connectors.tcgdex_pokemon_multilingual_physical import (
+              PhysicalMultilingualTcgdexPokemonConnector,
+          )
+
+          connector = PhysicalMultilingualTcgdexPokemonConnector()
+          for language in LANGUAGES:
+              manifest = _source_manifest(connector, language=language)
+              anchors = sorted(KNOWN_PROMO_ANCHORS.get(language, set()))
+              print(
+                  f'language={language} physical_sets={len(manifest.sets)} '
+                  f'physical_cards={len(manifest.cards)} pocket_excluded={len(manifest.pocket_cards)} '
+                  f'promo_anchors={anchors}'
+              )
+          print('TCGdex physical source coverage: OK')
+          PY
