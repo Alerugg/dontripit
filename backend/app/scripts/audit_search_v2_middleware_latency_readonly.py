@@ -39,6 +39,7 @@ def main() -> int:
                   round(avg(latency_ms)::numeric, 1) AS avg_ms,
                   percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
                   percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
+                  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) AS p99_ms,
                   max(latency_ms)::int AS max_ms,
                   min(requested_at) AS first_seen,
                   max(requested_at) AS last_seen
@@ -103,6 +104,7 @@ def main() -> int:
             "latency_ms_is_computed_before_metric_insert": True,
             "catalog_latency_includes_auth_rate_limit_and_route": True,
             "internal_first_party_prefix": "internal",
+            "p99_is_accumulated_production_percentile_since_cutoff": True,
         },
         "summary": {
             "rows": len(normalized),
@@ -111,6 +113,7 @@ def main() -> int:
             "internal_first_party_search_groups": len(internal_search),
             "internal_first_party_samples": sum(row["samples"] for row in internal_search),
             "public_search_groups": len(public_search),
+            "public_search_samples": sum(row["samples"] for row in public_search),
         },
         "groups": normalized,
     }
