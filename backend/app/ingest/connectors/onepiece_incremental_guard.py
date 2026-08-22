@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
 from app.ingest.normalization import normalize_collector_number, normalize_variant
-from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
+from app.models import Card, Game, Print, PrintImage, Set
 
 
 class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
@@ -139,7 +139,13 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
         return True
 
     def _delta_payload(self, session, payload: dict) -> dict:
-        """Return only materialized rows whose persisted state differs from source."""
+        """Return only rows whose canonical material state differs from source.
+
+        ``punk_records`` PrintIdentifier ownership is deliberately excluded from
+        freshness. The legacy reconciler may preserve a different identifier for
+        a perfectly valid canonical physical print; treating that alias as a
+        Bandai source contract turns every refresh into a permanent full replay.
+        """
 
         if str(payload.get("source") or "").strip() != "onepiece_official_v2":
             return payload
@@ -216,20 +222,6 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
         ).all():
             primary_image_by_print.setdefault(int(print_id), str(url or "").strip())
 
-        external_id_by_print: dict[int, str] = {}
-        if is_global:
-            for print_id, external_id in session.execute(
-                select(PrintIdentifier.print_id, PrintIdentifier.external_id)
-                .join(Print, Print.id == PrintIdentifier.print_id)
-                .join(Card, Card.id == Print.card_id)
-                .where(
-                    Card.game_id == game.id,
-                    PrintIdentifier.source == "punk_records",
-                )
-                .order_by(PrintIdentifier.id.asc())
-            ).all():
-                external_id_by_print.setdefault(int(print_id), str(external_id or "").strip())
-
         source_sets_by_code = {
             str(row.get("code") or "").strip().lower(): row
             for row in payload.get("sets") or []
@@ -251,6 +243,10 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
         delta_cards: list[dict] = []
         source_print_count = 0
         delta_print_count = 0
+        reason_counts: dict[str, int] = {}
+
+        def record_reason(reason: str) -> None:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
         for source_card in payload.get("cards") or []:
             card_key = str(source_card.get("id") or "").strip().lower()
@@ -260,9 +256,13 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
 
             existing_card = existing_cards.get(card_key)
             card_changed = existing_card is None
+            if card_changed:
+                record_reason("missing_card")
             if existing_card is not None:
                 effective_name = incoming_name if is_global else existing_card["name"]
                 card_changed = bool(effective_name and effective_name != existing_card["name"])
+                if card_changed:
+                    record_reason("card_name")
 
             changed_prints: list[dict] = []
             for source_print in source_card.get("prints") or []:
@@ -275,30 +275,29 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
 
                 identity = (card_key, set_code, collector, language, variant)
                 existing_print = existing_prints.get(identity)
-                changed = existing_print is None
+                print_reasons: set[str] = set()
 
-                if existing_print is not None:
+                if existing_print is None:
+                    print_reasons.add("missing_print")
+                else:
                     expected_print_key = f"onepiece:{set_code}:{collector}:{language}:{variant}"
                     incoming_rarity_raw = source_print.get("rarity")
                     incoming_rarity = str(incoming_rarity_raw).strip() if incoming_rarity_raw not in (None, "") else None
                     if existing_print["rarity"] != incoming_rarity:
-                        changed = True
+                        print_reasons.add("rarity")
                     if existing_print["print_key"] != expected_print_key:
-                        changed = True
+                        print_reasons.add("print_key")
 
                     incoming_image = str(source_print.get("image_url") or "").strip()
                     physical_identity = (set_code, collector, variant)
                     if region == "asia-en" and physical_identity in existing_en_physical:
                         incoming_image = ""
                     if incoming_image and primary_image_by_print.get(existing_print["id"], "") != incoming_image:
-                        changed = True
+                        print_reasons.add("primary_image")
 
-                    incoming_external_id = str(source_print.get("id") or "").strip()
-                    if is_global and incoming_external_id:
-                        if external_id_by_print.get(existing_print["id"], "") != incoming_external_id:
-                            changed = True
-
-                if changed:
+                if print_reasons:
+                    for reason in print_reasons:
+                        record_reason(reason)
                     changed_prints.append(dict(source_print))
                     required_set_codes.add(set_code)
                     delta_print_count += 1
@@ -322,6 +321,7 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             "delta_cards": len(delta_cards),
             "delta_prints": delta_print_count,
             "delta_sets": len(delta_sets),
+            "change_reasons": dict(sorted(reason_counts.items())),
             "region": region,
             "language": language,
         }
@@ -330,7 +330,7 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
         delta["cards"] = delta_cards
         delta["diagnostics"] = diagnostics
         self.logger.info(
-            "ingest onepiece delta region=%s language=%s source_cards=%s source_prints=%s delta_cards=%s delta_prints=%s delta_sets=%s",
+            "ingest onepiece delta region=%s language=%s source_cards=%s source_prints=%s delta_cards=%s delta_prints=%s delta_sets=%s reasons=%s",
             region,
             language,
             len(payload.get("cards") or []),
@@ -338,6 +338,7 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             len(delta_cards),
             delta_print_count,
             len(delta_sets),
+            dict(sorted(reason_counts.items())),
         )
         return delta
 
