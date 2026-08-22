@@ -22,6 +22,16 @@ def _structured_code(value: object) -> str | None:
     return re.sub(r"-+", "-", normalized.replace(" ", "-")).strip("-") or None
 
 
+def _set_collector_parts(q_code: str) -> tuple[str, str] | None:
+    """Split canonical set-collector IDs without building indexed columns at query time."""
+    if "-" not in q_code:
+        return None
+    set_code, collector = q_code.split("-", 1)
+    if not set_code or not collector:
+        return None
+    return set_code, collector
+
+
 def exact_structured_identifier_search(
     session,
     *,
@@ -29,16 +39,16 @@ def exact_structured_identifier_search(
     game: str | None,
     limit: int = 24,
 ) -> list[dict] | None:
-    """Resolve a structured catalog identifier without invoking fuzzy search.
+    """Resolve Pokémon/MTG structured IDs on indexable equality predicates.
 
     ``None`` means the query is not identifier-shaped and the normal name/fuzzy
     engine should run. A list (including an empty list) means the query is an
     identifier and must fail closed instead of returning unrelated fuzzy cards.
 
-    One Piece keeps its dedicated collector parser because it also accepts
-    compact promo forms such as P135/P 135. Yu-Gi-Oh keeps its localization-aware
-    exact collector ranking. This fast path currently targets Pokémon and MTG,
-    where exact IDs otherwise fall through to the natural-name engine.
+    Pokémon's TCGdex ID is the canonical Card key, so it never needs to scan the
+    Print projection to discover the candidate Card. MTG IDs are set+collector;
+    querying those two indexed projection columns separately avoids the previous
+    runtime concatenation that forced a wide PrintSearchProfile scan.
     """
     if game not in {"pokemon", "mtg"}:
         return None
@@ -48,42 +58,40 @@ def exact_structured_identifier_search(
     q_code = _structured_code(query)
     if not q_code:
         return None
+    parts = _set_collector_parts(q_code)
+    if parts is None:
+        return []
 
+    set_code, collector = parts
     bounded_limit = max(1, min(int(limit or 24), 100))
     pokemon_card_key = f"pokemon:tcgdex:{q_code}" if game == "pokemon" else ""
 
+    if game == "pokemon":
+        candidate_sql = """
+          SELECT c.id AS card_id, 0 AS source_rank
+          FROM cards c
+          JOIN games g ON g.id=c.game_id
+          WHERE g.slug='pokemon'
+            AND lower(c.card_key)=:pokemon_card_key
+          LIMIT :limit
+        """
+    else:
+        candidate_sql = """
+          SELECT DISTINCT psp.card_id, 0 AS source_rank
+          FROM print_search_profiles psp
+          JOIN games g ON g.id=psp.game_id
+          WHERE g.slug='mtg'
+            AND psp.normalized_set_code=:set_code
+            AND psp.normalized_collector_number=:collector
+          ORDER BY psp.card_id ASC
+          LIMIT :limit
+        """
+
     rows = session.execute(
         text(
-            """
-            WITH candidates AS MATERIALIZED (
-              SELECT c.id AS card_id, 0 AS source_rank
-              FROM cards c
-              JOIN games g ON g.id=c.game_id
-              WHERE g.slug=:game
-                AND :pokemon_card_key <> ''
-                AND lower(c.card_key)=:pokemon_card_key
-
-              UNION ALL
-
-              SELECT psp.card_id, 1 AS source_rank
-              FROM print_search_profiles psp
-              JOIN games g ON g.id=psp.game_id
-              WHERE g.slug=:game
-                AND (
-                  psp.normalized_collector_number=:q_code
-                  OR (
-                    psp.normalized_set_code IS NOT NULL
-                    AND psp.normalized_collector_number IS NOT NULL
-                    AND psp.normalized_set_code || '-' || psp.normalized_collector_number=:q_code
-                  )
-                )
-            ),
-            ranked_cards AS MATERIALIZED (
-              SELECT card_id, MIN(source_rank) AS source_rank
-              FROM candidates
-              GROUP BY card_id
-              ORDER BY source_rank ASC, card_id ASC
-              LIMIT :limit
+            f"""
+            WITH ranked_cards AS MATERIALIZED (
+              {candidate_sql}
             )
             SELECT
               c.id AS card_id,
@@ -104,10 +112,10 @@ def exact_structured_identifier_search(
             FROM ranked_cards rc
             JOIN cards c ON c.id=rc.card_id
             JOIN games g ON g.id=c.game_id
-            JOIN card_search_profiles csp ON csp.card_id=c.id
+            LEFT JOIN card_search_profiles csp ON csp.card_id=c.id
             JOIN LATERAL (
               SELECT
-                psp.print_id,
+                p.id AS print_id,
                 s.code AS set_code,
                 s.name AS set_name,
                 p.collector_number,
@@ -118,21 +126,19 @@ def exact_structured_identifier_search(
                 (
                   SELECT pi.url
                   FROM print_images pi
-                  WHERE pi.print_id=psp.print_id
+                  WHERE pi.print_id=p.id
                   ORDER BY pi.is_primary DESC, pi.id ASC
                   LIMIT 1
                 ) AS primary_image_url,
                 COUNT(*) OVER () AS variant_count
-              FROM print_search_profiles psp
-              JOIN prints p ON p.id=psp.print_id
+              FROM prints p
               JOIN sets s ON s.id=p.set_id
-              WHERE psp.card_id=c.id
+              LEFT JOIN print_search_profiles psp ON psp.print_id=p.id
+              WHERE p.card_id=c.id
               ORDER BY
-                (psp.normalized_collector_number=:q_code) DESC,
                 (
-                  psp.normalized_set_code IS NOT NULL
-                  AND psp.normalized_collector_number IS NOT NULL
-                  AND psp.normalized_set_code || '-' || psp.normalized_collector_number=:q_code
+                  lower(s.code)=:set_code
+                  AND lower(p.collector_number)=:collector
                 ) DESC,
                 CASE lower(coalesce(p.language,'')) WHEN 'en' THEN 0 ELSE 1 END,
                 p.id ASC
@@ -146,6 +152,8 @@ def exact_structured_identifier_search(
             "game": game,
             "q_code": q_code,
             "pokemon_card_key": pokemon_card_key,
+            "set_code": set_code,
+            "collector": collector,
             "limit": bounded_limit,
         },
     ).mappings().all()
