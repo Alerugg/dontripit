@@ -23,7 +23,10 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
     q_norm = normalize_search_text(q)
     tokens = [token for token in q_norm.split() if len(token) >= 2][:8]
     bounded_limit = max(1, min(int(limit or 24), 100))
-    candidate_limit = max(240, bounded_limit * 12)
+    # matched_cards is already relevance-ordered before family reranking. Four
+    # pages of headroom is enough to preserve the top results while avoiding the
+    # old 240-300 correlated family-count lookups on every typo/fuzzy request.
+    candidate_limit = max(80, bounded_limit * 4)
 
     token_where = " AND ".join(
         f"csp.search_text LIKE :token_{idx}" for idx in range(len(tokens))
