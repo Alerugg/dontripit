@@ -16,7 +16,7 @@ function setCode(item) {
 
 function formatCurrency(value, currency = 'EUR') {
   const number = value === null || value === undefined || value === '' ? null : Number(value)
-  if (number === null || !Number.isFinite(number)) return null
+  if (number === null || !Number.isFinite(number) || number <= 0) return null
   try {
     return new Intl.NumberFormat('es-ES', {
       style: 'currency',
