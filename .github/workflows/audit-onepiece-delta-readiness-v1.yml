@@ -1,0 +1,63 @@
+name: Audit One Piece Delta Readiness V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/ingest/connectors/onepiece_incremental_guard.py'
+      - 'backend/app/scripts/audit_onepiece_delta_readiness_v1.py'
+      - 'backend/tests/test_onepiece_incremental_self_heal.py'
+      - '.github/workflows/audit-onepiece-delta-readiness-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-onepiece-delta-readiness-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+      ONEPIECE_SOURCE: remote
+      ONEPIECE_INGEST_SOURCE: remote
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile delta contract
+        run: |
+          python -m py_compile app/ingest/connectors/onepiece_incremental_guard.py
+          python -m py_compile app/scripts/audit_onepiece_delta_readiness_v1.py
+
+      - name: Run focused self-healing regression suite
+        run: pytest -q tests/test_onepiece_incremental_self_heal.py
+
+      - name: Compare current Bandai sources to production read-only
+        run: |
+          mkdir -p /tmp/onepiece-delta-readiness-v1
+          python -m app.scripts.audit_onepiece_delta_readiness_v1 \
+            --report /tmp/onepiece-delta-readiness-v1/report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-delta-readiness-v1-${{ github.run_id }}
+          path: /tmp/onepiece-delta-readiness-v1/*
+          retention-days: 90
+          if-no-files-found: warn
