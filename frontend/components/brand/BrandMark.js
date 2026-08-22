@@ -1,5 +1,5 @@
 const BRAND_ASSETS = {
-  nav: '/branding/dontripit-mark.png',
+  nav: '/branding/dontripit-nav-mark.webp',
   wordmark: '/branding/dontripit-wordmark.png',
 }
 
