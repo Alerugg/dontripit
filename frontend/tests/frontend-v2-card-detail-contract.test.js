@@ -8,31 +8,38 @@ function source(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8')
 }
 
-test('P0.5 Card detail presents logical identity and truthful physical coverage', () => {
+test('P0.5 Card detail presents logical identity and truthful physical market coverage', () => {
   const detail = source('components/cards/CardDetailLayout.js')
   assert.match(detail, /v9-identity-pill">Carta canónica/)
   assert.match(detail, /prints_pagination\?\.total/)
   assert.match(detail, /Sets relacionados/)
   assert.match(detail, /Solo en la impresión exacta/)
-  assert.doesNotMatch(detail, /display_price|price_market|cardmarket_price/)
+  assert.match(detail, /Rango entre impresiones\/variantes enlazadas; no es un precio universal de la carta/)
+  assert.match(detail, /No agregamos precios de distintas ediciones, idiomas o acabados/)
+  assert.match(detail, /marketSummary\.pricedPrints/)
 })
 
 test('P0.5 version browser makes exact Print links the primary conversion path', () => {
   const browser = source('components/cards/CardVersionBrowser.js')
   assert.match(browser, /Elige la edición exacta/)
-  assert.match(browser, /Cada enlace de idioma termina en una Print concreta/)
+  assert.match(browser, /Cada precio pertenece a una versión física enlazada de forma exacta/)
+  assert.match(browser, /getPrintHref\(representative\.print_id\)/)
   assert.match(browser, /getPrintHref\(exactPrint\.print_id\)/)
   assert.match(browser, /getPrintHref\(print\.print_id\)/)
   assert.match(browser, /getPrintHref\(singleExactPrint\.print_id\)/)
   assert.match(browser, /Abrir impresión exacta/)
 })
 
-test('P0.5 Cardmarket group identity is labelled as reference rather than exact valuation', () => {
+test('P0.5 linked Cardmarket identities expose only verified positive guide values', () => {
   const browser = source('components/cards/CardVersionBrowser.js')
   assert.match(browser, /Identidad Cardmarket enlazada/)
   assert.match(browser, /Sin enlace Cardmarket exacto/)
   assert.match(browser, /Referencia de producto Cardmarket/)
-  assert.doesNotMatch(browser, /price_guides|display_price|price_market|Cardmarket pendiente/)
+  assert.match(browser, /version\?\.market_status !== 'linked'/)
+  assert.match(browser, /price_guides/)
+  assert.match(browser, /Number\.isFinite\(number\) && number > 0/)
+  assert.match(browser, /Precio exacto · Cardmarket/)
+  assert.doesNotMatch(browser, /Cardmarket pendiente/)
 })
 
 test('P0.5 Card detail styling is global, responsive and reduced-motion safe', () => {
