@@ -85,12 +85,13 @@ SOURCE_MINIMUMS = {
     "releases": 1032,
 }
 
-# These counts describe explicit curated policy in this file and therefore remain
-# exact. If an alias or quarantine decision changes, it requires a reviewed code
-# change rather than being silently accepted as upstream growth.
+# These counts describe reviewed static source-policy evidence and therefore remain
+# exact. Eight configured quarantine keys currently match nine raw rows because
+# YGOPRODeck publishes 94820406 / SGX3-ENA11 twice (Common and Secret Rare).
+# Any further alias, quarantine-key or raw-row multiplicity change must be reviewed.
 EXPECTED_STATIC = {
     "source_card_aliases_merged": len(CARD_ALIAS_TO_CANONICAL),
-    "excluded_source_print_rows": len(SOURCE_PRINT_EXCLUSIONS),
+    "excluded_source_print_rows": 9,
 }
 
 
