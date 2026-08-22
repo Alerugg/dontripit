@@ -37,6 +37,35 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+      - name: Diagnose curated raw-source exclusion hits
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
+          from app.scripts.build_yugioh_v2_snapshot_canonical import SOURCE_PRINT_EXCLUSIONS
+
+          cards=YgoProDeckYugiohConnector()._load_remote(limit=None)
+          hits=Counter()
+          samples={}
+          for card in cards:
+              card_id=str(card.get('id') or '').strip()
+              for row in card.get('card_sets') or []:
+                  code=str(row.get('set_code') or '').strip().upper()
+                  key=(card_id,code)
+                  if key in SOURCE_PRINT_EXCLUSIONS:
+                      hits[key]+=1
+                      samples.setdefault(key,[]).append(row)
+          report={
+              'configured_exclusions':len(SOURCE_PRINT_EXCLUSIONS),
+              'raw_exclusion_hits':sum(hits.values()),
+              'hits':[
+                  {'card_id':card_id,'set_code':code,'count':hits[(card_id,code)],'rows':samples[(card_id,code)]}
+                  for card_id,code in sorted(hits)
+              ],
+          }
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
       - name: Build fresh canonical snapshot from current YGOPRODeck and cardsets source
         run: python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
       - name: Compare canonical identities to Neon
