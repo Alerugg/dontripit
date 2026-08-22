@@ -6,10 +6,11 @@ const test = require('node:test')
 const ROOT = path.resolve(__dirname, '..')
 const source = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8')
 
-test('Explorer cards show only exact matched prices and stay silent when price is absent', () => {
+test('Explorer cards show only exact matched positive prices and stay silent when price is absent', () => {
   const card = source('components/catalog/CatalogCard.js')
   assert.match(card, /mapping_confidence !== 'exact'/)
   assert.match(card, /Precio de impresión exacta/)
+  assert.match(card, /number <= 0/)
   assert.match(card, /if \(!market\) return null/)
   assert.match(card, /Print \$\{market\.printId\}/)
   assert.doesNotMatch(card, /Sin precio actual/)
@@ -24,6 +25,7 @@ test('Canonical Card detail exposes an honest range without inventing a universa
   assert.match(detail, /no es un precio universal de la carta/)
   assert.match(detail, /onMarketSummary=\{setMarketSummary\}/)
   assert.match(browser, /price_guides/)
+  assert.match(browser, /number > 0/)
   assert.match(browser, /VersionMarket/)
   assert.match(browser, /Precio exacto · Cardmarket/)
   assert.match(browser, /guideVariantLabel/)
@@ -33,12 +35,13 @@ test('Canonical Card detail exposes an honest range without inventing a universa
 test('Exact Print page uses a safe locale and makes the exact market price the headline', () => {
   const printPage = source('app/prints/[id]/page.js')
   assert.match(printPage, /function normalizeLocaleTag/)
-  assert.match(printPage, /split\('@'\)/)
-  assert.match(printPage, /replace\(\/_\/g, '-'\)/)
+  assert.ok(printPage.includes(".split('@')[0]"))
+  assert.ok(printPage.includes(".replace(/_/g, '-')"))
   assert.match(printPage, /function formatMarketDate/)
-  assert.match(printPage, /const primaryValue = price\.trend/)
+  assert.match(printPage, /positiveNumber\(price\.trend\)/)
   assert.match(printPage, /Precio de mercado/)
   assert.match(printPage, /if \(!price\) return null/)
+  assert.match(printPage, /locale=\{DEFAULT_DISPLAY_LOCALE\}/)
   assert.doesNotMatch(printPage, /toLocaleDateString\(locale/)
 })
 
