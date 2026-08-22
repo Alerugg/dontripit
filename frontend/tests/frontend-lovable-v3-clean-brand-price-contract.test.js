@@ -14,7 +14,7 @@ test('loads the clean interior override after the approved Home styles', () => {
   assert.ok(cleanIndex > homeIndex)
 })
 
-test('uses verified Don’tRipIt wordmark data and the official navigation mark', () => {
+test('uses verified Don’tRipIt wordmark data and the official circular mark', () => {
   const brand = read('components/brand/BrandMark.js')
   assert.match(brand, /data:image\/webp;base64,UklGR/)
   assert.match(brand, /wordmark:\s*WORDMARK_DATA_URI/)
@@ -24,19 +24,25 @@ test('uses verified Don’tRipIt wordmark data and the official navigation mark'
   assert.doesNotMatch(brand, /dontripit-wordmark\.png/)
 })
 
-test('round DR mark is explicit in nav and auth stays on horizontal wordmark', () => {
+test('nav uses horizontal wordmark, footer uses large DR mark and auth keeps wordmark', () => {
   const nav = read('components/layout/TopNav.js')
+  const footer = read('components/layout/SiteFooter.js')
   const auth = read('components/auth/AuthShell.js')
   const placement = read('app/lovable-v3-brand-placement.css')
 
-  assert.match(nav, /<BrandMark variant="nav" \/>/)
+  assert.match(nav, /className="dri-nav-brand"[^]*<BrandMark \/>/)
+  assert.doesNotMatch(nav, /<BrandMark variant="nav" \/>/)
+  assert.match(footer, /dri-footer-logo-safe[^]*<BrandMark variant="nav" \/>/)
   assert.doesNotMatch(auth, /<BrandMark compact \/>/)
   assert.match(auth, /dri-auth-mobile-brand"><BrandMark \/>/)
-  assert.match(placement, /The circular DR! mark is navigation-only/)
-  assert.match(placement, /width:\s*42px !important/)
-  assert.match(placement, /width:\s*36px !important/)
+  assert.match(placement, /Global nav uses the horizontal wordmark/)
+  assert.match(placement, /Footer uses the circular DR! mark/)
+  assert.match(placement, /\.dri-nav-brand \.dri-brand-official-wordmark/)
+  assert.match(placement, /width:\s*156px !important/)
+  assert.match(placement, /\.dri-footer \.dri-brand-official-mark/)
+  assert.match(placement, /width:\s*120px !important/)
+  assert.match(placement, /width:\s*96px !important/)
   assert.match(placement, /overflow:\s*visible !important/)
-  assert.match(placement, /\.dri-footer \.dri-brand-official-wordmark/)
 })
 
 test('clean interior system is centered, sans, dark and does not target Home composition', () => {
