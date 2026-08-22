@@ -193,7 +193,7 @@
 .v15-print-market-primary {
   display: grid !important;
   justify-items: end;
-  gap: 2px;
+  gap: 4px;
 }
 
 .v15-print-market-primary > span {
@@ -215,8 +215,9 @@
 }
 
 .v15-print-market-primary > small {
-  color: #716978;
-  font-size: .5rem;
+  color: #7d7484;
+  font-size: .58rem;
+  line-height: 1.35;
 }
 
 .results-list .v15-result-price-row,
