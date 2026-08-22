@@ -6,6 +6,7 @@ on:
       - 'backend/app/routes/search_v2.py'
       - 'backend/app/search_v2/exhaustive_name_query.py'
       - 'backend/app/search_v2/exact_identifier.py'
+      - 'backend/app/search_v2/onepiece_exact_collector.py'
       - 'backend/app/search_v2/pokemon_query.py'
       - 'backend/app/search_v2/yugioh_query.py'
       - 'backend/app/scripts/audit_search_v2_exhaustive_pagination_v1.py'
@@ -13,6 +14,7 @@ on:
       - 'backend/alembic/versions/*localized*'
       - 'backend/tests/test_search_v2_api.py'
       - 'backend/tests/test_search_v2_exact_identifier.py'
+      - 'backend/tests/test_onepiece_exact_collector_physical.py'
       - 'backend/tests/test_search_v2_performance.py'
       - 'backend/tests/test_pokemon_search_v2_performance.py'
       - 'backend/tests/test_yugioh_search_v2_performance.py'
@@ -51,6 +53,7 @@ jobs:
           python -m py_compile app/routes/search_v2.py
           python -m py_compile app/search_v2/exhaustive_name_query.py
           python -m py_compile app/search_v2/exact_identifier.py
+          python -m py_compile app/search_v2/onepiece_exact_collector.py
           python -m py_compile app/search_v2/pokemon_query.py
           python -m py_compile app/search_v2/yugioh_query.py
           python -m py_compile app/scripts/audit_search_v2_exhaustive_pagination_v1.py
@@ -62,6 +65,7 @@ jobs:
           pytest -q \
             tests/test_search_v2_api.py \
             tests/test_search_v2_exact_identifier.py \
+            tests/test_onepiece_exact_collector_physical.py \
             tests/test_search_v2_filter_contracts.py \
             tests/test_search_v2_performance.py \
             tests/test_mtg_search_v2.py \
