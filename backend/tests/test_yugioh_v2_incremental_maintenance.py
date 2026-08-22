@@ -19,7 +19,7 @@ def test_incremental_v2_skips_catalog_wide_legacy_repair(monkeypatch):
     ) == {}
 
 
-def test_full_v2_preserves_inherited_legacy_repair(monkeypatch):
+def test_full_v2_runs_inherited_legacy_repair_with_parent_gate_enabled(monkeypatch):
     connector = YgoProDeckYugiohV2Connector()
     observed = {}
 
@@ -42,5 +42,5 @@ def test_full_v2_preserves_inherited_legacy_repair(monkeypatch):
     assert observed == {
         "session": "session",
         "source": "source",
-        "incremental": False,
+        "incremental": True,
     }
