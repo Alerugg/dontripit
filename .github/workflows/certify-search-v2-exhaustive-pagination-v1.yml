@@ -6,11 +6,14 @@ on:
       - 'backend/app/routes/search_v2.py'
       - 'backend/app/search_v2/exhaustive_name_query.py'
       - 'backend/app/search_v2/exact_identifier.py'
+      - 'backend/app/search_v2/yugioh_query.py'
       - 'backend/app/scripts/audit_search_v2_exhaustive_pagination_v1.py'
       - 'backend/alembic/versions/*search*'
+      - 'backend/alembic/versions/*localized*'
       - 'backend/tests/test_search_v2_api.py'
       - 'backend/tests/test_search_v2_exact_identifier.py'
       - 'backend/tests/test_search_v2_performance.py'
+      - 'backend/tests/test_yugioh_search_v2_performance.py'
       - '.github/workflows/certify-search-v2-exhaustive-pagination-v1.yml'
   workflow_dispatch:
 
@@ -46,8 +49,10 @@ jobs:
           python -m py_compile app/routes/search_v2.py
           python -m py_compile app/search_v2/exhaustive_name_query.py
           python -m py_compile app/search_v2/exact_identifier.py
+          python -m py_compile app/search_v2/yugioh_query.py
           python -m py_compile app/scripts/audit_search_v2_exhaustive_pagination_v1.py
           python -m py_compile alembic/versions/20260822_37_add_search_hot_path_indexes.py
+          python -m py_compile alembic/versions/20260822_38_add_localized_name_trgm.py
           test "$(alembic heads | wc -l)" -eq 1
       - name: Run Search V2 regression suite
         run: |
@@ -57,7 +62,8 @@ jobs:
             tests/test_search_v2_filter_contracts.py \
             tests/test_search_v2_performance.py \
             tests/test_mtg_search_v2.py \
-            tests/test_yugioh_multilingual_search_v2.py
+            tests/test_yugioh_multilingual_search_v2.py \
+            tests/test_yugioh_search_v2_performance.py
       - name: Audit exhaustive live Pikachu and Luffy pagination
         run: |
           mkdir -p /tmp/search-v2-exhaustive-pagination-v1
