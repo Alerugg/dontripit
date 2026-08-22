@@ -8,7 +8,7 @@ from app.ingest.base import IngestStats
 from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
 from app.ingest.connectors.onepiece_incremental_guard import SelfHealingOnePieceCanonicalConnector
 from app.ingest.registry import get_connector
-from app.models import Print
+from app.models import Print, PrintIdentifier
 
 
 def _promo_payload(*, collector: str = "P-150", language: str = "ja") -> dict:
@@ -103,7 +103,34 @@ def test_materialized_payload_reduces_to_empty_delta_without_mutating_source(cli
         assert delta["sets"] == []
         assert delta["diagnostics"]["incremental_delta"]["source_prints"] == 20
         assert delta["diagnostics"]["incremental_delta"]["delta_prints"] == 0
+        assert delta["diagnostics"]["incremental_delta"]["change_reasons"] == {}
         assert payload == original
+
+
+def test_global_delta_ignores_legacy_punk_identifier_drift(client):
+    connector = SelfHealingOnePieceCanonicalConnector()
+    payload = _promo_payload_many([f"P-{number:03d}" for number in range(130, 136)], language="en")
+
+    with db.SessionLocal() as session:
+        connector.upsert(session, payload, IngestStats())
+        session.flush()
+
+        identifiers = session.execute(
+            select(PrintIdentifier)
+            .join(Print, Print.id == PrintIdentifier.print_id)
+            .where(Print.language == "en", PrintIdentifier.source == "punk_records")
+        ).scalars().all()
+        assert len(identifiers) >= 6
+        for identifier in identifiers:
+            identifier.external_id = f"legacy-owner-{identifier.print_id}"
+        session.flush()
+
+        delta = connector._delta_payload(session, payload)
+
+        assert delta["cards"] == []
+        assert delta["sets"] == []
+        assert delta["diagnostics"]["incremental_delta"]["delta_prints"] == 0
+        assert delta["diagnostics"]["incremental_delta"]["change_reasons"] == {}
 
 
 def test_changed_payload_writes_only_new_regional_promo(client):
@@ -124,6 +151,7 @@ def test_changed_payload_writes_only_new_regional_promo(client):
         assert [row["code"] for row in delta["sets"]] == ["P"]
         assert delta["diagnostics"]["incremental_delta"]["source_prints"] == 21
         assert delta["diagnostics"]["incremental_delta"]["delta_prints"] == 1
+        assert delta["diagnostics"]["incremental_delta"]["change_reasons"] == {"missing_card": 1, "missing_print": 1}
 
         connector.upsert(session, expanded, IngestStats())
         session.flush()
@@ -150,6 +178,7 @@ def test_changed_primary_image_remains_a_real_delta(client):
         assert len(delta["cards"]) == 1
         assert len(delta["cards"][0]["prints"]) == 1
         assert delta["diagnostics"]["incremental_delta"]["delta_prints"] == 1
+        assert delta["diagnostics"]["incremental_delta"]["change_reasons"] == {"primary_image": 1}
 
 
 def test_canonical_refresh_does_not_run_full_legacy_image_sweep(client):
