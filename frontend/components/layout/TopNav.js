@@ -55,7 +55,7 @@ export default function TopNav() {
     <header className="dri-nav">
       <div className="dri-nav-inner app-shell">
         <Link href={user ? '/dashboard' : '/'} className="dri-nav-brand" aria-label="Don’tRipIt inicio" onClick={() => setOpen(false)}>
-          <BrandMark variant="nav" />
+          <BrandMark />
         </Link>
 
         <nav className="dri-nav-links" aria-label="Navegación principal">
