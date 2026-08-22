@@ -1,0 +1,54 @@
+name: Certify Search V2 Production Latency V1
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_search_v2_production_latency_v1.py'
+      - '.github/workflows/certify-search-v2-production-latency-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certify-search-v2-production-latency-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      # No explicit ref: PR runs test their merge commit; workflow_dispatch
+      # dispatched at catalog-v2 naturally checks out that exact production ref.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile latency audit
+        run: python -m py_compile app/scripts/audit_search_v2_production_latency_v1.py
+
+      - name: Audit production latency and result quality read-only
+        run: |
+          mkdir -p /tmp/search-v2-production-latency-v1
+          python -m app.scripts.audit_search_v2_production_latency_v1 \
+            --base-url https://api.dontripit.com \
+            --report /tmp/search-v2-production-latency-v1/report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-v2-production-latency-v1-${{ github.run_id }}
+          path: /tmp/search-v2-production-latency-v1/*
+          retention-days: 90
+          if-no-files-found: warn
