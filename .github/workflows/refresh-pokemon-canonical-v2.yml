@@ -2,6 +2,15 @@ name: Refresh Pokemon Canonical V2
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/refresh-pokemon-canonical-v2.yml'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py'
 
 permissions:
   contents: read
@@ -40,14 +49,15 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
-      - name: Compile certified Pokemon physical writer
+      - name: Compile certified Pokemon physical writer and parity gate
         run: |
           python -m py_compile \
             app/ingest/run.py \
             app/ingest/registry.py \
             app/ingest/connectors/tcgdex_pokemon.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
-            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/scripts/prove_pokemon_tcgdex_parity.py
 
       - name: Re-run focused Pokemon physical identity guards
         env:
@@ -91,3 +101,8 @@ jobs:
               raise SystemExit(f'Pokemon language coverage incomplete: {summary!r}')
           print(json.dumps({'status': 'pass', 'languages': summary}, indent=2, sort_keys=True))
           PY
+
+      - name: Prove fresh TCGdex physical source parity in production
+        env:
+          PYTHONPATH: .
+        run: python -m app.scripts.prove_pokemon_tcgdex_parity
