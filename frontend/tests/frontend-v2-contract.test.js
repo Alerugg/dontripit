@@ -50,13 +50,17 @@ test('explorer exposes counted canonical cards, exact prints, sets and numbered 
   assert.match(explorer, /searchCatalog\(\{/)
 })
 
-test('catalog result cards reserve market amounts for exact physical prints', () => {
+test('catalog result cards expose only verified exact physical-print market amounts', () => {
   const card = source('components/catalog/CatalogCard.js')
   assert.match(card, /if \(item\?\.type !== 'print'\) return null/)
-  assert.match(card, /const raw = item\?\.market\?\.display_price/)
+  assert.match(card, /market\.mapping_confidence !== 'exact'/)
+  assert.match(card, /market\.display_price/)
+  assert.match(card, /function cardCornerMarket/)
+  assert.match(card, /item\?\.card_market/)
+  assert.match(card, /Precio de impresión exacta/)
+  assert.match(card, /if \(!market\) return null/)
+  assert.doesNotMatch(card, /Sin precio actual/)
   assert.doesNotMatch(card, /cardmarket_price/)
-  assert.match(card, /Cardmarket exacto/)
-  assert.match(card, /No mostramos estimaciones ni precios de otra edición/)
 })
 
 test('chosen Editorial Gallery Home and final design override are active', () => {
