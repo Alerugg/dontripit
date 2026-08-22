@@ -89,9 +89,15 @@ def _fast_card_rows(
             csp.normalized_name,
             CASE
               WHEN csp.normalized_name = :q_norm THEN 0
-              WHEN csp.normalized_name LIKE :prefix THEN 1
-              WHEN (' ' || csp.normalized_name || ' ') LIKE :word_match THEN 2
-              ELSE 3
+              -- One Piece users commonly search the character's familiar name
+              -- ("Luffy", "Zoro") while canonical names are "Monkey D Luffy"
+              -- and "Roronoa Zoro". Preserve the legacy relevance contract by
+              -- ranking a terminal whole-name token ahead of incidental prefixes
+              -- such as "Luffy & Ace" or "Zoro-Juurou".
+              WHEN :game = 'onepiece' AND csp.normalized_name LIKE :suffix THEN 1
+              WHEN csp.normalized_name LIKE :prefix THEN 2
+              WHEN (' ' || csp.normalized_name || ' ') LIKE :word_match THEN 3
+              ELSE 4
             END AS rank_bucket
           FROM card_search_profiles csp
           WHERE csp.game_id = (
@@ -155,6 +161,7 @@ def _fast_card_rows(
     params = {
         "q_norm": q_norm,
         "prefix": f"{q_norm}%",
+        "suffix": f"% {q_norm}",
         "contains": f"%{q_norm}%",
         "word_match": f"% {q_norm} %",
         "game": game,
