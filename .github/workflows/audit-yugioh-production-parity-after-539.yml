@@ -1,0 +1,108 @@
+name: Audit Yu-Gi-Oh Production Parity After 539
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-yugioh-production-parity-after-539.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build current canonical Yu-Gi-Oh source snapshot
+        run: |
+          rm -rf /tmp/ygo-current
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+      - name: Prove current production parity read-only
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root = Path('/tmp/ygo-current')
+
+          def vals(file_name, key):
+              return {
+                  str(json.loads(line)[key])
+                  for line in (root / file_name).read_text().splitlines()
+                  if line.strip()
+              }
+
+          source_cards = vals('cards.jsonl', 'card_key')
+          source_sets = {value.lower() for value in vals('sets.jsonl', 'code')}
+          source_prints = vals('prints.jsonl', 'print_key')
+
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              tx = conn.begin()
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              game_id = conn.execute(
+                  text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")
+              ).scalar_one()
+              db_cards = {
+                  str(value)
+                  for value in conn.execute(
+                      text('SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL'),
+                      {'g': game_id},
+                  ).scalars()
+              }
+              db_sets = {
+                  str(value).lower()
+                  for value in conn.execute(
+                      text('SELECT code FROM sets WHERE game_id=:g'),
+                      {'g': game_id},
+                  ).scalars()
+              }
+              db_prints = {
+                  str(value)
+                  for value in conn.execute(
+                      text('''
+                          SELECT p.print_key
+                          FROM prints p
+                          JOIN cards c ON c.id=p.card_id
+                          WHERE c.game_id=:g AND p.print_key IS NOT NULL
+                      '''),
+                      {'g': game_id},
+                  ).scalars()
+              }
+              tx.rollback()
+
+          missing_cards = sorted(source_cards - db_cards)
+          missing_sets = sorted(source_sets - db_sets)
+          missing_prints = sorted(source_prints - db_prints)
+          proof = {
+              'source_cards': len(source_cards),
+              'source_sets': len(source_sets),
+              'source_prints': len(source_prints),
+              'missing_cards': len(missing_cards),
+              'missing_sets': len(missing_sets),
+              'missing_prints': len(missing_prints),
+              'missing_card_examples': missing_cards[:20],
+              'missing_set_examples': missing_sets[:20],
+              'missing_print_examples': missing_prints[:20],
+              'production_writes': 0,
+          }
+          print(json.dumps(proof, indent=2, sort_keys=True))
+          if missing_cards or missing_sets or missing_prints:
+              raise AssertionError(proof)
+          PY
