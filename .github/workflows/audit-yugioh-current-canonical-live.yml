@@ -85,6 +85,8 @@ jobs:
           }
           Path('/tmp/ygo-current-canonical-gap.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
           print(json.dumps(report,indent=2,sort_keys=True))
+          if not report['current_source_exactly_covered']:
+              raise SystemExit(f"Current Yu-Gi-Oh canonical source is not fully covered by Neon: {json.dumps(gaps, sort_keys=True)}")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
