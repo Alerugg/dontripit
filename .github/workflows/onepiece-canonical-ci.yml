@@ -8,6 +8,7 @@ on:
       - 'fix/**'
     paths:
       - 'backend/app/ingest/connectors/onepiece*.py'
+      - 'backend/app/ingest/registry.py'
       - 'backend/tests/test_onepiece*.py'
       - '.github/workflows/onepiece-canonical-ci.yml'
       - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
@@ -17,6 +18,7 @@ on:
       - catalog-v2
     paths:
       - 'backend/app/ingest/connectors/onepiece*.py'
+      - 'backend/app/ingest/registry.py'
       - 'backend/tests/test_onepiece*.py'
       - '.github/workflows/onepiece-canonical-ci.yml'
       - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
@@ -44,6 +46,7 @@ jobs:
         run: >-
           pytest -q
           tests/test_onepiece_canonical_connector.py
+          tests/test_onepiece_incremental_self_heal.py
           tests/test_onepiece_v2_identity.py
           tests/test_onepiece_legacy_policy_jp.py
 
