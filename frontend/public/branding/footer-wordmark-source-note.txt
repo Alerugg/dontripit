@@ -1,0 +1,1 @@
+Footer wordmark rendering uses the verified embedded transparent asset in components/brand/BrandMark.js because the legacy dontripit-wordmark.png is physically truncated. Do not restore the legacy PNG without validating its decoded pixel bounds and desktop/mobile rendering.
