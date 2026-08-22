@@ -130,7 +130,7 @@ def test_changed_payload_writes_only_new_regional_promo(client):
         p150 = session.execute(
             select(Print).where(Print.collector_number == "P-150", Print.language == "ja")
         ).scalar_one()
-        assert p150.print_key == "onepiece:p:P-150:ja:default"
+        assert p150.print_key == "onepiece:p:p-150:ja:default"
 
 
 def test_changed_primary_image_remains_a_real_delta(client):
