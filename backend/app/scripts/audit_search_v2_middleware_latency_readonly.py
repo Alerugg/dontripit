@@ -10,6 +10,7 @@ import psycopg2
 
 OUTPUT = Path(os.getenv("SEARCH_V2_MIDDLEWARE_OUTPUT", "artifacts/search-v2-middleware-latency.json"))
 CUTOFF = os.getenv("FRA1_READY_AT", "2026-08-15T01:04:33Z")
+CURRENTNESS_SECONDS = int(os.getenv("SEARCH_V2_DB_METRIC_CURRENTNESS_SECONDS", "900"))
 
 QUERY = """
 SELECT
@@ -96,6 +97,19 @@ def main() -> int:
     finally:
         conn.close()
 
+    latest_metric_at = max(
+        (row["last_seen"] for row in rows if row.get("last_seen") is not None),
+        default=None,
+    )
+    metric_lag_seconds = (
+        max(0.0, (now - latest_metric_at).total_seconds())
+        if latest_metric_at is not None
+        else None
+    )
+    db_metrics_current = (
+        metric_lag_seconds is not None and metric_lag_seconds <= CURRENTNESS_SECONDS
+    )
+
     normalized = [
         {key: _clean(value) for key, value in row.items()}
         for row in rows
@@ -122,13 +136,22 @@ def main() -> int:
         "cutoff": CUTOFF,
         "transaction_read_only": True,
         "production_writes": 0,
+        "telemetry_freshness": {
+            "latest_persisted_metric_at": _clean(latest_metric_at),
+            "metric_lag_seconds": metric_lag_seconds,
+            "currentness_threshold_seconds": CURRENTNESS_SECONDS,
+            "db_metrics_current": db_metrics_current,
+            "role": "current" if db_metrics_current else "historical_diagnostic_only",
+        },
         "interpretation_contract": {
             "health_skips_catalog_auth_and_rate_limit": True,
-            "latency_ms_is_computed_before_metric_insert": True,
+            "latency_ms_is_computed_before_optional_metric_insert": True,
             "catalog_latency_includes_auth_rate_limit_and_route": True,
             "internal_first_party_prefix": "internal",
-            "p95_p99_are_accumulated_production_percentiles_per_window": True,
-            "recent_windows_may_be_sparse_and_must_be_interpreted_with_sample_count": True,
+            "p95_p99_are_persisted_percentiles_per_window": True,
+            "vercel_db_metric_persistence_is_optional_and_disabled_by_default": True,
+            "stale_db_metrics_must_not_be_used_as_current_performance_proof": True,
+            "current_performance_is_certified_by_active_api_probes_and_runtime_logs": True,
         },
         "windows": window_summaries,
         "groups": normalized,
