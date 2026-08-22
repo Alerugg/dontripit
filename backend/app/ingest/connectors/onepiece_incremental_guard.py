@@ -4,11 +4,11 @@ from sqlalchemy import select
 
 from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
 from app.ingest.normalization import normalize_collector_number, normalize_variant
-from app.models import Card, Game, Print, Set
+from app.models import Card, Game, Print, PrintIdentifier, PrintImage, Set
 
 
 class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
-    """Canonical One Piece writer with checksum-safe drift repair.
+    """Canonical One Piece writer with checksum-safe drift repair and delta replay.
 
     Incremental ingestion normally skips a source payload whose checksum was
     already persisted. That is safe only while every canonical entity guaranteed
@@ -18,8 +18,15 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
 
     Before accepting a checksum skip, prove that the stored source payload still
     has complete Card, Set and exact physical Print coverage in the database. If
-    any expected identity is missing, return ``False`` so the normal writer
-    replays the current payload and repairs the drift transactionally.
+    any expected identity is missing, return ``False`` so the writer replays the
+    current payload transactionally.
+
+    A changed official checksum does not imply that every row changed. Bandai's
+    regional payloads contain thousands of physical prints, while most refreshes
+    add or alter only a small tail. Before calling the legacy row-oriented writer,
+    build a database snapshot in a handful of queries and reduce the payload to
+    only new or materially changed Sets, Cards and Prints. This keeps canonical
+    freshness while avoiding tens of thousands of per-row SQL round trips.
     """
 
     name = "onepiece"
@@ -130,3 +137,227 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             len(expected_prints),
         )
         return True
+
+    def _delta_payload(self, session, payload: dict) -> dict:
+        """Return only materialized rows whose persisted state differs from source."""
+
+        if str(payload.get("source") or "").strip() != "onepiece_official_v2":
+            return payload
+
+        game = session.execute(select(Game).where(Game.slug == "onepiece")).scalar_one_or_none()
+        if game is None:
+            return payload
+
+        language = self._normalize_language(str(payload.get("language") or "en"))
+        region = str(payload.get("region") or "global-en").strip().lower()
+        is_global = region == "global-en"
+
+        existing_sets = {
+            str(code or "").strip().lower(): {"id": set_id, "name": str(name or "").strip()}
+            for set_id, code, name in session.execute(
+                select(Set.id, Set.code, Set.name).where(Set.game_id == game.id)
+            ).all()
+        }
+        existing_cards = {
+            str(card_key or "").strip().lower(): {"id": card_id, "name": str(name or "").strip()}
+            for card_id, card_key, name in session.execute(
+                select(Card.id, Card.card_key, Card.name).where(
+                    Card.game_id == game.id,
+                    Card.card_key.is_not(None),
+                )
+            ).all()
+        }
+
+        print_rows = session.execute(
+            select(
+                Print.id,
+                Card.card_key,
+                Set.code,
+                Print.collector_number,
+                Print.language,
+                Print.variant,
+                Print.rarity,
+                Print.print_key,
+            )
+            .join(Card, Card.id == Print.card_id)
+            .join(Set, Set.id == Print.set_id)
+            .where(Card.game_id == game.id)
+        ).all()
+
+        existing_prints: dict[tuple[str, str, str, str, str], dict] = {}
+        existing_en_physical: set[tuple[str, str, str]] = set()
+        for print_id, card_key, set_code, collector, print_language, variant, rarity, print_key in print_rows:
+            normalized_set = str(set_code or "").strip().lower()
+            normalized_collector = normalize_collector_number(collector)
+            normalized_language = str(print_language or "").strip().lower()
+            normalized_variant = normalize_variant(variant)
+            identity = (
+                str(card_key or "").strip().lower(),
+                normalized_set,
+                normalized_collector,
+                normalized_language,
+                normalized_variant,
+            )
+            existing_prints[identity] = {
+                "id": int(print_id),
+                "rarity": str(rarity).strip() if rarity is not None else None,
+                "print_key": str(print_key or "").strip(),
+            }
+            if normalized_language == "en":
+                existing_en_physical.add((normalized_set, normalized_collector, normalized_variant))
+
+        primary_image_by_print: dict[int, str] = {}
+        for print_id, url in session.execute(
+            select(PrintImage.print_id, PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Card, Card.id == Print.card_id)
+            .where(Card.game_id == game.id, PrintImage.is_primary.is_(True))
+            .order_by(PrintImage.id.asc())
+        ).all():
+            primary_image_by_print.setdefault(int(print_id), str(url or "").strip())
+
+        external_id_by_print: dict[int, str] = {}
+        if is_global:
+            for print_id, external_id in session.execute(
+                select(PrintIdentifier.print_id, PrintIdentifier.external_id)
+                .join(Print, Print.id == PrintIdentifier.print_id)
+                .join(Card, Card.id == Print.card_id)
+                .where(
+                    Card.game_id == game.id,
+                    PrintIdentifier.source == "punk_records",
+                )
+                .order_by(PrintIdentifier.id.asc())
+            ).all():
+                external_id_by_print.setdefault(int(print_id), str(external_id or "").strip())
+
+        source_sets_by_code = {
+            str(row.get("code") or "").strip().lower(): row
+            for row in payload.get("sets") or []
+            if str(row.get("code") or "").strip()
+        }
+        required_set_codes: set[str] = set()
+        changed_set_codes: set[str] = set()
+
+        for set_code, source_set in source_sets_by_code.items():
+            existing = existing_sets.get(set_code)
+            if existing is None:
+                changed_set_codes.add(set_code)
+                continue
+            incoming_name = str(source_set.get("name") or set_code).strip()
+            effective_name = incoming_name if is_global else existing["name"]
+            if effective_name and effective_name != existing["name"]:
+                changed_set_codes.add(set_code)
+
+        delta_cards: list[dict] = []
+        source_print_count = 0
+        delta_print_count = 0
+
+        for source_card in payload.get("cards") or []:
+            card_key = str(source_card.get("id") or "").strip().lower()
+            incoming_name = str(source_card.get("name") or "").strip()
+            if not card_key or not incoming_name:
+                continue
+
+            existing_card = existing_cards.get(card_key)
+            card_changed = existing_card is None
+            if existing_card is not None:
+                effective_name = incoming_name if is_global else existing_card["name"]
+                card_changed = bool(effective_name and effective_name != existing_card["name"])
+
+            changed_prints: list[dict] = []
+            for source_print in source_card.get("prints") or []:
+                source_print_count += 1
+                set_code = str(source_print.get("set_code") or "").strip().lower()
+                collector = normalize_collector_number(source_print.get("collector_number"))
+                variant = normalize_variant(source_print.get("variant"))
+                if not set_code or not collector:
+                    continue
+
+                identity = (card_key, set_code, collector, language, variant)
+                existing_print = existing_prints.get(identity)
+                changed = existing_print is None
+
+                if existing_print is not None:
+                    expected_print_key = f"onepiece:{set_code}:{collector}:{language}:{variant}"
+                    incoming_rarity_raw = source_print.get("rarity")
+                    incoming_rarity = str(incoming_rarity_raw).strip() if incoming_rarity_raw not in (None, "") else None
+                    if existing_print["rarity"] != incoming_rarity:
+                        changed = True
+                    if existing_print["print_key"] != expected_print_key:
+                        changed = True
+
+                    incoming_image = str(source_print.get("image_url") or "").strip()
+                    physical_identity = (set_code, collector, variant)
+                    if region == "asia-en" and physical_identity in existing_en_physical:
+                        incoming_image = ""
+                    if incoming_image and primary_image_by_print.get(existing_print["id"], "") != incoming_image:
+                        changed = True
+
+                    incoming_external_id = str(source_print.get("id") or "").strip()
+                    if is_global and incoming_external_id:
+                        if external_id_by_print.get(existing_print["id"], "") != incoming_external_id:
+                            changed = True
+
+                if changed:
+                    changed_prints.append(dict(source_print))
+                    required_set_codes.add(set_code)
+                    delta_print_count += 1
+
+            if card_changed or changed_prints:
+                card_copy = dict(source_card)
+                card_copy["prints"] = changed_prints
+                delta_cards.append(card_copy)
+
+        required_set_codes.update(changed_set_codes)
+        delta_sets = [
+            dict(source_sets_by_code[code])
+            for code in source_sets_by_code
+            if code in required_set_codes
+        ]
+
+        diagnostics = dict(payload.get("diagnostics") or {})
+        diagnostics["incremental_delta"] = {
+            "source_cards": len(payload.get("cards") or []),
+            "source_prints": source_print_count,
+            "delta_cards": len(delta_cards),
+            "delta_prints": delta_print_count,
+            "delta_sets": len(delta_sets),
+            "region": region,
+            "language": language,
+        }
+        delta = dict(payload)
+        delta["sets"] = delta_sets
+        delta["cards"] = delta_cards
+        delta["diagnostics"] = diagnostics
+        self.logger.info(
+            "ingest onepiece delta region=%s language=%s source_cards=%s source_prints=%s delta_cards=%s delta_prints=%s delta_sets=%s",
+            region,
+            language,
+            len(payload.get("cards") or []),
+            source_print_count,
+            len(delta_cards),
+            delta_print_count,
+            len(delta_sets),
+        )
+        return delta
+
+    def upsert(self, session, payload: dict, stats, **kwargs) -> dict:
+        delta = self._delta_payload(session, payload)
+        touched = super().upsert(session, delta, stats, **kwargs)
+        # The delta writer must still prove the complete source contract, not only
+        # the rows selected for mutation.
+        self._assert_promo_materialized(session, payload)
+        return touched
+
+    def repair_legacy_records(self, session, source, stats, **kwargs) -> dict:
+        """Keep legacy image sweeping out of the canonical daily data refresh.
+
+        The inherited repair scans every One Piece print and resolves images row
+        by row. It is unrelated to source freshness and can dominate canonical
+        refresh runtime. Image cleanup remains owned by the dedicated image repair
+        workflows; the canonical writer only mutates source-backed delta rows.
+        """
+        self.logger.info(
+            "ingest onepiece legacy_repair_skipped owner=dedicated_image_repair_workflow"
+        )
+        return {}
