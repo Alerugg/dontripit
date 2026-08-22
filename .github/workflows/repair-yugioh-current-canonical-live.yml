@@ -1,0 +1,86 @@
+name: Repair Yu-Gi-Oh Current Canonical Live
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/repair-yugioh-current-canonical-live.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-yugioh-current-canonical-live
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Incrementally refresh current Yu-Gi-Oh source only
+        run: python -m app.ingest.run ygoprodeck_yugioh --fixture false --incremental true
+      - name: Rebuild current canonical snapshot
+        run: |
+          rm -rf /tmp/ygo-current
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+      - name: Prove current source coverage in Neon
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root = Path('/tmp/ygo-current')
+          def vals(name, key):
+              with (root / name).open() as handle:
+                  return {str(json.loads(line)[key]) for line in handle if line.strip()}
+
+          source_cards = vals('cards.jsonl', 'card_key')
+          source_sets = {value.lower() for value in vals('sets.jsonl', 'code')}
+          source_prints = vals('prints.jsonl', 'print_key')
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              gid = conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_cards = {str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"), {'g': gid}).scalars()}
+              db_sets = {str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"), {'g': gid}).scalars()}
+              db_prints = {str(v) for v in conn.execute(text('''SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=:g AND p.print_key IS NOT NULL'''), {'g': gid}).scalars()}
+
+          report = {
+              'source_counts': {'cards': len(source_cards), 'sets': len(source_sets), 'prints': len(source_prints)},
+              'neon_counts': {'cards': len(db_cards), 'sets': len(db_sets), 'prints': len(db_prints)},
+              'missing_cards': len(source_cards - db_cards),
+              'missing_sets': len(source_sets - db_sets),
+              'missing_prints': len(source_prints - db_prints),
+              'missing_card_examples': sorted(source_cards - db_cards)[:100],
+              'missing_set_examples': sorted(source_sets - db_sets)[:100],
+              'missing_print_examples': sorted(source_prints - db_prints)[:100],
+          }
+          Path('/tmp/ygo-live-repair-proof.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if report['missing_cards'] or report['missing_sets'] or report['missing_prints']:
+              raise SystemExit(f"Yu-Gi-Oh live repair did not reach 0/0/0: {json.dumps(report, sort_keys=True)}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-live-repair-proof-${{ github.run_id }}
+          path: /tmp/ygo-live-repair-proof.json
+          retention-days: 30
+          if-no-files-found: warn
