@@ -72,20 +72,36 @@
   display: none !important;
 }
 
-/* Footer: horizontal wordmark, fully visible. */
-.dri-footer-brand > .dri-brand-official,
-.dri-footer-brand > a .dri-brand-official {
-  width: 176px !important;
+/* Footer: horizontal wordmark with an explicit safe render area. */
+.dri-footer-brand,
+.dri-footer-logo-safe {
+  overflow: visible !important;
+}
+
+.dri-footer-logo-safe {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 78px;
+  padding: 10px 8px 12px 0;
+  box-sizing: border-box;
+}
+
+.dri-footer-logo-safe > .dri-brand-official {
+  width: 196px !important;
   min-height: 58px !important;
   overflow: visible !important;
 }
 
 .dri-footer .dri-brand-official-wordmark {
   display: block !important;
-  width: 176px !important;
+  width: 196px !important;
   height: auto !important;
-  max-width: 176px !important;
+  max-width: 196px !important;
   max-height: none !important;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  object-fit: contain !important;
 }
 
 .dri-footer .dri-brand-official-mark {
@@ -143,10 +159,14 @@
     max-height: 36px !important;
   }
 
-  .dri-footer-brand > .dri-brand-official,
-  .dri-footer-brand > a .dri-brand-official,
+  .dri-footer-logo-safe {
+    min-height: 72px;
+    padding-block: 9px 11px;
+  }
+
+  .dri-footer-logo-safe > .dri-brand-official,
   .dri-footer .dri-brand-official-wordmark {
-    width: 164px !important;
-    max-width: 164px !important;
+    width: 180px !important;
+    max-width: 180px !important;
   }
 }
