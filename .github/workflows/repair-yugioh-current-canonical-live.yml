@@ -34,9 +34,65 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Incrementally refresh current Yu-Gi-Oh source only
-        run: python -m app.ingest.run ygoprodeck_yugioh --fixture false --incremental true
-      - name: Rebuild current canonical snapshot
+      - name: Build current canonical snapshot before targeted repair
+        run: |
+          rm -rf /tmp/ygo-current
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+      - name: Materialize fixture for only canonical Cards missing in Neon
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
+
+          root = Path('/tmp/ygo-current')
+          source_cards = {
+              str(json.loads(line)['card_key'])
+              for line in (root / 'cards.jsonl').read_text().splitlines()
+              if line.strip()
+          }
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              gid = conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_cards = {
+                  str(value)
+                  for value in conn.execute(
+                      text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),
+                      {'g': gid},
+                  ).scalars()
+              }
+
+          missing_keys = sorted(source_cards - db_cards)
+          prefix = 'yugioh:ygoprodeck:card-id:'
+          connector = YgoProDeckYugiohConnector()
+          endpoint = f"{connector.base_url}/cardinfo.php"
+          raw_cards = []
+          for key in missing_keys:
+              if not key.startswith(prefix):
+                  raise SystemExit(f'Unexpected Yu-Gi-Oh canonical card key: {key}')
+              raw_id = key[len(prefix):]
+              payload = connector._request_json(endpoint, params={'id': raw_id})
+              matches = [row for row in (payload.get('data') or []) if str(row.get('id')) == raw_id]
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected exactly one raw YGOPRODeck row for {key}, got {len(matches)}')
+              raw_cards.append(matches[0])
+
+          fixture = Path('/tmp/ygo-missing-cards.json')
+          fixture.write_text(json.dumps({'data': raw_cards}, sort_keys=True) + '\n')
+          report = {
+              'missing_before': len(missing_keys),
+              'fixture_cards': len(raw_cards),
+              'missing_keys': missing_keys,
+          }
+          Path('/tmp/ygo-targeted-repair-input.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if len(raw_cards) != len(missing_keys):
+              raise SystemExit('Targeted fixture cardinality mismatch')
+          PY
+      - name: Upsert only missing Yu-Gi-Oh Cards through official connector
+        run: python -m app.ingest.run ygoprodeck_yugioh --fixture true --path /tmp/ygo-missing-cards.json --incremental true
+      - name: Rebuild current canonical snapshot after targeted repair
         run: |
           rm -rf /tmp/ygo-current
           python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
@@ -81,6 +137,8 @@ jobs:
         if: always()
         with:
           name: ygo-live-repair-proof-${{ github.run_id }}
-          path: /tmp/ygo-live-repair-proof.json
+          path: |
+            /tmp/ygo-targeted-repair-input.json
+            /tmp/ygo-live-repair-proof.json
           retention-days: 30
           if-no-files-found: warn
