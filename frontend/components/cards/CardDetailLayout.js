@@ -1,6 +1,7 @@
 'use client'
 
 import './CardDetailV2.css'
+import { useState } from 'react'
 import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import CardVersionBrowser from './CardVersionBrowser'
@@ -13,6 +14,7 @@ function safeCount(value, fallback = 0) {
 }
 
 export default function CardDetailLayout({ card, routeGameSlug = '' }) {
+  const [marketSummary, setMarketSummary] = useState(null)
   const gameSlug = normalizeGameSlug(routeGameSlug || card?.game_slug || card?.game || '')
   const gameConfig = getGameConfig(gameSlug)
   const gameLabel = gameConfig?.name || card?.game || 'TCG'
@@ -61,14 +63,35 @@ export default function CardDetailLayout({ card, routeGameSlug = '' }) {
             <span>Sets relacionados</span>
             <strong>{setCount.toLocaleString('es-ES')}</strong>
           </div>
-          <div className="v9-card-market-rule">
+          <div className={`v9-card-market-rule ${marketSummary ? 'v15-card-market-rule-priced' : ''}`}>
             <span>Mercado</span>
-            <strong>Solo en la impresión exacta</strong>
-            <small>No agregamos precios de distintas ediciones, idiomas o acabados.</small>
+            {marketSummary ? (
+              <>
+                <div className="v15-card-market-range">
+                  <strong>{marketSummary.range}</strong>
+                  <em>{marketSummary.pricedPrints.toLocaleString('es-ES')} de {printCount.toLocaleString('es-ES')} impresiones con precio exacto</em>
+                </div>
+                <small>
+                  Rango entre impresiones/variantes enlazadas; no es un precio universal de la carta.
+                  {marketSummary.asOfDisplay ? ` Cardmarket · actualizado ${marketSummary.asOfDisplay}.` : ' Cardmarket.'}
+                  {' '}No agregamos precios de distintas ediciones, idiomas o acabados.
+                </small>
+              </>
+            ) : (
+              <>
+                <strong>Solo en la impresión exacta</strong>
+                <small>No agregamos precios de distintas ediciones, idiomas o acabados.</small>
+              </>
+            )}
           </div>
         </section>
 
-        <CardVersionBrowser cardId={card.id} cardName={card.name} gameLabel={gameLabel} />
+        <CardVersionBrowser
+          cardId={card.id}
+          cardName={card.name}
+          gameLabel={gameLabel}
+          onMarketSummary={setMarketSummary}
+        />
 
         {(card.sets || []).length ? (
           <section className="v9-related-sets" aria-labelledby="v9-related-sets-title">
