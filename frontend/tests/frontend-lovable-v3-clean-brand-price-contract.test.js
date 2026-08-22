@@ -17,7 +17,7 @@ test('loads the clean interior override after the approved Home styles', () => {
 test('uses official Don’tRipIt assets for wordmark and navigation mark', () => {
   const brand = read('components/brand/BrandMark.js')
   assert.match(brand, /\/branding\/dontripit-wordmark\.png/)
-  assert.match(brand, /\/branding\/dontripit-mark\.png/)
+  assert.match(brand, /\/branding\/dontripit-nav-mark\.webp/)
   assert.match(brand, /alt="Don’tRipIt"/)
 })
 
@@ -30,6 +30,8 @@ test('round DR mark is explicit in nav and auth stays on horizontal wordmark', (
   assert.doesNotMatch(auth, /<BrandMark compact \/>/)
   assert.match(auth, /dri-auth-mobile-brand"><BrandMark \/>/)
   assert.match(placement, /The circular DR! mark is navigation-only/)
+  assert.match(placement, /width:\s*42px !important/)
+  assert.match(placement, /width:\s*36px !important/)
   assert.match(placement, /overflow:\s*visible !important/)
   assert.match(placement, /\.dri-footer \.dri-brand-official-wordmark/)
 })
