@@ -166,7 +166,7 @@ export default function HomeSearch() {
               suggestions={suggestions}
               suggestionsLoading={loading}
               onSuggestionSelect={selectSuggestion}
-              placeholder="Pikachu, Luffy, Black Lotus, Dark Magician…"
+              placeholder="Pikachu, Luffy, Black Lotus…"
               variant="hero"
             />
           </div>
