@@ -6,6 +6,7 @@ on:
     branches:
       - catalog-v2
     paths:
+      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
       - 'backend/app/ingest/connectors/onepiece_canonical.py'
 
 permissions:
