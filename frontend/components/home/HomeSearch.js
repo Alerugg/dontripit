@@ -8,6 +8,20 @@ import { ACTIVE_GAME_CATALOG } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 import './HomeSearchV2.css'
 
+const QUICK_SEARCHES = [
+  { label: 'Pikachu', query: 'Pikachu', game: 'pokemon' },
+  { label: 'Luffy', query: 'Luffy', game: 'onepiece' },
+  { label: 'Black Lotus', query: 'Black Lotus', game: 'magic' },
+  { label: 'Dark Magician', query: 'Dark Magician', game: 'yugioh' },
+]
+
+function displayGameName(game) {
+  if (!game) return ''
+  if (game.name === 'Magic: The Gathering') return 'Magic'
+  if (game.name === 'ONE PIECE Card Game') return 'One Piece'
+  return game.name
+}
+
 function suggestionHref(item) {
   if (item?.type === 'print' && item.id) return getPrintHref(item.id)
   if (item?.type === 'set' && item.game && (item.set_code || item.code)) {
@@ -83,63 +97,102 @@ export default function HomeSearch() {
     if (clean) router.push(scopedSearchHref(selectedGame, clean))
   }
 
+  function runQuickSearch(item) {
+    setSelectedGame(item.game)
+    setQuery(item.query)
+    setSuggestions([])
+    router.push(scopedSearchHref(item.game, item.query))
+  }
+
+  const scopeLabel = selectedConfig ? displayGameName(selectedConfig) : 'Todos los TCG'
+
   return (
     <div className="v17-home-search-wrap">
-      <div className="v17-home-search-shell">
-        <div className="v17-home-search-games" role="group" aria-label="Elegir juego para la búsqueda">
-          <button
-            type="button"
-            className={`v17-game-scope ${selectedGame === '' ? 'is-active' : ''}`}
-            aria-pressed={selectedGame === ''}
-            aria-label="Buscar en todos los juegos"
-            data-game="all"
-            onClick={() => chooseGame('')}
-          >
-            Todos
-          </button>
-          {ACTIVE_GAME_CATALOG.map((game) => (
+      <div className="v17-home-search-console">
+        <div className="v17-search-console-glow" aria-hidden="true" />
+
+        <div className="v17-home-search-head">
+          <div className="v17-home-search-title">
+            <span><i aria-hidden="true" /> Buscador de catálogo</span>
+            <strong>Encuentra la carta. Aterriza en la impresión correcta.</strong>
+          </div>
+          <div className="v17-home-search-flow" aria-label="Flujo de búsqueda">
+            <small>Card</small><i aria-hidden="true" /><small>Print</small><i aria-hidden="true" /><small>Market</small>
+          </div>
+        </div>
+
+        <div className="v17-home-search-shell">
+          <div className="v17-home-search-games" role="group" aria-label="Elegir juego para la búsqueda">
             <button
-              key={game.slug}
               type="button"
-              className={`v17-game-scope ${selectedGame === game.slug ? 'is-active' : ''}`}
-              aria-pressed={selectedGame === game.slug}
-              aria-label={`Buscar solo en ${game.name}`}
-              data-game={game.slug}
-              onClick={() => chooseGame(game.slug)}
-              style={{ '--scope-accent': game.accent }}
+              className={`v17-game-scope ${selectedGame === '' ? 'is-active' : ''}`}
+              aria-pressed={selectedGame === ''}
+              aria-label="Buscar en todos los juegos"
+              data-game="all"
+              onClick={() => chooseGame('')}
             >
               <i aria-hidden="true" />
-              {game.name === 'Magic: The Gathering' ? 'Magic' : game.name === 'ONE PIECE Card Game' ? 'One Piece' : game.name}
+              Todos
             </button>
-          ))}
+            {ACTIVE_GAME_CATALOG.map((game) => (
+              <button
+                key={game.slug}
+                type="button"
+                className={`v17-game-scope ${selectedGame === game.slug ? 'is-active' : ''}`}
+                aria-pressed={selectedGame === game.slug}
+                aria-label={`Buscar solo en ${game.name}`}
+                data-game={game.slug}
+                onClick={() => chooseGame(game.slug)}
+                style={{ '--scope-accent': game.accent }}
+              >
+                <i aria-hidden="true" />
+                {displayGameName(game)}
+              </button>
+            ))}
+          </div>
+
+          <div className="v17-home-search-input">
+            <span className="v17-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <circle cx="10.5" cy="10.5" r="5.75" />
+                <path d="M15 15l4.5 4.5" />
+              </svg>
+            </span>
+            <SearchInput
+              type="search"
+              value={query}
+              onChange={setQuery}
+              onSubmit={submit}
+              suggestions={suggestions}
+              suggestionsLoading={loading}
+              onSuggestionSelect={selectSuggestion}
+              placeholder="Pikachu, Luffy, Black Lotus…"
+              variant="hero"
+            />
+          </div>
         </div>
 
-        <div className="v17-home-search-input">
-          <SearchInput
-            type="search"
-            value={query}
-            onChange={setQuery}
-            onSubmit={submit}
-            suggestions={suggestions}
-            suggestionsLoading={loading}
-            onSuggestionSelect={selectSuggestion}
-            placeholder="Pikachu, Luffy, Black Lotus, Dark Magician…"
-            variant="hero"
-          />
-        </div>
-      </div>
+        <div className="v17-home-search-bottom">
+          <div className="v17-home-search-examples" aria-label="Ejemplos de búsqueda">
+            <span>Prueba con</span>
+            {QUICK_SEARCHES.map((item) => (
+              <button key={item.label} type="button" onClick={() => runQuickSearch(item)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
 
-      <div className="v17-home-search-meta" aria-label="Alcance de búsqueda">
-        <small>
-          Buscando en <strong>{selectedConfig?.name || 'todos los TCG'}</strong>
-        </small>
-        <button
-          type="button"
-          className="v17-home-hub-link"
-          onClick={() => router.push(selectedGame ? `/games/${selectedGame}` : '/explorer')}
-        >
-          {selectedConfig ? `Abrir hub de ${selectedConfig.name} →` : 'Abrir explorador →'}
-        </button>
+          <div className="v17-home-search-meta" aria-label="Alcance de búsqueda">
+            <small><i aria-hidden="true" /> Buscando en <strong>{scopeLabel}</strong></small>
+            <button
+              type="button"
+              className="v17-home-hub-link"
+              onClick={() => router.push(selectedGame ? `/games/${selectedGame}` : '/explorer')}
+            >
+              {selectedConfig ? `Abrir hub de ${displayGameName(selectedConfig)} →` : 'Explorador avanzado →'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
