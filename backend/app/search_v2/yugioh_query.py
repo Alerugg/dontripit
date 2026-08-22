@@ -61,7 +61,10 @@ def normal_yugioh_search(
     q_code = q_norm.replace(" ", "-")
     q_raw = q.casefold()
     bounded_limit = max(1, min(int(limit or 24), 100))
-    candidate_limit = max(100, bounded_limit * 10)
+    # Each signal is independently score-ordered before this cap. Four times the
+    # requested page (with a small floor for suggestions) leaves ample reranking
+    # headroom without hydrating hundreds of losing Cards on every fuzzy query.
+    candidate_limit = max(60, bounded_limit * 4)
 
     tokens = [token for token in q_norm.split() if len(token) >= 2][:8]
     token_params = {f"token_{idx}": f"%{token}%" for idx, token in enumerate(tokens)}
@@ -164,7 +167,7 @@ def normal_yugioh_search(
             AND lower(pl.language)=lower(coalesce(p.language,''))
             AND lower(coalesce(p.language,'')) IN ('es','ja')
             AND (:display_language IS NULL OR lower(coalesce(p.language,''))=ANY(string_to_array(:display_language, ',')))
-            AND position(:q_raw in lower(pl.card_name)) > 0
+            AND lower(pl.card_name) LIKE :localized_contains
           GROUP BY p.card_id
           ORDER BY score DESC, p.card_id ASC
           LIMIT :candidate_limit
@@ -268,6 +271,7 @@ def normal_yugioh_search(
         "display_language": display_language,
         "prefix": f"{q_norm}%",
         "contains": f"%{q_norm}%",
+        "localized_contains": f"%{q_raw}%",
         "word": f"% {q_norm} %",
         "candidate_limit": candidate_limit,
         "limit": bounded_limit,
