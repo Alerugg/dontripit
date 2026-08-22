@@ -2,72 +2,142 @@
  * The circular DR! mark is navigation-only. Other product surfaces use the horizontal wordmark.
  */
 
-.dri-nav-brand {
-  min-width: 42px !important;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
+/* Reset legacy logo sizing/clipping before applying the product placement rules. */
+.dri-brand-official {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  overflow: visible !important;
+  line-height: 0 !important;
+  position: static !important;
+  transform: none !important;
 }
 
-/* Nav may still render the shared wordmark component; swap its visible treatment to the official round mark. */
-.dri-nav-brand .dri-brand-official-wordmark {
+.dri-brand-official::before,
+.dri-brand-official::after {
+  content: none !important;
   display: none !important;
+}
+
+.dri-brand-official img {
+  position: static !important;
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  clip: auto !important;
+  clip-path: none !important;
+  transform: none !important;
+}
+
+/* Navigation: only the official round DR! mark. */
+.dri-nav-brand {
+  min-width: 42px !important;
+  min-height: 42px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  overflow: visible !important;
+}
+
+.dri-nav-brand .dri-brand-official {
+  width: 38px !important;
+  height: 38px !important;
 }
 
 .dri-nav-brand .dri-brand-official-mark {
   display: block !important;
-  width: 36px !important;
-  height: 36px !important;
-  object-fit: contain;
+  width: 38px !important;
+  height: 38px !important;
+  max-width: 38px !important;
+  object-fit: contain !important;
 }
 
-.dri-nav-brand .dri-brand-official:not(.dri-brand-nav)::before {
-  content: '';
-  display: block;
-  width: 36px;
-  height: 36px;
-  background: url('/branding/dontripit-mark.png') center / contain no-repeat;
+.dri-nav-brand .dri-brand-official-wordmark {
+  display: none !important;
 }
 
-/* All non-navigation surfaces stay on the horizontal logo family. */
-.dri-footer .dri-brand-official-mark,
+/* Footer: horizontal wordmark, fully visible. */
+.dri-footer-brand > .dri-brand-official,
+.dri-footer-brand > a .dri-brand-official {
+  width: 176px !important;
+  min-height: 58px !important;
+  overflow: visible !important;
+}
+
+.dri-footer .dri-brand-official-wordmark {
+  display: block !important;
+  width: 176px !important;
+  height: auto !important;
+  max-width: 176px !important;
+  max-height: none !important;
+}
+
+.dri-footer .dri-brand-official-mark {
+  display: none !important;
+}
+
+/* Authentication: horizontal wordmark on desktop and mobile. */
+.dri-auth-logo,
+.dri-auth-mobile-brand {
+  overflow: visible !important;
+}
+
+.dri-auth-logo .dri-brand-official {
+  width: min(210px, 100%) !important;
+  min-height: 66px !important;
+}
+
+.dri-auth-logo .dri-brand-official-wordmark {
+  display: block !important;
+  width: min(210px, 100%) !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.dri-auth-mobile-brand .dri-brand-official {
+  width: 150px !important;
+  min-height: 50px !important;
+}
+
+.dri-auth-mobile-brand .dri-brand-official-wordmark {
+  display: block !important;
+  width: 150px !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
 .dri-auth-logo .dri-brand-official-mark,
 .dri-auth-mobile-brand .dri-brand-official-mark {
   display: none !important;
 }
 
-.dri-footer .dri-brand-official-wordmark {
-  display: block !important;
-  width: 164px !important;
-  max-height: none !important;
-}
-
-.dri-auth-logo .dri-brand-official-wordmark {
-  display: block !important;
-  width: min(190px, 100%) !important;
-  max-height: none !important;
-}
-
-.dri-auth-mobile-brand .dri-brand-official-wordmark {
-  display: block !important;
-  width: 138px !important;
-  max-height: none !important;
-}
-
 @media (max-width: 700px) {
   .dri-nav-brand {
     min-width: 38px !important;
+    min-height: 38px !important;
   }
 
-  .dri-nav-brand .dri-brand-official-mark,
-  .dri-nav-brand .dri-brand-official:not(.dri-brand-nav)::before {
-    width: 32px !important;
-    height: 32px !important;
+  .dri-nav-brand .dri-brand-official,
+  .dri-nav-brand .dri-brand-official-mark {
+    width: 34px !important;
+    height: 34px !important;
+    max-width: 34px !important;
   }
 
-  /* Neutralize the previous mobile pseudo-mark so the round asset is never duplicated. */
-  .dri-nav-brand .dri-brand-official::after {
-    content: none !important;
-    display: none !important;
+  .dri-footer-brand > .dri-brand-official,
+  .dri-footer-brand > a .dri-brand-official,
+  .dri-footer .dri-brand-official-wordmark {
+    width: 164px !important;
+    max-width: 164px !important;
   }
 }
