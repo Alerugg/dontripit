@@ -186,7 +186,6 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
 
         existing_prints: dict[tuple[str, str, str, str, str], dict] = {}
         existing_en_physical: set[tuple[str, str, str]] = set()
-        print_ids: list[int] = []
         for print_id, card_key, set_code, collector, print_language, variant, rarity, print_key in print_rows:
             normalized_set = str(set_code or "").strip().lower()
             normalized_collector = normalize_collector_number(collector)
@@ -206,23 +205,25 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             }
             if normalized_language == "en":
                 existing_en_physical.add((normalized_set, normalized_collector, normalized_variant))
-            print_ids.append(int(print_id))
 
         primary_image_by_print: dict[int, str] = {}
-        if print_ids:
-            for print_id, url in session.execute(
-                select(PrintImage.print_id, PrintImage.url)
-                .where(PrintImage.print_id.in_(print_ids), PrintImage.is_primary.is_(True))
-                .order_by(PrintImage.id.asc())
-            ).all():
-                primary_image_by_print.setdefault(int(print_id), str(url or "").strip())
+        for print_id, url in session.execute(
+            select(PrintImage.print_id, PrintImage.url)
+            .join(Print, Print.id == PrintImage.print_id)
+            .join(Card, Card.id == Print.card_id)
+            .where(Card.game_id == game.id, PrintImage.is_primary.is_(True))
+            .order_by(PrintImage.id.asc())
+        ).all():
+            primary_image_by_print.setdefault(int(print_id), str(url or "").strip())
 
         external_id_by_print: dict[int, str] = {}
-        if is_global and print_ids:
+        if is_global:
             for print_id, external_id in session.execute(
                 select(PrintIdentifier.print_id, PrintIdentifier.external_id)
+                .join(Print, Print.id == PrintIdentifier.print_id)
+                .join(Card, Card.id == Print.card_id)
                 .where(
-                    PrintIdentifier.print_id.in_(print_ids),
+                    Card.game_id == game.id,
                     PrintIdentifier.source == "punk_records",
                 )
                 .order_by(PrintIdentifier.id.asc())
@@ -314,10 +315,8 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             if code in required_set_codes
         ]
 
-        delta = dict(payload)
-        delta["sets"] = delta_sets
-        delta["cards"] = delta_cards
-        delta.setdefault("diagnostics", {})["incremental_delta"] = {
+        diagnostics = dict(payload.get("diagnostics") or {})
+        diagnostics["incremental_delta"] = {
             "source_cards": len(payload.get("cards") or []),
             "source_prints": source_print_count,
             "delta_cards": len(delta_cards),
@@ -326,6 +325,10 @@ class SelfHealingOnePieceCanonicalConnector(OnePieceCanonicalConnector):
             "region": region,
             "language": language,
         }
+        delta = dict(payload)
+        delta["sets"] = delta_sets
+        delta["cards"] = delta_cards
+        delta["diagnostics"] = diagnostics
         self.logger.info(
             "ingest onepiece delta region=%s language=%s source_cards=%s source_prints=%s delta_cards=%s delta_prints=%s delta_sets=%s",
             region,
