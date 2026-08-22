@@ -2,12 +2,16 @@ name: Certify Search V2 Production Latency V1
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_search_v2_production_latency_v1.py'
+      - '.github/workflows/certify-search-v2-production-latency-v1.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: certify-search-v2-production-latency-v1
+  group: certify-search-v2-production-latency-v1-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -18,9 +22,9 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # No explicit ref: PR runs test their merge commit; workflow_dispatch
+      # dispatched at catalog-v2 naturally checks out that exact production ref.
       - uses: actions/checkout@v4
-        with:
-          ref: catalog-v2
 
       - uses: actions/setup-python@v5
         with:
