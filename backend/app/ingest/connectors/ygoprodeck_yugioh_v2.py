@@ -20,8 +20,8 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
     timeout even when only a few dozen cards changed. Current source rows already
     self-heal through ``should_skip_existing_record`` + ``upsert`` and return
     touched entity ids for targeted Search V2 reindexing, so the scheduled V2
-    freshness path deliberately leaves broad legacy/image cleanup to its dedicated
-    maintenance work instead of coupling it to every daily refresh.
+    freshness path deliberately leaves broad legacy/image cleanup to a full
+    reconciliation instead of coupling it to every daily refresh.
     """
 
     name = "ygoprodeck_yugioh"
@@ -128,12 +128,23 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
         return cards
 
     def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
-        """Do not run the inherited catalog-wide repair in the daily V2 path."""
-        if not bool(kwargs.get("incremental", True)):
-            return super().repair_legacy_records(session, source, stats, **kwargs)
+        """Keep the broad legacy repair out of daily incremental refreshes.
 
-        self.logger.info(
-            "ingest ygoprodeck_v2 legacy_repair_skipped "
-            "owner=dedicated_legacy_image_maintenance"
-        )
-        return {}
+        The inherited implementation historically gates the sweep on
+        ``incremental=True``. V2 reverses where that maintenance belongs: daily
+        incremental runs skip it, while an explicit full reconciliation invokes
+        the inherited repair with its internal gate enabled.
+        """
+        if bool(kwargs.get("incremental", True)):
+            self.logger.info(
+                "ingest ygoprodeck_v2 legacy_repair_skipped "
+                "owner=full_reconciliation"
+            )
+            return {}
+
+        repair_kwargs = dict(kwargs)
+        repair_kwargs["incremental"] = True
+        self.logger.info("ingest ygoprodeck_v2 legacy_repair_start mode=full_reconciliation")
+        result = super().repair_legacy_records(session, source, stats, **repair_kwargs)
+        self.logger.info("ingest ygoprodeck_v2 legacy_repair_done mode=full_reconciliation")
+        return result
