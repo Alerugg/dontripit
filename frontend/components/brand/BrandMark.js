@@ -1,10 +1,18 @@
-export default function BrandMark({ compact = false, className = '' }) {
+const BRAND_ASSETS = {
+  nav: '/branding/dontripit-mark.png',
+  wordmark: '/branding/dontripit-wordmark.png',
+}
+
+export default function BrandMark({ compact = false, variant = 'wordmark', className = '' }) {
+  const resolvedVariant = variant === 'nav' || compact ? 'nav' : 'wordmark'
+  const src = BRAND_ASSETS[resolvedVariant]
+
   return (
-    <span className={`dri-brand dri-brand-official ${compact ? 'dri-brand-compact' : ''} ${className}`.trim()}>
+    <span className={`dri-brand dri-brand-official dri-brand-${resolvedVariant} ${className}`.trim()}>
       <img
-        src={compact ? '/branding/dontripit-mark.png' : '/branding/dontripit-wordmark.png'}
+        src={src}
         alt="Don’tRipIt"
-        className={compact ? 'dri-brand-official-mark' : 'dri-brand-official-wordmark'}
+        className={resolvedVariant === 'nav' ? 'dri-brand-official-mark' : 'dri-brand-official-wordmark'}
         loading="eager"
         decoding="async"
       />
