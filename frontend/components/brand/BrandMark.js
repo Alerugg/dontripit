@@ -1,6 +1,6 @@
 const BRAND_ASSETS = {
-  nav: '/branding/dontripit-mark.png',
-  wordmark: '/branding/dontripit-wordmark.png',
+  nav: '/branding/dontripit_logo.png',
+  wordmark: '/branding/dontripit-wordmark-ui.webp',
 }
 
 export default function BrandMark({ compact = false, variant = 'wordmark', className = '' }) {
