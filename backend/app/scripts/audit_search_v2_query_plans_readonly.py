@@ -18,6 +18,7 @@ OUTPUT = Path(
 EXPECTED_INDEXES = {
     "ix_print_search_profiles_game_set_collector": "print_search_profiles",
     "ix_card_search_profiles_game_name_exact": "card_search_profiles",
+    "ix_card_search_profiles_game_name_pattern": "card_search_profiles",
     "ix_print_localizations_card_name_lower_trgm": "print_localizations",
 }
 
@@ -26,6 +27,7 @@ CASES = [
         "name": "mtg_exact_set_collector",
         "budget_ms": 250.0,
         "required_indexes": {"ix_print_search_profiles_game_set_collector"},
+        "required_any_indexes": set(),
         "forbidden_seq_relations": {"print_search_profiles"},
         "sql": """
             SELECT psp.card_id
@@ -40,7 +42,14 @@ CASES = [
     {
         "name": "pokemon_exact_card_name",
         "budget_ms": 250.0,
-        "required_indexes": {"ix_card_search_profiles_game_name_exact"},
+        "required_indexes": set(),
+        # Both indexes have (game_id, normalized_name) as their leading key.
+        # PostgreSQL is free to prefer the pattern_ops variant after Search V3;
+        # either plan is index-backed and valid for this exact lookup.
+        "required_any_indexes": {
+            "ix_card_search_profiles_game_name_exact",
+            "ix_card_search_profiles_game_name_pattern",
+        },
         "forbidden_seq_relations": {"card_search_profiles"},
         "sql": """
             SELECT csp.card_id
@@ -55,6 +64,7 @@ CASES = [
         "name": "yugioh_localized_name_trigram",
         "budget_ms": 500.0,
         "required_indexes": {"ix_print_localizations_card_name_lower_trgm"},
+        "required_any_indexes": set(),
         "forbidden_seq_relations": {"print_localizations"},
         "sql": """
             SELECT pl.print_id
@@ -71,6 +81,7 @@ CASES = [
         "name": "onepiece_exact_card_key",
         "budget_ms": 250.0,
         "required_indexes": set(),
+        "required_any_indexes": set(),
         "forbidden_seq_relations": {"cards", "prints"},
         "sql": """
             SELECT p.id
@@ -139,6 +150,7 @@ def main() -> int:
     conn = psycopg2.connect(url)
     conn.autocommit = False
     cases: list[dict] = []
+    present_indexes: dict[str, dict] = {}
     try:
         with conn.cursor() as cur:
             cur.execute("SHOW transaction_read_only")
@@ -179,12 +191,16 @@ def main() -> int:
                 summary = _plan_summary(document)
                 used = set(summary["indexes"])
                 missing_plan_indexes = sorted(case["required_indexes"] - used)
+                required_any = set(case.get("required_any_indexes") or set())
+                missing_any_group = bool(required_any) and not bool(required_any & used)
                 forbidden_seq = sorted(
                     set(summary["seq_scan_relations"]) & case["forbidden_seq_relations"]
                 )
                 failures = []
                 if missing_plan_indexes:
                     failures.append("required_indexes_not_used=" + ",".join(missing_plan_indexes))
+                if missing_any_group:
+                    failures.append("none_of_required_indexes_used=" + ",".join(sorted(required_any)))
                 if forbidden_seq:
                     failures.append("forbidden_seq_scan=" + ",".join(forbidden_seq))
                 if summary["execution_time_ms"] > case["budget_ms"]:
@@ -196,6 +212,7 @@ def main() -> int:
                         "name": case["name"],
                         "budget_ms": case["budget_ms"],
                         "required_indexes": sorted(case["required_indexes"]),
+                        "required_any_indexes": sorted(required_any),
                         "forbidden_seq_relations": sorted(case["forbidden_seq_relations"]),
                         "status": "pass" if not failures else "fail",
                         "failures": failures,
