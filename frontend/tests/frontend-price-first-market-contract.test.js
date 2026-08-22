@@ -41,7 +41,7 @@ test('Exact Print page uses a safe locale and makes the exact market price the h
   assert.match(printPage, /positiveNumber\(price\.trend\)/)
   assert.match(printPage, /Precio de mercado/)
   assert.match(printPage, /if \(!price\) return null/)
-  assert.match(printPage, /locale=\{DEFAULT_DISPLAY_LOCALE\}/)
+  assert.ok(printPage.includes('locale={DEFAULT_DISPLAY_LOCALE}'))
   assert.doesNotMatch(printPage, /toLocaleDateString\(locale/)
 })
 
