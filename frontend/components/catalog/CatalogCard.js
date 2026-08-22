@@ -87,14 +87,24 @@ function resolveItemType(item) {
 function exactMarket(item) {
   if (item?.type !== 'print') return null
   const raw = item?.market?.display_price
-  const display = formatCurrency(raw, item?.market?.currency || 'EUR')
+  const market = item?.market
+  const display = formatCurrency(raw, market?.currency || 'EUR')
   if (!display) return null
 
   return {
     display,
-    low: formatCurrency(item?.market?.price_low, item?.market?.currency || 'EUR'),
-    asOf: formatMarketDate(item?.market?.as_of),
+    low: formatCurrency(market?.price_low, market?.currency || 'EUR'),
+    asOf: formatMarketDate(market?.as_of),
   }
+}
+
+function cardCornerMarket(item) {
+  if (item?.type !== 'card') return null
+  const market = item?.card_market
+  const raw = market?.display_price
+  const display = formatCurrency(raw, market?.currency || 'EUR')
+  if (!display) return null
+  return { display }
 }
 
 function CardSignal({ item }) {
@@ -171,6 +181,7 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         : '#'
   const itemType = resolveItemType(item)
   const market = exactMarket(item)
+  const cardMarket = cardCornerMarket(item)
   const metaChips = buildMetaChips(item)
 
   return (
@@ -195,6 +206,11 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         )}
         <span className={`badge ${itemType.className} v8-result-type-badge`}>{itemType.label}</span>
         <span className="v13-result-game-badge">{item.game || 'TCG'}</span>
+        {item.type === 'card' && cardMarket ? (
+          <span className="v14-card-price-corner" title="Precio exacto de la impresión física mostrada">
+            {cardMarket.display}
+          </span>
+        ) : null}
       </div>
 
       <div className="catalog-card-content v8-result-content">

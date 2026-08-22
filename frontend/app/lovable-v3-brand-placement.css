@@ -1,0 +1,172 @@
+/* Don’tRipIt brand placement contract.
+ * The circular DR! mark is navigation-only. Other product surfaces use the horizontal wordmark.
+ */
+
+/* Reset legacy logo sizing/clipping before applying the product placement rules. */
+.dri-brand-official {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  overflow: visible !important;
+  line-height: 0 !important;
+  position: static !important;
+  transform: none !important;
+}
+
+.dri-brand-official::before,
+.dri-brand-official::after {
+  content: none !important;
+  display: none !important;
+}
+
+.dri-brand-official img {
+  position: static !important;
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  clip: auto !important;
+  clip-path: none !important;
+  transform: none !important;
+}
+
+/* Navigation: only the official round DR! mark. */
+.dri-nav-brand {
+  width: 46px !important;
+  min-width: 46px !important;
+  height: 46px !important;
+  min-height: 46px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: visible !important;
+}
+
+.dri-nav-brand .dri-brand-official {
+  width: 42px !important;
+  height: 42px !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.dri-nav-brand .dri-brand-official-mark {
+  display: block !important;
+  width: 42px !important;
+  height: 42px !important;
+  max-width: 42px !important;
+  max-height: 42px !important;
+  object-fit: contain !important;
+  object-position: center !important;
+}
+
+.dri-nav-brand .dri-brand-official-wordmark {
+  display: none !important;
+}
+
+/* Footer: horizontal wordmark with an explicit safe render area. */
+.dri-footer-brand,
+.dri-footer-logo-safe {
+  overflow: visible !important;
+}
+
+.dri-footer-logo-safe {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 78px;
+  padding: 10px 8px 12px 0;
+  box-sizing: border-box;
+}
+
+.dri-footer-logo-safe > .dri-brand-official {
+  width: 196px !important;
+  min-height: 58px !important;
+  overflow: visible !important;
+}
+
+.dri-footer .dri-brand-official-wordmark {
+  display: block !important;
+  width: 196px !important;
+  height: auto !important;
+  max-width: 196px !important;
+  max-height: none !important;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  object-fit: contain !important;
+}
+
+.dri-footer .dri-brand-official-mark {
+  display: none !important;
+}
+
+/* Authentication: horizontal wordmark on desktop and mobile. */
+.dri-auth-logo,
+.dri-auth-mobile-brand {
+  overflow: visible !important;
+}
+
+.dri-auth-logo .dri-brand-official {
+  width: min(210px, 100%) !important;
+  min-height: 66px !important;
+}
+
+.dri-auth-logo .dri-brand-official-wordmark {
+  display: block !important;
+  width: min(210px, 100%) !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.dri-auth-mobile-brand .dri-brand-official {
+  width: 150px !important;
+  min-height: 50px !important;
+}
+
+.dri-auth-mobile-brand .dri-brand-official-wordmark {
+  display: block !important;
+  width: 150px !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.dri-auth-logo .dri-brand-official-mark,
+.dri-auth-mobile-brand .dri-brand-official-mark {
+  display: none !important;
+}
+
+@media (max-width: 700px) {
+  .dri-nav-brand {
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+
+  .dri-nav-brand .dri-brand-official,
+  .dri-nav-brand .dri-brand-official-mark {
+    width: 36px !important;
+    height: 36px !important;
+    max-width: 36px !important;
+    max-height: 36px !important;
+  }
+
+  .dri-footer-logo-safe {
+    min-height: 72px;
+    padding-block: 9px 11px;
+  }
+
+  .dri-footer-logo-safe > .dri-brand-official,
+  .dri-footer .dri-brand-official-wordmark {
+    width: 180px !important;
+    max-width: 180px !important;
+  }
+}

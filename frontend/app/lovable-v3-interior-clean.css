@@ -1,0 +1,211 @@
+/* Lovable V3 — clean interior system. Home composition is intentionally untouched. */
+:root {
+  --v3-shell: 1200px;
+  --v3-reading: 680px;
+  --v3-line: rgba(255,255,255,.075);
+  --v3-line-strong: rgba(255,255,255,.12);
+  --v3-surface: #0d0d10;
+  --v3-surface-soft: #0a0a0d;
+  --v3-muted: #817b88;
+  --v3-text: #f0edf2;
+  --v3-violet: #a98bf8;
+}
+
+/* Official brand assets: transparent artwork, no badge/container behind them. */
+.dri-brand-official { display:inline-flex;align-items:center;line-height:0; }
+.dri-brand-official img { display:block;width:auto;object-fit:contain; }
+.dri-brand-official-wordmark { width:122px;height:auto;max-height:40px; }
+.dri-brand-official-mark { width:30px;height:30px; }
+.dri-nav-brand { min-width:122px;transition:opacity .18s ease; }
+.dri-nav-brand:hover { opacity:.86; }
+.dri-footer .dri-brand-official-wordmark { width:158px;max-height:none; }
+.dri-auth-logo .dri-brand-official-wordmark { width:154px;max-height:none; }
+.dri-auth-mobile-brand .dri-brand-official-mark { width:36px;height:36px; }
+
+/* Common interior rhythm */
+.catalog-shell,
+.detail-shell,
+.game-set-page,
+.library-shell,
+.v13-dashboard,
+.dri-game-hub-shell {
+  width:min(var(--v3-shell),calc(100% - 48px))!important;
+  margin-inline:auto!important;
+}
+
+/* Interior typography is interface sans. Display face stays available to Home only. */
+.v13-explorer-header h1,
+.v6-game-thesis h1,
+.game-set-hero h1,
+.detail-title-block h1,
+.library-hero h1,
+.v13-dashboard-head h1,
+.dri-auth-brand-copy h1,
+.dri-auth-form-wrap h2,
+.dri-auth-simple-card h1,
+.ux-price-main,
+.library-stat strong {
+  font-family:var(--font-body),Inter,ui-sans-serif,system-ui,sans-serif!important;
+  font-weight:650!important;
+  letter-spacing:-.025em!important;
+}
+
+/* Explorer — search first, controls second, results immediately after. */
+.v13-explorer-workspace.explorer-layout { max-width:var(--v3-shell);padding-top:26px!important;padding-bottom:72px!important; }
+.v13-explorer-top { gap:13px!important;margin-bottom:14px!important; }
+.v13-explorer-header.catalog-header { max-width:760px!important; }
+.v13-explorer-header .kicker { margin-bottom:7px!important;font-size:.58rem!important;letter-spacing:.085em!important; }
+.v13-explorer-header h1 { font-size:clamp(1.9rem,3vw,2.55rem)!important;line-height:1.08!important; }
+.v13-explorer-description { max-width:var(--v3-reading)!important;margin-top:8px!important;font-size:.76rem!important;line-height:1.55!important; }
+.v13-explorer-context { margin-top:9px!important; }
+.v13-explorer-search { width:min(100%,760px)!important; }
+.v13-result-tabs.v5-result-tabs { padding:9px 0 10px!important;border-bottom:1px solid var(--v3-line)!important; }
+.v13-result-tabs .v5-result-tab { min-height:30px!important;padding:5px 9px!important;border-radius:6px!important;background:transparent!important; }
+.v13-result-tabs .v5-result-tab.is-active { background:rgba(139,92,246,.10)!important; }
+.v13-explorer-body { grid-template-columns:224px minmax(0,1fr)!important;gap:28px!important; }
+.v13-explorer-sidebar.catalog-sidebar { padding:4px 18px 8px 0!important;border:0!important;border-right:1px solid var(--v3-line)!important;border-radius:0!important;background:transparent!important; }
+.v13-filter-stack { gap:12px!important; }
+.v13-filter-stack .input { min-height:34px!important;background:#0d0d10!important; }
+.v13-exact-price-filter { padding:9px!important;background:rgba(139,92,246,.035)!important; }
+.v13-results-toolbar { min-height:34px!important;margin-bottom:11px!important;padding-bottom:10px;border-bottom:1px solid var(--v3-line); }
+.v13-results-toolbar .v5-result-summary { font-size:.66rem!important; }
+.v13-sort-control .input { height:31px!important;min-height:31px!important; }
+.v13-view-toggle.segmented { min-height:31px!important;background:transparent!important; }
+.v13-pagination.pagination-row { margin-top:22px!important;padding-top:16px!important;border-top:1px solid var(--v3-line)!important; }
+
+/* Search cards: contained proportions, no stretched dashboard tiles. */
+.sv2-results-grid,.results-grid { gap:12px!important; }
+.catalog-card.v8-result-card { border-color:var(--v3-line)!important;border-radius:10px!important;background:var(--v3-surface)!important;box-shadow:none!important; }
+.catalog-card.v8-result-card:hover { transform:translateY(-1px)!important;border-color:rgba(155,116,247,.23)!important; }
+.v8-result-image-wrap { position:relative; }
+.v14-card-price-corner {
+  position:absolute;right:9px;bottom:9px;z-index:4;
+  display:inline-flex;align-items:center;min-height:27px;padding:0 8px;
+  border:1px solid rgba(196,181,253,.28);border-radius:7px;
+  color:#f4efff;background:rgba(10,9,14,.88);backdrop-filter:blur(8px);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.68rem;font-weight:750;font-variant-numeric:tabular-nums;
+  box-shadow:0 5px 18px rgba(0,0,0,.28);
+}
+
+/* Game hubs — compact product header and restrained set surfaces. */
+.v6-game-hub .dri-game-hub-shell { width:min(var(--v3-shell),calc(100% - 48px))!important;padding-top:24px!important;padding-bottom:72px!important; }
+.v6-game-hero { border-radius:12px!important; }
+.v6-game-hero-main { gap:34px!important;padding:30px 32px!important; }
+.v6-game-thesis h1 { font-size:clamp(2rem,3.4vw,3rem)!important;line-height:1.06!important; }
+.v6-game-thesis p { max-width:620px!important;font-size:.82rem!important;line-height:1.55!important; }
+.v6-game-secondary { gap:48px!important;margin-top:42px!important; }
+.v6-game-hub .ux-stat { min-height:72px!important;padding:12px 14px!important;background:transparent!important; }
+.v6-game-hub .ux-stat strong { font-size:1.05rem!important; }
+
+/* Set detail — one compact header, then workspace. */
+.game-set-page { padding-top:25px!important;padding-bottom:76px!important; }
+.game-set-hero { grid-template-columns:minmax(0,1fr) 220px!important;gap:30px!important;padding:0 0 24px!important;border:0!important;border-bottom:1px solid var(--v3-line)!important;border-radius:0!important;background:transparent!important; }
+.game-set-hero h1 { margin:8px 0 7px!important;font-size:clamp(2rem,3.2vw,2.75rem)!important;line-height:1.06!important; }
+.game-set-hero-copy > p:last-of-type { max-width:var(--v3-reading)!important;font-size:.78rem!important;line-height:1.55!important; }
+.game-set-meta-chips { margin:13px 0!important; }
+.game-set-hero-art { width:min(205px,100%)!important;padding:11px!important;border-radius:10px!important; }
+.game-set-hero-media { min-height:145px!important; }
+.dri-set-checklist { margin-top:28px!important; }
+.dri-set-checklist-head { margin-bottom:14px!important; }
+.dri-set-controls input,.dri-set-controls select { min-height:35px!important; }
+
+/* Card + exact print — stable media rail, content is the focus. */
+.detail-shell { padding-top:25px!important;padding-bottom:76px!important; }
+.detail-actions { margin-bottom:15px!important; }
+.detail-page { grid-template-columns:296px minmax(0,1fr)!important;gap:34px!important; }
+.detail-media-column { top:74px!important;gap:11px!important; }
+.detail-media-card { min-height:350px!important;padding:17px!important;border-radius:11px!important; }
+.detail-media-card .detail-image { max-height:430px!important; }
+.detail-content { gap:18px!important; }
+.detail-title-block { padding-bottom:16px!important; }
+.detail-title-block h1 { margin:7px 0 8px!important;font-size:clamp(2rem,3.2vw,2.75rem)!important;line-height:1.05!important; }
+.detail-intro { max-width:var(--v3-reading)!important;font-size:.8rem!important;line-height:1.55!important; }
+.detail-section-block,.identifiers,.dri-version-summary,.dri-technical { border-color:var(--v3-line)!important;border-radius:10px!important;background:transparent!important; }
+.dri-version-summary { padding:15px!important; }
+.dri-version-summary-head { margin-bottom:12px!important; }
+.dri-version-facts,.dri-technical-grid { border-color:var(--v3-line)!important;background:var(--v3-line)!important; }
+.dri-version-fact { padding:10px 12px!important;background:#0b0b0e!important; }
+.dri-exact-actions { gap:16px!important;padding:15px!important;border-radius:10px!important;background:rgba(139,92,246,.035)!important; }
+.dri-technical { padding:14px 15px!important; }
+.ux-price-panel { padding:15px!important; }
+.ux-price-main { font-size:1.4rem!important; }
+.ux-price-grid { margin:12px 0!important; }
+
+/* Collection / wishlist — data first, hero second. */
+.library-shell { padding-top:25px!important;padding-bottom:76px!important; }
+.library-hero { grid-template-columns:minmax(0,1fr) 280px!important;gap:28px!important;padding:0 0 22px!important;border:0!important;border-bottom:1px solid var(--v3-line)!important;border-radius:0!important;background:transparent!important; }
+.library-hero::after { display:none!important; }
+.library-hero h1 { margin:7px 0 9px!important;font-size:clamp(2rem,3.2vw,2.7rem)!important;line-height:1.06!important; }
+.library-hero p { max-width:var(--v3-reading)!important;font-size:.78rem!important;line-height:1.55!important; }
+.library-summary { border:0!important;border-left:1px solid var(--v3-line)!important;border-radius:0!important;background:transparent!important; }
+.library-stat { padding:10px 15px!important;background:transparent!important; }
+.library-stat strong { font-size:1rem!important; }
+.library-grid { grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px!important;margin-top:22px!important; }
+.library-card { border-radius:10px!important; }
+.library-card-media { padding:13px!important; }
+.library-card-body { gap:8px!important;padding:13px!important; }
+.library-price { padding:9px!important; }
+
+/* Dashboard — financial workspace, not a wall of cards. */
+.v13-dashboard { width:min(var(--v3-shell),calc(100% - 48px))!important;padding-top:25px!important;padding-bottom:76px!important; }
+.v13-dashboard-head { padding-bottom:15px!important; }
+.v13-dashboard-head h1 { max-width:700px!important;font-size:clamp(2rem,3.2vw,2.75rem)!important;line-height:1.06!important; }
+.v13-dashboard-head p { max-width:var(--v3-reading)!important;font-size:.78rem!important;line-height:1.55!important; }
+.v13-overview { border-width:1px 0!important;border-radius:0!important;background:transparent!important; }
+.v13-overview .ux-stat { min-height:68px!important;background:transparent!important; }
+.v13-search-workspace { margin-top:20px!important;padding:15px 0 18px!important;border:0!important;border-bottom:1px solid var(--v3-line)!important;border-radius:0!important;background:transparent!important; }
+.v13-search-workspace .ux-search-copy h2 { font-family:var(--font-body)!important;font-size:1.25rem!important;letter-spacing:-.02em!important; }
+.v13-personal-grid { margin-top:30px!important;gap:22px!important; }
+.v13-personal-panel,.v13-pulse-section { border-color:var(--v3-line)!important;border-radius:10px!important;background:transparent!important; }
+.v13-catalog-section { margin-top:34px!important; }
+.v13-dashboard .ux-account-section { margin-top:38px!important; }
+
+/* Auth — contained and quiet; all existing controls remain untouched. */
+.dri-auth-page { width:min(100%,980px);min-height:100vh;margin-inline:auto;grid-template-columns:minmax(300px,390px) minmax(0,1fr)!important;background:#09090c!important; }
+.dri-auth-brand-panel { min-height:100vh!important;padding:34px!important;background:radial-gradient(circle at 25% 25%,rgba(139,92,246,.09),transparent 24rem),#0b0a0f!important; }
+.dri-auth-brand-copy { margin-block:auto!important;padding-block:34px!important; }
+.dri-auth-brand-copy h1 { margin:11px 0 10px!important;font-size:clamp(1.8rem,3vw,2.45rem)!important;line-height:1.08!important; }
+.dri-auth-brand-copy > p { font-size:.76rem!important;line-height:1.55!important; }
+.dri-auth-brand-copy ul { margin-top:20px!important; }
+.dri-auth-form-panel { padding:30px 28px!important; }
+.dri-auth-form-wrap { width:min(100%,420px)!important; }
+.dri-auth-form-wrap h2,.dri-auth-simple-card h1 { font-size:clamp(1.65rem,2.6vw,2.1rem)!important;line-height:1.08!important; }
+.dri-auth-simple-card { width:min(100%,460px)!important;border-radius:12px!important;background:#0d0d10!important;box-shadow:none!important; }
+
+@media (max-width:900px) {
+  .catalog-shell,.detail-shell,.game-set-page,.library-shell,.v13-dashboard,.dri-game-hub-shell { width:min(100% - 32px,var(--v3-shell))!important; }
+  .v13-explorer-body { display:block!important; }
+  .v13-explorer-sidebar { display:none!important; }
+  .game-set-hero,.library-hero { grid-template-columns:1fr!important; }
+  .game-set-hero-visual { display:none!important; }
+  .library-summary { max-width:none!important;border-left:0!important;border-top:1px solid var(--v3-line)!important;grid-template-columns:repeat(2,minmax(0,1fr))!important; }
+  .detail-page { grid-template-columns:250px minmax(0,1fr)!important;gap:25px!important; }
+  .library-grid { grid-template-columns:repeat(2,minmax(0,1fr))!important; }
+}
+
+@media (max-width:700px) {
+  .dri-nav-brand { min-width:42px; }
+  .dri-nav-brand .dri-brand-official-wordmark { display:none; }
+  .dri-nav-brand .dri-brand-official::after { content:'';display:block;width:30px;height:30px;background:url('/branding/dontripit-mark.png') center/contain no-repeat; }
+  .detail-page { grid-template-columns:1fr!important; }
+  .detail-media-column { position:static!important; }
+  .detail-media-card { min-height:285px!important; }
+  .library-grid { grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important; }
+  .dri-auth-page { width:100%;grid-template-columns:1fr!important; }
+  .dri-auth-brand-panel { display:none!important; }
+}
+
+@media (max-width:520px) {
+  .catalog-shell,.detail-shell,.game-set-page,.library-shell,.v13-dashboard,.dri-game-hub-shell { width:calc(100% - 24px)!important; }
+  .v13-explorer-header h1,.v6-game-thesis h1,.game-set-hero h1,.detail-title-block h1,.library-hero h1,.v13-dashboard-head h1 { font-size:1.8rem!important; }
+  .v13-results-toolbar { display:grid!important;gap:8px!important; }
+  .v13-results-controls { justify-content:space-between!important; }
+  .library-grid { grid-template-columns:1fr 1fr!important; }
+  .library-card-title { font-size:.82rem!important; }
+  .dri-auth-form-panel { padding:26px 18px!important; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .dri-nav-brand,.catalog-card.v8-result-card { transition:none!important; }
+  .catalog-card.v8-result-card:hover { transform:none!important; }
+}
