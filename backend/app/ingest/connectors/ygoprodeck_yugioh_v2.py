@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.ingest.base import IngestStats
 from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
 
 
@@ -12,6 +13,15 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
     scheduled jobs could repeatedly re-read the same first page forever. API v7
     supports ``sort=new`` plus ``startdate``/``dateregion``; incremental jobs use
     those parameters while full reconciliation keeps the original all-card path.
+
+    The legacy connector also performs a catalog-wide Print repair after every
+    incremental batch. That sweep checks print keys and primary images row by row
+    across the full Yu-Gi-Oh catalog and can take longer than the production job
+    timeout even when only a few dozen cards changed. Current source rows already
+    self-heal through ``should_skip_existing_record`` + ``upsert`` and return
+    touched entity ids for targeted Search V2 reindexing, so the scheduled V2
+    freshness path deliberately leaves broad legacy/image cleanup to a full
+    reconciliation instead of coupling it to every daily refresh.
     """
 
     name = "ygoprodeck_yugioh"
@@ -116,3 +126,25 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
             offset += batch_size
 
         return cards
+
+    def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
+        """Keep the broad legacy repair out of daily incremental refreshes.
+
+        The inherited implementation historically gates the sweep on
+        ``incremental=True``. V2 reverses where that maintenance belongs: daily
+        incremental runs skip it, while an explicit full reconciliation invokes
+        the inherited repair with its internal gate enabled.
+        """
+        if bool(kwargs.get("incremental", True)):
+            self.logger.info(
+                "ingest ygoprodeck_v2 legacy_repair_skipped "
+                "owner=full_reconciliation"
+            )
+            return {}
+
+        repair_kwargs = dict(kwargs)
+        repair_kwargs["incremental"] = True
+        self.logger.info("ingest ygoprodeck_v2 legacy_repair_start mode=full_reconciliation")
+        result = super().repair_legacy_records(session, source, stats, **repair_kwargs)
+        self.logger.info("ingest ygoprodeck_v2 legacy_repair_done mode=full_reconciliation")
+        return result
