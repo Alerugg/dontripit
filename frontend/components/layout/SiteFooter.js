@@ -14,7 +14,9 @@ export default function SiteFooter() {
     <footer className="dri-footer">
       <div className="app-shell dri-footer-grid">
         <div className="dri-footer-brand">
-          <BrandMark />
+          <div className="dri-footer-logo-safe" aria-label="Don’tRipIt">
+            <BrandMark />
+          </div>
           <p>Busca la carta, identifica la versión física exacta y organiza colección y wishlist desde una sola cuenta.</p>
           <a href="mailto:info@dontripit.com">info@dontripit.com</a>
         </div>
