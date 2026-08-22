@@ -3,17 +3,27 @@ name: Audit Yu-Gi-Oh Current Canonical Source
 on:
   push:
     branches: [catalog-v2]
-    paths: ['.github/workflows/audit-yugioh-current-canonical-live.yml']
+    paths:
+      - '.github/workflows/audit-yugioh-current-canonical-live.yml'
+      - 'backend/app/scripts/build_yugioh_v2_snapshot_canonical.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh_v2.py'
+      - 'backend/tests/test_yugioh_v2_snapshot_growth_guard.py'
   pull_request:
     branches: [catalog-v2]
-    paths: ['.github/workflows/audit-yugioh-current-canonical-live.yml']
+    paths:
+      - '.github/workflows/audit-yugioh-current-canonical-live.yml'
+      - 'backend/app/scripts/build_yugioh_v2_snapshot_canonical.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh_v2.py'
+      - 'backend/tests/test_yugioh_v2_snapshot_growth_guard.py'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: audit-yugioh-current-canonical
+  group: audit-yugioh-current-canonical-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,147 +39,107 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || 'catalog-v2' }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Apply reviewed YGOPRODeck exclusion multiplicity update
-        if: github.event_name == 'pull_request'
-        working-directory: .
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          builder = Path('backend/app/scripts/build_yugioh_v2_snapshot_canonical.py')
-          text = builder.read_text()
-          old = '''# These counts describe explicit curated policy in this file and therefore remain
-          # exact. If an alias or quarantine decision changes, it requires a reviewed code
-          # change rather than being silently accepted as upstream growth.
-          EXPECTED_STATIC = {
-              "source_card_aliases_merged": len(CARD_ALIAS_TO_CANONICAL),
-              "excluded_source_print_rows": len(SOURCE_PRINT_EXCLUSIONS),
-          }
-          '''
-          new = '''# These counts describe reviewed static source-policy evidence and therefore remain
-          # exact. Eight configured quarantine keys currently match nine raw rows because
-          # YGOPRODeck publishes 94820406 / SGX3-ENA11 twice (Common and Secret Rare).
-          # Any further alias, quarantine-key or raw-row multiplicity change must be reviewed.
-          EXPECTED_STATIC = {
-              "source_card_aliases_merged": len(CARD_ALIAS_TO_CANONICAL),
-              "excluded_source_print_rows": 9,
-          }
-          '''
-          if old in text:
-              builder.write_text(text.replace(old, new, 1))
-          elif '"excluded_source_print_rows": 9,' not in text:
-              raise SystemExit('expected static gate block not found')
-
-          tests = Path('backend/tests/test_yugioh_v2_snapshot_growth_guard.py')
-          test_text = tests.read_text()
-          marker = 'def test_snapshot_gate_keeps_reviewed_exclusion_row_count_exact():'
-          if marker not in test_text:
-              test_text += '''\n\ndef test_snapshot_gate_keeps_reviewed_exclusion_row_count_exact():\n    with pytest.raises(AssertionError, match="excluded_source_print_rows"):\n        _assert_snapshot_gates(\n            _valid_counts(\n                excluded_source_print_rows=(\n                    EXPECTED_STATIC["excluded_source_print_rows"] + 1\n                )\n            )\n        )\n'''
-              tests.write_text(test_text)
-          PY
-          git diff --check
-          (cd backend && pytest -q tests/test_yugioh_v2_snapshot_growth_guard.py)
-          if git diff --quiet -- backend/app/scripts/build_yugioh_v2_snapshot_canonical.py backend/tests/test_yugioh_v2_snapshot_growth_guard.py; then
-            echo 'Reviewed multiplicity fix already present.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add backend/app/scripts/build_yugioh_v2_snapshot_canonical.py backend/tests/test_yugioh_v2_snapshot_growth_guard.py
-          git commit -m 'fix(yugioh): accept reviewed duplicate quarantined rarity row'
-          git push origin "HEAD:${GITHUB_HEAD_REF}"
-      - name: Diagnose curated raw-source exclusion hits
-        run: |
-          python - <<'PY'
-          import json
-          from collections import Counter
-          from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
-          from app.scripts.build_yugioh_v2_snapshot_canonical import SOURCE_PRINT_EXCLUSIONS
-
-          cards=YgoProDeckYugiohConnector()._load_remote(limit=None)
-          hits=Counter()
-          samples={}
-          for card in cards:
-              card_id=str(card.get('id') or '').strip()
-              for row in card.get('card_sets') or []:
-                  code=str(row.get('set_code') or '').strip().upper()
-                  key=(card_id,code)
-                  if key in SOURCE_PRINT_EXCLUSIONS:
-                      hits[key]+=1
-                      samples.setdefault(key,[]).append(row)
-          report={
-              'configured_exclusions':len(SOURCE_PRINT_EXCLUSIONS),
-              'raw_exclusion_hits':sum(hits.values()),
-              'hits':[
-                  {'card_id':card_id,'set_code':code,'count':hits[(card_id,code)],'rows':samples[(card_id,code)]}
-                  for card_id,code in sorted(hits)
-              ],
-          }
-          print(json.dumps(report,indent=2,sort_keys=True))
-          PY
+      - name: Prove Yu-Gi-Oh canonical growth guards
+        run: pytest -q tests/test_yugioh_v2_snapshot_growth_guard.py
       - name: Build fresh canonical snapshot from current YGOPRODeck and cardsets source
         run: python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
-      - name: Compare canonical identities to Neon
+      - name: Compare current canonical identities to Neon
         run: |
           python - <<'PY'
           import json, os
           from pathlib import Path
           from sqlalchemy import create_engine, text
-          root=Path('/tmp/ygo-current')
-          manifest=json.loads((root/'manifest.json').read_text())
-          def vals(name,key):
-              out=set()
-              with (root/name).open() as f:
-                  for line in f: out.add(str(json.loads(line)[key]))
-              return out
-          source_cards=vals('cards.jsonl','card_key')
-          source_sets={v.lower() for v in vals('sets.jsonl','code')}
-          source_prints=vals('prints.jsonl','print_key')
-          url=os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL']
-          engine=create_engine(url)
+
+          root = Path('/tmp/ygo-current')
+          manifest = json.loads((root / 'manifest.json').read_text())
+
+          def vals(name, key):
+              with (root / name).open() as handle:
+                  return {str(json.loads(line)[key]) for line in handle if line.strip()}
+
+          source_cards = vals('cards.jsonl', 'card_key')
+          source_sets = {value.lower() for value in vals('sets.jsonl', 'code')}
+          source_prints = vals('prints.jsonl', 'print_key')
+
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           with engine.connect() as conn:
-              gid=conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
-              db_cards={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
-              db_sets={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
-              db_prints={str(v) for v in conn.execute(text('''SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=:g AND p.print_key IS NOT NULL'''),{'g':gid}).scalars()}
-          gaps={
-              'source_cards_missing_in_neon':len(source_cards-db_cards),
-              'source_sets_missing_in_neon':len(source_sets-db_sets),
-              'source_prints_missing_in_neon':len(source_prints-db_prints),
-              'neon_cards_not_in_current_source':len(db_cards-source_cards),
-              'neon_sets_not_in_current_source':len(db_sets-source_sets),
-              'neon_prints_not_in_current_source':len(db_prints-source_prints),
-          }
-          report={
-              'mode':'read_only',
-              'source_counts':manifest['counts'],
-              'neon_counts':{'cards':len(db_cards),'sets':len(db_sets),'prints':len(db_prints)},
-              'gaps':gaps,
-              'current_source_exactly_covered':all(gaps[k]==0 for k in ('source_cards_missing_in_neon','source_sets_missing_in_neon','source_prints_missing_in_neon')),
-              'exact_set_equality':all(v==0 for v in gaps.values()),
-              'samples':{
-                  'missing_cards':sorted(source_cards-db_cards)[:100],
-                  'missing_sets':sorted(source_sets-db_sets)[:100],
-                  'missing_prints':sorted(source_prints-db_prints)[:100],
-                  'stale_cards':sorted(db_cards-source_cards)[:100],
-                  'stale_sets':sorted(db_sets-source_sets)[:100],
-                  'stale_prints':sorted(db_prints-source_prints)[:100],
+              gid = conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_cards = {
+                  str(value)
+                  for value in conn.execute(
+                      text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),
+                      {'g': gid},
+                  ).scalars()
               }
+              db_sets = {
+                  str(value).lower()
+                  for value in conn.execute(
+                      text("SELECT code FROM sets WHERE game_id=:g"),
+                      {'g': gid},
+                  ).scalars()
+              }
+              db_prints = {
+                  str(value)
+                  for value in conn.execute(
+                      text('''
+                          SELECT p.print_key
+                          FROM prints p
+                          JOIN cards c ON c.id=p.card_id
+                          WHERE c.game_id=:g AND p.print_key IS NOT NULL
+                      '''),
+                      {'g': gid},
+                  ).scalars()
+              }
+
+          gaps = {
+              'source_cards_missing_in_neon': len(source_cards - db_cards),
+              'source_sets_missing_in_neon': len(source_sets - db_sets),
+              'source_prints_missing_in_neon': len(source_prints - db_prints),
+              'neon_cards_not_in_current_source': len(db_cards - source_cards),
+              'neon_sets_not_in_current_source': len(db_sets - source_sets),
+              'neon_prints_not_in_current_source': len(db_prints - source_prints),
           }
-          Path('/tmp/ygo-current-canonical-gap.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
-          print(json.dumps(report,indent=2,sort_keys=True))
+          report = {
+              'mode': 'read_only',
+              'source_counts': manifest['counts'],
+              'neon_counts': {
+                  'cards': len(db_cards),
+                  'sets': len(db_sets),
+                  'prints': len(db_prints),
+              },
+              'gaps': gaps,
+              'current_source_exactly_covered': all(
+                  gaps[key] == 0
+                  for key in (
+                      'source_cards_missing_in_neon',
+                      'source_sets_missing_in_neon',
+                      'source_prints_missing_in_neon',
+                  )
+              ),
+              'samples': {
+                  'missing_cards': sorted(source_cards - db_cards)[:100],
+                  'missing_sets': sorted(source_sets - db_sets)[:100],
+                  'missing_prints': sorted(source_prints - db_prints)[:100],
+                  'stale_cards': sorted(db_cards - source_cards)[:100],
+                  'stale_sets': sorted(db_sets - source_sets)[:100],
+                  'stale_prints': sorted(db_prints - source_prints)[:100],
+              },
+          }
+          Path('/tmp/ygo-current-canonical-gap.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
           if not report['current_source_exactly_covered']:
-              raise SystemExit(f"Current Yu-Gi-Oh canonical source is not fully covered by Neon: {json.dumps(gaps, sort_keys=True)}")
+              raise SystemExit(
+                  'Current Yu-Gi-Oh canonical source is not fully covered by Neon: '
+                  + json.dumps(gaps, sort_keys=True)
+              )
           PY
       - uses: actions/upload-artifact@v4
         if: always()
