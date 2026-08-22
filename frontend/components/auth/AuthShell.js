@@ -76,7 +76,7 @@ export default function AuthShell({ mode = 'register', next = '/dashboard' }) {
 
       <section className="dri-auth-form-panel">
         <div className="dri-auth-form-wrap">
-          <div className="dri-auth-mobile-brand"><BrandMark compact /></div>
+          <div className="dri-auth-mobile-brand"><BrandMark /></div>
           <span className="dri-kicker">{register ? 'Crear cuenta' : 'Iniciar sesión'}</span>
           <h2>{register ? 'Tu colección empieza aquí.' : 'Continúa donde lo dejaste.'}</h2>
           <p className="dri-auth-intro">
