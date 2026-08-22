@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import time
 from pathlib import Path
@@ -31,7 +32,8 @@ CASES = [
     {"game": "yugioh", "query": "Blu-Eyes Wite Dragon", "kind": "fuzzy", "top_contains": "blue-eyes white dragon"},
     {"game": "yugioh", "query": "zznotrealcard991", "kind": "fuzzy", "expect_empty": True},
     {"game": "onepiece", "query": "Luffy", "kind": "core", "top_contains": "luffy"},
-    {"game": "onepiece", "query": "P-135", "kind": "core", "mode": "exact_identifier"},
+    {"game": "onepiece", "query": "P-150", "kind": "core", "top_contains": "kuzan", "mode": "exact_identifier"},
+    {"game": "onepiece", "query": "OP05-119", "kind": "core", "top_contains": "luffy", "mode": "exact_identifier"},
     {"game": "onepiece", "query": "Lufy", "kind": "fuzzy", "top_contains": "luffy"},
     {"game": "onepiece", "query": "zznotrealcard991", "kind": "fuzzy", "expect_empty": True},
 ]
@@ -42,6 +44,14 @@ def _latency_ms(response: requests.Response) -> int:
     if raw is None:
         raise RuntimeError("production response missing x-app-response-time-ms")
     return int(float(raw))
+
+
+def _nearest_rank(samples: list[int], percentile: float) -> int:
+    if not samples:
+        raise ValueError("at least one latency sample is required")
+    ordered = sorted(samples)
+    rank = max(1, math.ceil(percentile * len(ordered)))
+    return ordered[min(rank - 1, len(ordered) - 1)]
 
 
 def _validate_payload(case: dict, payload: dict) -> None:
@@ -76,9 +86,10 @@ def _run_case(base_url: str, case: dict) -> dict:
     samples: list[int] = []
     response_modes: list[str | None] = []
 
-    # Two samples keeps the complete audit below the public 30-request window,
-    # while the median smooths one cold-start spike. A separate hard ceiling
-    # still catches pathological regressions such as the historical 2-7s paths.
+    # Fifteen cases x two samples exactly fills the public 30-request window.
+    # The per-case percentile fields below are regression diagnostics only;
+    # statistically meaningful p95/p99 come from the separate middleware audit
+    # over accumulated production request metrics.
     for sample_index in range(2):
         response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
@@ -101,6 +112,8 @@ def _run_case(base_url: str, case: dict) -> dict:
         "hard_sample_ceiling_ms": HARD_SAMPLE_CEILING_MS,
         "samples_ms": samples,
         "median_ms": median_ms,
+        "sample_p95_ms": _nearest_rank(samples, 0.95),
+        "sample_p99_ms": _nearest_rank(samples, 0.99),
         "max_ms": max_ms,
         "pagination_modes": response_modes,
         "status": status,
@@ -114,13 +127,21 @@ def main() -> int:
     args = parser.parse_args()
 
     rows = [_run_case(args.base_url, case) for case in CASES]
+    all_samples = [sample for row in rows for sample in row["samples_ms"]]
     report = {
         "status": "pass" if all(row["status"] == "pass" for row in rows) else "fail",
         "production_writes": 0,
         "base_url": args.base_url,
+        "request_count": len(all_samples),
         "core_budget_ms": CORE_BUDGET_MS,
         "fuzzy_budget_ms": FUZZY_BUDGET_MS,
         "hard_sample_ceiling_ms": HARD_SAMPLE_CEILING_MS,
+        "active_sample_summary": {
+            "median_ms": float(statistics.median(all_samples)),
+            "sample_p95_ms": _nearest_rank(all_samples, 0.95),
+            "sample_p99_ms": _nearest_rank(all_samples, 0.99),
+            "max_ms": max(all_samples),
+        },
         "cases": rows,
     }
     Path(args.report).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
