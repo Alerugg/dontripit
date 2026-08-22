@@ -128,15 +128,14 @@ def exhaustive_name_page(
 ) -> dict:
     """Page every logical Card whose canonical normalized name contains query.
 
-    Canonical ``cards`` are the source of truth. Search profiles may enrich and
-    rank a Card, but a missing/stale profile is never allowed to hide a real
-    canonical Card. This is what makes common-name searches exhaustive.
+    The hot path starts from CardSearchProfile so PostgreSQL can use the existing
+    trigram/exact indexes directly. Canonical Cards remain the source of truth:
+    a second, narrow fallback recovers Cards whose profile is missing or stale.
+    This avoids the previous LEFT JOIN LATERAL lookup once per Card, which made
+    negative searches especially expensive for large games such as Yu-Gi-Oh.
 
-    PostgreSQL deliberately performs one matched-card pass. Totals are carried
-    with window aggregates and representative Print/image enrichment happens
-    only after LIMIT/OFFSET. The previous implementation rebuilt the same
-    matched-card CTE twice and evaluated extra Print work before returning a
-    24-row page.
+    Totals travel with the page via window aggregates. Representative Print and
+    image enrichment happens only after LIMIT/OFFSET.
     """
     q_norm = normalize_search_text(query)
     if not q_norm:
@@ -158,32 +157,42 @@ def exhaustive_name_page(
 
     matched_cards_cte = """
         SELECT
-          c.id AS card_id,
-          profile.normalized_name,
-          COALESCE(profile.attributes_json, '{}'::jsonb) AS attributes_json,
+          csp.card_id,
+          csp.normalized_name,
+          COALESCE(csp.attributes_json, '{}'::jsonb) AS attributes_json,
           CASE
-            WHEN profile.normalized_name = :q_norm THEN 5000.0
-            WHEN profile.normalized_name LIKE :prefix THEN 3000.0
-            WHEN (' ' || COALESCE(profile.normalized_name, '') || ' ') LIKE :word THEN 2200.0
-            WHEN profile.normalized_name LIKE :contains THEN 1500.0
+            WHEN csp.normalized_name = :q_norm THEN 5000.0
+            WHEN csp.normalized_name LIKE :prefix THEN 3000.0
+            WHEN (' ' || csp.normalized_name || ' ') LIKE :word THEN 2200.0
+            ELSE 1500.0
+          END AS score
+        FROM card_search_profiles csp
+        JOIN games g ON g.id = csp.game_id
+        WHERE (:game = '' OR g.slug = :game)
+          AND csp.normalized_name LIKE :contains
+
+        UNION ALL
+
+        SELECT
+          c.id AS card_id,
+          COALESCE(csp.normalized_name, lower(c.name)) AS normalized_name,
+          COALESCE(csp.attributes_json, '{}'::jsonb) AS attributes_json,
+          CASE
+            WHEN COALESCE(csp.normalized_name, lower(c.name)) = :q_norm THEN 5000.0
+            WHEN COALESCE(csp.normalized_name, lower(c.name)) LIKE :prefix THEN 3000.0
+            WHEN (' ' || COALESCE(csp.normalized_name, lower(c.name)) || ' ') LIKE :word THEN 2200.0
             ELSE 1400.0
           END AS score
         FROM cards c
         JOIN games g ON g.id = c.game_id
-        LEFT JOIN LATERAL (
-          SELECT csp.normalized_name, csp.attributes_json
-          FROM card_search_profiles csp
-          WHERE csp.card_id = c.id
-            AND csp.normalized_name LIKE :contains
-          ORDER BY
-            CASE WHEN csp.normalized_name = :q_norm THEN 0 ELSE 1 END,
-            csp.id ASC
-          LIMIT 1
-        ) profile ON TRUE
+        LEFT JOIN card_search_profiles csp ON csp.card_id = c.id
         WHERE (:game = '' OR g.slug = :game)
-          AND (
-            profile.normalized_name IS NOT NULL
-            OR lower(c.name) LIKE :canonical_fallback
+          AND lower(c.name) LIKE :canonical_fallback
+          AND NOT EXISTS (
+            SELECT 1
+            FROM card_search_profiles hit
+            WHERE hit.card_id = c.id
+              AND hit.normalized_name LIKE :contains
           )
     """
 
