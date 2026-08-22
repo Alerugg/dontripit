@@ -14,11 +14,14 @@ test('loads the clean interior override after the approved Home styles', () => {
   assert.ok(cleanIndex > homeIndex)
 })
 
-test('uses official Don’tRipIt assets for wordmark and navigation mark', () => {
+test('uses verified Don’tRipIt wordmark data and the official navigation mark', () => {
   const brand = read('components/brand/BrandMark.js')
-  assert.match(brand, /\/branding\/dontripit-wordmark\.png/)
+  assert.match(brand, /data:image\/webp;base64,UklGR/)
+  assert.match(brand, /wordmark:\s*WORDMARK_DATA_URI/)
   assert.match(brand, /\/branding\/dontripit-nav-mark\.png/)
+  assert.match(brand, /width:\s*180,\s*height:\s*62/)
   assert.match(brand, /alt="Don’tRipIt"/)
+  assert.doesNotMatch(brand, /dontripit-wordmark\.png/)
 })
 
 test('round DR mark is explicit in nav and auth stays on horizontal wordmark', () => {
