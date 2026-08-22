@@ -5,7 +5,11 @@ on:
   pull_request:
     paths:
       - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity_v2.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_incremental_guard.py'
+      - 'backend/app/ingest/registry.py'
+      - 'backend/tests/test_tcgdex_en_legacy_incremental.py'
       - '.github/workflows/audit-pokemon-tcgdex-parity-v1.yml'
 
 permissions:
@@ -35,7 +39,11 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         run: pip install -r requirements.txt
-      - name: Compile parity audit
-        run: python -m py_compile app/scripts/prove_pokemon_tcgdex_parity.py
+      - name: Compile parity audit and incremental contract
+        run: |
+          python -m py_compile app/ingest/connectors/tcgdex_pokemon_incremental_guard.py
+          python -m py_compile app/scripts/prove_pokemon_tcgdex_parity_v2.py
+      - name: Run legacy EN incremental regression
+        run: pytest -q tests/test_tcgdex_en_legacy_incremental.py
       - name: Prove fresh TCGdex EN ES JA physical parity read-only
-        run: python -m app.scripts.prove_pokemon_tcgdex_parity
+        run: python -m app.scripts.prove_pokemon_tcgdex_parity_v2
