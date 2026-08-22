@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app.search_v2.exact_identifier import _structured_code, exact_structured_identifier_search
+from app.search_v2.exact_identifier import (
+    _set_collector_parts,
+    _structured_code,
+    exact_structured_identifier_search,
+)
 
 
 def test_structured_identifier_normalization_is_strict():
@@ -9,6 +13,12 @@ def test_structured_identifier_normalization_is_strict():
     assert _structured_code("lea_1") == "lea-1"
     assert _structured_code("Pikachu") is None
     assert _structured_code("Porygon-Z") is None
+
+
+def test_set_collector_parts_preserve_indexable_components():
+    assert _set_collector_parts("lea-1") == ("lea", "1")
+    assert _set_collector_parts("svp-202") == ("svp", "202")
+    assert _set_collector_parts("bad") is None
 
 
 def test_exact_identifier_only_claims_supported_games():
@@ -39,8 +49,10 @@ class _FakeSession:
 
     def __init__(self):
         self.params = None
+        self.sql = None
 
-    def execute(self, _sql, params):
+    def execute(self, sql, params):
+        self.sql = str(sql)
         self.params = params
         return _Result([])
 
@@ -56,9 +68,12 @@ def test_pokemon_tcgdex_identifier_uses_exact_card_key_and_fails_closed():
     assert result == []
     assert session.params["q_code"] == "base1-4"
     assert session.params["pokemon_card_key"] == "pokemon:tcgdex:base1-4"
+    assert session.params["set_code"] == "base1"
+    assert session.params["collector"] == "4"
+    assert "lower(c.card_key)=:pokemon_card_key" in session.sql
 
 
-def test_mtg_set_collector_identifier_uses_exact_compound_code():
+def test_mtg_set_collector_identifier_uses_separate_indexed_columns():
     session = _FakeSession()
     result = exact_structured_identifier_search(
         session,
@@ -69,3 +84,8 @@ def test_mtg_set_collector_identifier_uses_exact_compound_code():
     assert result == []
     assert session.params["q_code"] == "lea-1"
     assert session.params["pokemon_card_key"] == ""
+    assert session.params["set_code"] == "lea"
+    assert session.params["collector"] == "1"
+    assert "psp.normalized_set_code=:set_code" in session.sql
+    assert "psp.normalized_collector_number=:collector" in session.sql
+    assert "|| '-' ||" not in session.sql
