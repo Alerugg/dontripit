@@ -98,8 +98,9 @@ jobs:
               }
               promo_by_region[region] = sorted(region_promos)
 
+          p150_collector = normalize_collector_number('P-150')
           official_p150_regions = [
-              region for region, promos in promo_by_region.items() if 'P-150' in promos
+              region for region, promos in promo_by_region.items() if p150_collector in promos
           ]
           if not official_p150_regions:
               raise AssertionError('P-150 disappeared from all official Bandai regional card-list sources')
@@ -143,7 +144,7 @@ jobs:
           missing_cards = sorted(src_cards - db_cards)
           missing_sets = sorted(src_sets - db_sets)
           missing_prints = sorted(src_prints - db_prints)
-          expected_p150 = sorted(row for row in src_prints if row[1] == 'P-150')
+          expected_p150 = sorted(row for row in src_prints if row[1] == p150_collector)
           missing_p150 = sorted(set(expected_p150) - db_prints)
 
           proof = {
