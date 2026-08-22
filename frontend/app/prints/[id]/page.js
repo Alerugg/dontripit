@@ -123,6 +123,7 @@ function PriceMetric({ label, value, currency, locale }) {
 }
 
 function PriceBlock({ price, cardmarket, locale }) {
+  // Absence rule: “Sin Price Guide actual” is intentionally rendered as silence, never as a fake price panel.
   if (!price) return null
 
   const currency = price.currency || 'EUR'
@@ -139,6 +140,7 @@ function PriceBlock({ price, cardmarket, locale }) {
   const primaryDisplay = money(primary.value, currency, locale)
   if (!primaryDisplay) return null
   const updated = formatMarketDate(price.as_of, locale)
+  const hasRollingWindow = [price.avg1, price.avg7, price.avg30].some((value) => positiveNumber(value) !== null)
 
   return (
     <section className="panel-soft identifiers ux-price-panel v14-market-panel v15-print-market-panel">
@@ -154,12 +156,23 @@ function PriceBlock({ price, cardmarket, locale }) {
         </div>
       </div>
 
-      <div className="ux-price-grid v14-price-grid">
-        <PriceMetric label="Low" value={price.minimum} currency={currency} locale={locale} />
-        <PriceMetric label="Media 1d" value={price.avg1} currency={currency} locale={locale} />
-        <PriceMetric label="Media 7d" value={price.avg7} currency={currency} locale={locale} />
-        <PriceMetric label="Media 30d" value={price.avg30} currency={currency} locale={locale} />
+      <div className="ux-price-grid v14-price-grid" aria-label="Conceptos de precio de esta Print">
+        <PriceMetric label="Mínimo" value={price.minimum} currency={currency} locale={locale} />
+        <PriceMetric label="Conservador" value={price.conservative} currency={currency} locale={locale} />
+        <PriceMetric label="Tendencia" value={price.trend} currency={currency} locale={locale} />
+        <PriceMetric label="Media" value={price.average} currency={currency} locale={locale} />
       </div>
+
+      {hasRollingWindow ? (
+        <div className="v15-price-window">
+          <span className="v15-price-window-label">Ventana Cardmarket</span>
+          <div className="ux-price-grid v14-price-grid v15-price-window-grid">
+            <PriceMetric label="Media 1d" value={price.avg1} currency={currency} locale={locale} />
+            <PriceMetric label="Media 7d" value={price.avg7} currency={currency} locale={locale} />
+            <PriceMetric label="Media 30d" value={price.avg30} currency={currency} locale={locale} />
+          </div>
+        </div>
+      ) : null}
 
       <div className="v14-market-foot">
         <p className="detail-meta">
@@ -175,7 +188,7 @@ function PriceBlock({ price, cardmarket, locale }) {
 
       <details className="dri-technical dri-price-method v14-price-method">
         <summary>Cómo leer estos precios</summary>
-        <p className="detail-meta">El precio principal prioriza la métrica de mercado publicada para esta contraparte exacta. Low y medias se muestran por separado. No reutilizamos el precio de otra edición, idioma o acabado.</p>
+        <p className="detail-meta">El valor conservador usa Low Price EX+ para versiones no foil y Foil Low para versiones foil cuando Cardmarket publica esa métrica. Tendencia, media y ventanas temporales se mantienen separadas. No reutilizamos el precio de otra edición, idioma o acabado.</p>
       </details>
     </section>
   )
