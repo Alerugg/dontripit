@@ -41,25 +41,31 @@
 
 /* Navigation: only the official round DR! mark. */
 .dri-nav-brand {
-  min-width: 42px !important;
-  min-height: 42px !important;
+  width: 46px !important;
+  min-width: 46px !important;
+  height: 46px !important;
+  min-height: 46px !important;
   display: inline-flex !important;
   align-items: center !important;
-  justify-content: flex-start !important;
+  justify-content: center !important;
   overflow: visible !important;
 }
 
 .dri-nav-brand .dri-brand-official {
-  width: 38px !important;
-  height: 38px !important;
+  width: 42px !important;
+  height: 42px !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
 .dri-nav-brand .dri-brand-official-mark {
   display: block !important;
-  width: 38px !important;
-  height: 38px !important;
-  max-width: 38px !important;
+  width: 42px !important;
+  height: 42px !important;
+  max-width: 42px !important;
+  max-height: 42px !important;
   object-fit: contain !important;
+  object-position: center !important;
 }
 
 .dri-nav-brand .dri-brand-official-wordmark {
@@ -123,15 +129,18 @@
 
 @media (max-width: 700px) {
   .dri-nav-brand {
-    min-width: 38px !important;
-    min-height: 38px !important;
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
   }
 
   .dri-nav-brand .dri-brand-official,
   .dri-nav-brand .dri-brand-official-mark {
-    width: 34px !important;
-    height: 34px !important;
-    max-width: 34px !important;
+    width: 36px !important;
+    height: 36px !important;
+    max-width: 36px !important;
+    max-height: 36px !important;
   }
 
   .dri-footer-brand > .dri-brand-official,
