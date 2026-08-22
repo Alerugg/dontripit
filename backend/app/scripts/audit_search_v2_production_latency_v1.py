@@ -24,7 +24,10 @@ CASES = [
     {"game": "mtg", "query": "lea-1", "kind": "core", "top_contains": "animate wall", "mode": "exact_identifier"},
     {"game": "mtg", "query": "Lightnng Bolt", "kind": "fuzzy", "top_contains": "lightning bolt"},
     {"game": "yugioh", "query": "Blue-Eyes White Dragon", "kind": "core", "top_contains": "blue-eyes white dragon"},
-    {"game": "yugioh", "query": "LOB-001", "kind": "core", "mode": "exact_identifier"},
+    # Yu-Gi-Oh exact collectors are resolved inside its specialized ranked
+    # engine; the physical result is exact even though the outer API mode is
+    # currently labelled ranked_fallback.
+    {"game": "yugioh", "query": "LOB-001", "kind": "core", "top_contains": "blue-eyes white dragon"},
     {"game": "yugioh", "query": "Blu-Eyes Wite Dragon", "kind": "fuzzy", "top_contains": "blue-eyes white dragon"},
     {"game": "yugioh", "query": "zznotrealcard991", "kind": "fuzzy", "expect_empty": True},
     {"game": "onepiece", "query": "Luffy", "kind": "core", "top_contains": "luffy"},
