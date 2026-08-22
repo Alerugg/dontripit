@@ -89,17 +89,22 @@ def _fast_card_rows(
             csp.normalized_name,
             CASE
               WHEN csp.normalized_name = :q_norm THEN 0
-              -- One Piece users commonly search the character's familiar name
-              -- ("Luffy", "Zoro") while canonical names are "Monkey D Luffy"
-              -- and "Roronoa Zoro". Preserve the legacy relevance contract by
-              -- ranking a terminal whole-name token ahead of incidental prefixes
-              -- such as "Luffy & Ace" or "Zoro-Juurou".
-              WHEN :game = 'onepiece' AND csp.normalized_name LIKE :suffix THEN 1
-              WHEN csp.normalized_name LIKE :prefix THEN 2
-              WHEN (' ' || csp.normalized_name || ' ') LIKE :word_match THEN 3
-              ELSE 4
+              -- For One Piece, a familiar-name search should favor the canonical
+              -- character name (Monkey D Luffy, Roronoa Zoro) over compound card
+              -- names that merely end in the same token (Ace & Sabo & Luffy).
+              WHEN :game = 'onepiece'
+                   AND csp.normalized_name LIKE :suffix
+                   AND c_rank.name NOT LIKE '%&%'
+                   AND c_rank.name NOT LIKE '%/%' THEN 1
+              WHEN csp.normalized_name LIKE :prefix
+                   AND (:game <> 'onepiece' OR (c_rank.name NOT LIKE '%&%' AND c_rank.name NOT LIKE '%/%')) THEN 2
+              WHEN :game = 'onepiece' AND csp.normalized_name LIKE :suffix THEN 3
+              WHEN csp.normalized_name LIKE :prefix THEN 4
+              WHEN (' ' || csp.normalized_name || ' ') LIKE :word_match THEN 5
+              ELSE 6
             END AS rank_bucket
           FROM card_search_profiles csp
+          JOIN cards c_rank ON c_rank.id = csp.card_id
           WHERE csp.game_id = (
               SELECT g0.id
               FROM games g0
