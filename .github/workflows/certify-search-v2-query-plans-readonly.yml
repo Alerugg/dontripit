@@ -1,0 +1,48 @@
+name: Certify Search V2 Query Plans Read-only
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - 'backend/app/scripts/audit_search_v2_query_plans_readonly.py'
+      - '.github/workflows/certify-search-v2-query-plans-readonly.yml'
+      - 'backend/alembic/versions/20260822_37_add_search_hot_path_indexes.py'
+      - 'backend/alembic/versions/20260822_38_add_localized_name_trgm.py'
+      - 'backend/app/search_v2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PGOPTIONS: -c default_transaction_read_only=on
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audit dependency
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Compile query-plan audit
+        run: python -m py_compile app/scripts/audit_search_v2_query_plans_readonly.py
+      - name: Certify production Neon query plans read-only
+        run: |
+          mkdir -p artifacts
+          SEARCH_V2_QUERY_PLAN_OUTPUT=artifacts/search-v2-query-plans-readonly.json \
+            python app/scripts/audit_search_v2_query_plans_readonly.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-v2-query-plans-readonly-${{ github.run_id }}
+          path: backend/artifacts/search-v2-query-plans-readonly.json
+          retention-days: 90
+          if-no-files-found: warn

@@ -6,6 +6,15 @@ on:
       - catalog-v2
     paths:
       - .github/triggers/search-v2-post-fra1-cert
+      - .github/workflows/search-v2-middleware-latency-audit.yml
+      - backend/app/scripts/audit_search_v2_middleware_latency_readonly.py
+  pull_request:
+    branches:
+      - catalog-v2
+    paths:
+      - .github/workflows/search-v2-middleware-latency-audit.yml
+      - backend/app/scripts/audit_search_v2_middleware_latency_readonly.py
+  workflow_dispatch:
 
 permissions:
   contents: read

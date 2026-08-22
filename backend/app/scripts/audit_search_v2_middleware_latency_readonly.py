@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg2
@@ -10,6 +10,58 @@ import psycopg2
 
 OUTPUT = Path(os.getenv("SEARCH_V2_MIDDLEWARE_OUTPUT", "artifacts/search-v2-middleware-latency.json"))
 CUTOFF = os.getenv("FRA1_READY_AT", "2026-08-15T01:04:33Z")
+CURRENTNESS_SECONDS = int(os.getenv("SEARCH_V2_DB_METRIC_CURRENTNESS_SECONDS", "900"))
+
+QUERY = """
+SELECT
+  endpoint,
+  CASE
+    WHEN api_key_prefix = 'internal' THEN 'internal-first-party'
+    WHEN api_key_prefix IS NULL THEN 'public-ip'
+    ELSE 'api-key'
+  END AS auth_mode,
+  count(*)::int AS samples,
+  count(*) FILTER (WHERE status_code >= 400)::int AS errors,
+  round(avg(latency_ms)::numeric, 1) AS avg_ms,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) AS p99_ms,
+  max(latency_ms)::int AS max_ms,
+  min(requested_at) AS first_seen,
+  max(requested_at) AS last_seen
+FROM api_request_metrics
+WHERE requested_at >= %s::timestamptz
+  AND endpoint IN (
+    '/api/health',
+    '/api/v1/health',
+    '/api/db-check',
+    '/api/v1/db-check',
+    '/api/games',
+    '/api/v1/games',
+    '/api/v2/search',
+    '/api/v2/search/suggest',
+    '/api/v2/search/advanced',
+    '/api/v2/games/onepiece/facets',
+    '/api/v2/games/pokemon/facets',
+    '/api/v2/games/yugioh/facets',
+    '/api/v2/games/mtg/facets'
+  )
+GROUP BY endpoint, auth_mode
+ORDER BY endpoint, auth_mode
+"""
+
+
+def _parse_cutoff(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _clean(value):
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if value is not None and value.__class__.__name__ == "Decimal":
+        return float(value)
+    return value
 
 
 def main() -> int:
@@ -17,6 +69,14 @@ def main() -> int:
     if not url:
         raise RuntimeError("DATABASE_URL_UNPOOLED or DATABASE_URL is required")
 
+    now = datetime.now(timezone.utc)
+    windows = [
+        ("last_6h", now - timedelta(hours=6)),
+        ("last_24h", now - timedelta(hours=24)),
+        ("since_fra1", _parse_cutoff(CUTOFF)),
+    ]
+
+    rows: list[dict] = []
     conn = psycopg2.connect(url)
     conn.autocommit = False
     try:
@@ -25,93 +85,75 @@ def main() -> int:
             if cur.fetchone()[0] != "on":
                 raise RuntimeError("refusing audit without transaction_read_only=on")
 
-            cur.execute(
-                """
-                SELECT
-                  endpoint,
-                  CASE
-                    WHEN api_key_prefix = 'internal' THEN 'internal-first-party'
-                    WHEN api_key_prefix IS NULL THEN 'public-ip'
-                    ELSE 'api-key'
-                  END AS auth_mode,
-                  count(*)::int AS samples,
-                  count(*) FILTER (WHERE status_code >= 400)::int AS errors,
-                  round(avg(latency_ms)::numeric, 1) AS avg_ms,
-                  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
-                  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
-                  max(latency_ms)::int AS max_ms,
-                  min(requested_at) AS first_seen,
-                  max(requested_at) AS last_seen
-                FROM api_request_metrics
-                WHERE requested_at >= %s::timestamptz
-                  AND endpoint IN (
-                    '/api/health',
-                    '/api/v1/health',
-                    '/api/db-check',
-                    '/api/v1/db-check',
-                    '/api/games',
-                    '/api/v1/games',
-                    '/api/v2/search',
-                    '/api/v2/search/suggest',
-                    '/api/v2/search/advanced',
-                    '/api/v2/games/onepiece/facets',
-                    '/api/v2/games/pokemon/facets',
-                    '/api/v2/games/yugioh/facets',
-                    '/api/v2/games/mtg/facets'
-                  )
-                GROUP BY endpoint, auth_mode
-                ORDER BY endpoint, auth_mode
-                """,
-                (CUTOFF,),
-            )
-            names = [item.name for item in cur.description]
-            rows = [dict(zip(names, row)) for row in cur.fetchall()]
+            for window_name, window_start in windows:
+                cur.execute(QUERY, (window_start,))
+                names = [item.name for item in cur.description]
+                for raw_row in cur.fetchall():
+                    row = dict(zip(names, raw_row))
+                    row["window"] = window_name
+                    row["window_start"] = window_start
+                    rows.append(row)
         conn.rollback()
     finally:
         conn.close()
 
-    def clean(value):
-        if hasattr(value, "isoformat"):
-            return value.isoformat()
-        if value is not None and value.__class__.__name__ == "Decimal":
-            return float(value)
-        return value
+    latest_metric_at = max(
+        (row["last_seen"] for row in rows if row.get("last_seen") is not None),
+        default=None,
+    )
+    metric_lag_seconds = (
+        max(0.0, (now - latest_metric_at).total_seconds())
+        if latest_metric_at is not None
+        else None
+    )
+    db_metrics_current = (
+        metric_lag_seconds is not None and metric_lag_seconds <= CURRENTNESS_SECONDS
+    )
 
-    normalized = [{key: clean(value) for key, value in row.items()} for row in rows]
-    health = [row for row in normalized if row["endpoint"] in {"/api/health", "/api/v1/health"}]
-    keyed_search = [
-        row for row in normalized
-        if row["auth_mode"] == "api-key" and row["endpoint"].startswith("/api/v2/")
+    normalized = [
+        {key: _clean(value) for key, value in row.items()}
+        for row in rows
     ]
-    internal_search = [
-        row for row in normalized
-        if row["auth_mode"] == "internal-first-party" and row["endpoint"].startswith("/api/v2/")
-    ]
-    public_search = [
-        row for row in normalized
-        if row["auth_mode"] == "public-ip" and row["endpoint"].startswith("/api/v2/")
-    ]
+
+    window_summaries = {}
+    for window_name, _ in windows:
+        window_rows = [row for row in normalized if row["window"] == window_name]
+        search_rows = [row for row in window_rows if row["endpoint"] == "/api/v2/search"]
+        public_search = [row for row in search_rows if row["auth_mode"] == "public-ip"]
+        keyed_search = [row for row in search_rows if row["auth_mode"] == "api-key"]
+        internal_search = [row for row in search_rows if row["auth_mode"] == "internal-first-party"]
+        window_summaries[window_name] = {
+            "groups": len(window_rows),
+            "search_samples": sum(row["samples"] for row in search_rows),
+            "public_search_samples": sum(row["samples"] for row in public_search),
+            "api_key_search_samples": sum(row["samples"] for row in keyed_search),
+            "internal_search_samples": sum(row["samples"] for row in internal_search),
+        }
 
     report = {
         "status": "pass",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": now.isoformat(),
         "cutoff": CUTOFF,
         "transaction_read_only": True,
         "production_writes": 0,
+        "telemetry_freshness": {
+            "latest_persisted_metric_at": _clean(latest_metric_at),
+            "metric_lag_seconds": metric_lag_seconds,
+            "currentness_threshold_seconds": CURRENTNESS_SECONDS,
+            "db_metrics_current": db_metrics_current,
+            "role": "current" if db_metrics_current else "historical_diagnostic_only",
+        },
         "interpretation_contract": {
             "health_skips_catalog_auth_and_rate_limit": True,
-            "latency_ms_is_computed_before_metric_insert": True,
+            "latency_ms_is_computed_before_optional_metric_insert": True,
             "catalog_latency_includes_auth_rate_limit_and_route": True,
             "internal_first_party_prefix": "internal",
+            "p95_p99_are_persisted_percentiles_per_window": True,
+            "vercel_db_metric_persistence_is_optional_and_disabled_by_default": True,
+            "stale_db_metrics_must_not_be_used_as_current_performance_proof": True,
+            "current_performance_is_certified_by_active_api_probes_and_runtime_logs": True,
         },
-        "summary": {
-            "rows": len(normalized),
-            "health_groups": len(health),
-            "keyed_search_groups": len(keyed_search),
-            "internal_first_party_search_groups": len(internal_search),
-            "internal_first_party_samples": sum(row["samples"] for row in internal_search),
-            "public_search_groups": len(public_search),
-        },
+        "windows": window_summaries,
         "groups": normalized,
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
