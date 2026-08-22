@@ -4,6 +4,9 @@ on:
   push:
     branches: [catalog-v2]
     paths: ['.github/workflows/audit-yugioh-current-canonical-live.yml']
+  pull_request:
+    branches: [catalog-v2]
+    paths: ['.github/workflows/audit-yugioh-current-canonical-live.yml']
   workflow_dispatch:
 
 permissions:
