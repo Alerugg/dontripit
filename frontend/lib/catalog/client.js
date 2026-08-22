@@ -122,7 +122,7 @@ export async function searchCatalog(filters = {}, options = {}) {
 }
 
 export async function suggestCatalog(filters = {}, options = {}) {
-  const payload = await request('/api/catalog/suggest', {
+  const payload = await request('/api/search-v2/suggest', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
   }, options)
