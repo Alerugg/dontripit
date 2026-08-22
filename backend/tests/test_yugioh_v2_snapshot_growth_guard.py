@@ -55,3 +55,14 @@ def test_snapshot_gate_keeps_curated_policy_exact():
                 )
             )
         )
+
+
+def test_snapshot_gate_keeps_reviewed_exclusion_row_count_exact():
+    with pytest.raises(AssertionError, match="excluded_source_print_rows"):
+        _assert_snapshot_gates(
+            _valid_counts(
+                excluded_source_print_rows=(
+                    EXPECTED_STATIC["excluded_source_print_rows"] + 1
+                )
+            )
+        )
