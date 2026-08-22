@@ -17,7 +17,7 @@ test('loads the clean interior override after the approved Home styles', () => {
 test('uses official Don’tRipIt assets for wordmark and navigation mark', () => {
   const brand = read('components/brand/BrandMark.js')
   assert.match(brand, /\/branding\/dontripit-wordmark\.png/)
-  assert.match(brand, /\/branding\/dontripit-nav-mark\.webp/)
+  assert.match(brand, /\/branding\/dontripit-nav-mark\.png/)
   assert.match(brand, /alt="Don’tRipIt"/)
 })
 
