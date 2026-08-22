@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   audit:
+    # Read-only against production: TCGdex source manifests + SELECT parity checks.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
