@@ -32,8 +32,8 @@ CASES = [
     {"game": "yugioh", "query": "Blu-Eyes Wite Dragon", "kind": "fuzzy", "top_contains": "blue-eyes white dragon"},
     {"game": "yugioh", "query": "zznotrealcard991", "kind": "fuzzy", "expect_empty": True},
     {"game": "onepiece", "query": "Luffy", "kind": "core", "top_contains": "luffy"},
-    {"game": "onepiece", "query": "P-150", "kind": "core", "top_contains": "kuzan", "mode": "exact_identifier"},
-    {"game": "onepiece", "query": "OP05-119", "kind": "core", "top_contains": "luffy", "mode": "exact_identifier"},
+    {"game": "onepiece", "query": "P-150", "kind": "core", "top_collector": "P-150", "mode": "exact_identifier"},
+    {"game": "onepiece", "query": "OP05-119", "kind": "core", "top_collector": "OP05-119", "mode": "exact_identifier"},
     {"game": "onepiece", "query": "Lufy", "kind": "fuzzy", "top_contains": "luffy"},
     {"game": "onepiece", "query": "zznotrealcard991", "kind": "fuzzy", "expect_empty": True},
 ]
@@ -54,6 +54,10 @@ def _nearest_rank(samples: list[int], percentile: float) -> int:
     return ordered[min(rank - 1, len(ordered) - 1)]
 
 
+def _compact_identifier(value: object) -> str:
+    return "".join(ch for ch in str(value or "").casefold() if ch.isalnum())
+
+
 def _validate_payload(case: dict, payload: dict) -> None:
     items = payload.get("items") or []
     if case.get("expect_empty"):
@@ -70,6 +74,15 @@ def _validate_payload(case: dict, payload: dict) -> None:
             f"expected mode {expected_mode} for {case['game']}:{case['query']}, "
             f"got {payload.get('pagination_mode')}"
         )
+
+    top_collector = case.get("top_collector")
+    if top_collector:
+        actual_collector = items[0].get("collector_number")
+        if _compact_identifier(actual_collector) != _compact_identifier(top_collector):
+            raise AssertionError(
+                f"unexpected top collector for {case['game']}:{case['query']}: "
+                f"{actual_collector!r}"
+            )
 
     top_contains = case.get("top_contains")
     if top_contains:
