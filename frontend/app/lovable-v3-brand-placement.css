@@ -1,0 +1,73 @@
+/* Don’tRipIt brand placement contract.
+ * The circular DR! mark is navigation-only. Other product surfaces use the horizontal wordmark.
+ */
+
+.dri-nav-brand {
+  min-width: 42px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* Nav may still render the shared wordmark component; swap its visible treatment to the official round mark. */
+.dri-nav-brand .dri-brand-official-wordmark {
+  display: none !important;
+}
+
+.dri-nav-brand .dri-brand-official-mark {
+  display: block !important;
+  width: 36px !important;
+  height: 36px !important;
+  object-fit: contain;
+}
+
+.dri-nav-brand .dri-brand-official:not(.dri-brand-nav)::before {
+  content: '';
+  display: block;
+  width: 36px;
+  height: 36px;
+  background: url('/branding/dontripit-mark.png') center / contain no-repeat;
+}
+
+/* All non-navigation surfaces stay on the horizontal logo family. */
+.dri-footer .dri-brand-official-mark,
+.dri-auth-logo .dri-brand-official-mark,
+.dri-auth-mobile-brand .dri-brand-official-mark {
+  display: none !important;
+}
+
+.dri-footer .dri-brand-official-wordmark {
+  display: block !important;
+  width: 164px !important;
+  max-height: none !important;
+}
+
+.dri-auth-logo .dri-brand-official-wordmark {
+  display: block !important;
+  width: min(190px, 100%) !important;
+  max-height: none !important;
+}
+
+.dri-auth-mobile-brand .dri-brand-official-wordmark {
+  display: block !important;
+  width: 138px !important;
+  max-height: none !important;
+}
+
+@media (max-width: 700px) {
+  .dri-nav-brand {
+    min-width: 38px !important;
+  }
+
+  .dri-nav-brand .dri-brand-official-mark,
+  .dri-nav-brand .dri-brand-official:not(.dri-brand-nav)::before {
+    width: 32px !important;
+    height: 32px !important;
+  }
+
+  /* Neutralize the previous mobile pseudo-mark so the round asset is never duplicated. */
+  .dri-nav-brand .dri-brand-official::after {
+    content: none !important;
+    display: none !important;
+  }
+}
