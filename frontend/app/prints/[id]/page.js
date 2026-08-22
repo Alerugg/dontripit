@@ -41,10 +41,15 @@ function IdentityChip({ children, accent = false }) {
   return <span className={`v14-identity-chip ${accent ? 'is-accent' : ''}`}>{children}</span>
 }
 
-function money(value, currency = 'EUR', locale = DEFAULT_DISPLAY_LOCALE) {
+function positiveNumber(value) {
   if (value === null || value === undefined || value === '') return null
   const number = Number(value)
-  if (!Number.isFinite(number)) return null
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function money(value, currency = 'EUR', locale = DEFAULT_DISPLAY_LOCALE) {
+  const number = positiveNumber(value)
+  if (number === null) return null
   const safeLocale = normalizeLocaleTag(locale)
   try {
     return new Intl.NumberFormat(safeLocale, {
@@ -106,11 +111,11 @@ function friendlyVariant(value) {
   return raw.replace(/[-_]+/g, ' ')
 }
 
-function PriceMetric({ label, value, currency, locale, featured = false }) {
+function PriceMetric({ label, value, currency, locale }) {
   const display = money(value, currency, locale)
   if (!display) return null
   return (
-    <div className={`ux-price-metric ${featured ? 'is-featured' : ''}`}>
+    <div className="ux-price-metric">
       <span>{label}</span>
       <strong>{display}</strong>
     </div>
@@ -121,14 +126,18 @@ function PriceBlock({ price, cardmarket, locale }) {
   if (!price) return null
 
   const currency = price.currency || 'EUR'
-  const primaryValue = price.trend ?? price.average ?? price.conservative ?? price.minimum
-  const primaryDisplay = money(primaryValue, currency, locale)
+  const primaryCandidates = [
+    { label: 'Precio de mercado', value: positiveNumber(price.trend) },
+    { label: 'Media actual', value: positiveNumber(price.average) },
+    { label: 'Valor conservador', value: positiveNumber(price.conservative) },
+    { label: 'Low actual', value: positiveNumber(price.minimum) },
+    { label: 'Media 7d', value: positiveNumber(price.avg7) },
+    { label: 'Media 30d', value: positiveNumber(price.avg30) },
+  ]
+  const primary = primaryCandidates.find((candidate) => candidate.value !== null)
+  if (!primary) return null
+  const primaryDisplay = money(primary.value, currency, locale)
   if (!primaryDisplay) return null
-  const primaryLabel = price.trend !== null && price.trend !== undefined
-    ? 'Precio de mercado'
-    : price.average !== null && price.average !== undefined
-      ? 'Media actual'
-      : 'Valor disponible'
   const updated = formatMarketDate(price.as_of, locale)
 
   return (
@@ -139,7 +148,7 @@ function PriceBlock({ price, cardmarket, locale }) {
           <h2>Cardmarket</h2>
         </div>
         <div className="v14-market-primary v15-print-market-primary">
-          <span>{primaryLabel}</span>
+          <span>{primary.label}</span>
           <strong className="ux-price-main">{primaryDisplay}</strong>
           <small>Esta Print física · no otra edición</small>
         </div>
@@ -148,7 +157,7 @@ function PriceBlock({ price, cardmarket, locale }) {
       <div className="ux-price-grid v14-price-grid">
         <PriceMetric label="Low" value={price.minimum} currency={currency} locale={locale} />
         <PriceMetric label="Media 1d" value={price.avg1} currency={currency} locale={locale} />
-        <PriceMetric label="Media 7d" value={price.avg7} currency={currency} locale={locale} featured />
+        <PriceMetric label="Media 7d" value={price.avg7} currency={currency} locale={locale} />
         <PriceMetric label="Media 30d" value={price.avg30} currency={currency} locale={locale} />
       </div>
 
@@ -317,7 +326,7 @@ export default function PrintDetailPage({ params }) {
                 <LibraryActions printId={printDetail.id} />
               </section>
 
-              <PriceBlock price={price} cardmarket={cardmarket} locale={displayLocale} />
+              <PriceBlock price={price} cardmarket={cardmarket} locale={DEFAULT_DISPLAY_LOCALE} />
 
               <section className="dri-version-summary panel-soft v14-version-summary">
                 <div className="dri-version-summary-head">
