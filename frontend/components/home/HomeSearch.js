@@ -189,7 +189,7 @@ export default function HomeSearch() {
               className="v17-home-hub-link"
               onClick={() => router.push(selectedGame ? `/games/${selectedGame}` : '/explorer')}
             >
-              {selectedConfig ? `Abrir ${displayGameName(selectedConfig)} →` : 'Explorador avanzado →'}
+              {selectedConfig ? `Abrir hub de ${displayGameName(selectedConfig)} →` : 'Explorador avanzado →'}
             </button>
           </div>
         </div>
