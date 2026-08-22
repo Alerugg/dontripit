@@ -23,9 +23,10 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
     q_norm = normalize_search_text(q)
     tokens = [token for token in q_norm.split() if len(token) >= 2][:8]
     bounded_limit = max(1, min(int(limit or 24), 100))
-    # matched_cards is already relevance-ordered before family reranking. Four
-    # pages of headroom is enough to preserve the top results while avoiding the
-    # old 240-300 correlated family-count lookups on every typo/fuzzy request.
+    # Keep fuzzy hydration close to the requested page. Expensive family
+    # coverage is applied only to true prefix candidates below; typo-only
+    # candidates should be ranked by relevance/similarity without catalog-wide
+    # family counting.
     candidate_limit = max(80, bounded_limit * 4)
 
     token_where = " AND ".join(
@@ -55,9 +56,6 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
             csp.game_id,
             csp.normalized_name,
             csp.attributes_json,
-            COUNT(*) OVER (
-              PARTITION BY csp.game_id, csp.normalized_name
-            ) AS name_identity_count,
             (
               CASE WHEN csp.normalized_name = :q_norm THEN 5000.0 ELSE 0.0 END +
               CASE WHEN csp.normalized_name LIKE :prefix THEN 2200.0 ELSE 0.0 END +
@@ -78,7 +76,6 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
             game_id,
             normalized_name,
             attributes_json,
-            name_identity_count,
             relevance_score
           FROM matched_cards
           ORDER BY relevance_score DESC, card_id ASC
@@ -90,20 +87,28 @@ def normal_pokemon_search(session, *, query: str, limit: int = 24) -> list[dict]
             attributes_json,
             (
               relevance_score +
-              LEAST(
-                name_identity_count + (
-                  SELECT COUNT(*)
-                  FROM card_search_profiles related
-                  WHERE related.game_id=pre_candidates.game_id
-                    AND related.normalized_name LIKE pre_candidates.normalized_name || ' %'
-                ),
-                50
-              ) * 32.0
+              CASE
+                WHEN normalized_name LIKE :prefix THEN
+                  LEAST(
+                    (
+                      SELECT COUNT(*)
+                      FROM card_search_profiles related
+                      WHERE related.game_id=pre_candidates.game_id
+                        AND (
+                          related.normalized_name = pre_candidates.normalized_name
+                          OR related.normalized_name LIKE pre_candidates.normalized_name || ' %'
+                        )
+                    ),
+                    50
+                  ) * 32.0
+                ELSE 0.0
+              END
             ) AS score
           FROM pre_candidates
-          -- Short prefixes naturally favor shorter words under trigram similarity.
-          -- Bounded catalog-family coverage (base name plus named variants) is a
-          -- data-derived tie-breaker; no individual character is hard-coded.
+          -- Family coverage is useful for real prefixes (for example "pika")
+          -- but adds no value to pure typo recovery (for example "pikchu").
+          -- PostgreSQL short-circuits CASE, so fuzzy-only rows never execute the
+          -- correlated family count.
           ORDER BY score DESC, card_id ASC
           LIMIT :limit
         )
