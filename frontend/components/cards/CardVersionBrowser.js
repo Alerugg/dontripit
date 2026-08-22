@@ -61,7 +61,155 @@ function exactPrintLabel(print) {
   ].filter(Boolean).join(' · ')
 }
 
-export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function formatMoney(value, currency = 'EUR') {
+  const number = finiteNumber(value)
+  if (number === null) return null
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency: currency || 'EUR',
+      maximumFractionDigits: 2,
+    }).format(number)
+  } catch {
+    return `${number.toFixed(2)} ${currency || 'EUR'}`
+  }
+}
+
+function formatMarketDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  try {
+    return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+  } catch {
+    return null
+  }
+}
+
+function guideVariantLabel(value) {
+  const raw = String(value || '').toLowerCase()
+  if (raw === 'foil') return 'Foil'
+  if (raw === 'nonfoil' || raw === 'non-foil') return 'No foil'
+  return friendlyVariant(value) || 'Versión'
+}
+
+function primaryGuideValue(guide) {
+  const candidates = [
+    ['market', 'Mercado'],
+    ['avg7', 'Media 7d'],
+    ['avg30', 'Media 30d'],
+    ['avg1', 'Media 1d'],
+    ['last', 'Última'],
+    ['low', 'Low'],
+    ['mid', 'Mid'],
+  ]
+  for (const [key, label] of candidates) {
+    const value = finiteNumber(guide?.[key])
+    if (value !== null) return { value, label }
+  }
+  return null
+}
+
+function priceGuidesForVersion(version) {
+  if (version?.market_status !== 'linked' || !version?.cardmarket) return []
+  return (version?.price_guides || []).map((guide) => {
+    const primary = primaryGuideValue(guide)
+    if (!primary) return null
+    const currency = guide?.currency || 'EUR'
+    return {
+      ...primary,
+      currency,
+      display: formatMoney(primary.value, currency),
+      lowDisplay: formatMoney(guide?.low, currency),
+      variant: guideVariantLabel(guide?.variant),
+      asOf: guide?.as_of || null,
+      asOfDisplay: formatMarketDate(guide?.as_of),
+    }
+  }).filter((guide) => guide?.display)
+}
+
+function summarizeMarket(payload) {
+  const allVersions = payload?.versions || []
+  const pricedPrintIds = new Set()
+  const prices = []
+  let currency = null
+  let newestAsOf = null
+  let pricedVersions = 0
+
+  for (const version of allVersions) {
+    const guides = priceGuidesForVersion(version)
+    if (!guides.length) continue
+    pricedVersions += 1
+    for (const print of version?.prints || []) {
+      const id = print?.print_id || print?.id
+      if (id !== null && id !== undefined) pricedPrintIds.add(String(id))
+    }
+    for (const guide of guides) {
+      if (!currency) currency = guide.currency || 'EUR'
+      if ((guide.currency || 'EUR') === currency) prices.push(guide.value)
+      if (guide.asOf) {
+        const timestamp = new Date(guide.asOf).getTime()
+        if (Number.isFinite(timestamp) && (!newestAsOf || timestamp > newestAsOf.timestamp)) {
+          newestAsOf = { timestamp, value: guide.asOf }
+        }
+      }
+    }
+  }
+
+  if (!prices.length) return null
+  const minimum = Math.min(...prices)
+  const maximum = Math.max(...prices)
+  const minDisplay = formatMoney(minimum, currency || 'EUR')
+  const maxDisplay = formatMoney(maximum, currency || 'EUR')
+  const range = minimum === maximum ? minDisplay : `${minDisplay} – ${maxDisplay}`
+  const pricedPrints = pricedPrintIds.size || pricedVersions
+
+  return {
+    range,
+    pricedPrints,
+    pricedVersions,
+    totalPrints: Number(payload?.print_count || 0),
+    totalVersions: Number(payload?.version_count || allVersions.length),
+    asOf: newestAsOf?.value || null,
+    asOfDisplay: formatMarketDate(newestAsOf?.value),
+  }
+}
+
+function VersionMarket({ version }) {
+  const guides = priceGuidesForVersion(version)
+  if (!guides.length) return null
+  const asOf = guides.map((guide) => guide.asOf).filter(Boolean).sort().at(-1)
+  const asOfDisplay = formatMarketDate(asOf)
+
+  return (
+    <section className="v15-version-market" aria-label={`Precios Cardmarket de ${version.set_name || version.set_code || 'esta versión'}`}>
+      <div className="v15-version-market-head">
+        <span>Precio exacto · Cardmarket</span>
+        {asOfDisplay ? <small>{asOfDisplay}</small> : null}
+      </div>
+      <div className="v15-version-price-lines">
+        {guides.map((guide, index) => (
+          <div className="v15-version-price-line" key={`${guide.variant}-${guide.label}-${index}`}>
+            <span className="v15-version-price-variant">{guide.variant}</span>
+            <strong>{guide.display}</strong>
+            <small>
+              {guide.label}
+              {guide.lowDisplay && guide.lowDisplay !== guide.display ? ` · Low ${guide.lowDisplay}` : ''}
+            </small>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+export default function CardVersionBrowser({ cardId, cardName, gameLabel, onMarketSummary }) {
   const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -74,6 +222,7 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
     let cancelled = false
     setLoading(true)
     setError('')
+    setPayload(null)
     fetchCardVersions(cardId)
       .then((result) => { if (!cancelled) setPayload(result) })
       .catch((requestError) => {
@@ -89,6 +238,12 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
   useEffect(() => {
     setVisibleCount(PAGE_SIZE)
   }, [query, language, cardId])
+
+  const marketSummary = useMemo(() => summarizeMarket(payload), [payload])
+
+  useEffect(() => {
+    if (typeof onMarketSummary === 'function') onMarketSummary(marketSummary)
+  }, [marketSummary, onMarketSummary])
 
   const versions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -114,12 +269,13 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
         <div>
           <p className="eyebrow">Impresiones físicas</p>
           <h2 id="card-versions-title">Elige la edición exacta</h2>
-          <p className={styles.headingCopy}>Cada enlace de idioma termina en una Print concreta. El precio y Cardmarket se verifican después sobre esa identidad exacta.</p>
+          <p className={styles.headingCopy}>Cada precio pertenece a una versión física enlazada de forma exacta. Si una versión no tiene precio verificado, no mostramos estimaciones ni datos de otra edición.</p>
         </div>
         <div className={styles.counts} aria-label="Cobertura física">
           <span><strong>{totalPrints.toLocaleString('es-ES')}</strong> prints</span>
           <span><strong>{totalVersions.toLocaleString('es-ES')}</strong> versiones</span>
           <span><strong>{allLanguages.length}</strong> idiomas</span>
+          {marketSummary ? <span className="v15-priced-count"><strong>{marketSummary.pricedPrints}</strong> con precio</span> : null}
         </div>
       </div>
 
@@ -188,6 +344,8 @@ export default function CardVersionBrowser({ cardId, cardName, gameLabel }) {
                   <h3 title={versionTitle}>{versionTitle}</h3>
                   <p className={styles.meta}>{versionMeta(version) || 'Edición física identificada'}</p>
                 </div>
+
+                <VersionMarket version={version} />
 
                 <div className={styles.languageBlock}>
                   <span className={styles.languageLabel}>Selecciona idioma / impresión</span>
