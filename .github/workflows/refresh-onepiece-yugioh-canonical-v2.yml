@@ -2,13 +2,6 @@ name: Refresh One Piece and Yu-Gi-Oh Canonical V2
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - catalog-v2
-    paths:
-      - '.github/workflows/refresh-onepiece-yugioh-canonical-v2.yml'
-      - 'backend/app/ingest/connectors/onepiece*.py'
-      - 'backend/app/ingest/registry.py'
 
 permissions:
   contents: read
