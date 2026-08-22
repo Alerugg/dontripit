@@ -8,9 +8,12 @@ on:
     paths:
       - '.github/workflows/refresh-pokemon-canonical-v2.yml'
       - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity_v2.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_incremental_guard.py'
+      - 'backend/app/ingest/registry.py'
 
 permissions:
   contents: read
@@ -57,7 +60,9 @@ jobs:
             app/ingest/connectors/tcgdex_pokemon.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
-            app/scripts/prove_pokemon_tcgdex_parity.py
+            app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
+            app/scripts/prove_pokemon_tcgdex_parity.py \
+            app/scripts/prove_pokemon_tcgdex_parity_v2.py
 
       - name: Re-run focused Pokemon physical identity guards
         env:
@@ -66,7 +71,8 @@ jobs:
           unset DATABASE_URL DATABASE_URL_UNPOOLED
           pytest -q \
             tests/test_tcgdex_multilingual.py \
-            tests/test_tcgdex_physical_scope.py
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_en_legacy_incremental.py
 
       - name: Refresh certified EN ES JA physical catalog incrementally
         env:
@@ -105,4 +111,4 @@ jobs:
       - name: Prove fresh TCGdex physical source parity in production
         env:
           PYTHONPATH: .
-        run: python -m app.scripts.prove_pokemon_tcgdex_parity
+        run: python -m app.scripts.prove_pokemon_tcgdex_parity_v2
