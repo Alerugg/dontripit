@@ -1,0 +1,164 @@
+name: Audit P0 Promo Freshness Final V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-p0-promo-freshness-final-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+      ONEPIECE_SOURCE: remote
+      ONEPIECE_INGEST_SOURCE: remote
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Require production DB and read-only transaction
+        run: |
+          test -n "${DATABASE_URL_UNPOOLED:-}"
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine,text
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              conn.rollback()
+          print('transaction_read_only=on')
+          PY
+
+      - name: Prove current Pokemon EN ES JA physical source parity - READ ONLY
+        run: |
+          mkdir -p artifacts
+          python -m app.scripts.prove_pokemon_tcgdex_parity_v2 | tee artifacts/p0-pokemon-parity-v1.json
+
+      - name: Prove current One Piece Global Asia JP source parity - READ ONLY
+        run: |
+          python - <<'PY' | tee artifacts/p0-onepiece-parity-v1.json
+          import json, os
+          from sqlalchemy import create_engine,text
+          from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
+          from app.ingest.normalization import normalize_collector_number, normalize_variant
+
+          connector=OnePieceCanonicalConnector()
+          payloads=[
+              connector._load_official_cardlist_remote(limit=None),
+              connector._load_official_asia_en_cardlist_remote(limit=None),
+              connector._load_official_jp_cardlist_remote(limit=None),
+          ]
+          promo_audit=connector._annotate_regional_promo_audit(payloads)
+          src_cards=set(); src_sets=set(); src_prints=set(); source_by_region={}; promo_by_region={}
+          for payload in payloads:
+              region=str(payload.get('region') or 'unknown')
+              language=connector._normalize_language(str(payload.get('language') or 'en'))
+              region_cards={str(c['id']).strip().lower() for c in payload.get('cards') or [] if c.get('id')}
+              region_sets={str(s['code']).strip().lower() for s in payload.get('sets') or [] if s.get('code')}
+              region_prints={
+                  (str(p.get('set_code') or '').strip().lower(),normalize_collector_number(p.get('collector_number')),language,normalize_variant(p.get('variant')))
+                  for card in payload.get('cards') or [] for p in card.get('prints') or [] if p.get('collector_number')
+              }
+              promos={collector for set_code,collector,_lang,_variant in region_prints if set_code=='p'}
+              src_cards.update(region_cards); src_sets.update(region_sets); src_prints.update(region_prints)
+              source_by_region[region]={'cards':len(region_cards),'sets':len(region_sets),'prints':len(region_prints),'promos':len(promos)}
+              promo_by_region[region]=sorted(promos)
+
+          p150=normalize_collector_number('P-150')
+          p150_regions=sorted(region for region,promos in promo_by_region.items() if p150 in promos)
+          if not p150_regions:
+              raise AssertionError('P-150 disappeared from official Bandai regional sources')
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on': raise RuntimeError('not read-only')
+              gid=conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
+              db_cards={str(v).strip().lower() for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
+              db_sets={str(v).strip().lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
+              db_prints={
+                  (str(sc or '').strip().lower(),normalize_collector_number(cn),str(lang or '').strip().lower(),normalize_variant(var))
+                  for sc,cn,lang,var in conn.execute(text('''
+                    SELECT s.code,p.collector_number,p.language,p.variant
+                    FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id
+                    WHERE c.game_id=:g
+                  '''),{'g':gid}).all()
+              }
+              conn.rollback()
+
+          missing_cards=sorted(src_cards-db_cards); missing_sets=sorted(src_sets-db_sets); missing_prints=sorted(src_prints-db_prints)
+          expected_p150=sorted(row for row in src_prints if row[1]==p150)
+          missing_p150=sorted(set(expected_p150)-db_prints)
+          proof={
+              'status':'pass','production_writes':0,'transaction_read_only':True,
+              'source_by_region':source_by_region,'promo_audit':promo_audit,
+              'source_cards_union':len(src_cards),'source_sets_union':len(src_sets),'source_prints_union':len(src_prints),
+              'missing_cards':len(missing_cards),'missing_sets':len(missing_sets),'missing_prints':len(missing_prints),
+              'official_p150_regions':p150_regions,'expected_p150_prints':expected_p150,'missing_p150_prints':missing_p150,
+              'missing_card_examples':missing_cards[:20],'missing_set_examples':missing_sets[:20],'missing_print_examples':missing_prints[:20],
+          }
+          if missing_cards or missing_sets or missing_prints or missing_p150:
+              proof['status']='fail'; raise AssertionError(json.dumps(proof,indent=2,sort_keys=True,default=str))
+          print(json.dumps(proof,indent=2,sort_keys=True,default=str))
+          PY
+
+      - name: Probe current production promo anchors
+        run: |
+          python - <<'PY' | tee artifacts/p0-promo-live-probes-v1.json
+          import json, requests
+          from urllib.parse import urlencode
+
+          base='https://api.dontripit.com'
+          cases=[
+            {'game':'pokemon','q':'svp-202','collector':'202','mode':'exact_identifier'},
+            {'game':'onepiece','q':'P-150','collector':'P-150','mode':'exact_identifier'},
+          ]
+          rows=[]
+          compact=lambda x: ''.join(ch for ch in str(x or '').casefold() if ch.isalnum())
+          for case in cases:
+              url=f"{base}/api/v2/search?"+urlencode({'q':case['q'],'game':case['game'],'limit':24})
+              r=requests.get(url,timeout=15); r.raise_for_status(); payload=r.json(); items=payload.get('items') or []
+              if not items: raise AssertionError(f"empty production promo search: {case}")
+              if payload.get('pagination_mode')!=case['mode']:
+                  raise AssertionError(f"wrong mode for {case}: {payload.get('pagination_mode')}")
+              actual=items[0].get('collector_number')
+              # Pokemon TCGdex identifier includes set prefix, while collector_number is the local collector.
+              if case['game']=='pokemon':
+                  if compact(actual) not in {compact(case['collector']),compact(case['q'])}:
+                      raise AssertionError(f"wrong Pokemon promo collector: expected {case} got {actual!r}")
+              elif compact(actual)!=compact(case['collector']):
+                  raise AssertionError(f"wrong One Piece promo collector: expected {case} got {actual!r}")
+              rows.append({'game':case['game'],'query':case['q'],'status_code':r.status_code,'pagination_mode':payload.get('pagination_mode'),'count':payload.get('count'),'top_collector':actual,'top_name':items[0].get('name'),'response_time_ms':r.headers.get('x-app-response-time-ms')})
+          report={'status':'pass','production_writes':0,'base_url':base,'cases':rows}
+          print(json.dumps(report,indent=2,sort_keys=True))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-promo-freshness-final-v1-${{ github.run_id }}
+          path: |
+            backend/artifacts/p0-pokemon-parity-v1.json
+            backend/artifacts/p0-onepiece-parity-v1.json
+            backend/artifacts/p0-promo-live-probes-v1.json
+          retention-days: 30
+          if-no-files-found: warn
