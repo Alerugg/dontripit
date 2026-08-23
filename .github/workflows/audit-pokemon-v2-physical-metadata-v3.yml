@@ -54,16 +54,8 @@ jobs:
               ''')).mappings().all()]
               conn.rollback()
 
-          versions=Counter()
-          sources=Counter()
-          missing_attrs=[]
-          missing_physical=[]
-          bad_hash=[]
-          missing_identifier=[]
-          bad_identifier=[]
-          third_party_counts=Counter()
-          dimension_shapes=Counter()
-          source_ids=Counter()
+          versions=Counter(); sources=Counter(); source_ids=Counter(); third_party=Counter()
+          missing_attrs=[]; missing_physical=[]; bad_hash=[]; missing_identifier=[]; bad_identifier=[]
 
           for row in rows:
               sources[str(row.get('source'))]+=1
@@ -81,16 +73,15 @@ jobs:
                   'foil': pv.get('foil'),
                   'size': pv.get('size'),
                   'language': pv.get('language'),
+                  'release_context': pv.get('release_context'),
               }
-              # Historical generator: json.dumps(sort_keys=True,separators=(',',':')) + SHA1[:16].
               key=json.dumps(dims,sort_keys=True,separators=(',',':'),ensure_ascii=False)
               h=hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
               expected='v2-'+h
               if row['variant'] != expected or str(pv.get('variant_hash') or '') != h:
                   bad_hash.append({'print_id':row['print_id'],'variant':row['variant'],'stored_hash':pv.get('variant_hash'),'replayed':expected,'dims':dims})
               source_id=str(attrs.get('source_id') or row.get('card_tcgdex_id') or '')
-              if source_id:
-                  source_ids[source_id]+=1
+              if source_id: source_ids[source_id]+=1
               ident=row.get('variant_external_id')
               if not ident:
                   missing_identifier.append(row['print_id'])
@@ -99,24 +90,25 @@ jobs:
               tp=pv.get('third_party')
               if isinstance(tp,dict):
                   for k,v in tp.items():
-                      if v not in (None,''):
-                          third_party_counts[str(k)]+=1
-              dimension_shapes[json.dumps(sorted(dims.keys()))]+=1
+                      if v not in (None,''): third_party[str(k)]+=1
 
+          failures=missing_attrs or missing_physical or bad_hash or missing_identifier or bad_identifier
           report={
-              'status':'pass' if not (missing_attrs or missing_physical or bad_hash or missing_identifier or bad_identifier) else 'fail',
+              'status':'fail' if failures else 'pass',
               'production_writes':0,
               'transaction_read_only':True,
               'residual_v2_missing_images':len(rows),
               'attribute_sources':dict(sources),
               'source_versions':dict(versions),
               'unique_source_ids':len(source_ids),
-              'third_party_reference_counts':dict(third_party_counts),
-              'missing_attributes':missing_attrs,
-              'missing_physical_variant':missing_physical,
-              'bad_hash_replay':bad_hash[:100],
-              'missing_variant_identifier':missing_identifier[:100],
-              'bad_variant_identifier':bad_identifier[:100],
+              'third_party_reference_counts':dict(third_party),
+              'missing_attributes':len(missing_attrs),
+              'missing_physical_variant':len(missing_physical),
+              'bad_hash_replay_count':len(bad_hash),
+              'missing_variant_identifier_count':len(missing_identifier),
+              'bad_variant_identifier_count':len(bad_identifier),
+              'bad_hash_samples':bad_hash[:20],
+              'bad_identifier_samples':bad_identifier[:20],
               'invariants':{
                   'hash_replay_ok':len(bad_hash)==0,
                   'physical_metadata_complete':len(missing_attrs)==0 and len(missing_physical)==0,
@@ -125,8 +117,7 @@ jobs:
           }
           Path('backend/artifacts/pokemon-v2-physical-metadata-v3.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
           print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
-          if report['status']!='pass':
-              raise SystemExit(1)
+          if report['status']!='pass': raise SystemExit(1)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
