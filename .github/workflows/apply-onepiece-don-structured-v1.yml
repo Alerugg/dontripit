@@ -8,6 +8,8 @@ on:
       - 'backend/alembic/versions/20260823_40_add_onepiece_don_structured.py'
       - 'backend/alembic/versions/20260823_41_add_onepiece_don_market_items.py'
       - 'backend/app/onepiece_don_models.py'
+      - 'backend/app/search_v2_models.py'
+      - 'backend/app/search_v2/indexer.py'
       - 'backend/app/scripts/apply_onepiece_don_structured_v1.py'
       - 'backend/app/scripts/certify_onepiece_don_structured_v1.py'
   workflow_dispatch:
@@ -42,10 +44,11 @@ jobs:
       - name: Install backend and DON dependencies
         run: |
           pip install -r requirements.txt
-          pip install --disable-pip-version-check pypdf==5.9.0
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0'
       - name: Compile DON implementation
         run: |
           python -m py_compile app/onepiece_don_models.py
+          python -m py_compile app/search_v2/indexer.py
           python -m py_compile app/scripts/apply_onepiece_don_structured_v1.py
           python -m py_compile app/scripts/certify_onepiece_don_structured_v1.py
       - name: Apply schema
