@@ -1,0 +1,139 @@
+name: Audit Pokemon V2 Residual 228 V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-residual-228-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PYTHONPATH: .
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      POKEMON_V2_IMAGE_BACKFILL_OUTPUT: artifacts/pokemon-v2-residual-228-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+
+      - name: Checkout exact historical TCGdex source
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Residual identity classification gate - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import os,re
+          from collections import Counter,defaultdict
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+
+          PIN=os.environ['TCGDEX_CARDS_SHA']
+          occurrences=Counter()
+          pattern=re.compile(r'\btcgplayer\s*:\s*(\d+)\b')
+          for path in (Path(os.environ['TCGDEX_CARDS_REPO'])/'data').rglob('*.ts'):
+              try: content=path.read_text(encoding='utf-8')
+              except UnicodeDecodeError: continue
+              for match in pattern.finditer(content): occurrences[match.group(1)]+=1
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,pa.source,pa.source_version,pa.attributes_json,
+                       (SELECT pi.external_id FROM print_identifiers pi
+                        WHERE pi.print_id=p.id AND pi.source='tcgdex-variant-v2' LIMIT 1) exact_variant_id,
+                       EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id) has_image
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en' AND COALESCE(p.variant,'') LIKE 'v2-%'
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(rows)!=27241: raise RuntimeError(f'v2 universe drift: {len(rows)}')
+          product_to_exact=defaultdict(set)
+          normalized=[]
+          for row in rows:
+              if row['source']!='tcgdex/cards-database' or str(row['source_version'])!=PIN:
+                  raise RuntimeError(f"source drift on print {row['print_id']}")
+              attrs=row['attributes_json']; pv=attrs['physical_variant']
+              exact=f"{attrs['source_id']}#{pv['variant_hash']}"
+              if row['exact_variant_id']!=exact or row['variant']!=f"v2-{pv['variant_hash']}":
+                  raise RuntimeError(f"exact identity drift on print {row['print_id']}")
+              tp=pv.get('third_party') or {}
+              product=str(tp.get('tcgplayer')) if tp.get('tcgplayer') not in (None,'') else None
+              if product: product_to_exact[product].add(exact)
+              normalized.append({'print_id':row['print_id'],'has_image':bool(row['has_image']),'product':product,'exact':exact})
+
+          residual=[row for row in normalized if not row['has_image']]
+          no_product=[row for row in residual if not row['product']]
+          with_product=[row for row in residual if row['product']]
+          shared=[row for row in with_product if len(product_to_exact[row['product']])>1]
+          unique=[row for row in with_product if len(product_to_exact[row['product']])==1]
+          globally_unique=[row for row in unique if occurrences[row['product']]==1]
+          upstream_bad=[row for row in unique if occurrences[row['product']]!=1]
+
+          metrics={
+            'all_v2':len(rows),
+            'residual':len(residual),
+            'without_tcgplayer':len(no_product),
+            'with_tcgplayer':len(with_product),
+            'shared_product_rejected':len(shared),
+            'db_unique':len(unique),
+            'globally_unique_in_pinned_source':len(globally_unique),
+            'upstream_uniqueness_failures':len(upstream_bad),
+          }
+          print(metrics)
+          expected={
+            'residual':228,
+            'without_tcgplayer':65,
+            'with_tcgplayer':163,
+            'shared_product_rejected':123,
+            'db_unique':40,
+            'globally_unique_in_pinned_source':40,
+            'upstream_uniqueness_failures':0,
+          }
+          for key,value in expected.items():
+              if metrics[key]!=value:
+                  raise RuntimeError(f'residual decomposition drift {key}: expected={value} actual={metrics[key]}')
+          PY
+
+      - name: Re-probe 40 globally unique residual products - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: python -m app.scripts.backfill_pokemon_v2_exact_images_v1
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-v2-residual-228-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-residual-228-v1.json
+          retention-days: 30
