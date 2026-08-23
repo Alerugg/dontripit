@@ -1,0 +1,305 @@
+/* Price-first market layer — exact physical prices only. */
+
+.v15-result-price-card {
+  border-color: rgba(155,116,247,.30) !important;
+  background:
+    linear-gradient(135deg, rgba(139,92,246,.075), rgba(139,92,246,.025) 55%, transparent),
+    #0b0b0e !important;
+}
+
+.v15-result-price-card .v8-result-signal-label {
+  color: #9a86d4;
+}
+
+.v15-result-price-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.v15-result-price-row > strong {
+  min-width: 0;
+  overflow: visible;
+  color: #f6f2fb !important;
+  font-size: 1.12rem !important;
+  font-weight: 720 !important;
+  letter-spacing: -.035em;
+  text-overflow: clip;
+}
+
+.v15-result-price-row > span {
+  flex: 0 0 auto;
+  color: #7f7787;
+  font-size: .5rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.v15-card-market-rule-priced {
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(139,92,246,.08), transparent 68%),
+    #0d0c11 !important;
+}
+
+.v15-card-market-rule-priced::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(#b69af9, rgba(182,154,249,.15));
+}
+
+.v15-card-market-range {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 5px;
+}
+
+.v15-card-market-range > strong {
+  margin: 0 !important;
+  color: #f2edf8 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: clamp(1.05rem, 2.2vw, 1.42rem) !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650 !important;
+  letter-spacing: -.04em;
+  white-space: nowrap;
+}
+
+.v15-card-market-range > em {
+  color: #9c92a5;
+  font-size: .55rem;
+  font-style: normal;
+  font-weight: 720;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.v15-version-market {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid rgba(155,116,247,.24);
+  border-radius: 9px;
+  background:
+    linear-gradient(135deg, rgba(139,92,246,.075), transparent 65%),
+    #09090c;
+}
+
+.v15-version-market-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.v15-version-market-head > span {
+  overflow: hidden;
+  color: #9d88dc;
+  font-size: .51rem;
+  font-weight: 840;
+  letter-spacing: .065em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.v15-version-market-head > small {
+  flex: 0 0 auto;
+  color: #6f6876;
+  font-size: .5rem;
+  white-space: nowrap;
+}
+
+.v15-version-price-lines {
+  display: grid;
+  gap: 5px;
+}
+
+.v15-version-price-line {
+  display: grid;
+  grid-template-columns: minmax(48px, auto) auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255,255,255,.055);
+}
+
+.v15-version-price-line:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.v15-version-price-variant {
+  color: #bdb5c5;
+  font-size: .55rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.v15-version-price-line > strong {
+  color: #f5f0fa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: .93rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 680;
+  letter-spacing: -.035em;
+  white-space: nowrap;
+}
+
+.v15-version-price-line > small {
+  min-width: 0;
+  overflow: hidden;
+  color: #746d7b;
+  font-size: .5rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v15-priced-count {
+  border-color: rgba(155,116,247,.22) !important;
+  color: #9283b8 !important;
+}
+
+.v15-priced-count strong {
+  color: #d6c8fb !important;
+}
+
+.v15-print-market-panel {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(155,116,247,.24) !important;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(139,92,246,.11), transparent 34%),
+    #0b0b0f !important;
+}
+
+.v15-print-market-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(#b69af9, rgba(182,154,249,.12));
+}
+
+.v15-print-market-primary {
+  display: grid !important;
+  justify-items: end;
+  gap: 4px;
+}
+
+.v15-print-market-primary > span {
+  color: #8e8497;
+  font-size: .56rem;
+  font-weight: 760;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.v15-print-market-primary > strong {
+  color: #f6f1fb !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: clamp(1.7rem, 4vw, 2.6rem) !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650 !important;
+  letter-spacing: -.06em;
+  line-height: 1;
+}
+
+.v15-print-market-primary > small {
+  color: #7d7484;
+  font-size: .58rem;
+  line-height: 1.35;
+}
+
+.results-list .v15-result-price-row,
+.v8-result-card.list .v15-result-price-row {
+  display: grid;
+  justify-content: initial;
+  gap: 1px;
+}
+
+.results-list .v15-result-price-row > strong,
+.v8-result-card.list .v15-result-price-row > strong {
+  font-size: .88rem !important;
+}
+
+.results-list .v15-result-price-row > span,
+.v8-result-card.list .v15-result-price-row > span {
+  font-size: .47rem;
+}
+
+@media (max-width: 760px) {
+  .v15-card-market-range {
+    align-items: start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .v15-card-market-range > em {
+    text-align: left;
+  }
+
+  .v15-print-market-primary {
+    justify-items: start;
+  }
+}
+
+@media (max-width: 620px) {
+  .v15-version-market {
+    gap: 5px;
+    padding: 7px 8px;
+  }
+
+  .v15-version-market-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .v15-version-price-line {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 7px;
+  }
+
+  .v15-version-price-line > strong {
+    justify-self: end;
+    font-size: .82rem;
+  }
+
+  .v15-version-price-line > small {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .v15-result-price-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .v15-result-price-row > strong {
+    font-size: .98rem !important;
+  }
+
+  .v15-result-price-row > span {
+    font-size: .46rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v15-result-price-card,
+  .v15-version-market,
+  .v15-print-market-panel {
+    transition: none !important;
+  }
+}

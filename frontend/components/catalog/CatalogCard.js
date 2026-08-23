@@ -16,7 +16,7 @@ function setCode(item) {
 
 function formatCurrency(value, currency = 'EUR') {
   const number = value === null || value === undefined || value === '' ? null : Number(value)
-  if (number === null || !Number.isFinite(number)) return null
+  if (number === null || !Number.isFinite(number) || number <= 0) return null
   try {
     return new Intl.NumberFormat('es-ES', {
       style: 'currency',
@@ -86,29 +86,55 @@ function resolveItemType(item) {
 
 function exactMarket(item) {
   if (item?.type !== 'print') return null
-  const raw = item?.market?.display_price
   const market = item?.market
-  const display = formatCurrency(raw, market?.currency || 'EUR')
+  if (!market || market.mapping_confidence !== 'exact') return null
+  const display = formatCurrency(market.display_price, market.currency || 'EUR')
   if (!display) return null
 
   return {
     display,
-    low: formatCurrency(market?.price_low, market?.currency || 'EUR'),
-    asOf: formatMarketDate(market?.as_of),
+    low: formatCurrency(market.price_low, market.currency || 'EUR'),
+    asOf: formatMarketDate(market.as_of),
+    printId: market.print_id || item.id || null,
   }
 }
 
 function cardCornerMarket(item) {
   if (item?.type !== 'card') return null
   const market = item?.card_market
-  const raw = market?.display_price
-  const display = formatCurrency(raw, market?.currency || 'EUR')
+  if (!market || market.mapping_confidence !== 'exact') return null
+  const display = formatCurrency(market.display_price, market.currency || 'EUR')
   if (!display) return null
-  return { display }
+  return {
+    display,
+    asOf: formatMarketDate(market.as_of),
+    printId: market.print_id || item.matched_print_id || null,
+  }
 }
 
 function CardSignal({ item }) {
   const count = Number(item.variant_count || 0)
+  const market = cardCornerMarket(item)
+
+  if (market) {
+    const context = [
+      market.printId ? `Print ${market.printId}` : null,
+      'Cardmarket',
+      market.asOf ? `actualizado ${market.asOf}` : null,
+    ].filter(Boolean).join(' · ')
+
+    return (
+      <div className="v8-result-signal v8-result-market v15-result-price-card">
+        <span className="v8-result-signal-label">Precio de impresión exacta</span>
+        <div className="v15-result-price-row">
+          <strong>{market.display}</strong>
+          {count > 0 ? <span>{count.toLocaleString('es-ES')} impresión{count === 1 ? '' : 'es'}</span> : null}
+        </div>
+        <span className="v8-result-signal-note">{context}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="v8-result-signal v8-result-card-signal">
       <div>
@@ -123,22 +149,17 @@ function CardSignal({ item }) {
 }
 
 function PrintMarketSignal({ market }) {
-  if (!market) {
-    return (
-      <div className="v8-result-signal v8-result-market is-empty">
-        <span className="v8-result-signal-label">Cardmarket exacto</span>
-        <strong>Sin precio actual</strong>
-        <span className="v8-result-signal-note">No mostramos estimaciones ni precios de otra edición.</span>
-      </div>
-    )
-  }
+  if (!market) return null
 
   return (
-    <div className="v8-result-signal v8-result-market">
-      <span className="v8-result-signal-label">Cardmarket exacto</span>
-      <strong>{market.display}</strong>
+    <div className="v8-result-signal v8-result-market v15-result-price-card">
+      <span className="v8-result-signal-label">Precio de impresión exacta</span>
+      <div className="v15-result-price-row">
+        <strong>{market.display}</strong>
+        <span>Cardmarket</span>
+      </div>
       <span className="v8-result-signal-note">
-        {[market.low && market.low !== market.display ? `Low ${market.low}` : null, market.asOf ? `actualizado ${market.asOf}` : null].filter(Boolean).join(' · ') || 'Correspondencia de esta impresión'}
+        {[market.printId ? `Print ${market.printId}` : null, market.low && market.low !== market.display ? `Low ${market.low}` : null, market.asOf ? `actualizado ${market.asOf}` : null].filter(Boolean).join(' · ')}
       </span>
     </div>
   )
@@ -181,7 +202,6 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         : '#'
   const itemType = resolveItemType(item)
   const market = exactMarket(item)
-  const cardMarket = cardCornerMarket(item)
   const metaChips = buildMetaChips(item)
 
   return (
@@ -206,11 +226,6 @@ export default function CatalogCard({ item, view = 'grid', queryState, debugImag
         )}
         <span className={`badge ${itemType.className} v8-result-type-badge`}>{itemType.label}</span>
         <span className="v13-result-game-badge">{item.game || 'TCG'}</span>
-        {item.type === 'card' && cardMarket ? (
-          <span className="v14-card-price-corner" title="Precio exacto de la impresión física mostrada">
-            {cardMarket.display}
-          </span>
-        ) : null}
       </div>
 
       <div className="catalog-card-content v8-result-content">

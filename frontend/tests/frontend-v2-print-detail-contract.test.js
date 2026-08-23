@@ -22,24 +22,27 @@ test('Print detail makes exact physical identity explicit above secondary card c
 test('ownership and exact market appear before card text', () => {
   const page = source('app/prints/[id]/page.js')
   const ownership = page.indexOf('<LibraryActions printId={printDetail.id} />')
-  const market = page.indexOf('<PriceBlock price={price} cardmarket={cardmarket} locale={displayLocale} />')
+  const market = page.indexOf('<PriceBlock price={price} cardmarket={cardmarket} locale={DEFAULT_DISPLAY_LOCALE} />')
   const cardText = page.indexOf('className="panel-soft identifiers v14-card-text"')
   assert.ok(ownership >= 0, 'missing exact Print library actions')
   assert.ok(market > ownership, 'market should follow exact ownership actions')
   assert.ok(cardText > market, 'card text must remain secondary to exact identity and market')
 })
 
-test('market panel stays fail-closed and keeps all four Cardmarket concepts', () => {
+test('market panel stays fail-closed and keeps verified Cardmarket concepts', () => {
   const page = source('app/prints/[id]/page.js')
   for (const label of ['Mínimo', 'Conservador', 'Tendencia', 'Media']) {
     assert.ok(page.includes(label), `missing price label ${label}`)
   }
-  assert.match(page, /Sin Price Guide actual/)
+  assert.match(page, /if \(!price\) return null/)
+  assert.match(page, /if \(!primary\) return null/)
+  assert.match(page, /positiveNumber\(price\.trend\)/)
   assert.match(page, /No reutilizamos el precio de otra edición/)
   assert.match(page, /Low Price EX\+/)
   assert.match(page, /Foil Low/)
-  assert.match(page, /Sin enlace Cardmarket exacto disponible/)
   assert.match(page, /Ver esta Print en Cardmarket/)
+  assert.doesNotMatch(page, /Sin enlace Cardmarket exacto disponible/)
+  assert.doesNotMatch(page, /value \|\| 0/)
 })
 
 test('Cardmarket CTA lives in the market panel and is not duplicated in related navigation', () => {

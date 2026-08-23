@@ -52,27 +52,30 @@ test('language and Cardmarket filters remain physical-print concepts and are app
   assert.match(route, /market\?\.display_price/)
 })
 
-test('result cards distinguish canonical Cards, exact Prints and Sets', () => {
+test('result cards distinguish canonical Cards, exact Prints and Sets with verified exact prices only', () => {
   const card = source('components/catalog/CatalogCard.js')
   assert.match(card, /Carta canónica/)
   assert.match(card, /Impresión exacta/)
   assert.match(card, /Cobertura física/)
-  assert.match(card, /Cardmarket exacto/)
+  assert.match(card, /Precio de impresión exacta/)
   assert.match(card, /Contenido del set/)
   assert.match(card, /if \(item\?\.type !== 'print'\) return null/)
-  assert.match(card, /const raw = item\?\.market\?\.display_price/)
+  assert.match(card, /market\.mapping_confidence !== 'exact'/)
+  assert.match(card, /market\.display_price/)
+  assert.doesNotMatch(card, /Sin precio actual/)
   assert.doesNotMatch(card, /cardmarket_price/)
 })
 
-test('Card detail makes exact Print selection primary without inventing Card-level market data', () => {
+test('Card detail makes exact Print selection primary while any summary stays explicitly non-universal', () => {
   const detail = source('components/cards/CardDetailLayout.js')
   assert.match(detail, /Carta canónica/)
   assert.match(detail, /Impresiones físicas/)
   assert.match(detail, /Solo en la impresión exacta/)
+  assert.match(detail, /Rango entre impresiones\/variantes enlazadas; no es un precio universal de la carta/)
   assert.match(detail, /No agregamos precios de distintas ediciones, idiomas o acabados/)
   assert.match(detail, /prints_pagination\?\.total/)
   assert.match(detail, /<CardVersionBrowser/)
-  assert.doesNotMatch(detail, /cardmarket_price|display_price|price_market/)
+  assert.doesNotMatch(detail, /cardmarket_price|price_market/)
 })
 
 test('version browser routes every selectable physical identity to an exact Print', () => {

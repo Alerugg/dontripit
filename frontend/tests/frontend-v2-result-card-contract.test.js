@@ -14,18 +14,22 @@ test('P0.4 canonical cards expose physical coverage without inventing a universa
   assert.match(card, /Cobertura física/)
   assert.match(card, /variant_count/)
   assert.match(card, /el mercado pertenece a cada impresión física/)
+  assert.match(card, /cardCornerMarket/)
+  assert.match(card, /mapping_confidence !== 'exact'/)
   assert.doesNotMatch(card, /cardmarket_price/)
 })
 
-test('P0.4 exact Prints make verified current Cardmarket data the primary signal', () => {
+test('P0.4 exact Prints make verified current Cardmarket data the primary signal and fail closed', () => {
   const card = source('components/catalog/CatalogCard.js')
   assert.match(card, /function PrintMarketSignal/)
-  assert.match(card, /Cardmarket exacto/)
-  assert.match(card, /market\?\.display_price/)
-  assert.match(card, /market\?\.price_low/)
-  assert.match(card, /market\?\.as_of/)
-  assert.match(card, /Sin precio actual/)
-  assert.match(card, /No mostramos estimaciones ni precios de otra edición/)
+  assert.match(card, /Precio de impresión exacta/)
+  assert.match(card, /market\.display_price/)
+  assert.match(card, /market\.price_low/)
+  assert.match(card, /market\.as_of/)
+  assert.match(card, /market\.mapping_confidence !== 'exact'/)
+  assert.match(card, /if \(!market\) return null/)
+  assert.doesNotMatch(card, /Sin precio actual/)
+  assert.doesNotMatch(card, />N\/D</)
 })
 
 test('P0.4 Sets use source fields and never reuse a Print market block', () => {
@@ -33,7 +37,7 @@ test('P0.4 Sets use source fields and never reuse a Print market block', () => {
   assert.match(card, /function SetSignal/)
   assert.match(card, /Contenido del set/)
   assert.match(card, /item\.card_count \?\? item\.total_cards \?\? item\.cards_count/)
-  assert.match(card, /item\.set_code \|\| item\.code/)
+  assert.match(card, /function setCode/)
   assert.match(card, /item\.type === 'print' \? <PrintMarketSignal/)
   assert.match(card, /item\.type === 'set' \? <SetSignal/)
 })
