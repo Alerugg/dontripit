@@ -1,0 +1,76 @@
+name: Backfill Pokemon EN Exact Images V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/backfill-pokemon-en-exact-images-v1.yml'
+      - 'backend/app/scripts/audit_pokemon_tcgdex_source_marketplace_v1.py'
+      - 'backend/app/scripts/backfill_pokemon_en_exact_images_v1.py'
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/backfill-pokemon-en-exact-images-v1.yml'
+      - 'backend/app/scripts/audit_pokemon_tcgdex_source_marketplace_v1.py'
+      - 'backend/app/scripts/backfill_pokemon_en_exact_images_v1.py'
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PYTHONPATH: .
+      TCGDEX_CARDS_SHA: d9083b73db080979123ebf5e9e97338d4e0745b2
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      POKEMON_EN_IMAGE_BACKFILL_OUTPUT: artifacts/pokemon-en-exact-images-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned TCGdex cards database
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: d9083b73db080979123ebf5e9e97338d4e0745b2
+          path: tcgdex-cards
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: PR preflight - READ ONLY
+        if: github.event_name == 'pull_request'
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python -m app.scripts.backfill_pokemon_en_exact_images_v1 --require-baseline
+
+      - name: Production apply
+        if: github.event_name == 'push'
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python -m app.scripts.backfill_pokemon_en_exact_images_v1 --apply
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-en-exact-images-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-exact-images-v1.json
+          retention-days: 30
