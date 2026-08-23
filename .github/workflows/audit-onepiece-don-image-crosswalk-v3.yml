@@ -30,9 +30,10 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install read-only image audit dependencies
+      - name: Install backend and read-only image audit dependencies
         run: |
-          pip install --disable-pip-version-check psycopg2-binary==2.9.9 'pypdf[image]==5.9.0' Pillow ImageHash
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0' ImageHash
       - name: Compile image crosswalk auditors
         run: |
           python -m py_compile \
