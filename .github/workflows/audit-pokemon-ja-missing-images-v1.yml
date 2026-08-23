@@ -1,0 +1,153 @@
+name: Audit Pokemon JA Missing Images V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-ja-missing-images-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      OUTPUT: backend/artifacts/pokemon-ja-missing-images-v1.json
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Inventory JA missing-image identity and source coverage - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on':
+                  raise RuntimeError('audit connection is not read-only')
+
+              missing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.tcgdex_id,p.collector_number,p.print_key,p.is_foil,
+                       c.name card_name,s.code set_code,s.name set_name,
+                       pa.source attributes_source,pa.source_version,pa.attributes_json
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='ja'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+
+              id_rows=[dict(r) for r in conn.execute(text('''
+                SELECT pi.print_id,pi.source,pi.external_id
+                FROM print_identifiers pi
+                JOIN prints p ON p.id=pi.print_id JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='ja'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY pi.print_id,pi.source,pi.external_id
+              ''')).mappings().all()]
+
+              existing_images=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.tcgdex_id,p.collector_number,
+                       s.code set_code,im.url,im.source,im.is_primary
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_images im ON im.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='ja'
+                ORDER BY p.id,im.id
+              ''')).mappings().all()]
+
+              total_ja=conn.execute(text('''
+                SELECT COUNT(*)::int
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='ja'
+              ''')).scalar_one()
+              conn.rollback()
+
+          if len(missing)!=4862:
+              raise RuntimeError(f'JA missing-image baseline drift: expected=4862 actual={len(missing)}')
+
+          ids_by_print=defaultdict(list)
+          for row in id_rows:
+              ids_by_print[int(row['print_id'])].append({'source':str(row['source']),'external_id':str(row['external_id'])})
+
+          variant_counts=Counter(str(r.get('variant')) for r in missing)
+          attr_source_counts=Counter(f"{r.get('attributes_source')}@{r.get('source_version')}" for r in missing)
+          identifier_source_counts=Counter(str(r['source']) for r in id_rows)
+          identifier_print_coverage=Counter()
+          for print_id,items in ids_by_print.items():
+              for source in {x['source'] for x in items}:
+                  identifier_print_coverage[source]+=1
+
+          existing_source_counts=Counter(str(r.get('source')) for r in existing_images)
+          existing_host_counts=Counter()
+          existing_path_language_counts=Counter()
+          for row in existing_images:
+              try:
+                  parsed=urlparse(str(row.get('url') or ''))
+                  existing_host_counts[parsed.netloc]+=1
+                  parts=[p for p in parsed.path.split('/') if p]
+                  if parsed.netloc=='assets.tcgdex.net' and parts:
+                      existing_path_language_counts[parts[0]]+=1
+              except Exception:
+                  existing_host_counts['<parse-error>']+=1
+
+          tcgdex_nonnull=sum(1 for r in missing if r.get('tcgdex_id'))
+          attrs_source_id=sum(1 for r in missing if isinstance(r.get('attributes_json'),dict) and r['attributes_json'].get('source_id'))
+          attrs_physical_variant=sum(1 for r in missing if isinstance(r.get('attributes_json'),dict) and isinstance(r['attributes_json'].get('physical_variant'),dict))
+
+          set_counts=Counter(str(r.get('set_code')) for r in missing)
+          samples=[]
+          for row in missing[:150]:
+              attrs=row.get('attributes_json') if isinstance(row.get('attributes_json'),dict) else {}
+              pv=attrs.get('physical_variant') if isinstance(attrs.get('physical_variant'),dict) else None
+              samples.append({
+                'print_id':int(row['print_id']),'card_name':row.get('card_name'),'set_code':row.get('set_code'),
+                'collector_number':row.get('collector_number'),'variant':row.get('variant'),'is_foil':row.get('is_foil'),
+                'tcgdex_id':row.get('tcgdex_id'),'attributes_source':row.get('attributes_source'),
+                'source_version':row.get('source_version'),'attributes_source_id':attrs.get('source_id'),
+                'physical_variant':pv,'identifiers':ids_by_print.get(int(row['print_id']),[]),
+              })
+
+          report={
+            'status':'pass','mode':'read-only-inventory','production_writes':0,
+            'ja_total_prints':int(total_ja),'ja_missing_images':len(missing),'ja_existing_image_rows':len(existing_images),
+            'missing_variant_counts':dict(variant_counts),'missing_tcgdex_id_nonnull':tcgdex_nonnull,
+            'missing_attributes_source_id':attrs_source_id,'missing_physical_variant':attrs_physical_variant,
+            'missing_attributes_source_version_counts':dict(attr_source_counts),
+            'missing_identifier_row_source_counts':dict(identifier_source_counts),
+            'missing_identifier_print_coverage':dict(identifier_print_coverage),
+            'existing_image_source_counts':dict(existing_source_counts),
+            'existing_image_host_counts':dict(existing_host_counts),
+            'existing_tcgdex_path_language_counts':dict(existing_path_language_counts),
+            'top_missing_sets':dict(set_counts.most_common(40)),'samples':samples,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k!='samples'},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-ja-missing-images-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-ja-missing-images-v1.json
+          retention-days: 30
