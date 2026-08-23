@@ -1,0 +1,81 @@
+name: Audit Pokemon TCGdex Existing URL Shape V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-existing-url-shape-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Inspect existing Pokemon image URL shapes - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          mkdir -p backend/artifacts
+          python - <<'PY'
+          import json,os
+          from collections import Counter
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from sqlalchemy import create_engine,text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,p.collector_number,p.variant,s.code set_code,
+                       im.url,im.source,im.is_primary
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_images im ON im.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND p.tcgdex_id IS NOT NULL
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                ORDER BY p.id,im.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          hosts=Counter(); sources=Counter(); patterns=Counter()
+          samples=[]
+          for r in rows:
+              url=str(r['url'])
+              parsed=urlparse(url)
+              hosts[parsed.netloc]+=1; sources[str(r.get('source'))]+=1
+              parts=[x for x in parsed.path.split('/') if x]
+              suffix='/'.join(parts[-5:])
+              patterns[suffix]+=1
+              if len(samples)<300:
+                  samples.append({k:r.get(k) for k in ['print_id','tcgdex_id','collector_number','variant','set_code','url','source','is_primary']})
+          report={
+            'status':'pass','production_writes':0,'rows':len(rows),
+            'host_counts':dict(hosts.most_common()),
+            'source_counts':dict(sources.most_common()),
+            'sample_count':len(samples),'samples':samples,
+          }
+          Path('backend/artifacts/pokemon-tcgdex-existing-url-shape-v1.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k!='samples'},indent=2,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgdex-existing-url-shape-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgdex-existing-url-shape-v1.json
+          retention-days: 30
