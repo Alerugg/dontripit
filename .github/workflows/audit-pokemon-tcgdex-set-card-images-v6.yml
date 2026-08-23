@@ -1,0 +1,195 @@
+name: Audit Pokemon TCGdex Set Card Images V6
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-set-card-images-v6.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Certify embedded set-card images READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, time, requests
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          UA={'User-Agent':'Dontripit Pokemon TCGdex set image certifier/1.0','Accept':'application/json'}
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              missing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.language,p.tcgdex_id print_tcgdex_id,p.collector_number,
+                       c.tcgdex_id card_tcgdex_id,c.name card_name
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                  AND p.language IN ('en','es')
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.language,p.id
+              ''')).mappings().all()]
+              # SourceRecord evidence: does current persisted TCGdex raw data already carry image?
+              source_record_counts=[dict(r) for r in conn.execute(text('''
+                WITH m AS (
+                  SELECT p.id print_id,p.language,p.tcgdex_id,c.tcgdex_id card_tcgdex_id
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon' AND p.language IN ('en','es')
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT m.language,
+                       count(DISTINCT m.print_id)::bigint missing,
+                       count(DISTINCT m.print_id) FILTER (WHERE sr.id IS NOT NULL)::bigint source_record_found,
+                       count(DISTINCT m.print_id) FILTER (WHERE NULLIF(sr.raw_json->>'image','') IS NOT NULL)::bigint source_record_with_image
+                FROM m
+                LEFT JOIN sources src ON src.name='tcgdex_pokemon'
+                LEFT JOIN source_records sr ON sr.source_id=src.id
+                  AND (sr.raw_json->>'id')=COALESCE(m.tcgdex_id,m.card_tcgdex_id)
+                GROUP BY m.language ORDER BY m.language
+              ''')).mappings().all()]
+              conn.rollback()
+
+          # Resolve exact set ids from card detail only; individual detail is trusted for identity fields.
+          keys=[]
+          for r in missing:
+              if r['language']=='en' and r['print_tcgdex_id']:
+                  keys.append(('en',str(r['print_tcgdex_id']),r['print_id']))
+              elif r['language']=='es' and r['card_tcgdex_id']:
+                  keys.append(('es',str(r['card_tcgdex_id']),r['print_id']))
+
+          def fetch_detail(item):
+              lang,cid,pid=item
+              s=requests.Session(); s.headers.update(UA)
+              url=f'https://api.tcgdex.net/v2/{lang}/cards/{cid}'
+              for a in range(4):
+                  try:
+                      resp=s.get(url,timeout=20)
+                      if resp.status_code==429 or resp.status_code>=500:
+                          time.sleep(.3*(a+1)); continue
+                      if resp.status_code!=200: return pid,{'status':resp.status_code,'lang':lang,'id':cid}
+                      d=resp.json()
+                      return pid,{'status':200,'lang':lang,'id':str(d.get('id') or ''),'set_id':str(((d.get('set') or {}).get('id')) or ''),'localId':str(d.get('localId') or '')}
+                  except Exception as exc:
+                      if a==3: return pid,{'status':type(exc).__name__,'lang':lang,'id':cid,'error':str(exc)}
+                      time.sleep(.3*(a+1))
+              return pid,{'status':'exhausted','lang':lang,'id':cid}
+
+          details={}
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futs=[pool.submit(fetch_detail,k) for k in keys]
+              for f in as_completed(futs): pid,d=f.result(); details[pid]=d
+
+          set_keys=sorted({(d['lang'],d['set_id']) for d in details.values() if d.get('status')==200 and d.get('set_id')})
+          def fetch_set(key):
+              lang,sid=key
+              s=requests.Session(); s.headers.update(UA)
+              url=f'https://api.tcgdex.net/v2/{lang}/sets/{sid}'
+              for a in range(4):
+                  try:
+                      resp=s.get(url,timeout=30)
+                      if resp.status_code==429 or resp.status_code>=500:
+                          time.sleep(.35*(a+1)); continue
+                      if resp.status_code!=200: return key,{'status':resp.status_code}
+                      data=resp.json()
+                      cards=data.get('cards') or []
+                      return key,{'status':200,'cards':{str(c.get('id')):c for c in cards if c.get('id')},'card_count':len(cards)}
+                  except Exception as exc:
+                      if a==3: return key,{'status':type(exc).__name__,'error':str(exc)}
+                      time.sleep(.35*(a+1))
+              return key,{'status':'exhausted'}
+
+          sets={}
+          with ThreadPoolExecutor(max_workers=12) as pool:
+              futs=[pool.submit(fetch_set,k) for k in set_keys]
+              for f in as_completed(futs): k,v=f.result(); sets[k]=v
+
+          classified=[]
+          by_pid={r['print_id']:r for r in missing}
+          for pid,d in details.items():
+              row=by_pid[pid]
+              source_id=str(row['print_tcgdex_id'] if row['language']=='en' else row['card_tcgdex_id'])
+              set_payload=sets.get((row['language'],d.get('set_id')),{})
+              card=(set_payload.get('cards') or {}).get(source_id) if set_payload.get('status')==200 else None
+              image=(card or {}).get('image') if card else None
+              classified.append({**row,'source_id':source_id,'detail':d,'set_status':set_payload.get('status'),'embedded_card_found':bool(card),'embedded_image':image})
+
+          en_exact=[r for r in classified if r['language']=='en' and r['print_tcgdex_id']]
+          es_card=[r for r in classified if r['language']=='es']
+          en_with_image=[r for r in en_exact if r['detail'].get('status')==200 and r['detail'].get('id')==r['source_id'] and r['embedded_image']]
+          es_with_image=[r for r in es_card if r['detail'].get('status')==200 and r['detail'].get('id')==r['source_id'] and r['embedded_image']]
+
+          # Probe a representative but broad deterministic subset first; the writer preflight can probe all.
+          probe_rows=(en_with_image[:400] + es_with_image[:100])
+          def probe(row):
+              url=str(row['embedded_image']).rstrip('/')+'/high.webp'
+              s=requests.Session(); s.headers.update({'User-Agent':UA['User-Agent'],'Accept':'image/*'})
+              try:
+                  resp=s.get(url,timeout=20,stream=True)
+                  prefix=next(resp.iter_content(32),b'') if resp.status_code==200 else b''
+                  return row['print_id'],{'url':url,'status':resp.status_code,'content_type':resp.headers.get('Content-Type'),'prefix_hex':prefix[:12].hex()}
+              except Exception as exc:
+                  return row['print_id'],{'url':url,'status':type(exc).__name__,'error':str(exc)}
+          probes={}
+          with ThreadPoolExecutor(max_workers=20) as pool:
+              futs=[pool.submit(probe,r) for r in probe_rows]
+              for f in as_completed(futs): pid,v=f.result(); probes[pid]=v
+
+          summary={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'source_record_counts':source_record_counts,
+            'detail_status_counts':dict(Counter(str(d.get('status')) for d in details.values())),
+            'set_request_count':len(set_keys),
+            'set_status_counts':dict(Counter(str(v.get('status')) for v in sets.values())),
+            'en_exact_count':len(en_exact),
+            'en_exact_embedded_card_found':sum(1 for r in en_exact if r['embedded_card_found']),
+            'en_exact_embedded_image':len(en_with_image),
+            'es_card_count':len(es_card),
+            'es_embedded_card_found':sum(1 for r in es_card if r['embedded_card_found']),
+            'es_embedded_image':len(es_with_image),
+            'probe_count':len(probe_rows),
+            'probe_status_counts':dict(Counter(str(v.get('status')) for v in probes.values())),
+            'probe_image_200':sum(1 for v in probes.values() if v.get('status')==200 and str(v.get('content_type') or '').startswith('image/')),
+          }
+          report={**summary,
+            'en_with_image_samples':en_with_image[:100],
+            'es_with_image_samples':es_with_image[:100],
+            'missing_or_no_image':[r for r in classified if not r['embedded_image']][:200],
+            'probe_results':list(probes.values())[:500],
+          }
+          Path('artifacts/pokemon-tcgdex-set-card-images-v6.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgdex-set-card-images-v6-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgdex-set-card-images-v6.json
+          retention-days: 30
