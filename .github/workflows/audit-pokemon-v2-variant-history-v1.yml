@@ -1,0 +1,231 @@
+name: Audit Pokemon V2 Variant History V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-variant-history-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Trace historical Pokemon variant writers and production state READ ONLY
+        run: |
+          mkdir -p backend/artifacts
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          def git(*args, max_chars=200000):
+              p = subprocess.run(['git', *args], text=True, capture_output=True, check=False)
+              out = p.stdout
+              if p.stderr:
+                  out += ('\n[stderr]\n' + p.stderr)
+              return {'returncode': p.returncode, 'output': out[:max_chars]}
+
+          # Inspect the complete repository history instead of relying on GitHub code-search indexing.
+          historic_paths_raw = git('log','--all','--name-only','--pretty=format:', max_chars=1000000)['output']
+          historic_paths = sorted({
+              line.strip() for line in historic_paths_raw.splitlines()
+              if line.strip() and re.search(r'(pokemon|tcgdex)', line, re.I)
+          })
+
+          current_v2 = git('grep','-n','-E',r'v2-|variant.*tcgdex|tcgdex.*variant','HEAD','--','backend', max_chars=200000)
+          tcgdex_history = git(
+              'log','--follow','--date=iso-strict',
+              '--format=%H%x09%ad%x09%s',
+              '--','backend/app/ingest/connectors/tcgdex_pokemon.py',
+              max_chars=200000,
+          )
+          v2_commits = git(
+              'log','--all','-Gv2-','--date=iso-strict',
+              '--format=%H%x09%ad%x09%s','--','backend',
+              max_chars=200000,
+          )
+          variant_commits = git(
+              'log','--all','-Gvariant','--date=iso-strict',
+              '--format=%H%x09%ad%x09%s','--',
+              'backend/app/ingest/connectors/tcgdex_pokemon.py','backend/app/scripts','backend/migrations','migrations',
+              max_chars=300000,
+          )
+
+          candidate_shas = []
+          for blob in (v2_commits['output'], variant_commits['output']):
+              for line in blob.splitlines():
+                  if re.match(r'^[0-9a-f]{40}\t', line):
+                      sha=line.split('\t',1)[0]
+                      if sha not in candidate_shas:
+                          candidate_shas.append(sha)
+          candidate_shas = candidate_shas[:80]
+          patches = []
+          for sha in candidate_shas:
+              shown = git(
+                  'show','--format=fuller','--find-renames','--stat','--patch',sha,'--','backend',
+                  max_chars=120000,
+              )
+              txt=shown['output']
+              # Retain only candidates whose actual patch/text mentions Pokemon/TCGdex/v2/variant.
+              if re.search(r'(pokemon|tcgdex|v2-|variant)', txt, re.I):
+                  patches.append({'sha':sha,'show':txt})
+
+          # Also inspect history for every path that has ever had Pokemon/TCGdex in its name.
+          path_histories=[]
+          for path in historic_paths[:250]:
+              h=git('log','--all','--date=iso-strict','--format=%H%x09%ad%x09%s','--',path,max_chars=50000)
+              if h['output'].strip():
+                  path_histories.append({'path':path,'history':h['output']})
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+
+              def rows(sql, params=None):
+                  return [dict(r) for r in conn.execute(text(sql),params or {}).mappings().all()]
+
+              variant_counts=rows('''
+                SELECT COALESCE(p.language,'<null>') language,
+                       COALESCE(p.variant,'<null>') variant,
+                       count(*)::bigint total,
+                       count(*) FILTER (WHERE NOT EXISTS (
+                         SELECT 1 FROM print_images pi WHERE pi.print_id=p.id
+                       ))::bigint missing_image,
+                       count(*) FILTER (WHERE NULLIF(trim(p.tcgdex_id),'') IS NOT NULL)::bigint with_print_tcgdex_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                GROUP BY COALESCE(p.language,'<null>'),COALESCE(p.variant,'<null>')
+                ORDER BY language,total DESC,variant
+              ''')
+
+              v2_summary=rows('''
+                SELECT COALESCE(p.language,'<null>') language,
+                       count(*)::bigint total_v2,
+                       count(*) FILTER (WHERE NOT EXISTS (
+                         SELECT 1 FROM print_images pi WHERE pi.print_id=p.id
+                       ))::bigint missing_image,
+                       count(*) FILTER (WHERE NULLIF(trim(p.tcgdex_id),'') IS NOT NULL)::bigint with_print_tcgdex_id,
+                       count(*) FILTER (WHERE NULLIF(trim(c.tcgdex_id),'') IS NOT NULL)::bigint with_card_tcgdex_id,
+                       count(*) FILTER (WHERE NULLIF(trim(s.tcgdex_id),'') IS NOT NULL)::bigint with_set_tcgdex_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND COALESCE(p.variant,'') LIKE 'v2-%'
+                GROUP BY COALESCE(p.language,'<null>')
+                ORDER BY language
+              ''')
+
+              v2_samples=rows('''
+                SELECT p.id print_id,p.language,p.variant,p.collector_number,p.tcgdex_id print_tcgdex_id,
+                       p.is_foil,p.finish,p.printing,p.external_url,p.image_source,p.image_source_url,
+                       c.id card_id,c.name card_name,c.tcgdex_id card_tcgdex_id,
+                       s.id set_id,s.code set_code,s.name set_name,s.tcgdex_id set_tcgdex_id,
+                       EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id) has_image
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND COALESCE(p.variant,'') LIKE 'v2-%'
+                ORDER BY p.language,s.code,p.collector_number,p.variant,p.id
+                LIMIT 500
+              ''')
+
+              missing_v2_samples=rows('''
+                SELECT p.id print_id,p.language,p.variant,p.collector_number,p.tcgdex_id print_tcgdex_id,
+                       p.is_foil,p.finish,p.printing,
+                       c.id card_id,c.name card_name,c.tcgdex_id card_tcgdex_id,
+                       s.id set_id,s.code set_code,s.name set_name,s.tcgdex_id set_tcgdex_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND COALESCE(p.variant,'') LIKE 'v2-%'
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.language,s.code,p.collector_number,p.variant,p.id
+                LIMIT 1500
+              ''')
+
+              duplicate_groups=rows('''
+                WITH x AS (
+                  SELECT p.id,p.card_id,p.set_id,p.language,p.collector_number,p.variant,p.tcgdex_id,
+                         EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id) has_image
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                )
+                SELECT card_id,set_id,language,collector_number,count(*)::bigint n,
+                       array_agg(id ORDER BY id) print_ids,
+                       array_agg(COALESCE(variant,'<null>') ORDER BY id) variants,
+                       array_agg(COALESCE(tcgdex_id,'<null>') ORDER BY id) tcgdex_ids,
+                       array_agg(has_image ORDER BY id) image_flags
+                FROM x
+                GROUP BY card_id,set_id,language,collector_number
+                HAVING count(*)>1
+                   AND bool_or(COALESCE(variant,'') LIKE 'v2-%')
+                ORDER BY n DESC,language,card_id,set_id,collector_number
+                LIMIT 1000
+              ''')
+              conn.rollback()
+
+          report={
+              'status':'pass',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'historic_pokemon_tcgdex_paths':historic_paths,
+              'current_tree_v2_variant_hits':current_v2,
+              'tcgdex_connector_history':tcgdex_history,
+              'history_v2_commits':v2_commits,
+              'history_variant_commits':variant_commits,
+              'candidate_commit_patches':patches,
+              'path_histories':path_histories,
+              'production_variant_counts':variant_counts,
+              'production_v2_summary':v2_summary,
+              'production_v2_samples':v2_samples,
+              'production_missing_v2_samples':missing_v2_samples,
+              'production_v2_duplicate_groups':duplicate_groups,
+          }
+          Path('backend/artifacts/pokemon-v2-variant-history-v1.json').write_text(
+              json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8'
+          )
+          print(json.dumps({
+              'status':'pass','production_writes':0,
+              'historic_paths':historic_paths,
+              'v2_summary':v2_summary,
+              'v2_history_commit_lines':v2_commits['output'].splitlines()[:40],
+              'variant_history_commit_lines':variant_commits['output'].splitlines()[:40],
+              'candidate_patch_count':len(patches),
+              'duplicate_group_count_capped':len(duplicate_groups),
+          },indent=2,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-v2-variant-history-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-variant-history-v1.json
+          retention-days: 30
