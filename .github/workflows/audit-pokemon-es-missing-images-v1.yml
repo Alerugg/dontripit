@@ -1,0 +1,147 @@
+name: Audit Pokemon ES Missing Images V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-es-missing-images-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      OUTPUT: backend/artifacts/pokemon-es-missing-images-v1.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Inventory ES missing and existing image provenance - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from sqlalchemy import create_engine,text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              missing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.is_foil,p.tcgdex_id,p.collector_number,p.rarity,p.print_key,
+                       c.name card_name,s.code set_code,s.name set_name,
+                       (SELECT jsonb_agg(jsonb_build_object('source',pi.source,'external_id',pi.external_id)
+                                         ORDER BY pi.source,pi.external_id)
+                        FROM print_identifiers pi WHERE pi.print_id=p.id) identifiers,
+                       (SELECT jsonb_agg(jsonb_build_object('source',pa.source,'source_version',pa.source_version,'attributes_json',pa.attributes_json)
+                                         ORDER BY pa.source,pa.source_version)
+                        FROM print_attributes pa WHERE pa.print_id=p.id) attributes
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND p.language='es'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              existing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.tcgdex_id,p.collector_number,s.code set_code,
+                       im.url,im.source,im.is_primary
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_images im ON im.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='es'
+                ORDER BY p.id,im.id
+              ''')).mappings().all()]
+              total_es=int(conn.execute(text('''
+                SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='es'
+              ''')).scalar_one())
+              conn.rollback()
+
+          if len(missing)!=933:
+              raise RuntimeError(f'ES missing-image drift: expected=933 actual={len(missing)}')
+
+          variant_counts=Counter(); set_counts=Counter(); id_sources=Counter(); attr_sources=Counter(); attr_versions=Counter()
+          with_tcgdex=with_source_id=source_id_matches=with_physical=with_tcgplayer=with_cardmarket=0
+          physical_keys=Counter(); manifest=[]
+          for r in missing:
+              variant_counts[str(r.get('variant') or '(null)')]+=1
+              set_counts[str(r.get('set_code') or '(null)')]+=1
+              if r.get('tcgdex_id') not in (None,''): with_tcgdex+=1
+              ids=r.get('identifiers') or []
+              attrs_list=r.get('attributes') or []
+              for item in ids: id_sources[str(item.get('source') or '(null)')]+=1
+              source_id=None; physical=None; attr_source=None; attr_version=None
+              for item in attrs_list:
+                  attr_source=str(item.get('source') or '(null)'); attr_version=str(item.get('source_version') or '(null)')
+                  attr_sources[attr_source]+=1; attr_versions[f'{attr_source}@{attr_version}']+=1
+                  payload=item.get('attributes_json')
+                  if isinstance(payload,dict):
+                      if payload.get('source_id') not in (None,''): source_id=str(payload.get('source_id'))
+                      if isinstance(payload.get('physical_variant'),dict): physical=payload['physical_variant']
+              if source_id:
+                  with_source_id+=1
+                  if str(r.get('tcgdex_id') or '')==source_id: source_id_matches+=1
+              tcgplayer=cardmarket=None
+              if physical:
+                  with_physical+=1
+                  for key in physical: physical_keys[str(key)]+=1
+                  tp=physical.get('third_party') or {}
+                  if isinstance(tp,dict):
+                      if tp.get('tcgplayer') not in (None,''): tcgplayer=str(tp.get('tcgplayer')); with_tcgplayer+=1
+                      if tp.get('cardmarket') not in (None,''): cardmarket=str(tp.get('cardmarket')); with_cardmarket+=1
+              manifest.append({
+                'print_id':int(r['print_id']),'card_name':r.get('card_name'),'set_code':r.get('set_code'),'set_name':r.get('set_name'),
+                'collector_number':r.get('collector_number'),'variant':r.get('variant'),'is_foil':r.get('is_foil'),'rarity':r.get('rarity'),
+                'tcgdex_id':r.get('tcgdex_id'),'print_key':r.get('print_key'),'source_id':source_id,
+                'physical_tcgplayer':tcgplayer,'physical_cardmarket':cardmarket,'identifiers':ids,'attributes':attrs_list,
+              })
+
+          existing_hosts=Counter(); existing_sources=Counter(); existing_lang_paths=Counter(); existing_tcgdex_rows=[]
+          for r in existing:
+              url=str(r.get('url') or '')
+              parsed=urlparse(url)
+              existing_hosts[parsed.netloc]+=1; existing_sources[str(r.get('source') or '(null)')]+=1
+              parts=[p for p in parsed.path.split('/') if p]
+              if parsed.netloc=='assets.tcgdex.net' and parts:
+                  existing_lang_paths[parts[0]]+=1
+                  if len(existing_tcgdex_rows)<250:
+                      existing_tcgdex_rows.append({k:r.get(k) for k in ['print_id','variant','tcgdex_id','collector_number','set_code','url','source','is_primary']})
+
+          report={
+            'status':'pass','mode':'read-only-inventory','production_writes':0,
+            'es_prints_total':total_es,'es_existing_image_rows':len(existing),'es_missing_images':len(missing),
+            'missing_variant_counts':dict(variant_counts.most_common()),'missing_set_counts':dict(set_counts.most_common()),
+            'missing_with_tcgdex_id':with_tcgdex,'missing_with_source_id':with_source_id,'missing_tcgdex_equals_source_id':source_id_matches,
+            'missing_with_physical_variant':with_physical,'missing_with_tcgplayer_in_physical':with_tcgplayer,'missing_with_cardmarket_in_physical':with_cardmarket,
+            'identifier_source_counts':dict(id_sources.most_common()),'attribute_source_counts':dict(attr_sources.most_common()),
+            'attribute_version_counts':dict(attr_versions.most_common()),'physical_variant_keys':dict(physical_keys.most_common()),
+            'existing_image_host_counts':dict(existing_hosts.most_common()),'existing_image_source_counts':dict(existing_sources.most_common()),
+            'existing_tcgdex_language_path_counts':dict(existing_lang_paths.most_common()),
+            'existing_tcgdex_samples':existing_tcgdex_rows,'manifest':manifest,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('manifest','existing_tcgdex_samples','missing_set_counts')},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-es-missing-images-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-es-missing-images-v1.json
+          retention-days: 30
