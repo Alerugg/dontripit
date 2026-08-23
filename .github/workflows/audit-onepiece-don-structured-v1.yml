@@ -3,11 +3,17 @@ name: Audit One Piece DON Structured V1
 on:
   pull_request:
     paths:
+      - 'backend/alembic/env.py'
+      - 'backend/alembic/versions/20260823_40_add_onepiece_don_structured.py'
+      - 'backend/alembic/versions/20260823_41_add_onepiece_don_market_items.py'
+      - 'backend/app/onepiece_don_models.py'
+      - 'backend/app/search_v2_models.py'
       - 'backend/app/scripts/audit_onepiece_don_structured_v1.py'
       - 'backend/app/scripts/probe_onepiece_don_official_source_v1.py'
       - 'backend/app/scripts/apply_onepiece_don_structured_v1.py'
-      - 'backend/app/data/onepiece_don_structured_v1.json'
+      - 'backend/app/scripts/certify_onepiece_don_structured_v1.py'
       - '.github/workflows/audit-onepiece-don-structured-v1.yml'
+      - '.github/workflows/apply-onepiece-don-structured-v1.yml'
   workflow_dispatch:
 
 jobs:
@@ -27,10 +33,15 @@ jobs:
           python-version: '3.12'
       - name: Install audit dependencies
         run: pip install --disable-pip-version-check psycopg2-binary==2.9.9 pypdf==5.9.0
-      - name: Compile probes
+      - name: Compile DON implementation
         run: |
+          python -m py_compile app/onepiece_don_models.py
           python -m py_compile app/scripts/audit_onepiece_don_structured_v1.py
           python -m py_compile app/scripts/probe_onepiece_don_official_source_v1.py
+          python -m py_compile app/scripts/apply_onepiece_don_structured_v1.py
+          python -m py_compile app/scripts/certify_onepiece_don_structured_v1.py
+          python -m py_compile alembic/versions/20260823_40_add_onepiece_don_structured.py
+          python -m py_compile alembic/versions/20260823_41_add_onepiece_don_market_items.py
       - name: Probe official Bandai DON list
         env:
           ONEPIECE_DON_OFFICIAL_URL: https://onepiece-cardgame.com/pdf/don-cardlist.pdf?v=260227
@@ -39,6 +50,11 @@ jobs:
           ONEPIECE_DON_SOURCE_PROBE_OUTPUT=artifacts/onepiece-don-official-source-v1.json \
           ONEPIECE_DON_SOURCE_PDF_OUTPUT=artifacts/onepiece-don-official-source-v1.pdf \
             python app/scripts/probe_onepiece_don_official_source_v1.py
+      - name: Dry-run official inventory materializer
+        env:
+          ONEPIECE_DON_APPLY: '0'
+          ONEPIECE_DON_APPLY_OUTPUT: artifacts/onepiece-don-structured-v1-dry-run.json
+        run: python app/scripts/apply_onepiece_don_structured_v1.py
       - name: Audit production Neon read-only
         run: |
           ONEPIECE_DON_AUDIT_OUTPUT=artifacts/onepiece-don-structured-v1-audit.json \
@@ -49,6 +65,7 @@ jobs:
           name: onepiece-don-structured-v1-audit-${{ github.run_id }}
           path: |
             backend/artifacts/onepiece-don-structured-v1-audit.json
+            backend/artifacts/onepiece-don-structured-v1-dry-run.json
             backend/artifacts/onepiece-don-official-source-v1.json
             backend/artifacts/onepiece-don-official-source-v1.pdf
           retention-days: 90
