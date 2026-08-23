@@ -20,6 +20,8 @@ class CardSearchProfile(Base):
     keywords_json: Mapped[list | None] = mapped_column(json_type, nullable=True)
     attributes_json: Mapped[dict | None] = mapped_column(json_type, nullable=True)
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_don: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    don_subject_normalized: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -46,6 +48,8 @@ class PrintSearchProfile(Base):
     keywords_json: Mapped[list | None] = mapped_column(json_type, nullable=True)
     attributes_json: Mapped[dict | None] = mapped_column(json_type, nullable=True)
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_don: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    don_subject_normalized: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
