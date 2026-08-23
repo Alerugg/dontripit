@@ -1,0 +1,221 @@
+name: Audit Pokemon EN Default TCGdex Source Path V3
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-en-default-tcgdex-source-path-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      OUTPUT: backend/artifacts/pokemon-en-default-tcgdex-source-path-v3.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Source-backed path derivation and 213 probes - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import json, os, re, time
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from urllib.parse import urlparse
+          import requests
+          from sqlalchemy import create_engine, text
+
+          ROOT=Path(os.environ['TCGDEX_CARDS_REPO'])/'data'
+          PIN=os.environ['TCGDEX_CARDS_SHA']
+          ID_RE=re.compile(r'\bid\s*:\s*["\']([^"\']+)["\']')
+
+          # Build set_id -> series_id from the pinned repository's canonical layout:
+          # data/<Series>/<Set>.ts paired with data/<Series>.ts.
+          set_to_series={}; source_files={}; skipped=[]
+          for path in ROOT.rglob('*.ts'):
+              rel=path.relative_to(ROOT)
+              if len(rel.parts)<2:
+                  continue
+              try:
+                  content=path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              if 'import { Set }' not in content or 'import serie from' not in content:
+                  continue
+              m=ID_RE.search(content)
+              if not m:
+                  continue
+              set_id=m.group(1)
+              series_dir=rel.parts[0]
+              series_file=ROOT/f'{series_dir}.ts'
+              if not series_file.exists():
+                  skipped.append({'set_id':set_id,'set_file':str(rel),'reason':'series_file_missing','series_file':str(series_file.relative_to(ROOT.parent))})
+                  continue
+              try:
+                  series_content=series_file.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  skipped.append({'set_id':set_id,'set_file':str(rel),'reason':'series_file_decode'})
+                  continue
+              sm=ID_RE.search(series_content)
+              if not sm:
+                  skipped.append({'set_id':set_id,'set_file':str(rel),'reason':'series_id_missing'})
+                  continue
+              series_id=sm.group(1)
+              previous=set_to_series.get(set_id)
+              if previous and previous!=series_id:
+                  raise RuntimeError(f'conflicting series for set {set_id}: {previous} vs {series_id}')
+              set_to_series[set_id]=series_id
+              source_files[set_id]=str(rel)
+
+          if len(set_to_series)<100:
+              raise RuntimeError(f'implausibly small set index: {len(set_to_series)}')
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              working=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,im.url
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                JOIN print_images im ON im.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND p.tcgdex_id IS NOT NULL
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                  AND im.source='tcgdex'
+                  AND im.url LIKE 'https://assets.tcgdex.net/en/%'
+              ''')).mappings().all()]
+              residual=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,p.variant,p.collector_number,p.print_key,
+                       c.name card_name,s.code set_code,s.name set_name,
+                       pa.source attributes_source,pa.source_version,pa.attributes_json
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(working)!=6034: raise RuntimeError(f'working baseline drift: {len(working)}')
+          if len(residual)!=213: raise RuntimeError(f'residual drift: {len(residual)}')
+
+          # Learn production set->series paths and ensure they are unambiguous.
+          prod_set_series=defaultdict(set); prod_bad=[]
+          for row in working:
+              parts=[p for p in urlparse(str(row['url'])).path.split('/') if p]
+              if len(parts)!=5 or parts[0]!='en' or parts[4]!='high.webp':
+                  prod_bad.append({'print_id':row['print_id'],'url':row['url']}); continue
+              prod_set_series[parts[2]].add(parts[1])
+          if prod_bad: raise RuntimeError(f'bad production URL shapes: {len(prod_bad)}')
+          ambiguous={k:sorted(v) for k,v in prod_set_series.items() if len(v)!=1}
+          if ambiguous: raise RuntimeError(f'ambiguous production set series: {ambiguous}')
+          prod_map={k:next(iter(v)) for k,v in prod_set_series.items()}
+
+          # Cross-check source series IDs wherever both source and working production evidence exist.
+          intersections=sorted(set(prod_map)&set(set_to_series))
+          cross_mismatch=[{'set_id':sid,'production':prod_map[sid],'source':set_to_series[sid]} for sid in intersections if prod_map[sid]!=set_to_series[sid]]
+          if cross_mismatch:
+              raise RuntimeError(f'source series disagrees with production: {cross_mismatch[:20]} total={len(cross_mismatch)}')
+          if len(intersections)<50:
+              raise RuntimeError(f'insufficient production/source path cross-checks: {len(intersections)}')
+
+          set_ids=sorted(set_to_series,key=len,reverse=True)
+          candidates=[]; identity_errors=[]
+          for row in residual:
+              tid=str(row.get('tcgdex_id') or '')
+              attrs=row.get('attributes_json')
+              source_id=str(attrs.get('source_id') or '') if isinstance(attrs,dict) else ''
+              if row.get('variant')!='default':
+                  identity_errors.append({'print_id':row['print_id'],'reason':'variant','value':row.get('variant')}); continue
+              if row.get('attributes_source')!='tcgdex/cards-database' or str(row.get('source_version') or '')!=PIN:
+                  identity_errors.append({'print_id':row['print_id'],'reason':'provenance'}); continue
+              if not tid or source_id!=tid:
+                  identity_errors.append({'print_id':row['print_id'],'reason':'source_id_mismatch','tcgdex_id':tid,'source_id':source_id}); continue
+              set_id=next((sid for sid in set_ids if tid.startswith(sid+'-')),None)
+              if not set_id:
+                  identity_errors.append({'print_id':row['print_id'],'reason':'no_source_set','tcgdex_id':tid}); continue
+              local_id=tid[len(set_id)+1:]
+              series_id=set_to_series[set_id]
+              candidates.append({
+                'print_id':int(row['print_id']),'tcgdex_id':tid,'set_id':set_id,'series_id':series_id,
+                'local_id':local_id,'set_code':row.get('set_code'),'card_name':row.get('card_name'),
+                'source_file':source_files[set_id],
+                'url':f'https://assets.tcgdex.net/en/{series_id}/{set_id}/{local_id}/high.webp',
+              })
+          if identity_errors: raise RuntimeError(f'identity/source mapping errors: {identity_errors[:20]} total={len(identity_errors)}')
+          if len(candidates)!=213: raise RuntimeError(f'not all residuals mapped: {len(candidates)}')
+
+          def probe_once(item):
+              try:
+                  r=requests.get(item['url'],headers={'User-Agent':'Dontripit Pokemon source path auditor/3.0','Accept':'image/webp,image/*;q=0.9,*/*;q=0.1'},timeout=18,stream=True)
+                  ctype=str(r.headers.get('Content-Type') or '').lower()
+                  prefix=next(r.iter_content(32),b'') if r.status_code==200 else b''
+                  return {**item,'status':r.status_code,'content_type':ctype,'prefix_hex':prefix[:12].hex(),'image_ok':r.status_code==200 and ctype.startswith('image/') and bool(prefix)}
+              except Exception as exc:
+                  return {**item,'status':type(exc).__name__,'error':str(exc),'image_ok':False}
+          def probe(item):
+              last=None
+              for attempt in range(3):
+                  last=probe_once(item); last['attempt']=attempt+1
+                  if last.get('image_ok'): return last
+                  if last.get('status') not in (429,500,502,503,504): return last
+                  time.sleep(attempt+1)
+              return last
+
+          results=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              for f in as_completed([pool.submit(probe,x) for x in candidates]): results.append(f.result())
+          results.sort(key=lambda x:x['print_id'])
+          verified=[r for r in results if r.get('image_ok')]
+          per_set={}
+          for sid in sorted({r['set_id'] for r in results}):
+              subset=[r for r in results if r['set_id']==sid]
+              per_set[sid]={'count':len(subset),'series_id':subset[0]['series_id'],'source_file':subset[0]['source_file'],'status_counts':dict(Counter(str(x.get('status')) for x in subset)),'verified_images':sum(1 for x in subset if x.get('image_ok'))}
+
+          report={
+            'status':'pass','mode':'read-only-source-backed-probe','production_writes':0,'source_version':PIN,
+            'sets_indexed':len(set_to_series),'skipped_set_files':len(skipped),
+            'production_source_series_intersections':len(intersections),'source_series_mismatches':0,
+            'residual_total':len(residual),'source_mapped_candidates':len(candidates),
+            'probe_status_counts':dict(Counter(str(r.get('status')) for r in results)),'verified_images':len(verified),
+            'per_set':per_set,
+            'verified_manifest':[{'print_id':r['print_id'],'tcgdex_id':r['tcgdex_id'],'url':r['url']} for r in verified],
+            'all_probe_results':results,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('verified_manifest','all_probe_results')},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-en-default-tcgdex-source-path-v3-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-default-tcgdex-source-path-v3.json
+          retention-days: 30
