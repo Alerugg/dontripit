@@ -1,0 +1,42 @@
+name: Test One Piece DON Source Image Proxy V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/onepiece_don_media.py'
+      - 'backend/app/routes/product_media.py'
+      - 'backend/app/search_v2/onepiece_don_query.py'
+      - 'backend/tests/test_onepiece_don_media_proxy.py'
+      - 'backend/tests/test_product_media_proxy.py'
+      - '.github/workflows/test-onepiece-don-source-image-proxy-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile touched backend modules
+        run: |
+          python -m py_compile \
+            app/onepiece_don_media.py \
+            app/routes/product_media.py \
+            app/search_v2/onepiece_don_query.py
+      - name: Run DON media proxy regression tests
+        run: |
+          pytest -q \
+            tests/test_onepiece_don_media_proxy.py \
+            tests/test_product_media_proxy.py

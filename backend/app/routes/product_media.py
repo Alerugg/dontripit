@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import text
 
 from app import db
+from app.onepiece_don_media import cardmarket_don_source_url
 
 
 product_media_bp = Blueprint("product_media", __name__)
@@ -60,6 +61,33 @@ _EXACT_CARDMARKET_VARIANT_SQL = text(
 )
 
 
+_CURRENT_ONEPIECE_DON_SOURCE_SQL = text(
+    """
+    WITH latest_source AS (
+      SELECT MAX(source_as_of) AS source_as_of
+      FROM onepiece_don_market_items
+      WHERE source = 'cardmarket'
+    )
+    SELECT
+      m.metacard_external_id,
+      m.representative_external_product_id,
+      e.category_id,
+      e.expansion_external_id
+    FROM onepiece_don_market_items m
+    JOIN latest_source latest ON latest.source_as_of = m.source_as_of
+    JOIN games g ON g.slug = 'onepiece'
+    JOIN external_catalog_products e
+      ON e.source = 'cardmarket'
+     AND e.game_id = g.id
+     AND e.product_group = 'single'
+     AND e.external_id = m.representative_external_product_id
+    WHERE m.source = 'cardmarket'
+      AND m.metacard_external_id = :metacard_id
+    LIMIT 2
+    """
+)
+
+
 def _exact_cardmarket_source(variant_id: int) -> dict | None:
     with db.SessionLocal() as session:
         rows = session.execute(
@@ -77,6 +105,40 @@ def _exact_cardmarket_source(variant_id: int) -> dict | None:
         "product_variant_id": int(row["product_variant_id"]),
         "product_id": product_id,
         "category_id": category_id,
+    }
+
+
+def _exact_onepiece_don_source(metacard_id: str) -> dict | None:
+    source_id = str(metacard_id or "").strip()
+    if not source_id.isdigit():
+        return None
+
+    with db.SessionLocal() as session:
+        rows = session.execute(
+            _CURRENT_ONEPIECE_DON_SOURCE_SQL,
+            {"metacard_id": source_id},
+        ).mappings().all()
+    if len(rows) != 1:
+        return None
+
+    row = dict(rows[0])
+    product_id = str(row.get("representative_external_product_id") or "").strip()
+    category_id = str(row.get("category_id") or "").strip()
+    expansion_id = str(row.get("expansion_external_id") or "").strip()
+    source_url = cardmarket_don_source_url(
+        category_id=category_id,
+        expansion_external_id=expansion_id,
+        product_id=product_id,
+    )
+    if source_url is None:
+        return None
+
+    return {
+        "metacard_external_id": source_id,
+        "product_id": product_id,
+        "category_id": category_id,
+        "expansion_external_id": expansion_id,
+        "source_url": source_url,
     }
 
 
@@ -163,6 +225,29 @@ def _unavailable(status: int = 404):
     return response
 
 
+def _image_response(
+    body: bytes,
+    content_type: str,
+    width: int,
+    height: int,
+    digest: str,
+    *,
+    source: str,
+) -> Response:
+    response = Response(body, status=200, content_type=content_type)
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    response.headers["CDN-Cache-Control"] = "public, s-maxage=604800, stale-while-revalidate=2592000"
+    response.headers["Vercel-CDN-Cache-Control"] = "public, s-maxage=604800, stale-while-revalidate=2592000"
+    response.headers["ETag"] = f'"sha256-{digest}"'
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["X-Image-Source"] = source
+    response.headers["X-Image-Width"] = str(width)
+    response.headers["X-Image-Height"] = str(height)
+    return response
+
+
 @product_media_bp.get("/media/product-variants/<int:variant_id>/cardmarket-image")
 def exact_cardmarket_product_image(variant_id: int):
     source = _exact_cardmarket_source(variant_id)
@@ -179,15 +264,41 @@ def exact_cardmarket_product_image(variant_id: int):
     except (urllib.error.URLError, TimeoutError, ValueError):
         return _unavailable(503)
 
-    response = Response(body, status=200, content_type=content_type)
-    response.headers["Cache-Control"] = "public, max-age=86400"
-    response.headers["CDN-Cache-Control"] = "public, s-maxage=604800, stale-while-revalidate=2592000"
-    response.headers["Vercel-CDN-Cache-Control"] = "public, s-maxage=604800, stale-while-revalidate=2592000"
-    response.headers["ETag"] = f'"sha256-{digest}"'
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["X-Image-Source"] = "cardmarket-exact-proxy-v1"
-    response.headers["X-Image-Width"] = str(width)
-    response.headers["X-Image-Height"] = str(height)
-    return response
+    return _image_response(
+        body,
+        content_type,
+        width,
+        height,
+        digest,
+        source="cardmarket-exact-proxy-v1",
+    )
+
+
+@product_media_bp.get("/media/onepiece/don/<metacard_id>/cardmarket-image")
+def exact_cardmarket_onepiece_don_image(metacard_id: str):
+    """Proxy the exact current Cardmarket image for a source-owned DON metacard.
+
+    The route intentionally resolves only the current representative source
+    product. It does not imply or create canonical Card/Print identity.
+    """
+    source = _exact_onepiece_don_source(metacard_id)
+    if source is None:
+        return _unavailable(404)
+
+    try:
+        body, content_type, width, height, digest = _fetch_exact_image(source["source_url"])
+    except urllib.error.HTTPError as error:
+        if error.code in {401, 403, 404}:
+            return _unavailable(404)
+        return _unavailable(503)
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return _unavailable(503)
+
+    return _image_response(
+        body,
+        content_type,
+        width,
+        height,
+        digest,
+        source="cardmarket-don-source-proxy-v1",
+    )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.onepiece_don_media import onepiece_don_proxy_url
 from app.search_v2.normalization import normalize_search_text
 
 
@@ -60,6 +61,7 @@ def onepiece_don_market_page(
             m.id,
             m.metacard_external_id,
             m.representative_external_product_id,
+            representative.expansion_external_id AS representative_expansion_external_id,
             m.name,
             m.subject,
             m.subject_normalized,
@@ -71,6 +73,12 @@ def onepiece_don_market_page(
             m.mapping_confidence
           FROM onepiece_don_market_items m
           JOIN latest_source latest ON latest.source_as_of = m.source_as_of
+          JOIN games source_game ON source_game.slug = 'onepiece'
+          JOIN external_catalog_products representative
+            ON representative.source = :source
+           AND representative.game_id = source_game.id
+           AND representative.product_group = 'single'
+           AND representative.external_id = m.representative_external_product_id
           WHERE m.source = :source
             AND ({subject_predicate})
         ),
@@ -161,10 +169,10 @@ def onepiece_don_market_page(
     items: list[dict] = []
     for row in rows:
         product_id = str(row["cardmarket_id_product"] or row["representative_external_product_id"] or "").strip()
-        category_id = str(row["cardmarket_category_id"] or "").strip()
-        image_url = None
-        if product_id.isdigit() and category_id.isdigit():
-            image_url = f"https://product-images.s3.cardmarket.com/{category_id}/{product_id}/{product_id}.jpg"
+        image_url = onepiece_don_proxy_url(
+            row["metacard_external_id"],
+            expansion_external_id=row["representative_expansion_external_id"],
+        )
 
         items.append(
             {
