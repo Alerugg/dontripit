@@ -1,0 +1,62 @@
+name: Audit One Piece DON Image Crosswalk V5 Visual
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v2.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v3.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v4.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py'
+      - 'backend/app/scripts/build_onepiece_don_image_crosswalk_v5_contact_sheet.py'
+      - '.github/workflows/audit-onepiece-don-image-crosswalk-v5-visual.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend and image audit dependencies
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0' ImageHash
+      - name: Compile V4/V5 auditors
+        run: |
+          python -m py_compile \
+            app/scripts/audit_onepiece_don_image_crosswalk_v4.py \
+            app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py \
+            app/scripts/build_onepiece_don_image_crosswalk_v5_contact_sheet.py
+      - name: Reproduce V4 calibration READ ONLY
+        env:
+          ONEPIECE_DON_IMAGE_CALIBRATION_OUTPUT: artifacts/onepiece-don-image-crosswalk-v4-fast.json
+        run: |
+          mkdir -p artifacts
+          python app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py
+      - name: Build strong and ambiguous visual controls
+        env:
+          ONEPIECE_DON_V4_INPUT: artifacts/onepiece-don-image-crosswalk-v4-fast.json
+          ONEPIECE_DON_V5_OUTPUT_DIR: artifacts/onepiece-don-v5-visual
+        run: python app/scripts/build_onepiece_don_image_crosswalk_v5_contact_sheet.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-crosswalk-v5-visual-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-v5-visual
+          retention-days: 90
