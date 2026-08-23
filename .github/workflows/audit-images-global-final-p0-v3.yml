@@ -1,0 +1,171 @@
+name: Audit Images Global Final P0 V3
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-images-global-final-p0-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Require production database and read-only mode
+        run: |
+          test -n "${DATABASE_URL_UNPOOLED:-}"
+          python - <<'PY'
+          import os
+          from sqlalchemy import text
+          from app import db
+          db.init_engine(os.environ['DATABASE_URL_UNPOOLED'])
+          with db.SessionLocal() as session:
+              session.execute(text('SET TRANSACTION READ ONLY'))
+              assert session.execute(text('SHOW transaction_read_only')).scalar_one() == 'on'
+              session.rollback()
+          print('transaction_read_only=on')
+          PY
+
+      - name: Generate complete current missing-image worklist READ ONLY
+        run: |
+          mkdir -p artifacts
+          python scripts/report_missing_images.py \
+            --json artifacts/missing-images-global-final-p0-v3.json \
+            --csv artifacts/missing-images-global-final-p0-v3.csv
+
+      - name: Certify final global image worklist
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          payload=json.loads(Path('artifacts/missing-images-global-final-p0-v3.json').read_text())
+          rows=payload['items']
+
+          game_reason=defaultdict(Counter)
+          game_entity=defaultdict(Counter)
+          language_game=defaultdict(Counter)
+          for row in rows:
+              game=str(row.get('game') or 'unknown')
+              game_reason[game][str(row.get('reason') or 'unknown')]+=1
+              game_entity[game][str(row.get('entity_type') or 'unknown')]+=1
+              if row.get('entity_type')=='print':
+                  language_game[game][str(row.get('language') or 'unknown')]+=1
+
+          deterministic={
+              'canonical_print_missing_image',
+              'canonical_product_variant_missing_image',
+              'external_mapped_variant_missing_image',
+          }
+          blocked_identity={
+              'external_identity_unverified_image_unknown',
+              'external_identity_ambiguous_image_unknown',
+          }
+          repairable=[r for r in rows if r.get('reason') in deterministic]
+          identity_blocked=[r for r in rows if r.get('reason') in blocked_identity]
+          unknown=[r for r in rows if r.get('reason') not in deterministic|blocked_identity]
+
+          entity_counts=dict(payload.get('entity_counts') or {})
+          game_counts=dict(payload.get('game_counts') or {})
+          reason_counts=dict(payload.get('reason_counts') or {})
+          print_language_matrix={g:dict(sorted(c.items())) for g,c in sorted(language_game.items())}
+
+          expected_entity={'external_product':9674,'print':32090,'product_variant':9542}
+          expected_game={'mtg':8086,'onepiece':299,'pokemon':12523,'riftbound':102,'yugioh':30296}
+          expected_reason={
+              'canonical_print_missing_image':32090,
+              'canonical_product_variant_missing_image':9542,
+              'external_identity_unverified_image_unknown':132,
+              'external_mapped_variant_missing_image':9542,
+          }
+          expected_language={
+              'mtg':{'en':243},
+              'pokemon':{'en':441,'es':806,'ja':4157},
+              'yugioh':{'es':25178,'ja':1265},
+          }
+
+          failures=[]
+          if len(rows)!=51306: failures.append(f'missing total expected 51306 got {len(rows)}')
+          if entity_counts!=expected_entity: failures.append(f'entity_counts expected={expected_entity} actual={entity_counts}')
+          if game_counts!=expected_game: failures.append(f'game_counts expected={expected_game} actual={game_counts}')
+          if reason_counts!=expected_reason: failures.append(f'reason_counts expected={expected_reason} actual={reason_counts}')
+          if len(repairable)!=51174: failures.append(f'deterministic expected 51174 got {len(repairable)}')
+          if len(identity_blocked)!=132: failures.append(f'identity-blocked expected 132 got {len(identity_blocked)}')
+          if unknown: failures.append(f'unclassified reasons count={len(unknown)} sample={unknown[:5]}')
+          if print_language_matrix!=expected_language: failures.append(f'print languages expected={expected_language} actual={print_language_matrix}')
+
+          # Per-game entity decomposition is a second independent arithmetic gate.
+          actual_game_entity={g:dict(sorted(c.items())) for g,c in sorted(game_entity.items())}
+          expected_game_entity={
+              'mtg':{'external_product':3922,'print':243,'product_variant':3921},
+              'onepiece':{'external_product':150,'product_variant':149},
+              'pokemon':{'external_product':3572,'print':5404,'product_variant':3547},
+              'riftbound':{'external_product':102},
+              'yugioh':{'external_product':1928,'print':26443,'product_variant':1925},
+          }
+          if actual_game_entity!=expected_game_entity:
+              failures.append(f'game entity matrix expected={expected_game_entity} actual={actual_game_entity}')
+
+          summary={
+              'status':'fail' if failures else 'pass',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'scope':payload.get('scope'),
+              'missing_verified_images':len(rows),
+              'entity_counts':entity_counts,
+              'game_counts':game_counts,
+              'reason_counts':reason_counts,
+              'repair_class_counts':{
+                  'deterministic_identity_known_or_canonical':len(repairable),
+                  'blocked_identity_unverified_or_ambiguous':len(identity_blocked),
+                  'other':len(unknown),
+              },
+              'game_entity_matrix':actual_game_entity,
+              'game_reason_matrix':{g:dict(sorted(c.items())) for g,c in sorted(game_reason.items())},
+              'print_language_matrix':print_language_matrix,
+              'certified_residual_evidence':{
+                  'pokemon':'#579/#582/#584/#585/#587/#588/#591/#592/#594/#595: all remaining exact assets source-null, CDN-unavailable, or physical-identity-blocked',
+                  'yugioh':'#567: 26,443 print gaps; 33 exact JA candidates yielded 0 valid images; ES exact physical candidates 0',
+                  'mtg':'#474: 243 exact Scryfall Art Series objects have no image_uris; #568/#570 sealed residuals blocked or unreviewed',
+                  'onepiece':'#566/#568: 149 sealed exact missing variants currently Cardmarket-blocked; canonical print gaps 0',
+                  'riftbound':'102 external rows remain identity-unverified; no canonical Print/ProductVariant image gap in this worklist',
+              },
+              'failures':failures,
+          }
+          Path('artifacts/missing-images-global-final-summary-v3.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True))
+          if failures:
+              raise SystemExit('global image P0 certification failed: '+ ' | '.join(failures))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: missing-images-global-final-p0-v3-${{ github.run_id }}
+          path: |
+            backend/artifacts/missing-images-global-final-p0-v3.json
+            backend/artifacts/missing-images-global-final-p0-v3.csv
+            backend/artifacts/missing-images-global-final-summary-v3.json
+          retention-days: 30
+          if-no-files-found: error
