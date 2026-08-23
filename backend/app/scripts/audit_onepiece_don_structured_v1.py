@@ -62,6 +62,7 @@ def main() -> int:
         "queries": {},
         "notes": [
             "source_records search is deliberately bounded to recent rows from One Piece/Bushiroad/Premier sources; no production-wide raw_json full scan is allowed",
+            "external Cardmarket rows are discovery evidence only and are never treated as canonical DON identities without a deterministic crosswalk",
         ],
     }
     exit_code = 0
@@ -216,6 +217,78 @@ def main() -> int:
                 )
             else:
                 report["queries"]["source_records_recent"] = []
+
+            report["queries"]["external_cardmarket_don_candidates"] = _fetchall(
+                cur,
+                """
+                WITH latest AS (
+                  SELECT max(last_seen_at) AS ts
+                  FROM external_catalog_products
+                  WHERE source = 'cardmarket' AND game_id = %s
+                )
+                SELECT
+                  e.id,
+                  e.external_id,
+                  e.product_group,
+                  e.name,
+                  e.category,
+                  e.expansion_external_id,
+                  e.metacard_external_id,
+                  e.website_path,
+                  e.raw_json,
+                  e.last_seen_at
+                FROM external_catalog_products e
+                CROSS JOIN latest
+                WHERE e.source = 'cardmarket'
+                  AND e.game_id = %s
+                  AND e.last_seen_at = latest.ts
+                  AND (
+                    lower(e.name) LIKE '%%don!!%%'
+                    OR lower(e.name) LIKE '%%don card%%'
+                    OR lower(coalesce(e.category, '')) LIKE '%%don%%'
+                    OR lower(coalesce(e.website_path, '')) LIKE '%%don%%'
+                    OR lower(coalesce(e.raw_json::text, '')) LIKE '%%don!!%%'
+                    OR lower(coalesce(e.raw_json::text, '')) LIKE '%%don card%%'
+                  )
+                ORDER BY e.product_group, lower(e.name), e.external_id
+                LIMIT 2000
+                """,
+                (game_id, game_id),
+            )
+
+            report["queries"]["external_cardmarket_don_linked"] = _fetchall(
+                cur,
+                """
+                SELECT
+                  e.external_id,
+                  e.name AS market_name,
+                  l.print_id,
+                  l.mapping_method,
+                  l.confidence,
+                  l.link_status,
+                  l.reviewed,
+                  l.evidence,
+                  c.name AS canonical_name,
+                  p.collector_number,
+                  p.variant,
+                  p.language
+                FROM external_catalog_print_links l
+                JOIN external_catalog_products e ON e.id = l.external_product_id
+                JOIN prints p ON p.id = l.print_id
+                JOIN cards c ON c.id = p.card_id
+                WHERE e.source = 'cardmarket'
+                  AND e.game_id = %s
+                  AND (
+                    lower(e.name) LIKE '%%don!!%%'
+                    OR lower(e.name) LIKE '%%don card%%'
+                    OR lower(coalesce(e.category, '')) LIKE '%%don%%'
+                    OR lower(coalesce(e.website_path, '')) LIKE '%%don%%'
+                  )
+                ORDER BY e.external_id, l.id
+                LIMIT 2000
+                """,
+                (game_id,),
+            )
 
             print_ids = [row["id"] for row in report["queries"]["prints"]]
             if print_ids:
