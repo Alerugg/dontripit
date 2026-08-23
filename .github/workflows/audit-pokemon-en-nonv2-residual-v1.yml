@@ -1,0 +1,167 @@
+name: Audit Pokemon EN NonV2 Residual V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-en-nonv2-residual-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      OUTPUT: backend/artifacts/pokemon-en-nonv2-residual-v1.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Inventory current EN non-v2 residual - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id AS print_id,p.variant,p.is_foil,p.tcgdex_id,p.collector_number,
+                       p.rarity,p.print_key,c.name AS card_name,s.code AS set_code,s.name AS set_name,
+                       (SELECT jsonb_agg(jsonb_build_object('source',pi.source,'external_id',pi.external_id)
+                                         ORDER BY pi.source,pi.external_id)
+                        FROM print_identifiers pi WHERE pi.print_id=p.id) AS identifiers,
+                       (SELECT jsonb_agg(jsonb_build_object('source',pa.source,'source_version',pa.source_version,
+                                                            'attributes_json',pa.attributes_json)
+                                         ORDER BY pa.source,pa.source_version)
+                        FROM print_attributes pa WHERE pa.print_id=p.id) AS attributes
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY COALESCE(s.code,''),p.collector_number,p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(rows)!=213:
+              raise RuntimeError(f'EN non-v2 residual drift: expected=213 actual={len(rows)}')
+
+          def clean(value):
+              return '(null)' if value in (None,'') else str(value)
+
+          variant_counts=Counter(clean(r.get('variant')) for r in rows)
+          set_counts=Counter(clean(r.get('set_code')) for r in rows)
+          identifier_source_counts=Counter()
+          attr_source_counts=Counter()
+          attr_version_counts=Counter()
+          with_tcgdex_id=0
+          with_any_identifiers=0
+          with_any_attributes=0
+          with_physical_variant=0
+          with_tcgplayer_in_physical=0
+          with_cardmarket_in_physical=0
+          with_source_id=0
+          physical_variant_keys=Counter()
+          identifier_manifest=[]
+
+          for r in rows:
+              ids=r.get('identifiers') or []
+              attrs=r.get('attributes') or []
+              if r.get('tcgdex_id') not in (None,''):
+                  with_tcgdex_id+=1
+              if ids:
+                  with_any_identifiers+=1
+              if attrs:
+                  with_any_attributes+=1
+              for item in ids:
+                  identifier_source_counts[clean(item.get('source'))]+=1
+              physical=None
+              source_id=None
+              for item in attrs:
+                  attr_source_counts[clean(item.get('source'))]+=1
+                  attr_version_counts[f"{clean(item.get('source'))}@{clean(item.get('source_version'))}"]+=1
+                  payload=item.get('attributes_json')
+                  if isinstance(payload,dict):
+                      if payload.get('source_id') not in (None,''):
+                          source_id=str(payload.get('source_id'))
+                      if isinstance(payload.get('physical_variant'),dict):
+                          physical=payload['physical_variant']
+              if source_id:
+                  with_source_id+=1
+              tcgplayer=None; cardmarket=None
+              if physical:
+                  with_physical_variant+=1
+                  for key in physical.keys(): physical_variant_keys[str(key)]+=1
+                  tp=physical.get('third_party') or {}
+                  if isinstance(tp,dict):
+                      if tp.get('tcgplayer') not in (None,''):
+                          tcgplayer=str(tp.get('tcgplayer')); with_tcgplayer_in_physical+=1
+                      if tp.get('cardmarket') not in (None,''):
+                          cardmarket=str(tp.get('cardmarket')); with_cardmarket_in_physical+=1
+              identifier_manifest.append({
+                  'print_id':int(r['print_id']),
+                  'card_name':r.get('card_name'),
+                  'set_code':r.get('set_code'),
+                  'set_name':r.get('set_name'),
+                  'collector_number':r.get('collector_number'),
+                  'variant':r.get('variant'),
+                  'is_foil':r.get('is_foil'),
+                  'rarity':r.get('rarity'),
+                  'tcgdex_id':r.get('tcgdex_id'),
+                  'print_key':r.get('print_key'),
+                  'identifiers':ids,
+                  'attributes':attrs,
+                  'source_id':source_id,
+                  'physical_tcgplayer':tcgplayer,
+                  'physical_cardmarket':cardmarket,
+              })
+
+          report={
+              'status':'pass',
+              'mode':'read-only-inventory',
+              'production_writes':0,
+              'en_nonv2_missing_images':len(rows),
+              'with_tcgdex_id':with_tcgdex_id,
+              'with_any_identifiers':with_any_identifiers,
+              'with_any_attributes':with_any_attributes,
+              'with_source_id':with_source_id,
+              'with_physical_variant':with_physical_variant,
+              'with_tcgplayer_in_physical':with_tcgplayer_in_physical,
+              'with_cardmarket_in_physical':with_cardmarket_in_physical,
+              'variant_counts':dict(variant_counts.most_common()),
+              'set_counts':dict(set_counts.most_common()),
+              'identifier_source_counts':dict(identifier_source_counts.most_common()),
+              'attribute_source_counts':dict(attr_source_counts.most_common()),
+              'attribute_version_counts':dict(attr_version_counts.most_common()),
+              'physical_variant_keys':dict(physical_variant_keys.most_common()),
+              'manifest':identifier_manifest,
+          }
+          out=Path(os.environ['OUTPUT'])
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k!='manifest'},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-en-nonv2-residual-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-nonv2-residual-v1.json
+          retention-days: 30
