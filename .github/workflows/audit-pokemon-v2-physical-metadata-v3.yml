@@ -1,0 +1,136 @@
+name: Audit Pokemon V2 Physical Metadata V3
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-physical-metadata-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Verify residual v2 physical metadata READ ONLY
+        run: |
+          mkdir -p backend/artifacts
+          python - <<'PY'
+          import hashlib, json, os
+          from collections import Counter
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.is_foil,p.tcgdex_id,
+                       c.tcgdex_id card_tcgdex_id,
+                       pa.source,pa.source_version,pa.attributes_json,
+                       (SELECT pi2.external_id FROM print_identifiers pi2
+                        WHERE pi2.print_id=p.id AND pi2.source='tcgdex-variant-v2' LIMIT 1) variant_external_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND COALESCE(p.variant,'') LIKE 'v2-%'
+                  AND NOT EXISTS (SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          versions=Counter()
+          sources=Counter()
+          missing_attrs=[]
+          missing_physical=[]
+          bad_hash=[]
+          missing_identifier=[]
+          bad_identifier=[]
+          third_party_counts=Counter()
+          dimension_shapes=Counter()
+          source_ids=Counter()
+
+          for row in rows:
+              sources[str(row.get('source'))]+=1
+              versions[str(row.get('source_version'))]+=1
+              attrs=row.get('attributes_json')
+              if not isinstance(attrs,dict):
+                  missing_attrs.append(row['print_id']); continue
+              pv=attrs.get('physical_variant')
+              if not isinstance(pv,dict):
+                  missing_physical.append(row['print_id']); continue
+              dims={
+                  'type': pv.get('type'),
+                  'subtype': pv.get('subtype'),
+                  'stamps': pv.get('stamps') or [],
+                  'foil': pv.get('foil'),
+                  'size': pv.get('size'),
+                  'language': pv.get('language'),
+              }
+              # Historical generator: json.dumps(sort_keys=True,separators=(',',':')) + SHA1[:16].
+              key=json.dumps(dims,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+              h=hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
+              expected='v2-'+h
+              if row['variant'] != expected or str(pv.get('variant_hash') or '') != h:
+                  bad_hash.append({'print_id':row['print_id'],'variant':row['variant'],'stored_hash':pv.get('variant_hash'),'replayed':expected,'dims':dims})
+              source_id=str(attrs.get('source_id') or row.get('card_tcgdex_id') or '')
+              if source_id:
+                  source_ids[source_id]+=1
+              ident=row.get('variant_external_id')
+              if not ident:
+                  missing_identifier.append(row['print_id'])
+              elif ident != f"{source_id}#{h}":
+                  bad_identifier.append({'print_id':row['print_id'],'identifier':ident,'expected':f"{source_id}#{h}"})
+              tp=pv.get('third_party')
+              if isinstance(tp,dict):
+                  for k,v in tp.items():
+                      if v not in (None,''):
+                          third_party_counts[str(k)]+=1
+              dimension_shapes[json.dumps(sorted(dims.keys()))]+=1
+
+          report={
+              'status':'pass' if not (missing_attrs or missing_physical or bad_hash or missing_identifier or bad_identifier) else 'fail',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'residual_v2_missing_images':len(rows),
+              'attribute_sources':dict(sources),
+              'source_versions':dict(versions),
+              'unique_source_ids':len(source_ids),
+              'third_party_reference_counts':dict(third_party_counts),
+              'missing_attributes':missing_attrs,
+              'missing_physical_variant':missing_physical,
+              'bad_hash_replay':bad_hash[:100],
+              'missing_variant_identifier':missing_identifier[:100],
+              'bad_variant_identifier':bad_identifier[:100],
+              'invariants':{
+                  'hash_replay_ok':len(bad_hash)==0,
+                  'physical_metadata_complete':len(missing_attrs)==0 and len(missing_physical)==0,
+                  'variant_identifier_complete':len(missing_identifier)==0 and len(bad_identifier)==0,
+              },
+          }
+          Path('backend/artifacts/pokemon-v2-physical-metadata-v3.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps(report,indent=2,ensure_ascii=False,default=str))
+          if report['status']!='pass':
+              raise SystemExit(1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-v2-physical-metadata-v3-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-physical-metadata-v3.json
+          retention-days: 30
