@@ -1,0 +1,55 @@
+name: Audit One Piece DON Image Crosswalk V4 Fast
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v2.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v3.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v4.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py'
+      - '.github/workflows/audit-onepiece-don-image-crosswalk-v4-fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend and image audit dependencies
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0' ImageHash
+      - name: Compile accelerated geometry calibration
+        run: |
+          python -m py_compile \
+            app/scripts/audit_onepiece_don_image_crosswalk_v4.py \
+            app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py
+      - name: Calibrate Bandai vs Cardmarket image geometry READ ONLY
+        env:
+          ONEPIECE_DON_IMAGE_CALIBRATION_OUTPUT: artifacts/onepiece-don-image-crosswalk-v4-fast.json
+        run: |
+          mkdir -p artifacts
+          python app/scripts/audit_onepiece_don_image_crosswalk_v4_fast.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-crosswalk-v4-fast-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-image-crosswalk-v4-fast.json
+          retention-days: 90
