@@ -1,0 +1,182 @@
+name: Audit Pokemon V2 Market Image Gate V4
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-market-image-gate-v4.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Certify exact v2 marketplace image candidates READ ONLY
+        run: |
+          mkdir -p backend/artifacts
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          import requests
+          from sqlalchemy import create_engine, text
+
+          PIN='771a8381c57c73182b9776657a15cd1166c66d36'
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              all_rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.language,p.is_foil,p.tcgdex_id,
+                       pa.source,pa.source_version,pa.attributes_json,
+                       (SELECT pi.external_id FROM print_identifiers pi
+                        WHERE pi.print_id=p.id AND pi.source='tcgdex-variant-v2' LIMIT 1) exact_variant_id,
+                       EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id) has_image
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND COALESCE(p.variant,'') LIKE 'v2-%'
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(all_rows)!=27241:
+              raise RuntimeError(f'Expected 27241 EN v2 Prints, found {len(all_rows)}')
+
+          exact_to_prints=defaultdict(list)
+          product_to_exact=defaultdict(set)
+          product_to_prints=defaultdict(set)
+          cardmarket_to_exact=defaultdict(set)
+          source_versions=Counter()
+          malformed=[]
+
+          for row in all_rows:
+              source_versions[str(row.get('source_version'))]+=1
+              attrs=row.get('attributes_json') or {}
+              pv=attrs.get('physical_variant') if isinstance(attrs,dict) else None
+              if not isinstance(pv,dict):
+                  malformed.append({'print_id':row['print_id'],'reason':'missing_physical_variant'}); continue
+              source_id=str(attrs.get('source_id') or '').strip()
+              h=str(pv.get('variant_hash') or '').strip()
+              exact=f'{source_id}#{h}' if source_id and h else ''
+              if not exact or row.get('exact_variant_id')!=exact or row.get('variant')!=f'v2-{h}':
+                  malformed.append({'print_id':row['print_id'],'reason':'exact_identity_mismatch','exact':exact,'identifier':row.get('exact_variant_id'),'variant':row.get('variant')}); continue
+              exact_to_prints[exact].append(int(row['print_id']))
+              tp=pv.get('third_party') or {}
+              if isinstance(tp,dict):
+                  tcg=tp.get('tcgplayer')
+                  cm=tp.get('cardmarket')
+                  if tcg not in (None,''):
+                      pid=str(tcg)
+                      product_to_exact[pid].add(exact)
+                      product_to_prints[pid].add(int(row['print_id']))
+                  if cm not in (None,''):
+                      cardmarket_to_exact[str(cm)].add(exact)
+
+          if malformed:
+              raise RuntimeError(f'Malformed exact v2 identities: {len(malformed)}')
+          if source_versions != Counter({PIN:27241}):
+              raise RuntimeError(f'Unexpected v2 source versions: {dict(source_versions)}')
+
+          residual=[]
+          for row in all_rows:
+              if row['has_image']:
+                  continue
+              attrs=row['attributes_json']; pv=attrs['physical_variant']
+              exact=row['exact_variant_id']; tp=pv.get('third_party') or {}
+              tcg=str(tp.get('tcgplayer')) if isinstance(tp,dict) and tp.get('tcgplayer') not in (None,'') else None
+              cm=str(tp.get('cardmarket')) if isinstance(tp,dict) and tp.get('cardmarket') not in (None,'') else None
+              residual.append({
+                  'print_id':int(row['print_id']),
+                  'variant':row['variant'],
+                  'exact_variant_id':exact,
+                  'source_id':attrs.get('source_id'),
+                  'physical_variant':pv,
+                  'tcgplayer_product_id':tcg,
+                  'cardmarket_product_id':cm,
+                  'tcgplayer_exact_identity_count':len(product_to_exact.get(tcg,set())) if tcg else 0,
+                  'tcgplayer_print_count':len(product_to_prints.get(tcg,set())) if tcg else 0,
+                  'cardmarket_exact_identity_count':len(cardmarket_to_exact.get(cm,set())) if cm else 0,
+              })
+
+          if len(residual)!=1296:
+              raise RuntimeError(f'Expected 1296 residual v2 missing images, found {len(residual)}')
+
+          unique_tcg=[x for x in residual if x['tcgplayer_product_id'] and x['tcgplayer_exact_identity_count']==1]
+          unique_cm=[x for x in residual if x['cardmarket_product_id'] and x['cardmarket_exact_identity_count']==1]
+          shared_tcg=[x for x in residual if x['tcgplayer_product_id'] and x['tcgplayer_exact_identity_count']>1]
+          no_tcg=[x for x in residual if not x['tcgplayer_product_id']]
+
+          unique_products=sorted({x['tcgplayer_product_id'] for x in unique_tcg})
+          def probe(pid):
+              url=f'https://tcgplayer-cdn.tcgplayer.com/product/{pid}_in_1000x1000.jpg'
+              try:
+                  r=requests.get(url,headers={'User-Agent':'Dontripit Pokemon v2 exact image certifier/1.0','Accept':'image/*'},timeout=15,stream=True)
+                  ctype=(r.headers.get('Content-Type') or '').lower()
+                  prefix=next(r.iter_content(32),b'') if r.status_code==200 else b''
+                  return {'product_id':pid,'url':url,'status':r.status_code,'content_type':ctype,'image_ok':r.status_code==200 and ctype.startswith('image/') and bool(prefix),'prefix_hex':prefix[:12].hex()}
+              except Exception as exc:
+                  return {'product_id':pid,'url':url,'status':type(exc).__name__,'image_ok':False,'error':str(exc)}
+
+          probes={}
+          with ThreadPoolExecutor(max_workers=24) as ex:
+              futs={ex.submit(probe,pid):pid for pid in unique_products}
+              for fut in as_completed(futs):
+                  res=fut.result(); probes[res['product_id']]=res
+
+          for item in unique_tcg:
+              item['probe']=probes.get(item['tcgplayer_product_id'])
+              item['verified_image']=bool(item['probe'] and item['probe'].get('image_ok'))
+
+          verified=[x for x in unique_tcg if x.get('verified_image')]
+          status_counts=Counter(str(v.get('status')) for v in probes.values())
+          report={
+              'status':'pass',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'source_version':PIN,
+              'all_v2_prints':len(all_rows),
+              'residual_v2_missing_images':len(residual),
+              'residual_with_tcgplayer_reference':sum(bool(x['tcgplayer_product_id']) for x in residual),
+              'residual_with_cardmarket_reference':sum(bool(x['cardmarket_product_id']) for x in residual),
+              'tcgplayer_unique_exact_identity_rows':len(unique_tcg),
+              'tcgplayer_shared_across_exact_identities_rows':len(shared_tcg),
+              'residual_without_tcgplayer':len(no_tcg),
+              'cardmarket_unique_exact_identity_rows':len(unique_cm),
+              'unique_tcgplayer_products_probed':len(unique_products),
+              'probe_status_counts':dict(status_counts),
+              'verified_exact_tcgplayer_images':len(verified),
+              'verified_candidates':verified,
+              'shared_tcgplayer_samples':shared_tcg[:100],
+              'no_tcgplayer_samples':no_tcg[:100],
+              'invariants':{
+                  'all_v2_exact_identity_valid':True,
+                  'single_source_version':True,
+                  'marketplace_uniqueness_measured_over_all_v2':True,
+              },
+          }
+          Path('backend/artifacts/pokemon-v2-market-image-gate-v4.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('verified_candidates','shared_tcgplayer_samples','no_tcgplayer_samples')},indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-v2-market-image-gate-v4-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-market-image-gate-v4.json
+          retention-days: 30
