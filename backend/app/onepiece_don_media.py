@@ -73,8 +73,14 @@ def onepiece_don_proxy_path(metacard_external_id: str | int | None) -> str | Non
 def onepiece_don_proxy_url(
     metacard_external_id: str | int | None,
     *,
+    expansion_external_id: str | int | None = None,
     public_base_url: str | None = None,
 ) -> str | None:
+    if expansion_external_id is not None:
+        expansion = str(expansion_external_id or "").strip()
+        if expansion not in CARDMARKET_DON_EXPANSION_TOKENS:
+            return None
+
     path = onepiece_don_proxy_path(metacard_external_id)
     if path is None:
         return None
