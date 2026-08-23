@@ -19,7 +19,6 @@ OUTPUT = Path(
 TERMS = (
     "%don!!%",
     "%don card%",
-    "%don!! card%",
     "%ドン!!%",
     "%ドンカード%",
     "%st-01%",
@@ -36,6 +35,19 @@ def _fetchall(cur, sql: str, params=()):
     return [dict(row) for row in cur.fetchall()]
 
 
+def _write_report(report: dict) -> None:
+    report["counts"] = {
+        key: len(value)
+        for key, value in report.get("queries", {}).items()
+        if isinstance(value, list)
+    }
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     url = (os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL") or "").strip()
     if not url:
@@ -48,7 +60,11 @@ def main() -> int:
         "transaction_read_only": None,
         "production_writes": 0,
         "queries": {},
+        "notes": [
+            "source_records search is deliberately bounded to recent rows from One Piece/Bushiroad/Premier sources; no production-wide raw_json full scan is allowed",
+        ],
     }
+    exit_code = 0
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SHOW transaction_read_only")
@@ -158,33 +174,48 @@ def main() -> int:
                 """,
             )
 
-            source_predicate = " OR ".join(["lower(sr.raw_json::text) LIKE %s" for _ in TERMS])
-            source_records = _fetchall(
-                cur,
-                f"""
-                SELECT sr.id, sr.source_id, s.name AS source_name, sr.checksum, sr.raw_json, sr.ingested_at
-                FROM source_records sr
-                JOIN sources s ON s.id = sr.source_id
-                WHERE ({source_predicate})
-                ORDER BY sr.id
-                LIMIT 500
-                """,
-                tuple(term.lower() for term in TERMS),
-            )
-            report["queries"]["source_records"] = source_records
-
-            report["queries"]["sources"] = _fetchall(
+            sources = _fetchall(
                 cur,
                 """
                 SELECT id, name, description
                 FROM sources
                 WHERE lower(name) LIKE '%%onepiece%%'
+                   OR lower(name) LIKE '%%one_piece%%'
                    OR lower(coalesce(description, '')) LIKE '%%one piece%%'
                    OR lower(name) LIKE '%%bushiroad%%'
                    OR lower(name) LIKE '%%premier%%'
                 ORDER BY id
                 """,
             )
+            report["queries"]["sources"] = sources
+            source_ids = [row["id"] for row in sources]
+
+            if source_ids:
+                source_predicate = " OR ".join(
+                    ["lower(recent.raw_json::text) LIKE %s" for _ in TERMS]
+                )
+                report["queries"]["source_records_recent"] = _fetchall(
+                    cur,
+                    f"""
+                    WITH recent AS MATERIALIZED (
+                      SELECT sr.id, sr.source_id, sr.checksum, sr.raw_json, sr.ingested_at
+                      FROM source_records sr
+                      WHERE sr.source_id = ANY(%s)
+                      ORDER BY sr.id DESC
+                      LIMIT 5000
+                    )
+                    SELECT recent.id, recent.source_id, s.name AS source_name,
+                           recent.checksum, recent.raw_json, recent.ingested_at
+                    FROM recent
+                    JOIN sources s ON s.id = recent.source_id
+                    WHERE ({source_predicate})
+                    ORDER BY recent.id DESC
+                    LIMIT 250
+                    """,
+                    (source_ids, *tuple(term.lower() for term in TERMS)),
+                )
+            else:
+                report["queries"]["source_records_recent"] = []
 
             print_ids = [row["id"] for row in report["queries"]["prints"]]
             if print_ids:
@@ -203,19 +234,18 @@ def main() -> int:
                 report["queries"]["price_counts"] = []
 
         conn.rollback()
+        report["status"] = "pass"
+    except Exception as exc:
+        conn.rollback()
+        report["status"] = "fail"
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        exit_code = 1
     finally:
         conn.close()
+        _write_report(report)
 
-    report["counts"] = {
-        key: len(value)
-        for key, value in report["queries"].items()
-        if isinstance(value, list)
-    }
-    report["status"] = "pass" if report["transaction_read_only"] else "fail"
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    return 0 if report["status"] == "pass" else 1
+    return exit_code
 
 
 if __name__ == "__main__":
