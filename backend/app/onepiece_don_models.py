@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uni
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.models import json_type
 
 
 class OnePieceDonPrint(Base):
@@ -69,11 +70,17 @@ class OnePieceDonOfficialItem(Base):
             "slot_number",
             name="uq_onepiece_don_official_items_slot",
         ),
+        UniqueConstraint(
+            "pdf_sha256",
+            "sequence_number",
+            name="uq_onepiece_don_official_items_sequence",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pdf_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
     image_object: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -85,6 +92,33 @@ class OnePieceDonOfficialItem(Base):
     )
     mapping_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     mapping_confidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class OnePieceDonEvidenceItem(Base):
+    """Project evidence that must not be promoted to a canonical Print by guesswork.
+
+    This table is intentionally separate from the official Bandai PDF inventory
+    and from ``onepiece_don_prints``. It preserves physical/event evidence such
+    as the Osaka test and the collaborator-received Bushiroad/Premier piece while
+    their exact crosswalk remains unresolved.
+    """
+
+    __tablename__ = "onepiece_don_evidence_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evidence_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
+    evidence_kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    physical_received: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    claimed_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    identity_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unresolved", server_default="unresolved")
+    evidence_json: Mapped[dict | None] = mapped_column(json_type, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
