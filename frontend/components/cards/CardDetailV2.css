@@ -133,6 +133,7 @@
 }
 
 .v9-card-market-rule {
+  min-height: 92px;
   background: #0d0c11;
 }
 

@@ -73,7 +73,13 @@ export default function PublicHome() {
             {HERO_PRINTS.map((src, index) => (
               <div key={src} className={`v17-floating-print is-${index + 1}`}>
                 <div className="v17-floating-art">
-                  <img src={src} alt="" />
+                  <img
+                    src={src}
+                    alt=""
+                    loading={index === 0 ? 'eager' : 'lazy'}
+                    fetchPriority={index === 0 ? 'high' : 'low'}
+                    decoding="async"
+                  />
                 </div>
                 <span>PRINT {String(index + 1).padStart(2, '0')}</span>
               </div>
@@ -127,12 +133,19 @@ export default function PublicHome() {
               <Link
                 key={game.slug}
                 href={`/games/${game.slug}`}
+                prefetch={false}
                 className={`v17-game-panel is-${index + 1}`}
                 style={{ '--game-accent': game.accent }}
                 aria-label={`Entrar en ${shortGameName(game)}`}
               >
                 <span className="v17-game-brand" aria-hidden="true">
-                  <img className={`v17-game-logo is-${game.slug}`} src={GAME_LOGOS[game.slug]} alt="" />
+                  <img
+                    className={`v17-game-logo is-${game.slug}`}
+                    src={GAME_LOGOS[game.slug]}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                  />
                 </span>
                 <strong className="v17-game-name">{shortGameName(game)}</strong>
               </Link>
@@ -148,8 +161,8 @@ export default function PublicHome() {
             <h2>Tu colección,<br />impresión a impresión.</h2>
             <p>Solo se valora lo que tiene correspondencia segura.</p>
             <div>
-              <Link href="/collection">Colección</Link>
-              <Link href="/wishlist">Wishlist</Link>
+              <Link href="/collection" prefetch={false}>Colección</Link>
+              <Link href="/wishlist" prefetch={false}>Wishlist</Link>
             </div>
           </div>
 

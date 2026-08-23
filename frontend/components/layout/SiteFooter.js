@@ -23,22 +23,22 @@ export default function SiteFooter() {
 
         <div className="dri-footer-column">
           <strong>Juegos</strong>
-          {games.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}
+          {games.map(([label, href]) => <Link key={href} href={href} prefetch={false}>{label}</Link>)}
         </div>
 
         <div className="dri-footer-column">
           <strong>Don’tRipIt</strong>
-          <Link href="/#how-it-works">Cómo funciona</Link>
-          <Link href="/#releases">Lanzamientos</Link>
+          <Link href="/#how-it-works" prefetch={false}>Cómo funciona</Link>
+          <Link href="/#releases" prefetch={false}>Lanzamientos</Link>
           <a href="https://shop.dontripit.com" target="_blank" rel="noopener noreferrer">Tienda ↗</a>
-          <Link href="/register">Crear cuenta</Link>
+          <Link href="/register" prefetch={false}>Crear cuenta</Link>
         </div>
 
         <div className="dri-footer-column">
           <strong>Legal</strong>
-          <Link href="/privacy">Privacidad</Link>
-          <Link href="/cookies">Cookies</Link>
-          <Link href="/terms">Términos de uso</Link>
+          <Link href="/privacy" prefetch={false}>Privacidad</Link>
+          <Link href="/cookies" prefetch={false}>Cookies</Link>
+          <Link href="/terms" prefetch={false}>Términos de uso</Link>
           <a href="mailto:info@dontripit.com">Contacto</a>
         </div>
       </div>
