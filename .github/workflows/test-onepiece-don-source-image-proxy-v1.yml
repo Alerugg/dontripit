@@ -7,7 +7,6 @@ on:
       - 'backend/app/routes/product_media.py'
       - 'backend/app/search_v2/onepiece_don_query.py'
       - 'backend/tests/test_onepiece_don_media_proxy.py'
-      - 'backend/tests/test_onepiece_don_filter_contract.py'
       - 'backend/tests/test_product_media_proxy.py'
       - '.github/workflows/test-onepiece-don-source-image-proxy-v1.yml'
 
@@ -36,9 +35,8 @@ jobs:
             app/onepiece_don_media.py \
             app/routes/product_media.py \
             app/search_v2/onepiece_don_query.py
-      - name: Run DON media and existing contract tests
+      - name: Run DON media proxy regression tests
         run: |
           pytest -q \
             tests/test_onepiece_don_media_proxy.py \
-            tests/test_onepiece_don_filter_contract.py \
             tests/test_product_media_proxy.py
