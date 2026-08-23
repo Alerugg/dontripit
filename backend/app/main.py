@@ -24,6 +24,7 @@ from app.routes.market_current_products import market_current_products_bp
 from app.routes.market_reference import market_reference_bp
 from app.routes.market_search_read import market_search_read_bp
 from app.routes.market_print_summary import market_print_summary_bp
+from app.routes.onepiece_don_search import onepiece_don_search_bp
 from app.routes.product_media import product_media_bp
 from app.routes.search import search_bp
 from app.routes.search_v2 import search_v2_bp
@@ -63,6 +64,7 @@ def create_app(database_url: str | None = None) -> Flask:
     flask_app.register_blueprint(set_ui_bp)
     flask_app.register_blueprint(search_bp)
     flask_app.register_blueprint(search_v2_bp)
+    flask_app.register_blueprint(onepiece_don_search_bp)
     flask_app.register_blueprint(market_current_products_bp)
     flask_app.register_blueprint(market_reference_bp)
     flask_app.register_blueprint(market_search_read_bp)
