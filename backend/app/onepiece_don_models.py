@@ -8,29 +8,16 @@ from app.models import json_type
 
 
 class OnePieceDonPrint(Base):
-    """Explicit classification/provenance for a physical One Piece DON!! print.
-
-    DON!! cards are not inferred from names, effect text, rarity strings, or a
-    synthetic collector number. A row exists only when a source-backed physical
-    print has been deliberately classified as DON!!. Character/subject is kept
-    separately because Bandai's official DON list is artwork-first and does not
-    expose a normal card collector number.
-    """
+    """Explicit classification/provenance for a physical One Piece DON!! print."""
 
     __tablename__ = "onepiece_don_prints"
     __table_args__ = (
         UniqueConstraint("print_id", name="uq_onepiece_don_prints_print"),
-        UniqueConstraint(
-            "official_pdf_sha256",
-            "official_image_object",
-            name="uq_onepiece_don_prints_official_image",
-        ),
+        UniqueConstraint("official_pdf_sha256", "official_image_object", name="uq_onepiece_don_prints_official_image"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    print_id: Mapped[int] = mapped_column(
-        ForeignKey("prints.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
-    )
+    print_id: Mapped[int] = mapped_column(ForeignKey("prints.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subject_normalized: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     distribution_label: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -43,38 +30,17 @@ class OnePieceDonPrint(Base):
     subject_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     distribution_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class OnePieceDonOfficialItem(Base):
-    """One row per artwork slot in Bandai's official DON!! Card List PDF.
-
-    This source inventory deliberately allows ``print_id`` to stay NULL. It lets
-    us certify complete official-source coverage without inventing a marketplace
-    identity, character subject, language, rarity, or price for an unresolved
-    artwork. Mapping becomes explicit only after a deterministic crosswalk.
-    """
+    """One row per artwork slot in Bandai's official DON!! Card List PDF."""
 
     __tablename__ = "onepiece_don_official_items"
     __table_args__ = (
-        UniqueConstraint(
-            "pdf_sha256",
-            "image_object",
-            name="uq_onepiece_don_official_items_image",
-        ),
-        UniqueConstraint(
-            "pdf_sha256",
-            "page_number",
-            "slot_number",
-            name="uq_onepiece_don_official_items_slot",
-        ),
-        UniqueConstraint(
-            "pdf_sha256",
-            "sequence_number",
-            name="uq_onepiece_don_official_items_sequence",
-        ),
+        UniqueConstraint("pdf_sha256", "image_object", name="uq_onepiece_don_official_items_image"),
+        UniqueConstraint("pdf_sha256", "page_number", "slot_number", name="uq_onepiece_don_official_items_slot"),
+        UniqueConstraint("pdf_sha256", "sequence_number", name="uq_onepiece_don_official_items_sequence"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -87,25 +53,15 @@ class OnePieceDonOfficialItem(Base):
     image_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     distribution_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    print_id: Mapped[int | None] = mapped_column(
-        ForeignKey("prints.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    print_id: Mapped[int | None] = mapped_column(ForeignKey("prints.id", ondelete="SET NULL"), nullable=True, index=True)
     mapping_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     mapping_confidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class OnePieceDonEvidenceItem(Base):
-    """Project evidence that must not be promoted to a canonical Print by guesswork.
-
-    This table is intentionally separate from the official Bandai PDF inventory
-    and from ``onepiece_don_prints``. It preserves physical/event evidence such
-    as the Osaka test and the collaborator-received Bushiroad/Premier piece while
-    their exact crosswalk remains unresolved.
-    """
+    """Project evidence that must not be promoted to a canonical Print by guesswork."""
 
     __tablename__ = "onepiece_don_evidence_items"
 
@@ -120,6 +76,29 @@ class OnePieceDonEvidenceItem(Base):
     identity_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unresolved", server_default="unresolved")
     evidence_json: Mapped[dict | None] = mapped_column(json_type, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class OnePieceDonMarketItem(Base):
+    """Source-owned DON market identity, deliberately not a canonical Print."""
+
+    __tablename__ = "onepiece_don_market_items"
+    __table_args__ = (
+        UniqueConstraint("source", "metacard_external_id", name="uq_onepiece_don_market_source_meta"),
     )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    metacard_external_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    representative_external_product_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subject_normalized: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    product_ids_json: Mapped[list] = mapped_column(json_type, nullable=False)
+    product_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_as_of: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    official_item_id: Mapped[int | None] = mapped_column(ForeignKey("onepiece_don_official_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    mapping_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    mapping_confidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
