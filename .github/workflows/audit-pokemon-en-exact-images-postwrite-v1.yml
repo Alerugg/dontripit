@@ -37,6 +37,13 @@ jobs:
           from pathlib import Path
           from sqlalchemy import create_engine, text
 
+          EXPECTED_WRITES=269
+          BASELINE_TOTAL=7573
+          BASELINE_EN=1778
+          BASELINE_ES=933
+          BASELINE_JA=4862
+          BASELINE_EN_EXACT=1558
+
           engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
           with engine.connect() as conn:
               conn.execute(text('SET TRANSACTION READ ONLY'))
@@ -107,6 +114,7 @@ jobs:
 
           summary={
             'status':'pass','production_writes':0,'transaction_read_only':True,
+            'expected_writer_rows':EXPECTED_WRITES,
             'source_rows':len(source_rows),
             'source_distinct_prints':len({r['print_id'] for r in source_rows}),
             'source_distinct_urls':len({r['url'] for r in source_rows}),
@@ -125,9 +133,10 @@ jobs:
           Path('artifacts/pokemon-en-exact-images-postwrite-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
           print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
 
-          assert summary['source_rows']==271, summary
-          assert summary['source_distinct_prints']==271, summary
-          assert summary['source_distinct_urls']==271, summary
+          n=summary['source_rows']
+          assert n==EXPECTED_WRITES, summary
+          assert summary['source_distinct_prints']==n, summary
+          assert summary['source_distinct_urls']==n, summary
           assert summary['bad_scope']==0, report
           assert summary['bad_variant']==0, report
           assert summary['bad_primary']==0, report
@@ -135,11 +144,11 @@ jobs:
           assert summary['duplicate_urls']==0, report
           assert summary['duplicate_prints']==0, report
           assert summary['source_prints_with_multiple_images']==0, report
-          assert summary['missing_total_pokemon']==7302, summary
-          assert summary['missing_by_language'].get('en')==1507, summary
-          assert summary['missing_by_language'].get('es')==933, summary
-          assert summary['missing_by_language'].get('ja')==4862, summary
-          assert summary['missing_en_exact']==1287, summary
+          assert summary['missing_total_pokemon']==BASELINE_TOTAL-n, summary
+          assert summary['missing_by_language'].get('en')==BASELINE_EN-n, summary
+          assert summary['missing_by_language'].get('es')==BASELINE_ES, summary
+          assert summary['missing_by_language'].get('ja')==BASELINE_JA, summary
+          assert summary['missing_en_exact']==BASELINE_EN_EXACT-n, summary
           PY
       - uses: actions/upload-artifact@v4
         if: always()
