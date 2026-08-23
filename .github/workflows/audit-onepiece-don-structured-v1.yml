@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install audit dependencies
-        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9 pypdf==5.9.0
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9 'pypdf[image]==5.9.0'
       - name: Compile DON implementation
         run: |
           python -m py_compile app/onepiece_don_models.py
