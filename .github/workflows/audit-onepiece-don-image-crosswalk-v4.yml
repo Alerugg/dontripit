@@ -1,0 +1,51 @@
+name: Audit One Piece DON Image Crosswalk V4
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v2.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v3.py'
+      - 'backend/app/scripts/audit_onepiece_don_image_crosswalk_v4.py'
+      - '.github/workflows/audit-onepiece-don-image-crosswalk-v4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend and image audit dependencies
+        run: |
+          pip install --disable-pip-version-check -r requirements.txt
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0' ImageHash
+      - name: Compile geometry calibration
+        run: python -m py_compile app/scripts/audit_onepiece_don_image_crosswalk_v4.py
+      - name: Calibrate Bandai vs Cardmarket image geometry READ ONLY
+        env:
+          ONEPIECE_DON_IMAGE_CALIBRATION_OUTPUT: artifacts/onepiece-don-image-crosswalk-v4.json
+        run: |
+          mkdir -p artifacts
+          python app/scripts/audit_onepiece_don_image_crosswalk_v4.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-crosswalk-v4-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-image-crosswalk-v4.json
+          retention-days: 90
