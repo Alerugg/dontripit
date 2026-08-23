@@ -1,0 +1,162 @@
+name: Audit One Piece DON Source Image Proxy Postmerge V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-onepiece-don-source-image-proxy-postmerge-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+      PUBLIC_API_BASE_URL: https://api.dontripit.com
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Certify current DON owned-origin image contract read-only
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, urllib.error, urllib.request
+          from collections import Counter
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from app.onepiece_don_media import (
+              CARDMARKET_DON_EXPANSION_TOKENS,
+              cardmarket_don_source_url,
+              onepiece_don_proxy_url,
+          )
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                WITH latest AS (
+                  SELECT max(source_as_of) source_as_of
+                  FROM onepiece_don_market_items WHERE source='cardmarket'
+                )
+                SELECT m.metacard_external_id,m.representative_external_product_id,m.name,
+                       e.category_id,e.expansion_external_id
+                FROM onepiece_don_market_items m
+                JOIN latest l ON l.source_as_of=m.source_as_of
+                JOIN games g ON g.slug='onepiece'
+                JOIN external_catalog_products e
+                  ON e.source='cardmarket' AND e.game_id=g.id
+                 AND e.product_group='single'
+                 AND e.external_id=m.representative_external_product_id
+                WHERE m.source='cardmarket'
+                ORDER BY m.metacard_external_id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          assert len(rows)==164, {'current_don_rows':len(rows)}
+          for r in rows:
+              r['metacard_external_id']=str(r['metacard_external_id'])
+              r['representative_external_product_id']=str(r['representative_external_product_id'])
+              r['category_id']=str(r['category_id'] or '')
+              r['expansion_external_id']=str(r['expansion_external_id'] or '')
+              r['proxy_url']=onepiece_don_proxy_url(
+                  r['metacard_external_id'],
+                  expansion_external_id=r['expansion_external_id'],
+              )
+              r['source_url']=cardmarket_don_source_url(
+                  category_id=r['category_id'],
+                  expansion_external_id=r['expansion_external_id'],
+                  product_id=r['representative_external_product_id'],
+              )
+
+          unknown=[r for r in rows if r['expansion_external_id'] not in CARDMARKET_DON_EXPANSION_TOKENS]
+          assert not unknown, {'unknown_expansions':unknown}
+          assert all(r['proxy_url'] and r['proxy_url'].startswith('https://api.dontripit.com/media/onepiece/don/') for r in rows)
+          assert all('product-images.s3.cardmarket.com' not in r['proxy_url'] for r in rows)
+
+          def probe(row):
+              req=urllib.request.Request(row['proxy_url'],headers={
+                  'User-Agent':'Mozilla/5.0 Dontripit postmerge certifier',
+                  'Accept':'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',
+              })
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as resp:
+                      body=resp.read(64)
+                      return {
+                          'metacard_external_id':row['metacard_external_id'],
+                          'idProduct':row['representative_external_product_id'],
+                          'status':int(getattr(resp,'status',200) or 200),
+                          'content_type':resp.headers.get('Content-Type'),
+                          'x_image_source':resp.headers.get('X-Image-Source'),
+                          'prefix_hex':body[:12].hex(),
+                      }
+              except urllib.error.HTTPError as exc:
+                  return {
+                      'metacard_external_id':row['metacard_external_id'],
+                      'idProduct':row['representative_external_product_id'],
+                      'status':int(exc.code),
+                      'content_type':exc.headers.get('Content-Type') if exc.headers else None,
+                  }
+              except Exception as exc:
+                  return {
+                      'metacard_external_id':row['metacard_external_id'],
+                      'idProduct':row['representative_external_product_id'],
+                      'status':type(exc).__name__,
+                      'error':str(exc),
+                  }
+
+          probes=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futures=[pool.submit(probe,r) for r in rows]
+              for future in as_completed(futures): probes.append(future.result())
+          probes.sort(key=lambda r:r['metacard_external_id'])
+          status_counts=Counter(str(r['status']) for r in probes)
+          successes=[r for r in probes if r['status']==200]
+          non200=[r for r in probes if r['status']!=200]
+          valid_proxy_source=sum(1 for r in successes if r.get('x_image_source')=='cardmarket-don-source-proxy-v1')
+
+          report={
+              'status':'pass' if len(successes)>=160 and len(non200)<=4 else 'blocked',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'current_don_rows':len(rows),
+              'owned_proxy_urls':sum(1 for r in rows if r['proxy_url']),
+              'direct_cardmarket_hotlinks':sum(1 for r in rows if 'product-images.s3.cardmarket.com' in (r['proxy_url'] or '')),
+              'certified_expansion_token_count':len(CARDMARKET_DON_EXPANSION_TOKENS),
+              'http_status_counts':dict(sorted(status_counts.items())),
+              'http_200':len(successes),
+              'non_200':len(non200),
+              'valid_proxy_source_header':valid_proxy_source,
+              'non_200_rows':non200,
+              'sample_successes':successes[:12],
+          }
+          Path('artifacts/onepiece-don-source-image-proxy-postmerge-v1.json').write_text(
+              json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n'
+          )
+          print(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          # Fail closed if live deployment is not yet serving the merged contract.
+          assert report['status']=='pass', report
+          assert report['direct_cardmarket_hotlinks']==0, report
+          assert valid_proxy_source==len(successes), report
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-source-image-proxy-postmerge-v1-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-source-image-proxy-postmerge-v1.json
+          retention-days: 30
