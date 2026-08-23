@@ -2,6 +2,8 @@ import { toApiGameSlug } from './games'
 
 const RESPONSE_CACHE = new Map()
 const FIVE_MINUTES = 5 * 60 * 1000
+const SEARCH_TIMEOUT_MS = 15000
+const SUGGEST_TIMEOUT_MS = 8000
 
 function toQuery(params = {}) {
   const search = new URLSearchParams()
@@ -30,7 +32,7 @@ function normalizeCounts(payload = {}, fallbackTotal = null) {
   }
 }
 
-async function request(path, params, { ttlMs = 0, signal } = {}) {
+async function request(path, params, { ttlMs = 0, signal, timeoutMs = 0 } = {}) {
   const url = `${path}${toQuery(params)}`
   const now = Date.now()
 
@@ -39,10 +41,37 @@ async function request(path, params, { ttlMs = 0, signal } = {}) {
     if (cached && cached.expiresAt > now) return cached.promise
   }
 
+  const timeoutController = timeoutMs > 0 ? new AbortController() : null
+  let timeoutId = null
+  let timedOut = false
+  let removeExternalAbort = null
+  let requestSignal = signal
+
+  if (timeoutController) {
+    requestSignal = timeoutController.signal
+    if (signal) {
+      const abortFromExternal = () => timeoutController.abort(signal.reason)
+      if (signal.aborted) abortFromExternal()
+      else {
+        signal.addEventListener('abort', abortFromExternal, { once: true })
+        removeExternalAbort = () => signal.removeEventListener('abort', abortFromExternal)
+      }
+    }
+    timeoutId = setTimeout(() => {
+      timedOut = true
+      timeoutController.abort()
+    }, timeoutMs)
+  }
+
+  const cleanup = () => {
+    if (timeoutId) clearTimeout(timeoutId)
+    if (removeExternalAbort) removeExternalAbort()
+  }
+
   const promise = fetch(url, {
     method: 'GET',
     cache: 'no-store',
-    signal,
+    signal: requestSignal,
   }).then(async (response) => {
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
@@ -53,8 +82,18 @@ async function request(path, params, { ttlMs = 0, signal } = {}) {
         'No pudimos cargar datos del catálogo.',
       )
     }
+    if (payload === null) {
+      throw new Error('La respuesta del catálogo no es válida. Intenta de nuevo en unos segundos.')
+    }
     return payload
-  })
+  }).catch((error) => {
+    if (timedOut && error?.name === 'AbortError') {
+      const timeoutError = new Error('La búsqueda está tardando demasiado. Intenta de nuevo en unos segundos.')
+      timeoutError.name = 'TimeoutError'
+      throw timeoutError
+    }
+    throw error
+  }).finally(cleanup)
 
   if (ttlMs > 0) {
     RESPONSE_CACHE.set(url, { expiresAt: now + ttlMs, promise })
@@ -68,7 +107,7 @@ export async function searchCatalogPage(filters = {}, options = {}) {
   const payload = await request('/api/catalog/search', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
-  }, options)
+  }, { ...options, timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS })
 
   if (Array.isArray(payload)) {
     return {
@@ -106,7 +145,7 @@ export async function fetchCatalogCounts(filters = {}, options = {}) {
     game: toApiGameSlug(filters?.game || ''),
     counts_only: 1,
     include_counts: 1,
-  }, options)
+  }, { ...options, timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS })
 
   return {
     counts: normalizeCounts(payload),
@@ -125,7 +164,7 @@ export async function suggestCatalog(filters = {}, options = {}) {
   const payload = await request('/api/search-v2/suggest', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
-  }, options)
+  }, { ...options, timeoutMs: options.timeoutMs ?? SUGGEST_TIMEOUT_MS })
 
   return Array.isArray(payload) ? payload : payload?.items || []
 }
