@@ -1,0 +1,179 @@
+name: Audit Pokemon TCGdex Asset Path V5B
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-asset-path-v5b.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Certify deterministic EN TCGdex asset path READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, time, requests
+          from collections import Counter
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from sqlalchemy import create_engine, text
+
+          UA={'User-Agent':'Dontripit Pokemon TCGdex asset certifier/1.1'}
+          session=requests.Session(); session.headers.update(UA)
+          def get_json(url):
+              r=session.get(url,timeout=60); r.raise_for_status(); return r.json()
+          def parts(url):
+              return [p for p in urlparse(url or '').path.split('/') if p]
+
+          # Infer current set -> series only from TCGdex-owned set logo/symbol assets.
+          set_to_series={}
+          set_meta={}
+          for s in get_json('https://api.tcgdex.net/v2/en/sets'):
+              sid=str(s.get('id') or '')
+              series=set()
+              for asset in (s.get('logo'),s.get('symbol')):
+                  p=parts(asset)
+                  if len(p)>=4 and p[2]==sid:
+                      series.add(p[1])
+              if len(series)==1:
+                  set_to_series[sid]=next(iter(series))
+              set_meta[sid]={'logo':s.get('logo'),'symbol':s.get('symbol'),'series':sorted(series)}
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              existing=[dict(r) for r in conn.execute(text('''
+                SELECT pi.print_id,pi.url,p.tcgdex_id
+                FROM print_images pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND pi.url LIKE 'https://assets.tcgdex.net/en/%'
+              ''')).mappings().all()]
+              missing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,p.collector_number,p.print_key,c.name card_name
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND p.tcgdex_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          controls=[]
+          for r in existing:
+              p=parts(r['url'])
+              if len(p)<5: continue
+              url_series,url_set=p[1],p[2]
+              inferred=set_to_series.get(url_set)
+              controls.append({'print_id':r['print_id'],'url':r['url'],'url_series':url_series,'url_set':url_set,'inferred':inferred,'match':bool(inferred and inferred==url_series)})
+
+          def detail(row):
+              cid=str(row['tcgdex_id'])
+              s=requests.Session(); s.headers.update(UA)
+              for a in range(4):
+                  try:
+                      resp=s.get(f'https://api.tcgdex.net/v2/en/cards/{cid}',timeout=20)
+                      if resp.status_code==429 or resp.status_code>=500:
+                          time.sleep(.25*(a+1)); continue
+                      if resp.status_code!=200: return row,{'status':resp.status_code}
+                      d=resp.json()
+                      return row,{'status':200,'id':str(d.get('id') or ''),'localId':str(d.get('localId') or ''),'set_id':str(((d.get('set') or {}).get('id')) or '')}
+                  except Exception as exc:
+                      if a==3: return row,{'status':type(exc).__name__,'error':str(exc)}
+                      time.sleep(.25*(a+1))
+              return row,{'status':'exhausted'}
+
+          detailed=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              for f in as_completed([pool.submit(detail,r) for r in missing]):
+                  row,d=f.result(); detailed.append((row,d))
+
+          candidates=[]
+          for row,d in detailed:
+              cid=str(row['tcgdex_id'])
+              exact=d.get('status')==200 and d.get('id')==cid and bool(d.get('set_id')) and bool(d.get('localId'))
+              series=set_to_series.get(d.get('set_id')) if exact else None
+              url=f"https://assets.tcgdex.net/en/{series}/{d['set_id']}/{d['localId']}/high.webp" if series else None
+              candidates.append({**row,'detail':d,'identity_exact':exact,'series':series,'image_url':url})
+
+          image_candidates=[r for r in candidates if r['image_url']]
+          def probe(row):
+              s=requests.Session(); s.headers.update({**UA,'Accept':'image/*'})
+              try:
+                  resp=s.get(row['image_url'],timeout=20,stream=True)
+                  prefix=next(resp.iter_content(32),b'') if resp.status_code==200 else b''
+                  return row['print_id'],{'status':resp.status_code,'content_type':resp.headers.get('Content-Type'),'prefix_hex':prefix[:12].hex()}
+              except Exception as exc:
+                  return row['print_id'],{'status':type(exc).__name__,'error':str(exc)}
+          probes={}
+          with ThreadPoolExecutor(max_workers=20) as pool:
+              for f in as_completed([pool.submit(probe,r) for r in image_candidates]):
+                  pid,v=f.result(); probes[pid]=v
+          for r in candidates: r['probe']=probes.get(r['print_id'])
+
+          verified=[]
+          for r in candidates:
+              p=r.get('probe') or {}
+              if p.get('status')==200 and str(p.get('content_type') or '').startswith('image/'):
+                  verified.append(r)
+
+          summary={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'set_map_count':len(set_to_series),
+            'existing_asset_rows':len(existing),
+            'existing_controls_parsed':len(controls),
+            'existing_controls_resolved':sum(1 for r in controls if r['inferred']),
+            'existing_controls_matches':sum(1 for r in controls if r['match']),
+            'existing_controls_mismatches':sum(1 for r in controls if r['inferred'] and not r['match']),
+            'missing_en_exact':len(missing),
+            'detail_status_counts':dict(Counter(str(d.get('status')) for _,d in detailed)),
+            'identity_exact':sum(1 for r in candidates if r['identity_exact']),
+            'series_resolved':sum(1 for r in candidates if r['series']),
+            'image_candidates':len(image_candidates),
+            'probe_status_counts':dict(Counter(str((r.get('probe') or {}).get('status')) for r in image_candidates)),
+            'verified_http_images':len(verified),
+          }
+          report={**summary,
+            'mismatched_controls':[r for r in controls if r['inferred'] and not r['match']][:100],
+            'unresolved_controls':[r for r in controls if not r['inferred']][:100],
+            'verified_samples':verified[:100],
+            'unverified_samples':[r for r in candidates if r not in verified][:200],
+            'unmapped_sets':{k:v for k,v in set_meta.items() if k not in set_to_series},
+          }
+          Path('artifacts/pokemon-tcgdex-asset-path-v5b.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          assert summary['existing_controls_mismatches']==0, report
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgdex-asset-path-v5b-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgdex-asset-path-v5b.json
+          retention-days: 30
