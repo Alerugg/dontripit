@@ -1,0 +1,57 @@
+name: Certify One Piece DON Search Source V1
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/search_v2/onepiece_don_query.py'
+      - 'backend/app/routes/onepiece_don_search.py'
+      - 'backend/app/main.py'
+      - 'backend/app/scripts/certify_onepiece_don_search_source_v1.py'
+      - 'backend/app/scripts/audit_onepiece_don_price_source_v1.py'
+      - '.github/workflows/certify-onepiece-don-search-source-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile DON search path
+        run: python -m py_compile app/search_v2/onepiece_don_query.py app/routes/onepiece_don_search.py app/scripts/certify_onepiece_don_search_source_v1.py app/scripts/audit_onepiece_don_price_source_v1.py app/main.py
+      - name: Certify production data read-only
+        env:
+          ONEPIECE_DON_SEARCH_CERT_OUTPUT: artifacts/onepiece-don-search-source-v1.json
+        run: |
+          mkdir -p artifacts
+          python app/scripts/certify_onepiece_don_search_source_v1.py
+      - name: Audit source price coverage read-only
+        env:
+          ONEPIECE_DON_PRICE_AUDIT_OUTPUT: artifacts/onepiece-don-price-source-v1.json
+        run: python app/scripts/audit_onepiece_don_price_source_v1.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-search-source-v1-${{ github.run_id }}
+          path: |
+            backend/artifacts/onepiece-don-search-source-v1.json
+            backend/artifacts/onepiece-don-price-source-v1.json
+          retention-days: 90
