@@ -1,0 +1,95 @@
+name: Audit One Piece DON Catalog Metadata V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-onepiece-don-catalog-metadata-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Download official current One Piece singles catalog
+        run: |
+          curl --retry 5 --retry-all-errors --retry-delay 2 --fail --location --silent --show-error \
+            'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json' \
+            -o /tmp/products_singles_18.json
+          test -s /tmp/products_singles_18.json
+      - name: Inspect DON raw catalog metadata READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          from sqlalchemy import create_engine,text
+          payload=json.load(open('/tmp/products_singles_18.json'))
+          raw_rows=payload.get('products') or payload.get('data') or payload.get('items') or []
+          by_id={str(r.get('idProduct') or r.get('product_id') or ''):r for r in raw_rows if isinstance(r,dict)}
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              don=[dict(r) for r in conn.execute(text('''
+                WITH latest AS (SELECT max(source_as_of) x FROM onepiece_don_market_items WHERE source='cardmarket')
+                SELECT m.metacard_external_id,m.representative_external_product_id,m.name,m.subject,
+                       e.expansion_external_id,e.category_id,e.website_path,e.raw_json
+                FROM onepiece_don_market_items m JOIN latest l ON l.x=m.source_as_of
+                JOIN games g ON g.slug='onepiece'
+                JOIN external_catalog_products e ON e.source='cardmarket' AND e.game_id=g.id
+                 AND e.product_group='single' AND e.external_id=m.representative_external_product_id
+                WHERE m.source='cardmarket' ORDER BY m.metacard_external_id
+              ''')).mappings().all()]
+          out=[]
+          key_counts={}
+          for row in don:
+              pid=str(row['representative_external_product_id'])
+              raw=by_id.get(pid) or {}
+              for key in raw: key_counts[key]=key_counts.get(key,0)+1
+              out.append({
+                  'metacard_id':str(row['metacard_external_id']),
+                  'idProduct':pid,'name':row['name'],'subject':row['subject'],
+                  'db_expansion_external_id':str(row['expansion_external_id'] or ''),
+                  'db_category_id':str(row['category_id'] or ''),
+                  'db_website_path':row['website_path'],
+                  'catalog_raw':raw,
+              })
+          report={
+              'status':'pass','production_writes':0,'transaction_read_only':True,
+              'catalog_createdAt':payload.get('createdAt') or payload.get('created_at'),
+              'catalog_rows':len(raw_rows),'don_rows':len(out),
+              'catalog_raw_key_counts':dict(sorted(key_counts.items())),
+              'samples':out[:40],
+              'targets':[x for x in out if x['idProduct'] in {'691712','693571','751945','904161','904163','904165','904167'}],
+          }
+          assert len(out)==164,report
+          Path('artifacts/onepiece-don-catalog-metadata-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-catalog-metadata-v1-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-catalog-metadata-v1.json
+          retention-days: 30
+          if-no-files-found: error
