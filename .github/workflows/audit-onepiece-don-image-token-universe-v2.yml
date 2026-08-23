@@ -1,0 +1,238 @@
+name: Audit One Piece DON Image Token Universe V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-onepiece-don-image-token-universe-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Resolve exact Cardmarket DON image directory from official expansion-code universe READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import io
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from collections import Counter
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+
+          from PIL import Image
+          from sqlalchemy import create_engine, text
+
+          HOST = 'product-images.s3.cardmarket.com'
+          UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36'
+
+          # Current Cardmarket One Piece expansion-code universe, captured from
+          # https://www.cardmarket.com/en/OnePiece/Expansions on 2026-08-23.
+          # The resolver never assigns a token from text similarity: a token is
+          # accepted only when its exact first-party S3 path yields a decodable
+          # image for the exact idProduct, and exactly one token wins.
+          official_codes = '''
+          EB05 OP17 OP17P ST36 ST35 ST34 ST33 ST32 ST31 OP16 ST30 OP16P OP16-JP ST30-JP
+          OP15 OP15P OP15-JP EB03 EB04-JP OP14 ST29 OP14P ST29-JP OP14-JP OP13 OP13P
+          EB03-JP PRB02 LD01 ST-22 OP13-JP OP12 OP12P PRB02-JP ST-28-JP ST-27-JP
+          ST-26-JP ST-25-JP ST-24-JP ST-23-JP ST-28 ST-27 ST-26 ST-25 ST-24 ST-23
+          OP11 OP11P OP12-JP EB02 ST-22-JP OP10 OP10P ST-21 OP11-JP EB02-JP ST-21-JP
+          OP09P OP09 OP10-JP PRB01 ST-15 ST-16 ST-17 ST-18 ST-19 ST-20 OP08 OP08P
+          OP09-JP ST-14 PRB01-JP ST-15-JP ST-16-JP ST-17-JP ST-18-JP ST-19-JP ST-20-JP
+          OP07 OP07P OP08-JP EB01 ST-14-JP ST-13 OP06 ST-12 OP06P OP07-JP ST-11 EB01-JP
+          ST-13-JP OP05P OP05 OP06-JP ST-10 ST-12-JP ST-11-JP OP04P OP04 OP05-JP
+          ST-09-JP ST-08 ST-09 ST-10-JP ST-07 OP03 OP03P OP04-JP OP02 ST-06 OP02P
+          OP03-JP ST-05 OP01E OP01 ST01 ST-02 ST-03 ST-04 MINI DEMO OP02-JP ST-01-JP
+          ST-02-JP ST-03-JP ST-04-JP OP01-JP PB-XX PB-JP STP-JP STP UP-JP UP STR STR-JP
+          WC WC-JP P-JP P JDG R OPPR
+          '''.split()
+
+          def variants(code: str) -> list[str]:
+              out = [code]
+              compact = code.replace('-', '')
+              if compact != code:
+                  out.append(compact)
+              return out
+
+          token_universe = []
+          for code in official_codes:
+              token_universe.extend(variants(code.upper()))
+          token_universe = list(dict.fromkeys(token_universe))
+
+          engine = create_engine(os.environ['DATABASE_URL_UNPOOLED'], pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one() == 'on'
+              rows = [dict(r) for r in conn.execute(text('''
+                WITH latest AS (
+                  SELECT max(source_as_of) AS source_as_of
+                  FROM onepiece_don_market_items WHERE source='cardmarket'
+                )
+                SELECT m.metacard_external_id,m.representative_external_product_id,m.name,m.subject,
+                       e.category_id,e.expansion_external_id
+                FROM onepiece_don_market_items m
+                JOIN latest l ON l.source_as_of=m.source_as_of
+                JOIN games g ON g.slug='onepiece'
+                JOIN external_catalog_products e
+                  ON e.source='cardmarket' AND e.game_id=g.id
+                 AND e.product_group='single'
+                 AND e.external_id=m.representative_external_product_id
+                WHERE m.source='cardmarket'
+                ORDER BY m.metacard_external_id
+              ''')).mappings().all()]
+          assert len(rows) == 164, {'rows': len(rows)}
+
+          def fetch(token: str, category: str, pid: str):
+              url = f'https://{HOST}/{category}/{token}/{pid}/{pid}.jpg'
+              req = urllib.request.Request(url, headers={
+                  'User-Agent': UA,
+                  'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',
+                  'Accept-Language': 'en-US,en;q=0.9',
+                  'Referer': 'https://www.cardmarket.com/',
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=8) as response:
+                      body = response.read(5 * 1024 * 1024 + 1)
+                      status = int(getattr(response, 'status', 200) or 200)
+                  if status != 200 or not body or len(body) > 5 * 1024 * 1024:
+                      return None
+                  with Image.open(io.BytesIO(body)) as im:
+                      im.verify()
+                  with Image.open(io.BytesIO(body)) as im:
+                      width, height = im.size
+                      fmt = im.format
+                  if width < 100 or height < 100:
+                      return None
+                  return {
+                      'token': token,
+                      'url': url,
+                      'sha256': hashlib.sha256(body).hexdigest(),
+                      'bytes': len(body),
+                      'width': width,
+                      'height': height,
+                      'format': fmt,
+                  }
+              except urllib.error.HTTPError:
+                  return None
+              except Exception:
+                  return None
+
+          # Probe one product across all official tokens concurrently. Require
+          # uniqueness. This is intentionally slower but removes name inference.
+          def resolve(row):
+              pid = str(row['representative_external_product_id'])
+              category = str(row['category_id'] or '')
+              hits = []
+              with ThreadPoolExecutor(max_workers=24) as inner:
+                  future_to_token = {
+                      inner.submit(fetch, token, category, pid): token
+                      for token in token_universe
+                  }
+                  for future in as_completed(future_to_token):
+                      result = future.result()
+                      if result:
+                          hits.append(result)
+              hits.sort(key=lambda x: x['token'])
+              return {
+                  'metacard_id': str(row['metacard_external_id']),
+                  'idProduct': pid,
+                  'name': row['name'],
+                  'subject': row['subject'],
+                  'category_id': category,
+                  'expansion_external_id': str(row['expansion_external_id'] or ''),
+                  'hits': hits,
+                  'status': 'unique' if len(hits) == 1 else ('none' if not hits else 'ambiguous'),
+              }
+
+          results = []
+          # Keep outer concurrency low because each product fans out internally.
+          with ThreadPoolExecutor(max_workers=6) as outer:
+              futures = [outer.submit(resolve, row) for row in rows]
+              for future in as_completed(futures):
+                  results.append(future.result())
+          results.sort(key=lambda r: r['metacard_id'])
+
+          unique = [r for r in results if r['status'] == 'unique']
+          ambiguous = [r for r in results if r['status'] == 'ambiguous']
+          none = [r for r in results if r['status'] == 'none']
+          token_counts = Counter(r['hits'][0]['token'] for r in unique)
+          expansion_token = {}
+          for r in unique:
+              expansion_token.setdefault(r['expansion_external_id'], Counter())[r['hits'][0]['token']] += 1
+
+          report = {
+              'status': 'pass' if not ambiguous else 'blocked',
+              'production_writes': 0,
+              'transaction_read_only': True,
+              'source_expansions_url': 'https://www.cardmarket.com/en/OnePiece/Expansions',
+              'source_expansions_captured_on': '2026-08-23',
+              'official_code_count': len(official_codes),
+              'token_universe_count': len(token_universe),
+              'don_rows': len(results),
+              'unique_resolved': len(unique),
+              'ambiguous': len(ambiguous),
+              'unresolved': len(none),
+              'token_counts': dict(sorted(token_counts.items())),
+              'expansion_token_counts': {
+                  exp: dict(counter.most_common())
+                  for exp, counter in sorted(expansion_token.items())
+              },
+              'unique_rows': unique,
+              'ambiguous_rows': ambiguous,
+              'unresolved_rows': none,
+          }
+          assert len(results) == 164, report
+          assert not ambiguous, report
+          Path('artifacts/onepiece-don-image-token-universe-v2.json').write_text(
+              json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str) + '\n'
+          )
+          print(json.dumps({
+              'status': report['status'],
+              'production_writes': 0,
+              'official_code_count': report['official_code_count'],
+              'token_universe_count': report['token_universe_count'],
+              'don_rows': report['don_rows'],
+              'unique_resolved': report['unique_resolved'],
+              'ambiguous': report['ambiguous'],
+              'unresolved': report['unresolved'],
+              'token_counts': report['token_counts'],
+              'expansion_token_counts': report['expansion_token_counts'],
+              'unresolved_sample': [
+                  {k: r[k] for k in ('idProduct','name','expansion_external_id')}
+                  for r in none[:30]
+              ],
+          }, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-token-universe-v2-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-image-token-universe-v2.json
+          retention-days: 30
+          if-no-files-found: error
