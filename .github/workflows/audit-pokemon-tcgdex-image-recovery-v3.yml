@@ -1,0 +1,159 @@
+name: Audit Pokemon TCGdex Image Recovery V3
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-image-recovery-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Certify exact TCGdex image candidates READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, requests
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          session=requests.Session()
+          session.headers.update({'User-Agent':'Dontripit Pokemon image certifier/1.0'})
+          api={}
+          for lang in ('en','es'):
+              r=session.get(f'https://api.tcgdex.net/v2/{lang}/cards',timeout=60)
+              r.raise_for_status()
+              payload=r.json()
+              api[lang]={str(x.get('id')):x for x in payload if x.get('id')}
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              missing=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.language,p.collector_number,p.rarity,p.is_foil,p.variant,
+                       p.tcgdex_id print_tcgdex_id,p.print_key,
+                       c.id card_id,c.name card_name,c.tcgdex_id card_tcgdex_id,
+                       s.id set_id,s.code set_code
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon'
+                  AND p.language IN ('en','es')
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.language,p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          results=[]
+          for row in missing:
+              lang=row['language']
+              print_id=str(row['print_tcgdex_id']) if row['print_tcgdex_id'] else None
+              card_id=str(row['card_tcgdex_id']) if row['card_tcgdex_id'] else None
+              exact=api[lang].get(print_id) if print_id else None
+              card=api[lang].get(card_id) if card_id else None
+              image_base=(exact or {}).get('image') if exact else None
+              classification='no_tcgdex_identity'
+              if print_id:
+                  classification='print_exact_available' if image_base else ('print_exact_api_no_image' if exact else 'print_exact_api_missing')
+              elif card_id:
+                  image_base=(card or {}).get('image') if card else None
+                  classification='card_only_available' if image_base else ('card_only_api_no_image' if card else 'card_only_api_missing')
+              item=dict(row)
+              item['classification']=classification
+              item['image_base']=image_base
+              item['image_url']=(image_base.rstrip('/')+'/high.webp') if image_base else None
+              results.append(item)
+
+          # A card-only candidate is safer only when the canonical Card has one missing physical Print
+          # in that language and the TCGdex localized API resolves exactly that stable card id.
+          per_card_lang=Counter((r['language'],r['card_id']) for r in results)
+          for r in results:
+              r['missing_prints_same_card_language']=per_card_lang[(r['language'],r['card_id'])]
+              r['card_only_1to1_candidate']=bool(
+                  r['classification']=='card_only_available' and r['missing_prints_same_card_language']==1
+              )
+
+          exact=[r for r in results if r['classification']=='print_exact_available']
+          card_only_1to1=[r for r in results if r['card_only_1to1_candidate']]
+          candidates=exact+card_only_1to1
+
+          def probe(item):
+              try:
+                  resp=session.get(item['image_url'],timeout=15,stream=True)
+                  prefix=next(resp.iter_content(32),b'') if resp.status_code==200 else b''
+                  return item['print_id'],resp.status_code,resp.headers.get('Content-Type'),prefix[:12].hex()
+              except Exception as exc:
+                  return item['print_id'],type(exc).__name__,None,''
+
+          probe_results={}
+          with ThreadPoolExecutor(max_workers=24) as pool:
+              futs=[pool.submit(probe,r) for r in candidates]
+              for f in as_completed(futs):
+                  pid,status,ctype,prefix=f.result()
+                  probe_results[pid]={'status':status,'content_type':ctype,'prefix_hex':prefix}
+          for r in candidates:
+              r['probe']=probe_results.get(r['print_id'])
+
+          counts=Counter(r['classification'] for r in results)
+          by_lang={}
+          for lang in ('en','es'):
+              subset=[r for r in results if r['language']==lang]
+              by_lang[lang]={
+                'missing':len(subset),
+                'classification_counts':dict(Counter(r['classification'] for r in subset)),
+                'card_only_1to1_candidates':sum(1 for r in subset if r['card_only_1to1_candidate']),
+              }
+          http_counts=Counter(str(r['probe']['status']) for r in candidates if r.get('probe'))
+          verified=[r for r in candidates if r.get('probe',{}).get('status')==200 and str(r.get('probe',{}).get('content_type') or '').startswith('image/')]
+
+          report={
+            'status':'pass',
+            'production_writes':0,
+            'transaction_read_only':True,
+            'tcgdex_api_counts':{lang:len(items) for lang,items in api.items()},
+            'missing_en_es':len(results),
+            'classification_counts':dict(counts),
+            'by_language':by_lang,
+            'candidate_count':len(candidates),
+            'verified_http_image_count':len(verified),
+            'http_status_counts':dict(http_counts),
+            'verified_print_exact_count':sum(1 for r in verified if r['classification']=='print_exact_available'),
+            'verified_card_only_1to1_count':sum(1 for r in verified if r['classification']=='card_only_available'),
+            'unverified_candidates':[r for r in candidates if r not in verified],
+            'sample_verified':verified[:80],
+          }
+          Path('artifacts/pokemon-tcgdex-image-recovery-v3.json').write_text(
+            json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n'
+          )
+          print(json.dumps({k:v for k,v in report.items() if k not in ('sample_verified','unverified_candidates')},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgdex-image-recovery-v3-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgdex-image-recovery-v3.json
+          retention-days: 30
