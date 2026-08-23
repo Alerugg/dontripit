@@ -12,6 +12,14 @@ function toQuery(params = {}) {
   return query ? `?${query}` : ''
 }
 
+function requestInit(options = {}, init = {}) {
+  return {
+    ...init,
+    cache: 'no-store',
+    signal: options.signal,
+  }
+}
+
 async function readJson(response) {
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
@@ -20,16 +28,16 @@ async function readJson(response) {
   return payload
 }
 
-export async function searchV2({ q, game, limit = 24, language = '' } = {}) {
-  const response = await fetch(`/api/search-v2${toQuery({ q, game: toApiGameSlug(game || ''), limit, language })}`, {
-    method: 'GET',
-    cache: 'no-store',
-  })
+export async function searchV2({ q, game, limit = 24, language = '' } = {}, options = {}) {
+  const response = await fetch(
+    `/api/search-v2${toQuery({ q, game: toApiGameSlug(game || ''), limit, language })}`,
+    requestInit(options, { method: 'GET' }),
+  )
   const payload = await readJson(response)
   return payload?.items || []
 }
 
-export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 'all', category = '', region = '', sort = 'relevance', hasPrice = false, language = '' } = {}) {
+export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 'all', category = '', region = '', sort = 'relevance', hasPrice = false, language = '' } = {}, options = {}) {
   const response = await fetch(`/api/search-v2/federated${toQuery({
     q,
     game: toApiGameSlug(game || ''),
@@ -41,48 +49,44 @@ export async function federatedSearchV2({ q, game, page = 1, limit = 24, kind = 
     sort,
     language,
     has_price: hasPrice ? 1 : '',
-  })}`, {
-    method: 'GET',
-    cache: 'no-store',
-  })
+  })}`, requestInit(options, { method: 'GET' }))
   return readJson(response)
 }
 
-export async function suggestV2({ q, game, limit = 8, language = '' } = {}) {
+export async function suggestV2({ q, game, limit = 8, language = '' } = {}, options = {}) {
   const cleanQuery = String(q || '').trim()
   if (cleanQuery.length < MIN_SUGGEST_QUERY_LENGTH) return []
 
-  const response = await fetch(`/api/search-v2/suggest${toQuery({ q: cleanQuery, game: toApiGameSlug(game || ''), limit, language })}`, {
-    method: 'GET',
-    cache: 'no-store',
-  })
+  const response = await fetch(
+    `/api/search-v2/suggest${toQuery({ q: cleanQuery, game: toApiGameSlug(game || ''), limit, language })}`,
+    requestInit(options, { method: 'GET' }),
+  )
   const payload = await readJson(response)
   return payload?.items || []
 }
 
-export async function fetchFacetsV2(game) {
-  const response = await fetch(`/api/search-v2/facets${toQuery({ game: toApiGameSlug(game || '') })}`, {
-    method: 'GET',
-    cache: 'no-store',
-  })
+export async function fetchFacetsV2(game, options = {}) {
+  const response = await fetch(
+    `/api/search-v2/facets${toQuery({ game: toApiGameSlug(game || '') })}`,
+    requestInit(options, { method: 'GET' }),
+  )
   return readJson(response)
 }
 
-export async function fetchFacetValuesV2({ game, key, q = '', limit = 30 } = {}) {
-  const response = await fetch(`/api/search-v2/facet-values${toQuery({ game: toApiGameSlug(game || ''), key, q, limit })}`, {
-    method: 'GET',
-    cache: 'no-store',
-  })
+export async function fetchFacetValuesV2({ game, key, q = '', limit = 30 } = {}, options = {}) {
+  const response = await fetch(
+    `/api/search-v2/facet-values${toQuery({ game: toApiGameSlug(game || ''), key, q, limit })}`,
+    requestInit(options, { method: 'GET' }),
+  )
   const payload = await readJson(response)
   return payload?.items || []
 }
 
-export async function advancedSearchV2({ game, q = '', filters = {}, sort = 'relevance', hasPrice = false, language = '', limit = 50, offset = 0 } = {}) {
-  const response = await fetch('/api/search-v2/advanced', {
+export async function advancedSearchV2({ game, q = '', filters = {}, sort = 'relevance', hasPrice = false, language = '', limit = 50, offset = 0 } = {}, options = {}) {
+  const response = await fetch('/api/search-v2/advanced', requestInit(options, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    cache: 'no-store',
     body: JSON.stringify({ game: toApiGameSlug(game || ''), q, filters, sort, language, has_price: Boolean(hasPrice), limit, offset }),
-  })
+  }))
   return readJson(response)
 }

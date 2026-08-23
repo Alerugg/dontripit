@@ -47,7 +47,7 @@ test('Home search integrates active TCG scope and routes scoped searches to the 
   const css = source('components/home/HomeSearchV2.css')
 
   assert.match(search, /ACTIVE_GAME_CATALOG/)
-  assert.match(search, /suggestCatalog\(\{ q: clean, game: selectedGame, limit: 8 \}\)/)
+  assert.match(search, /suggestCatalog\([\s\S]*\{ q: clean, game: selectedGame, limit: 8 \}[\s\S]*\{ signal: controller\.signal \}/)
   assert.match(search, /`\/games\/\$\{game\}\$\{suffix\}`/)
   assert.match(search, /aria-pressed=\{selectedGame === game\.slug\}/)
   assert.match(search, /data-game=\{game\.slug\}/)

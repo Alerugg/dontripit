@@ -111,6 +111,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     || (game.slug === 'yugioh' && initialLanguages.length > 0)
   )
   const initialAdvancedHydrated = useRef(false)
+  const advancedControllerRef = useRef(null)
 
   const [query, setQuery] = useState(initialQuery)
   const [submittedQuery, setSubmittedQuery] = useState(initialAdvancedRan ? '' : initialQuery)
@@ -151,35 +152,46 @@ export default function OnePieceSearchV2Experience({ game }) {
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     async function loadFacets() {
       try {
-        const payload = await fetchFacetsV2(game.slug)
+        const payload = await fetchFacetsV2(game.slug, { signal: controller.signal })
         if (!cancelled) {
           setFacetGroups(visibleFacetGroups(payload?.groups || {}, game.slug))
           setFacetError('')
         }
       } catch (requestError) {
-        if (!cancelled) setFacetError(requestError.message || 'No pudimos cargar los filtros avanzados.')
+        if (!cancelled && requestError?.name !== 'AbortError') {
+          setFacetError(requestError.message || 'No pudimos cargar los filtros avanzados.')
+        }
       }
     }
     loadFacets()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [game.slug])
 
   useEffect(() => {
     if (query.trim().length < 1) {
       setSuggestions([])
+      setSuggestionsLoading(false)
       return undefined
     }
 
     let cancelled = false
+    const controller = new AbortController()
     const handle = setTimeout(async () => {
       setSuggestionsLoading(true)
       try {
-        const rows = await suggestV2({ q: query.trim(), game: game.slug, limit: 8, language: activeLanguage })
+        const rows = await suggestV2(
+          { q: query.trim(), game: game.slug, limit: 8, language: activeLanguage },
+          { signal: controller.signal },
+        )
         if (!cancelled) setSuggestions(rows.map(suggestionForLegacyRow))
-      } catch {
-        if (!cancelled) setSuggestions([])
+      } catch (requestError) {
+        if (!cancelled && requestError?.name !== 'AbortError') setSuggestions([])
       } finally {
         if (!cancelled) setSuggestionsLoading(false)
       }
@@ -187,6 +199,7 @@ export default function OnePieceSearchV2Experience({ game }) {
 
     return () => {
       cancelled = true
+      controller.abort()
       clearTimeout(handle)
     }
   }, [activeLanguage, game.slug, query])
@@ -194,11 +207,13 @@ export default function OnePieceSearchV2Experience({ game }) {
   useEffect(() => {
     if (!submittedQuery.trim()) {
       setNormalPayload(null)
+      setLoading(false)
       setError('')
       return undefined
     }
 
     let cancelled = false
+    const controller = new AbortController()
     async function runSearch() {
       setLoading(true)
       setError('')
@@ -213,10 +228,10 @@ export default function OnePieceSearchV2Experience({ game }) {
           sort: resultSort,
           hasPrice: onlyWithPrice,
           language: activeLanguage,
-        })
+        }, { signal: controller.signal })
         if (!cancelled) setNormalPayload(payload)
       } catch (requestError) {
-        if (!cancelled) {
+        if (!cancelled && requestError?.name !== 'AbortError') {
           setNormalPayload(null)
           setError(requestError.message || 'No pudimos ejecutar la búsqueda.')
         }
@@ -225,13 +240,20 @@ export default function OnePieceSearchV2Experience({ game }) {
       }
     }
     runSearch()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [activeLanguage, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, resultSort, submittedQuery])
 
   useEffect(() => {
     if (initialAdvancedHydrated.current || !initialAdvancedRan) return
     initialAdvancedHydrated.current = true
     runAdvanced(initialAdvancedPage, { reuseApplied: true })
+  }, [])
+
+  useEffect(() => () => {
+    advancedControllerRef.current?.abort()
   }, [])
 
   useEffect(() => {
@@ -255,6 +277,7 @@ export default function OnePieceSearchV2Experience({ game }) {
   }, [activeLanguage, advancedOpen, advancedPage, advancedQuery, advancedRan, appliedAdvancedFilters, game.slug, normalCategory, normalPage, normalType, onlyWithPrice, pathname, resultSort, router, submittedQuery])
 
   function submitNormal(nextQuery = query) {
+    advancedControllerRef.current?.abort()
     const clean = String(nextQuery || '').trim()
     setQuery(clean)
     setSubmittedQuery(clean)
@@ -265,6 +288,7 @@ export default function OnePieceSearchV2Experience({ game }) {
     setAdvancedItems([])
     setAdvancedTotal(0)
     setAdvancedPage(1)
+    setAdvancedLoading(false)
     setAdvancedError('')
   }
 
@@ -287,6 +311,10 @@ export default function OnePieceSearchV2Experience({ game }) {
   }
 
   async function runAdvanced(nextPage = 1, { reuseApplied = false, sortOverride = null, hasPriceOverride = null, languageOverride = null } = {}) {
+    advancedControllerRef.current?.abort()
+    const controller = new AbortController()
+    advancedControllerRef.current = controller
+
     const page = Math.max(1, Number(nextPage) || 1)
     const filters = reuseApplied ? appliedAdvancedFilters : advancedFilters
     const searchQuery = reuseApplied ? advancedQuery : query.trim()
@@ -314,15 +342,20 @@ export default function OnePieceSearchV2Experience({ game }) {
         language: activeDisplayLanguage,
         limit: ADVANCED_PAGE_SIZE,
         offset: (page - 1) * ADVANCED_PAGE_SIZE,
-      })
+      }, { signal: controller.signal })
+      if (advancedControllerRef.current !== controller || controller.signal.aborted) return
       setAdvancedItems(payload?.items || [])
       setAdvancedTotal(payload?.total || 0)
     } catch (requestError) {
+      if (requestError?.name === 'AbortError' || controller.signal.aborted || advancedControllerRef.current !== controller) return
       setAdvancedItems([])
       setAdvancedTotal(0)
       setAdvancedError(requestError.message || 'No pudimos aplicar los filtros.')
     } finally {
-      setAdvancedLoading(false)
+      if (advancedControllerRef.current === controller) {
+        advancedControllerRef.current = null
+        if (!controller.signal.aborted) setAdvancedLoading(false)
+      }
     }
   }
 
@@ -365,12 +398,15 @@ export default function OnePieceSearchV2Experience({ game }) {
   }
 
   function resetAdvanced() {
+    advancedControllerRef.current?.abort()
+    advancedControllerRef.current = null
     setAdvancedFilters({})
     setAppliedAdvancedFilters({})
     setAdvancedQuery('')
     setAdvancedItems([])
     setAdvancedTotal(0)
     setAdvancedPage(1)
+    setAdvancedLoading(false)
     setAdvancedRan(false)
     setAdvancedError('')
   }
