@@ -10,6 +10,7 @@ from PIL import Image
 from app.onepiece_don_media import (
     cardmarket_don_source_url,
     onepiece_don_proxy_path,
+    onepiece_don_proxy_url,
 )
 from app.routes import product_media
 from app.search_v2.onepiece_don_query import onepiece_don_market_page
@@ -46,12 +47,17 @@ def test_certified_don_source_url_requires_known_expansion_token():
     ) is None
 
 
-def test_source_owned_don_proxy_path_is_metacard_scoped():
+def test_source_owned_don_proxy_path_is_metacard_scoped_and_public():
     assert (
         onepiece_don_proxy_path("467133")
         == "/media/onepiece/don/467133/cardmarket-image"
     )
+    assert (
+        onepiece_don_proxy_url("467133", public_base_url="https://api.dontripit.com/")
+        == "https://api.dontripit.com/media/onepiece/don/467133/cardmarket-image"
+    )
     assert onepiece_don_proxy_path("not-a-metacard") is None
+    assert onepiece_don_proxy_url("467133", public_base_url="http://unsafe.invalid") is None
 
 
 def test_don_proxy_serves_validated_current_source_image(monkeypatch):
@@ -137,7 +143,8 @@ class _PostgresSession:
         return _Rows(self.rows)
 
 
-def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink():
+def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink(monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_BASE_URL", "https://api.dontripit.com")
     row = {
         "id": 1,
         "metacard_external_id": "467133",
@@ -169,7 +176,7 @@ def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink():
     )
 
     item = page["items"][0]
-    assert item["primary_image_url"] == "/media/onepiece/don/467133/cardmarket-image"
+    assert item["primary_image_url"] == "https://api.dontripit.com/media/onepiece/don/467133/cardmarket-image"
     assert "product-images.s3.cardmarket.com" not in item["primary_image_url"]
     assert item["card_id"] is None
     assert item["print_id"] is None
