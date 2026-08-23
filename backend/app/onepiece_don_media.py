@@ -12,7 +12,11 @@ Unknown future expansions deliberately fail closed until certified. This module
 only resolves media paths; it never creates canonical Card/Print identity.
 """
 
+import os
+
+
 CARDMARKET_IMAGE_HOST = "product-images.s3.cardmarket.com"
+DEFAULT_PUBLIC_API_BASE_URL = "https://api.dontripit.com"
 
 CARDMARKET_DON_EXPANSION_TOKENS: dict[str, str] = {
     "5229": "OP01",
@@ -64,3 +68,21 @@ def onepiece_don_proxy_path(metacard_external_id: str | int | None) -> str | Non
     if not metacard_id.isdigit():
         return None
     return f"/media/onepiece/don/{metacard_id}/cardmarket-image"
+
+
+def onepiece_don_proxy_url(
+    metacard_external_id: str | int | None,
+    *,
+    public_base_url: str | None = None,
+) -> str | None:
+    path = onepiece_don_proxy_path(metacard_external_id)
+    if path is None:
+        return None
+    base = str(
+        public_base_url
+        or os.getenv("PUBLIC_API_BASE_URL")
+        or DEFAULT_PUBLIC_API_BASE_URL
+    ).strip().rstrip("/")
+    if not base.startswith("https://"):
+        return None
+    return f"{base}{path}"
