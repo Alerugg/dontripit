@@ -7,7 +7,8 @@ Create Date: 2026-08-23
 DON!! cards are an explicit physical-card family. They are never inferred from
 free text and their marketplace/source identifiers are not collector numbers.
 This migration adds source-backed classification plus a complete official Bandai
-PDF inventory surface, and exposes explicit DON flags in Search V2 projections.
+PDF inventory surface, preserves unresolved event/physical evidence separately,
+and exposes explicit DON flags in Search V2 projections.
 """
 
 from typing import Sequence, Union
@@ -33,6 +34,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("pdf_sha256", sa.String(length=64), nullable=False),
         sa.Column("source_url", sa.Text(), nullable=False),
+        sa.Column("sequence_number", sa.Integer(), nullable=False),
         sa.Column("page_number", sa.Integer(), nullable=False),
         sa.Column("slot_number", sa.Integer(), nullable=False),
         sa.Column("image_object", sa.String(length=32), nullable=False),
@@ -49,11 +51,33 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "pdf_sha256", "page_number", "slot_number", name="uq_onepiece_don_official_items_slot"
         ),
+        sa.UniqueConstraint(
+            "pdf_sha256", "sequence_number", name="uq_onepiece_don_official_items_sequence"
+        ),
     )
     op.create_index("ix_onepiece_don_official_items_pdf_sha256", "onepiece_don_official_items", ["pdf_sha256"])
     op.create_index("ix_onepiece_don_official_items_image_sha256", "onepiece_don_official_items", ["image_sha256"])
     op.create_index("ix_onepiece_don_official_items_image_phash", "onepiece_don_official_items", ["image_phash"])
     op.create_index("ix_onepiece_don_official_items_print_id", "onepiece_don_official_items", ["print_id"])
+
+    op.create_table(
+        "onepiece_don_evidence_items",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("evidence_key", sa.String(length=160), nullable=False),
+        sa.Column("evidence_kind", sa.String(length=64), nullable=False),
+        sa.Column("source_label", sa.String(length=255), nullable=False),
+        sa.Column("source_url", sa.Text(), nullable=True),
+        sa.Column("organization", sa.String(length=255), nullable=True),
+        sa.Column("physical_received", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("claimed_label", sa.String(length=255), nullable=True),
+        sa.Column("identity_status", sa.String(length=32), server_default="unresolved", nullable=False),
+        sa.Column("evidence_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("evidence_key", name="uq_onepiece_don_evidence_items_key"),
+    )
+    op.create_index("ix_onepiece_don_evidence_items_evidence_key", "onepiece_don_evidence_items", ["evidence_key"], unique=True)
+    op.create_index("ix_onepiece_don_evidence_items_kind", "onepiece_don_evidence_items", ["evidence_kind"])
 
     op.create_table(
         "onepiece_don_prints",
@@ -101,8 +125,6 @@ def upgrade() -> None:
         sa.Column("don_subject_normalized", sa.Text(), nullable=True),
     )
 
-    # Prefix searches are the latency-critical path. pattern_ops keeps both the
-    # normal and DON-only selected-game flows indexable under non-C collations.
     with op.get_context().autocommit_block():
         op.execute(
             f"""
@@ -132,6 +154,10 @@ def downgrade() -> None:
     op.drop_index("ix_onepiece_don_prints_subject_normalized", table_name="onepiece_don_prints")
     op.drop_index("ix_onepiece_don_prints_print_id", table_name="onepiece_don_prints")
     op.drop_table("onepiece_don_prints")
+
+    op.drop_index("ix_onepiece_don_evidence_items_kind", table_name="onepiece_don_evidence_items")
+    op.drop_index("ix_onepiece_don_evidence_items_evidence_key", table_name="onepiece_don_evidence_items")
+    op.drop_table("onepiece_don_evidence_items")
 
     op.drop_index("ix_onepiece_don_official_items_print_id", table_name="onepiece_don_official_items")
     op.drop_index("ix_onepiece_don_official_items_image_phash", table_name="onepiece_don_official_items")
