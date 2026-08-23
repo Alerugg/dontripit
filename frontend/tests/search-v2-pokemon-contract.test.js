@@ -56,6 +56,6 @@ test('exact Pokémon print cards surface physical identity badges', () => {
 test('Search V2 client remains game-parameterized', () => {
   const client = source('lib/searchV2/client.js')
   assert.match(client, /searchV2\(\{ q, game/)
-  assert.match(client, /fetchFacetsV2\(game\)/)
+  assert.match(client, /fetchFacetsV2\(game, options = \{\}\)/)
   assert.match(client, /advancedSearchV2\(\{ game/)
 })
