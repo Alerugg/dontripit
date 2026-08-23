@@ -1,4 +1,4 @@
-# Production retrigger: DON structured V1 schema/materialization
+# Production certification persists a durable, reviewable Neon snapshot.
 name: Apply One Piece DON Structured V1
 
 on:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: apply-onepiece-don-structured-v1
@@ -87,6 +87,50 @@ jobs:
               raise AssertionError({'pass1':left,'pass2':right})
           print(json.dumps({'idempotent_logical_state': True, 'state': right}, indent=2, default=str))
           PY
+      - name: Persist production certification
+        working-directory: .
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p audit-reports
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          cert1=json.loads(Path('backend/artifacts/onepiece-don-structured-v1-cert-pass1.json').read_text())
+          cert2=json.loads(Path('backend/artifacts/onepiece-don-structured-v1-cert-pass2.json').read_text())
+          apply2=json.loads(Path('backend/artifacts/onepiece-don-structured-v1-apply-pass2.json').read_text())
+          out={
+            'certified_at': datetime.now(timezone.utc).isoformat(),
+            'workflow_run_id': os.environ['RUN_ID'],
+            'workflow_run_attempt': os.environ['RUN_ATTEMPT'],
+            'source_sha': os.environ['SOURCE_SHA'],
+            'idempotent_logical_state': True,
+            'status': cert2.get('status'),
+            'official': cert2.get('official'),
+            'evidence': cert2.get('evidence'),
+            'market': cert2.get('market'),
+            'cardmarket_as_of': cert2.get('cardmarket_as_of'),
+            'canonical_don_prints': cert2.get('canonical_don_prints'),
+            'accepted_external_don_print_links': cert2.get('accepted_external_don_print_links'),
+            'apply_status': apply2.get('status'),
+            'pdf_sha256': apply2.get('pdf_sha256'),
+            'extraction': apply2.get('extraction'),
+          }
+          if cert1.get('status') != 'pass' or cert2.get('status') != 'pass' or apply2.get('status') != 'apply_pass':
+            raise AssertionError(out)
+          Path('audit-reports/onepiece-don-structured-v1-production.json').write_text(json.dumps(out,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps(out,indent=2,sort_keys=True,default=str))
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add audit-reports/onepiece-don-structured-v1-production.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'audit(onepiece): persist DON structured production certification'
+            git push origin HEAD:catalog-v2
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
