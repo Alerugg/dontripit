@@ -1,0 +1,158 @@
+name: Audit One Piece DON Image Path V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-onepiece-don-image-path-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Resolve and probe current Cardmarket DON image paths READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib, io, json, os, re, urllib.error, urllib.request
+          from collections import Counter
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from PIL import Image
+          from sqlalchemy import create_engine, text
+
+          HOST='product-images.s3.cardmarket.com'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36'
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                WITH latest AS (
+                  SELECT max(source_as_of) source_as_of
+                  FROM onepiece_don_market_items WHERE source='cardmarket'
+                )
+                SELECT m.metacard_external_id,m.representative_external_product_id,m.name,m.subject,m.source_as_of,
+                       e.category_id,e.expansion_external_id,e.website_path,e.raw_json
+                FROM onepiece_don_market_items m
+                JOIN latest l ON l.source_as_of=m.source_as_of
+                JOIN games g ON g.slug='onepiece'
+                JOIN external_catalog_products e
+                  ON e.source='cardmarket' AND e.game_id=g.id
+                 AND e.product_group='single'
+                 AND e.external_id=m.representative_external_product_id
+                WHERE m.source='cardmarket'
+                ORDER BY m.metacard_external_id
+              ''')).mappings().all()]
+          assert len(rows)==164, {'rows':len(rows)}
+
+          def extract_token(path):
+              value=str(path or '').strip()
+              m=re.search(r'/Singles/([^/?#]+)',value,re.I)
+              return m.group(1) if m else None
+
+          def fetch(url):
+              req=urllib.request.Request(url,headers={
+                  'User-Agent':UA,
+                  'Accept':'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1',
+                  'Accept-Language':'en-US,en;q=0.9',
+                  'Referer':'https://www.cardmarket.com/',
+              })
+              try:
+                  with urllib.request.urlopen(req,timeout=15) as response:
+                      final=urlparse(response.geturl())
+                      body=response.read(5*1024*1024+1)
+                      if final.hostname!=HOST or not body or len(body)>5*1024*1024:
+                          return {'ok':False,'status':'invalid_response'}
+                  with Image.open(io.BytesIO(body)) as im: im.verify()
+                  with Image.open(io.BytesIO(body)) as im:
+                      width,height=im.size; fmt=im.format
+                  return {'ok':True,'status':200,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),
+                          'width':width,'height':height,'format':fmt}
+              except urllib.error.HTTPError as exc:
+                  return {'ok':False,'status':int(exc.code),'error':f'HTTP {exc.code}'}
+              except Exception as exc:
+                  return {'ok':False,'status':type(exc).__name__,'error':str(exc)}
+
+          def probe(row):
+              pid=str(row['representative_external_product_id'] or '').strip()
+              category=str(row.get('category_id') or '').strip()
+              if not category and isinstance(row.get('raw_json'),dict):
+                  category=str(row['raw_json'].get('category_id') or row['raw_json'].get('idCategory') or '').strip()
+              token=extract_token(row.get('website_path'))
+              simple=f'https://{HOST}/{category}/{pid}/{pid}.jpg' if category and pid else None
+              tokenized=f'https://{HOST}/{category}/{token}/{pid}/{pid}.jpg' if category and token and pid else None
+              result={
+                  'metacard_id':str(row['metacard_external_id']),
+                  'idProduct':pid,'name':row['name'],'subject':row.get('subject'),
+                  'category_id':category,'expansion_external_id':row.get('expansion_external_id'),
+                  'website_path':row.get('website_path'),'directory_token':token,
+                  'simple_url':simple,'tokenized_url':tokenized,
+              }
+              result['simple']=fetch(simple) if simple else {'ok':False,'status':'unresolved'}
+              result['tokenized']=fetch(tokenized) if tokenized else {'ok':False,'status':'unresolved'}
+              return result
+
+          results=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futures=[pool.submit(probe,row) for row in rows]
+              for future in as_completed(futures): results.append(future.result())
+          results.sort(key=lambda r:r['metacard_id'])
+
+          simple_ok=[r for r in results if r['simple']['ok']]
+          token_ok=[r for r in results if r['tokenized']['ok']]
+          token_missing=[r for r in results if not r['directory_token']]
+          report={
+              'status':'pass','production_writes':0,'transaction_read_only':True,
+              'market_rows':len(results),
+              'website_path_present':sum(1 for r in results if r['website_path']),
+              'directory_token_resolved':sum(1 for r in results if r['directory_token']),
+              'directory_token_missing':len(token_missing),
+              'simple_valid_images':len(simple_ok),
+              'tokenized_valid_images':len(token_ok),
+              'simple_status_counts':dict(sorted(Counter(str(r['simple']['status']) for r in results).items())),
+              'tokenized_status_counts':dict(sorted(Counter(str(r['tokenized']['status']) for r in results).items())),
+              'resolved_token_counts':dict(sorted(Counter(str(r['directory_token']) for r in token_ok).items())),
+              'tokenized_valid_rows':token_ok,
+              'token_missing_rows':token_missing,
+              'unresolved_tokenized_rows':[r for r in results if not r['tokenized']['ok']],
+          }
+          Path('artifacts/onepiece-don-image-path-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({
+              k:report[k] for k in (
+                'status','production_writes','market_rows','website_path_present','directory_token_resolved',
+                'directory_token_missing','simple_valid_images','tokenized_valid_images',
+                'simple_status_counts','tokenized_status_counts','resolved_token_counts'
+              )
+          },indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-path-v1-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-image-path-v1.json
+          retention-days: 30
+          if-no-files-found: error
