@@ -1,0 +1,258 @@
+name: Audit Pokemon EN Default TCGdex Source Path V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-en-default-tcgdex-source-path-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      OUTPUT: backend/artifacts/pokemon-en-default-tcgdex-source-path-v2.json
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+
+      - name: Checkout exact historical TCGdex source
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Derive exact source-backed asset paths and probe all 213 - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import json, os, re, time
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          import requests
+          from sqlalchemy import create_engine, text
+
+          ROOT=Path(os.environ['TCGDEX_CARDS_REPO'])/'data'
+          PIN=os.environ['TCGDEX_CARDS_SHA']
+
+          id_re=re.compile(r'\bid\s*:\s*["\']([^"\']+)["\']')
+          serie_import_re=re.compile(r'import\s+serie\s+from\s+["\']([^"\']+)["\']')
+
+          # Parse exact set -> series IDs from the pinned source tree.
+          set_to_series={}
+          source_files={}
+          parse_errors=[]
+          for path in ROOT.rglob('*.ts'):
+              try:
+                  content=path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              # Set files import the Set interface and a concrete `serie` object.
+              if 'Set' not in content or 'import serie from' not in content:
+                  continue
+              id_match=id_re.search(content)
+              import_match=serie_import_re.search(content)
+              if not id_match or not import_match:
+                  continue
+              set_id=id_match.group(1)
+              rel=import_match.group(1)
+              series_path=(path.parent/rel).resolve()
+              if series_path.suffix!='.ts':
+                  series_path=Path(str(series_path)+'.ts')
+              try:
+                  series_content=series_path.read_text(encoding='utf-8')
+              except Exception as exc:
+                  parse_errors.append({'set_file':str(path.relative_to(ROOT.parent)),'set_id':set_id,'series_ref':rel,'error':str(exc)})
+                  continue
+              series_id_match=id_re.search(series_content)
+              if not series_id_match:
+                  parse_errors.append({'set_file':str(path.relative_to(ROOT.parent)),'set_id':set_id,'series_ref':rel,'error':'series id not found'})
+                  continue
+              series_id=series_id_match.group(1)
+              existing=set_to_series.get(set_id)
+              if existing and existing!=series_id:
+                  parse_errors.append({'set_id':set_id,'error':'conflicting series ids','values':[existing,series_id]})
+                  continue
+              set_to_series[set_id]=series_id
+              source_files[set_id]=str(path.relative_to(ROOT.parent))
+
+          if parse_errors:
+              raise RuntimeError(f'pinned-source parse errors: {parse_errors[:10]}')
+          if len(set_to_series)<100:
+              raise RuntimeError(f'implausibly small pinned set index: {len(set_to_series)}')
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on':
+                  raise RuntimeError('audit connection is not read-only')
+
+              working=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,im.url
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                JOIN print_images im ON im.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND p.tcgdex_id IS NOT NULL
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                  AND im.source='tcgdex'
+                  AND im.url LIKE 'https://assets.tcgdex.net/en/%'
+              ''')).mappings().all()]
+
+              residual=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,p.variant,p.collector_number,p.print_key,
+                       c.name card_name,s.code set_code,s.name set_name,
+                       pa.source attributes_source,pa.source_version,pa.attributes_json
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND COALESCE(p.variant,'') NOT LIKE 'v2-%'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(working)!=6034:
+              raise RuntimeError(f'working TCGdex baseline drift: {len(working)}')
+          if len(residual)!=213:
+              raise RuntimeError(f'EN default residual drift: {len(residual)}')
+
+          # Prove source-derived series IDs agree with every usable production URL.
+          production_path_violations=[]
+          validated_intersections=0
+          for row in working:
+              tid=str(row['tcgdex_id'])
+              matches=[sid for sid in set_to_series if tid.startswith(sid+'-')]
+              if not matches:
+                  production_path_violations.append({'print_id':row['print_id'],'tcgdex_id':tid,'reason':'no source set match'})
+                  continue
+              set_id=max(matches,key=len)
+              local_id=tid[len(set_id)+1:]
+              series_id=set_to_series[set_id]
+              expected=f'https://assets.tcgdex.net/en/{series_id}/{set_id}/{local_id}/high.webp'
+              if str(row['url'])!=expected:
+                  production_path_violations.append({'print_id':row['print_id'],'tcgdex_id':tid,'actual':row['url'],'expected':expected,'set_id':set_id,'series_id':series_id})
+              else:
+                  validated_intersections+=1
+          if production_path_violations:
+              raise RuntimeError(f'source-derived path disagrees with production: {production_path_violations[:10]} total={len(production_path_violations)}')
+          if validated_intersections!=6034:
+              raise RuntimeError(f'not all working URLs validated: {validated_intersections}')
+
+          candidates=[]; identity_violations=[]
+          for row in residual:
+              tid=str(row.get('tcgdex_id') or '')
+              attrs=row.get('attributes_json')
+              source_id=str(attrs.get('source_id') or '') if isinstance(attrs,dict) else ''
+              if row.get('variant')!='default':
+                  identity_violations.append({'print_id':row['print_id'],'reason':'variant','value':row.get('variant')})
+                  continue
+              if row.get('attributes_source')!='tcgdex/cards-database' or str(row.get('source_version') or '')!=PIN:
+                  identity_violations.append({'print_id':row['print_id'],'reason':'provenance','source':row.get('attributes_source'),'version':row.get('source_version')})
+                  continue
+              if not tid or source_id!=tid:
+                  identity_violations.append({'print_id':row['print_id'],'reason':'source identity mismatch','tcgdex_id':tid,'source_id':source_id})
+                  continue
+              matches=[sid for sid in set_to_series if tid.startswith(sid+'-')]
+              if not matches:
+                  identity_violations.append({'print_id':row['print_id'],'reason':'no pinned set match','tcgdex_id':tid})
+                  continue
+              set_id=max(matches,key=len)
+              local_id=tid[len(set_id)+1:]
+              series_id=set_to_series[set_id]
+              url=f'https://assets.tcgdex.net/en/{series_id}/{set_id}/{local_id}/high.webp'
+              candidates.append({
+                'print_id':int(row['print_id']),'tcgdex_id':tid,'set_id':set_id,
+                'series_id':series_id,'local_id':local_id,'url':url,
+                'card_name':row.get('card_name'),'set_code':row.get('set_code'),
+                'source_file':source_files.get(set_id),
+              })
+
+          if identity_violations:
+              raise RuntimeError(f'candidate identity violations: {identity_violations[:20]} total={len(identity_violations)}')
+          if len(candidates)!=213:
+              raise RuntimeError(f'expected all 213 source-mapped, got {len(candidates)}')
+
+          def probe_once(item):
+              try:
+                  response=requests.get(item['url'],headers={
+                    'User-Agent':'Dontripit Pokemon source-backed asset auditor/2.0',
+                    'Accept':'image/webp,image/*;q=0.9,*/*;q=0.1',
+                  },timeout=18,stream=True)
+                  ctype=str(response.headers.get('Content-Type') or '').lower()
+                  prefix=next(response.iter_content(32),b'') if response.status_code==200 else b''
+                  return {**item,'status':response.status_code,'content_type':ctype,'prefix_hex':prefix[:12].hex(),'image_ok':response.status_code==200 and ctype.startswith('image/') and bool(prefix)}
+              except Exception as exc:
+                  return {**item,'status':type(exc).__name__,'error':str(exc),'image_ok':False}
+
+          def probe(item):
+              last=None
+              for attempt in range(3):
+                  result=probe_once(item); result['attempt']=attempt+1; last=result
+                  if result.get('image_ok'): return result
+                  if result.get('status') not in (429,500,502,503,504): return result
+                  time.sleep(attempt+1)
+              return last
+
+          results=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futures=[pool.submit(probe,item) for item in candidates]
+              for future in as_completed(futures): results.append(future.result())
+          results.sort(key=lambda x:x['print_id'])
+          verified=[r for r in results if r.get('image_ok')]
+
+          per_set={}
+          for set_id in sorted({r['set_id'] for r in results}):
+              subset=[r for r in results if r['set_id']==set_id]
+              per_set[set_id]={
+                'count':len(subset),'series_id':subset[0]['series_id'],
+                'status_counts':dict(Counter(str(r.get('status')) for r in subset)),
+                'verified_images':sum(1 for r in subset if r.get('image_ok')),
+                'source_file':subset[0]['source_file'],
+              }
+
+          report={
+            'status':'pass','mode':'read-only-source-backed-probe','production_writes':0,
+            'source_version':PIN,'pinned_sets_indexed':len(set_to_series),
+            'working_paths_validated_against_source_rule':validated_intersections,
+            'residual_total':len(residual),'source_mapped_candidates':len(candidates),
+            'probe_status_counts':dict(Counter(str(r.get('status')) for r in results)),
+            'verified_images':len(verified),'per_set':per_set,
+            'verified_manifest':[{'print_id':r['print_id'],'tcgdex_id':r['tcgdex_id'],'url':r['url']} for r in verified],
+            'all_probe_results':results,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('all_probe_results','verified_manifest')},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-en-default-tcgdex-source-path-v2-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-default-tcgdex-source-path-v2.json
+          retention-days: 30
