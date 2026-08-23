@@ -1,7 +1,8 @@
 import AuthShell from '../../components/auth/AuthShell'
 
 export const metadata = {
-  title: 'Entrar · Don’tRipIt',
+  title: 'Entrar',
+  description: 'Inicia sesión en Don’tRipIt para gestionar tu colección y wishlist.',
 }
 
 export default async function LoginPage({ searchParams }) {
