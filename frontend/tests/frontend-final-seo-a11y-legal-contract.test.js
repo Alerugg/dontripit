@@ -32,7 +32,7 @@ test('password recovery has explicit metadata and remains non-indexable', () => 
 test('home publishes a canonical URL while decorative imagery stays hidden from AT', () => {
   assert.match(home, /alternates: \{ canonical: '\/' \}/)
   assert.match(publicHome, /className="v17-print-scene" aria-hidden="true"/)
-  assert.match(publicHome, /<img src=\{src\} alt=""/)
+  assert.match(publicHome, /<img[\s\S]*?src=\{src\}[\s\S]*?alt=""[\s\S]*?\/>/)
   assert.match(publicHome, /className="v17-game-brand" aria-hidden="true"/)
 })
 
