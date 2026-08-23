@@ -1,0 +1,126 @@
+name: Audit Pokemon JA Residual API V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-ja-residual-api-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      OUTPUT: backend/artifacts/pokemon-ja-residual-api-v2.json
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Cross-check exact JA residual identities against current TCGdex card image index - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          python - <<'PY'
+          import datetime as dt, json, os
+          from collections import Counter
+          from pathlib import Path
+          import requests
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on':
+                  raise RuntimeError('audit connection is not read-only')
+              residual=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.collector_number,s.code set_code,
+                       ids.cnt ja_identifier_count,ids.external_id
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                LEFT JOIN LATERAL (
+                  SELECT COUNT(*)::int cnt,MIN(pi.external_id) external_id
+                  FROM print_identifiers pi WHERE pi.print_id=p.id AND pi.source='tcgdex:ja'
+                ) ids ON TRUE
+                WHERE g.slug='pokemon' AND p.language='ja'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              live_source_rows=int(conn.execute(text('''
+                SELECT COUNT(*) FROM print_images im
+                JOIN prints p ON p.id=im.print_id
+                JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='ja' AND im.source='tcgdex:ja'
+              ''')).scalar_one())
+              conn.rollback()
+
+          if len(residual)!=4157: raise RuntimeError(f'JA residual baseline drift: {len(residual)}')
+          if live_source_rows!=4002: raise RuntimeError(f'JA live source baseline drift: {live_source_rows}')
+          bad=[r for r in residual if r.get('variant')!='default' or int(r.get('ja_identifier_count') or 0)!=1 or not r.get('external_id')]
+          if bad: raise RuntimeError(f'JA residual identity violations: {bad[:20]} total={len(bad)}')
+
+          endpoint='https://api.tcgdex.net/v2/ja/cards'
+          response=requests.get(endpoint,headers={'User-Agent':'Dontripit Pokemon JA image index auditor/2.0','Accept':'application/json'},timeout=90)
+          response.raise_for_status()
+          cards=response.json()
+          if not isinstance(cards,list) or len(cards)<4000:
+              raise RuntimeError(f'implausible TCGdex JA card index: type={type(cards).__name__} count={len(cards) if isinstance(cards,list) else None}')
+
+          by_id={str(c.get('id')):c for c in cards if isinstance(c,dict) and c.get('id')}
+          if len(by_id)!=len(cards):
+              raise RuntimeError(f'TCGdex JA index duplicate/malformed ids: list={len(cards)} unique={len(by_id)}')
+
+          found=[]; absent=[]; image_present=[]; image_null=[]; path_mismatch=[]
+          for r in residual:
+              ext=str(r['external_id'])
+              c=by_id.get(ext)
+              if c is None:
+                  absent.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code')})
+                  continue
+              found.append(ext)
+              image=c.get('image')
+              if image:
+                  image=str(image)
+                  expected_suffix='/' + ext.rsplit('-',1)[-1]
+                  # Current API image base must be a JA asset and end in the exact local id.
+                  if not image.startswith('https://assets.tcgdex.net/ja/') or not image.endswith(expected_suffix):
+                      path_mismatch.append({'print_id':r['print_id'],'external_id':ext,'image':image,'expected_suffix':expected_suffix})
+                  image_present.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code'),'image_base':image})
+              else:
+                  image_null.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code')})
+
+          if path_mismatch:
+              raise RuntimeError(f'TCGdex JA image-base identity mismatches: {path_mismatch[:20]} total={len(path_mismatch)}')
+
+          report={
+            'status':'pass','mode':'read-only-current-tcgdex-ja-image-index','production_writes':0,
+            'retrieved_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),'endpoint':endpoint,
+            'tcgdex_ja_cards_total':len(cards),'tcgdex_ja_unique_ids':len(by_id),
+            'residual_total':len(residual),'residual_ids_found_in_api':len(found),
+            'residual_ids_absent_from_api':len(absent),'residual_image_base_present':len(image_present),
+            'residual_image_base_null':len(image_null),'image_base_identity_mismatches':0,
+            'image_present_by_set':dict(Counter(str(x.get('set_code')) for x in image_present)),
+            'absent_by_set':dict(Counter(str(x.get('set_code')) for x in absent)),
+            'image_present':image_present,'absent_from_api':absent,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if k not in ('image_present','absent_from_api')},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-ja-residual-api-v2-${{ github.run_id }}
+          path: backend/artifacts/pokemon-ja-residual-api-v2.json
+          retention-days: 30
