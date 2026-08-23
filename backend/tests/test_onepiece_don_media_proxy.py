@@ -53,11 +53,24 @@ def test_source_owned_don_proxy_path_is_metacard_scoped_and_public():
         == "/media/onepiece/don/467133/cardmarket-image"
     )
     assert (
-        onepiece_don_proxy_url("467133", public_base_url="https://api.dontripit.com/")
+        onepiece_don_proxy_url(
+            "467133",
+            expansion_external_id="6492",
+            public_base_url="https://api.dontripit.com/",
+        )
         == "https://api.dontripit.com/media/onepiece/don/467133/cardmarket-image"
     )
     assert onepiece_don_proxy_path("not-a-metacard") is None
-    assert onepiece_don_proxy_url("467133", public_base_url="http://unsafe.invalid") is None
+    assert onepiece_don_proxy_url(
+        "467133",
+        expansion_external_id="999999",
+        public_base_url="https://api.dontripit.com",
+    ) is None
+    assert onepiece_don_proxy_url(
+        "467133",
+        expansion_external_id="6492",
+        public_base_url="http://unsafe.invalid",
+    ) is None
 
 
 def test_don_proxy_serves_validated_current_source_image(monkeypatch):
@@ -143,12 +156,12 @@ class _PostgresSession:
         return _Rows(self.rows)
 
 
-def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink(monkeypatch):
-    monkeypatch.setenv("PUBLIC_API_BASE_URL", "https://api.dontripit.com")
-    row = {
+def _search_row(expansion_external_id="6492"):
+    return {
         "id": 1,
         "metacard_external_id": "467133",
         "representative_external_product_id": "904161",
+        "representative_expansion_external_id": expansion_external_id,
         "name": "Don!! (OP17 Luffy & Loki)",
         "subject": "Luffy & Loki",
         "subject_normalized": "luffy & loki",
@@ -168,8 +181,12 @@ def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink(monkeypatch):
         "cardmarket_currency": "EUR",
         "cardmarket_as_of": "2026-08-23T00:44:42Z",
     }
+
+
+def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink(monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_BASE_URL", "https://api.dontripit.com")
     page = onepiece_don_market_page(
-        _PostgresSession([row]),
+        _PostgresSession([_search_row()]),
         query="Luffy",
         limit=24,
         offset=0,
@@ -181,3 +198,14 @@ def test_don_search_uses_owned_proxy_not_direct_cardmarket_hotlink(monkeypatch):
     assert item["card_id"] is None
     assert item["print_id"] is None
     assert item["identity_scope"] == "source_owned"
+
+
+def test_don_search_hides_media_for_future_uncertified_expansion(monkeypatch):
+    monkeypatch.setenv("PUBLIC_API_BASE_URL", "https://api.dontripit.com")
+    page = onepiece_don_market_page(
+        _PostgresSession([_search_row("999999")]),
+        query="Luffy",
+        limit=24,
+        offset=0,
+    )
+    assert page["items"][0]["primary_image_url"] is None
