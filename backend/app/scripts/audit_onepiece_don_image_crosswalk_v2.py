@@ -215,6 +215,29 @@ def _rank(row: dict, market_fp: dict, official: list[dict]) -> dict:
     }
 
 
+def _persist_report(report: dict) -> None:
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "status": report["status"],
+                "transaction_read_only": report["transaction_read_only"],
+                "official_items": report["official"]["items"],
+                "market_rows": report["market_rows"],
+                "fetched_images": report["fetched_images"],
+                "unavailable_images": len(report["unavailable_images"]),
+                "exact_candidate_count": report["exact_candidate_count"],
+                "blocker": report.get("blocker"),
+            },
+            indent=2,
+        )
+    )
+
+
 def main() -> int:
     db_url = (os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL") or "").strip()
     if not db_url:
@@ -234,6 +257,8 @@ def main() -> int:
         "unavailable_images": [],
         "matches": [],
         "exact_candidates": [],
+        "exact_candidate_count": 0,
+        "blocker": None,
     }
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -270,22 +295,24 @@ def main() -> int:
         report["exact_candidates"].sort(key=lambda row: str(row["metacard_external_id"]))
         report["unavailable_images"].sort(key=lambda row: str(row["metacard_external_id"]))
         report["exact_candidate_count"] = len(report["exact_candidates"])
-        report["status"] = "pass"
         conn.rollback()
     finally:
         conn.close()
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "status": report["status"],
-        "transaction_read_only": report["transaction_read_only"],
-        "official_items": report["official"]["items"],
-        "market_rows": report["market_rows"],
-        "fetched_images": report["fetched_images"],
-        "unavailable_images": len(report["unavailable_images"]),
-        "exact_candidate_count": report["exact_candidate_count"],
-    }, indent=2))
+    if report["fetched_images"] != report["market_rows"] or report["unavailable_images"]:
+        report["status"] = "blocked"
+        report["blocker"] = {
+            "code": "incomplete_cardmarket_image_coverage",
+            "detail": "Canonical DON image crosswalk cannot be certified unless every current Cardmarket DON metacard image is readable.",
+            "market_rows": report["market_rows"],
+            "fetched_images": report["fetched_images"],
+            "unavailable_images": len(report["unavailable_images"]),
+        }
+        _persist_report(report)
+        raise AssertionError(report["blocker"])
+
+    report["status"] = "pass"
+    _persist_report(report)
     return 0
 
 
