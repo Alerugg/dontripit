@@ -1,0 +1,230 @@
+name: Audit Pokemon Missing Images Source V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-missing-images-source-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Inspect Pokemon print image source state READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+
+              def rows(sql, params=None):
+                  return [dict(r) for r in conn.execute(text(sql),params or {}).mappings().all()]
+
+              tables=rows('''
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema='public'
+                  AND (
+                    table_name ILIKE '%pokemon%'
+                    OR table_name ILIKE '%tcg%'
+                    OR table_name ILIKE '%image%'
+                    OR table_name ILIKE '%external%'
+                  )
+                ORDER BY table_name
+              ''')
+              columns={}
+              for table in ('print_images','prints','cards','external_catalog_products','external_catalog_print_links'):
+                  columns[table]=rows('''
+                    SELECT column_name,data_type
+                    FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name=:table
+                    ORDER BY ordinal_position
+                  ''',{'table':table})
+
+              source_counts=rows('''
+                SELECT COALESCE(pi.source,'<null>') source,count(*)::bigint n
+                FROM print_images pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                GROUP BY COALESCE(pi.source,'<null>')
+                ORDER BY n DESC,source
+              ''')
+              source_samples=rows('''
+                SELECT pi.source,pi.url,p.id print_id,p.language,p.collector_number,
+                       s.code set_code,c.name card_name
+                FROM print_images pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon'
+                ORDER BY pi.source,p.id
+                LIMIT 80
+              ''')
+
+              missing_by_language=rows('''
+                SELECT COALESCE(p.language,'<null>') language,count(*)::bigint n
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                GROUP BY COALESCE(p.language,'<null>')
+                ORDER BY n DESC,language
+              ''')
+
+              external_source_links=rows('''
+                WITH missing AS (
+                  SELECT p.id print_id,p.language
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT e.source,
+                       count(*)::bigint link_rows,
+                       count(DISTINCT m.print_id)::bigint missing_prints_linked,
+                       count(DISTINCT m.print_id) FILTER (
+                         WHERE l.link_status IN ('accepted','mapped','exact')
+                           AND l.confidence='exact' AND l.reviewed IS TRUE
+                       )::bigint exact_reviewed_prints
+                FROM missing m
+                JOIN external_catalog_print_links l ON l.print_id=m.print_id
+                JOIN external_catalog_products e ON e.id=l.external_product_id
+                GROUP BY e.source
+                ORDER BY missing_prints_linked DESC,e.source
+              ''')
+
+              exact_cardmarket_by_language=rows('''
+                WITH missing AS (
+                  SELECT p.id print_id,p.language
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ), strict AS (
+                  SELECT m.print_id,m.language,e.external_id,
+                         count(*) OVER(PARTITION BY l.external_product_id) variants_per_external,
+                         count(*) OVER(PARTITION BY l.print_id) externals_per_print
+                  FROM missing m
+                  JOIN external_catalog_print_links l ON l.print_id=m.print_id
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  WHERE e.source='cardmarket'
+                    AND e.product_group='single'
+                    AND l.link_status IN ('accepted','mapped','exact')
+                    AND l.confidence='exact'
+                    AND l.reviewed IS TRUE
+                )
+                SELECT COALESCE(language,'<null>') language,
+                       count(DISTINCT print_id)::bigint exact_reviewed,
+                       count(DISTINCT print_id) FILTER (
+                         WHERE variants_per_external=1 AND externals_per_print=1
+                       )::bigint exact_global_1to1
+                FROM strict
+                GROUP BY COALESCE(language,'<null>')
+                ORDER BY language
+              ''')
+
+              sibling_image_by_language=rows('''
+                WITH missing AS (
+                  SELECT p.id print_id,p.card_id,p.language,p.set_id,p.collector_number
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT COALESCE(m.language,'<null>') language,
+                       count(*)::bigint missing,
+                       count(*) FILTER (WHERE EXISTS (
+                         SELECT 1 FROM prints sibling
+                         JOIN print_images spi ON spi.print_id=sibling.id
+                         WHERE sibling.card_id=m.card_id AND sibling.id<>m.print_id
+                       ))::bigint same_card_has_other_imaged_print,
+                       count(*) FILTER (WHERE EXISTS (
+                         SELECT 1 FROM prints sibling
+                         JOIN print_images spi ON spi.print_id=sibling.id
+                         WHERE sibling.card_id=m.card_id AND sibling.id<>m.print_id
+                           AND sibling.language=m.language
+                       ))::bigint same_card_same_language_has_other_image
+                FROM missing m
+                GROUP BY COALESCE(m.language,'<null>')
+                ORDER BY language
+              ''')
+
+              missing_samples=rows('''
+                SELECT p.id print_id,p.language,p.collector_number,s.code set_code,c.name card_name,
+                       c.id card_id
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon'
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.language,s.code,p.collector_number,p.id
+                LIMIT 80
+              ''')
+              conn.rollback()
+
+          report={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'relevant_tables':tables,'columns':columns,
+            'existing_image_source_counts':source_counts,
+            'existing_image_samples':source_samples,
+            'missing_by_language':missing_by_language,
+            'external_source_links_for_missing':external_source_links,
+            'exact_cardmarket_links_by_language':exact_cardmarket_by_language,
+            'sibling_image_by_language':sibling_image_by_language,
+            'missing_samples':missing_samples,
+          }
+          total_missing=sum(int(x['n']) for x in missing_by_language)
+          report['missing_total']=total_missing
+          assert total_missing==7573,report
+          Path('artifacts/pokemon-missing-images-source-v1.json').write_text(
+            json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n'
+          )
+          print(json.dumps({
+            'status':'pass','production_writes':0,'missing_total':total_missing,
+            'missing_by_language':missing_by_language,
+            'existing_image_source_counts':source_counts,
+            'external_source_links_for_missing':external_source_links,
+            'exact_cardmarket_links_by_language':exact_cardmarket_by_language,
+            'sibling_image_by_language':sibling_image_by_language,
+            'relevant_tables':[x['table_name'] for x in tables],
+          },indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-missing-images-source-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-missing-images-source-v1.json
+          retention-days: 30
