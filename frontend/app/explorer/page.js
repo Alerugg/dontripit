@@ -12,6 +12,16 @@ function positivePage(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
 }
 
+function initialResultType(params, query) {
+  const requested = String(params?.kind || '').trim()
+  if (requested === 'all') return ''
+  if (VALID_TYPES.has(requested) && requested) return requested
+  // A query without an explicit tab should land on canonical Cards first.
+  // This keeps first paint on the fast, identity-safe path; exact Print/Set
+  // counts continue in the background once results are visible.
+  return query ? 'card' : ''
+}
+
 export const metadata = {
   title: 'Explorador de catálogo',
   description: 'Busca cartas, impresiones físicas y sets de todos los TCG activos en Don’tRipIt.',
@@ -21,7 +31,7 @@ export const metadata = {
 export default async function ExplorerPage({ searchParams }) {
   const params = await searchParams
   const query = String(params?.q || '').trim()
-  const kind = VALID_TYPES.has(params?.kind || '') ? (params?.kind || '') : ''
+  const kind = initialResultType(params, query)
   const view = VALID_VIEWS.has(params?.view || '') ? params.view : 'grid'
   const sort = VALID_SORTS.has(params?.sort || '') ? params.sort : 'relevance'
   const language = VALID_LANGUAGES.has(params?.language || '') ? (params?.language || '') : ''
