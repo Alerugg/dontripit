@@ -8,6 +8,7 @@ on:
       - 'backend/alembic/versions/20260823_41_add_onepiece_don_market_items.py'
       - 'backend/app/onepiece_don_models.py'
       - 'backend/app/search_v2_models.py'
+      - 'backend/app/search_v2/indexer.py'
       - 'backend/app/scripts/audit_onepiece_don_structured_v1.py'
       - 'backend/app/scripts/probe_onepiece_don_official_source_v1.py'
       - 'backend/app/scripts/apply_onepiece_don_structured_v1.py'
@@ -36,6 +37,7 @@ jobs:
       - name: Compile DON implementation
         run: |
           python -m py_compile app/onepiece_don_models.py
+          python -m py_compile app/search_v2/indexer.py
           python -m py_compile app/scripts/audit_onepiece_don_structured_v1.py
           python -m py_compile app/scripts/probe_onepiece_don_official_source_v1.py
           python -m py_compile app/scripts/apply_onepiece_don_structured_v1.py
