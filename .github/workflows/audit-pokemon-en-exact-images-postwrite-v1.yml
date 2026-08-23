@@ -1,0 +1,149 @@
+name: Audit Pokemon EN Exact Images Postwrite V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-en-exact-images-postwrite-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Certify production state READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+
+              source_rows=[dict(r) for r in conn.execute(text('''
+                SELECT pi.id image_id,pi.print_id,pi.url,pi.is_primary,pi.source,
+                       p.tcgdex_id,p.language,p.variant,p.is_foil,c.name card_name,
+                       s.code set_code,g.slug game_slug
+                FROM print_images pi
+                JOIN prints p ON p.id=pi.print_id
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE pi.source='tcgplayer:tcgdex-source'
+                ORDER BY pi.print_id
+              ''')).mappings().all()]
+
+              missing_by_language=dict(conn.execute(text('''
+                SELECT coalesce(p.language,'<null>') language,count(*) n
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                GROUP BY coalesce(p.language,'<null>')
+                ORDER BY 1
+              ''')).all())
+
+              missing_total=conn.execute(text('''
+                SELECT count(*)
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+              ''')).scalar_one()
+
+              missing_en_exact=conn.execute(text('''
+                SELECT count(*)
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='en' AND p.tcgdex_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+              ''')).scalar_one()
+
+              source_prints_with_multiple_images=conn.execute(text('''
+                SELECT count(*) FROM (
+                  SELECT pi.print_id
+                  FROM print_images pi
+                  WHERE pi.print_id IN (
+                    SELECT print_id FROM print_images WHERE source='tcgplayer:tcgdex-source'
+                  )
+                  GROUP BY pi.print_id
+                  HAVING count(*) > 1
+                ) q
+              ''')).scalar_one()
+              conn.rollback()
+
+          url_re=re.compile(r'^https://tcgplayer-cdn\.tcgplayer\.com/product/(\d+)_in_1000x1000\.jpg$')
+          bad_scope=[r for r in source_rows if r['game_slug']!='pokemon' or r['language']!='en' or not r['tcgdex_id']]
+          bad_variant=[r for r in source_rows if bool(r['is_foil']) or str(r['variant'] or '')!='default']
+          bad_primary=[r for r in source_rows if not bool(r['is_primary'])]
+          bad_url=[r for r in source_rows if not url_re.match(str(r['url'] or ''))]
+          duplicate_urls=len(source_rows)-len({r['url'] for r in source_rows})
+          duplicate_prints=len(source_rows)-len({r['print_id'] for r in source_rows})
+
+          summary={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'source_rows':len(source_rows),
+            'source_distinct_prints':len({r['print_id'] for r in source_rows}),
+            'source_distinct_urls':len({r['url'] for r in source_rows}),
+            'bad_scope':len(bad_scope),'bad_variant':len(bad_variant),
+            'bad_primary':len(bad_primary),'bad_url':len(bad_url),
+            'duplicate_urls':duplicate_urls,'duplicate_prints':duplicate_prints,
+            'source_prints_with_multiple_images':source_prints_with_multiple_images,
+            'missing_total_pokemon':int(missing_total),
+            'missing_by_language':{str(k):int(v) for k,v in missing_by_language.items()},
+            'missing_en_exact':int(missing_en_exact),
+          }
+          report={**summary,'samples':source_rows[:100],
+                  'bad_scope_samples':bad_scope[:20],
+                  'bad_variant_samples':bad_variant[:20],
+                  'bad_url_samples':bad_url[:20]}
+          Path('artifacts/pokemon-en-exact-images-postwrite-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+
+          assert summary['source_rows']==271, summary
+          assert summary['source_distinct_prints']==271, summary
+          assert summary['source_distinct_urls']==271, summary
+          assert summary['bad_scope']==0, report
+          assert summary['bad_variant']==0, report
+          assert summary['bad_primary']==0, report
+          assert summary['bad_url']==0, report
+          assert summary['duplicate_urls']==0, report
+          assert summary['duplicate_prints']==0, report
+          assert summary['source_prints_with_multiple_images']==0, report
+          assert summary['missing_total_pokemon']==7302, summary
+          assert summary['missing_by_language'].get('en')==1507, summary
+          assert summary['missing_by_language'].get('es')==933, summary
+          assert summary['missing_by_language'].get('ja')==4862, summary
+          assert summary['missing_en_exact']==1287, summary
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-en-exact-images-postwrite-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-exact-images-postwrite-v1.json
+          retention-days: 30
