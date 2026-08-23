@@ -1,0 +1,107 @@
+name: Audit Sealed Images Fresh All V3
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-images-fresh-all-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Re-probe every still-missing exact sealed image READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+          from app.scripts import sync_sealed_cardmarket_proxy_images_v1 as v1
+          from app.scripts import sync_sealed_cardmarket_proxy_images_v2 as v2
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+
+          # V2's identity gate is the certified one. Narrow it to rows that still
+          # have no ProductImage so this audit does not waste requests on the
+          # 3,653 proxy rows already materialized.
+          v1.ELIGIBLE_SQL=text(
+              'SELECT scoped.* FROM (' + v2.IDEMPOTENT_ELIGIBLE_SQL.text + ''') scoped
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM product_images pi WHERE pi.product_variant_id=scoped.variant_id
+               )'''
+          )
+          report=v2.certify_snapshot(engine,max_workers=16,timeout=8,retries=0)
+          recoverable=list(report.get('recoverable') or [])
+          unavailable=list(report.get('unavailable') or [])
+          hard=list(report.get('hard_failures') or [])
+          compact={k:v for k,v in report.items() if k not in {'recoverable','unavailable','hard_failures'}}
+          out={
+              'status':'pass',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'certification':compact,
+              'newly_recoverable_missing_count':len(recoverable),
+              'still_unavailable_missing_count':len(unavailable),
+              'hard_failure_count':len(hard),
+              'newly_recoverable_by_game':{},
+              'newly_recoverable_sample':[],
+              'hard_failure_sample':hard[:25],
+          }
+          for row in recoverable:
+              game=str(row.get('game') or 'unknown')
+              out['newly_recoverable_by_game'][game]=out['newly_recoverable_by_game'].get(game,0)+1
+          out['newly_recoverable_sample']=[
+              {k:r.get(k) for k in ('variant_id','game','product_name','product_type','set_code','language','region','external_id','source_image_url','sha256','width','height')}
+              for r in recoverable[:100]
+          ]
+          assert report.get('control',{}).get('ok') is True,out
+          assert int(report.get('source_url_collision_count') or 0)==0,out
+          assert len(hard)==0,out
+          Path('artifacts/sealed-images-fresh-all-v3.json').write_text(json.dumps(out,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({
+              'status':'pass','production_writes':0,
+              'eligible_missing':compact.get('eligible'),
+              'counts':compact.get('counts'),
+              'by_game':compact.get('by_game'),
+              'by_game_product_type':compact.get('by_game_product_type'),
+              'newly_recoverable_missing_count':len(recoverable),
+              'newly_recoverable_by_game':out['newly_recoverable_by_game'],
+              'still_unavailable_missing_count':len(unavailable),
+              'hard_failure_count':len(hard),
+              'source_url_collision_count':compact.get('source_url_collision_count'),
+              'newly_recoverable_sample':out['newly_recoverable_sample'][:25],
+          },indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed-images-fresh-all-v3-${{ github.run_id }}
+          path: backend/artifacts/sealed-images-fresh-all-v3.json
+          retention-days: 30
+          if-no-files-found: error
