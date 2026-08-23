@@ -1,0 +1,275 @@
+name: Audit Pokemon V2 Postwrite Cert V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-postwrite-cert-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PYTHONPATH: .
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      OUTPUT: artifacts/pokemon-v2-postwrite-cert-v1.json
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned TCGdex source
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Independent read-only production certification
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          from sqlalchemy import create_engine, text
+
+          SOURCE_VERSION = os.environ['TCGDEX_CARDS_SHA']
+          SOURCE_LABEL = 'tcgplayer:tcgdex-variant-v2'
+          EXPECTED_ALL_V2 = 27241
+          EXPECTED_WRITER_MAX = 1108
+          EXPECTED_PRIOR_RESIDUAL = 1296
+          EXPECTED_TARGET_WRITES = 1068
+          OUTPUT = Path(os.environ['OUTPUT'])
+
+          # Independent upstream occurrence map from the exact source snapshot.
+          occurrences = Counter()
+          pattern = re.compile(r'\btcgplayer\s*:\s*(\d+)\b')
+          for path in (Path(os.environ['TCGDEX_CARDS_REPO']) / 'data').rglob('*.ts'):
+              try:
+                  content = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              for match in pattern.finditer(content):
+                  occurrences[match.group(1)] += 1
+
+          engine = create_engine(os.environ['DATABASE_URL_UNPOOLED'], pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one() != 'on':
+                  raise RuntimeError('Certification connection is not read-only')
+
+              missing_by_language = {
+                  str(row['language']): int(row['missing'])
+                  for row in conn.execute(text('''
+                      SELECT p.language, COUNT(*) AS missing
+                      FROM prints p
+                      JOIN cards c ON c.id=p.card_id
+                      JOIN games g ON g.id=c.game_id
+                      WHERE g.slug='pokemon'
+                        AND NOT EXISTS (
+                          SELECT 1 FROM print_images im WHERE im.print_id=p.id
+                        )
+                      GROUP BY p.language
+                      ORDER BY p.language
+                  ''')).mappings().all()
+              }
+
+              v2_rows = [dict(row) for row in conn.execute(text('''
+                  SELECT p.id AS print_id,p.variant,p.language,p.tcgdex_id,
+                         pa.source AS attributes_source,pa.source_version,pa.attributes_json,
+                         (SELECT pi.external_id
+                          FROM print_identifiers pi
+                          WHERE pi.print_id=p.id AND pi.source='tcgdex-variant-v2'
+                          LIMIT 1) AS exact_variant_id,
+                         (SELECT COUNT(*) FROM print_images im WHERE im.print_id=p.id) AS image_count
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  JOIN print_attributes pa ON pa.print_id=p.id
+                  WHERE g.slug='pokemon' AND p.language='en'
+                    AND COALESCE(p.variant,'') LIKE 'v2-%'
+                  ORDER BY p.id
+              ''')).mappings().all()]
+
+              writer_rows = [dict(row) for row in conn.execute(text('''
+                  SELECT im.id AS image_id,im.print_id,im.url,im.is_primary,im.source,
+                         p.variant,p.language,p.tcgdex_id,
+                         pa.source AS attributes_source,pa.source_version,pa.attributes_json,
+                         (SELECT pi.external_id
+                          FROM print_identifiers pi
+                          WHERE pi.print_id=p.id AND pi.source='tcgdex-variant-v2'
+                          LIMIT 1) AS exact_variant_id,
+                         (SELECT COUNT(*) FROM print_images x WHERE x.print_id=p.id) AS image_count
+                  FROM print_images im
+                  JOIN prints p ON p.id=im.print_id
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  JOIN print_attributes pa ON pa.print_id=p.id
+                  WHERE g.slug='pokemon' AND im.source=:source
+                  ORDER BY im.print_id
+              '''), {'source': SOURCE_LABEL}).mappings().all()]
+              conn.rollback()
+
+          if len(v2_rows) != EXPECTED_ALL_V2:
+              raise RuntimeError(f'v2 universe drift: expected={EXPECTED_ALL_V2} actual={len(v2_rows)}')
+
+          product_to_exact = defaultdict(set)
+          normalized = {}
+          violations = []
+          for row in v2_rows:
+              attrs = row.get('attributes_json')
+              if row.get('attributes_source') != 'tcgdex/cards-database':
+                  violations.append(f"print {row['print_id']} attributes_source={row.get('attributes_source')}")
+                  continue
+              if str(row.get('source_version') or '') != SOURCE_VERSION:
+                  violations.append(f"print {row['print_id']} source_version={row.get('source_version')}")
+                  continue
+              if not isinstance(attrs, dict) or not isinstance(attrs.get('physical_variant'), dict):
+                  violations.append(f"print {row['print_id']} missing physical_variant")
+                  continue
+              physical = attrs['physical_variant']
+              source_id = str(attrs.get('source_id') or '').strip()
+              variant_hash = str(physical.get('variant_hash') or '').strip()
+              exact = f'{source_id}#{variant_hash}'
+              if not source_id or not variant_hash:
+                  violations.append(f"print {row['print_id']} incomplete exact identity")
+                  continue
+              if row.get('exact_variant_id') != exact:
+                  violations.append(f"print {row['print_id']} exact identifier mismatch")
+              if row.get('variant') != f'v2-{variant_hash}':
+                  violations.append(f"print {row['print_id']} variant replay mismatch")
+              third_party = physical.get('third_party') or {}
+              product = None
+              if isinstance(third_party, dict) and third_party.get('tcgplayer') not in (None, ''):
+                  product = str(third_party['tcgplayer'])
+                  product_to_exact[product].add(exact)
+              normalized[int(row['print_id'])] = {
+                  'exact': exact,
+                  'product': product,
+                  'image_count': int(row['image_count']),
+              }
+
+          v2_residual = sum(1 for row in v2_rows if int(row['image_count']) == 0)
+          v2_with_images = len(v2_rows) - v2_residual
+
+          source_products = []
+          source_exact = []
+          for row in writer_rows:
+              pid = int(row['print_id'])
+              info = normalized.get(pid)
+              if info is None:
+                  violations.append(f'writer image {row["image_id"]} is outside EN v2 universe')
+                  continue
+              product = info['product']
+              exact = info['exact']
+              source_products.append(product)
+              source_exact.append(exact)
+              if row.get('language') != 'en':
+                  violations.append(f'writer image on non-EN print {pid}')
+              if not str(row.get('variant') or '').startswith('v2-'):
+                  violations.append(f'writer image on non-v2 print {pid}')
+              if not bool(row.get('is_primary')):
+                  violations.append(f'writer image is not primary for print {pid}')
+              if int(row.get('image_count') or 0) != 1:
+                  violations.append(f'writer print {pid} has image_count={row.get("image_count")}')
+              if not product:
+                  violations.append(f'writer print {pid} has no TCGplayer physical reference')
+                  continue
+              if len(product_to_exact[product]) != 1:
+                  violations.append(f'writer product {product} is shared across exact identities')
+              if occurrences[product] != 1:
+                  violations.append(f'writer product {product} upstream occurrences={occurrences[product]}')
+              expected_url = f'https://tcgplayer-cdn.tcgplayer.com/product/{product}_in_1000x1000.jpg'
+              if row.get('url') != expected_url:
+                  violations.append(f'writer print {pid} URL mismatch')
+
+          duplicate_writer_prints = [
+              print_id for print_id,count in Counter(int(row['print_id']) for row in writer_rows).items()
+              if count != 1
+          ]
+          duplicate_writer_products = [
+              product for product,count in Counter(source_products).items()
+              if product and count != 1
+          ]
+          duplicate_writer_exact = [
+              exact for exact,count in Counter(source_exact).items()
+              if exact and count != 1
+          ]
+          if duplicate_writer_prints:
+              violations.append(f'duplicate writer print_ids: {len(duplicate_writer_prints)}')
+          if duplicate_writer_products:
+              violations.append(f'duplicate writer products: {len(duplicate_writer_products)}')
+          if duplicate_writer_exact:
+              violations.append(f'duplicate writer exact identities: {len(duplicate_writer_exact)}')
+          if len(writer_rows) > EXPECTED_WRITER_MAX:
+              violations.append(f'writer rows exceed certified maximum: {len(writer_rows)} > {EXPECTED_WRITER_MAX}')
+
+          total_missing = sum(missing_by_language.values())
+          target_state = (
+              len(writer_rows) == EXPECTED_TARGET_WRITES
+              and v2_residual == EXPECTED_PRIOR_RESIDUAL - EXPECTED_TARGET_WRITES
+              and missing_by_language.get('en') == 441
+              and missing_by_language.get('es') == 933
+              and missing_by_language.get('ja') == 4862
+              and total_missing == 6236
+          )
+
+          report = {
+              'status': 'pass' if not violations else 'fail',
+              'mode': 'read-only-production-certification',
+              'source_version': SOURCE_VERSION,
+              'source_label': SOURCE_LABEL,
+              'all_v2_prints': len(v2_rows),
+              'v2_with_images': v2_with_images,
+              'v2_residual_missing_images': v2_residual,
+              'writer_source_images': len(writer_rows),
+              'certified_writer_ceiling': EXPECTED_WRITER_MAX,
+              'expected_target_writes_from_pr579_probe': EXPECTED_TARGET_WRITES,
+              'missing_by_language': missing_by_language,
+              'pokemon_missing_images_total': total_missing,
+              'target_state_1068_applied': target_state,
+              'violations': violations[:100],
+              'violation_count': len(violations),
+              'duplicate_writer_prints': len(duplicate_writer_prints),
+              'duplicate_writer_products': len(duplicate_writer_products),
+              'duplicate_writer_exact_identities': len(duplicate_writer_exact),
+          }
+          OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+          OUTPUT.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(report, indent=2, sort_keys=True))
+
+          if violations:
+              raise RuntimeError(f'Certification integrity violations: {len(violations)}')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-v2-postwrite-cert-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-postwrite-cert-v1.json
+          retention-days: 30
