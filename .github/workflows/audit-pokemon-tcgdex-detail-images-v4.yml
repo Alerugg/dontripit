@@ -1,0 +1,183 @@
+name: Audit Pokemon TCGdex Detail Images V4
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgdex-detail-images-v4.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Probe TCGdex detail endpoints and exact image delivery READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, time, requests
+          from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.language,p.collector_number,p.rarity,p.is_foil,p.variant,
+                       p.tcgdex_id print_tcgdex_id,p.print_key,
+                       c.id card_id,c.name card_name,c.tcgdex_id card_tcgdex_id,
+                       s.id set_id,s.code set_code
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon'
+                  AND p.language IN ('en','es')
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.language,p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          # Exact EN candidates use print tcgdex_id. ES has no print tcgdex_id, so its
+          # card tcgdex_id is audited separately and never silently promoted to exact.
+          request_keys={}
+          for r in rows:
+              if r['language']=='en' and r['print_tcgdex_id']:
+                  request_keys[('en',str(r['print_tcgdex_id']))]=None
+              elif r['language']=='es' and r['card_tcgdex_id']:
+                  request_keys[('es',str(r['card_tcgdex_id']))]=None
+
+          def fetch_detail(key):
+              lang,cid=key
+              s=requests.Session()
+              s.headers.update({'User-Agent':'Dontripit Pokemon exact image certifier/1.0','Accept':'application/json'})
+              url=f'https://api.tcgdex.net/v2/{lang}/cards/{cid}'
+              for attempt in range(4):
+                  try:
+                      resp=s.get(url,timeout=20)
+                      if resp.status_code==429 or resp.status_code>=500:
+                          time.sleep(0.35*(attempt+1)); continue
+                      if resp.status_code!=200:
+                          return key,{'status':resp.status_code,'url':url}
+                      payload=resp.json()
+                      return key,{
+                        'status':200,'url':url,'id':str(payload.get('id') or ''),
+                        'localId':str(payload.get('localId') or ''),
+                        'name':payload.get('name'),'image':payload.get('image'),
+                        'set_id':str(((payload.get('set') or {}).get('id')) or ''),
+                        'variants':payload.get('variants'),
+                      }
+                  except Exception as exc:
+                      if attempt==3: return key,{'status':type(exc).__name__,'error':str(exc),'url':url}
+                      time.sleep(0.35*(attempt+1))
+              return key,{'status':'exhausted','url':url}
+
+          details={}
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futs=[pool.submit(fetch_detail,k) for k in request_keys]
+              for f in as_completed(futs):
+                  k,v=f.result(); details[k]=v
+
+          candidates=[]
+          for r in rows:
+              if r['language']=='en' and r['print_tcgdex_id']:
+                  source_id=str(r['print_tcgdex_id'])
+                  scope='print_exact'
+              elif r['language']=='es' and r['card_tcgdex_id']:
+                  source_id=str(r['card_tcgdex_id'])
+                  scope='card_localized'
+              else:
+                  continue
+              d=details.get((r['language'],source_id),{})
+              item=dict(r)
+              item['scope']=scope
+              item['source_id']=source_id
+              item['detail']=d
+              image=(d.get('image') or '').rstrip('/') if d.get('status')==200 else ''
+              item['image_url']=(image+'/high.webp') if image else None
+              item['id_exact']=bool(d.get('status')==200 and d.get('id')==source_id)
+              # localId is informative only; old/special IDs can contain suffixes.
+              item['collector_vs_local_id']={'collector':str(r['collector_number'] or ''),'localId':str(d.get('localId') or '')}
+              candidates.append(item)
+
+          image_candidates=[r for r in candidates if r['id_exact'] and r['image_url']]
+
+          def probe_image(item):
+              s=requests.Session(); s.headers.update({'User-Agent':'Dontripit Pokemon exact image certifier/1.0','Accept':'image/*'})
+              try:
+                  resp=s.get(item['image_url'],timeout=20,stream=True)
+                  prefix=next(resp.iter_content(32),b'') if resp.status_code==200 else b''
+                  return item['print_id'],{
+                    'status':resp.status_code,'content_type':resp.headers.get('Content-Type'),
+                    'content_length':resp.headers.get('Content-Length'),'prefix_hex':prefix[:12].hex()
+                  }
+              except Exception as exc:
+                  return item['print_id'],{'status':type(exc).__name__,'error':str(exc)}
+
+          probes={}
+          with ThreadPoolExecutor(max_workers=20) as pool:
+              futs=[pool.submit(probe_image,r) for r in image_candidates]
+              for f in as_completed(futs):
+                  pid,v=f.result(); probes[pid]=v
+          for r in candidates: r['probe']=probes.get(r['print_id'])
+
+          verified=[r for r in candidates if r['id_exact'] and r['image_url'] and r.get('probe',{}).get('status')==200 and str(r.get('probe',{}).get('content_type') or '').startswith('image/')]
+          verified_en=[r for r in verified if r['scope']=='print_exact']
+          verified_es=[r for r in verified if r['scope']=='card_localized']
+
+          # Stronger ES safety checks: each card-level source id must identify exactly one
+          # missing Spanish Print and no other Spanish Print may already claim that id.
+          es_source_counts=Counter(str(r['card_tcgdex_id']) for r in rows if r['language']=='es' and r['card_tcgdex_id'])
+          for r in verified_es:
+              r['source_id_unique_among_missing_es']=es_source_counts[r['source_id']]==1
+
+          summary={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'missing_en':sum(1 for r in rows if r['language']=='en'),
+            'missing_es':sum(1 for r in rows if r['language']=='es'),
+            'detail_request_count':len(request_keys),
+            'detail_status_counts':dict(Counter(str(d.get('status')) for d in details.values())),
+            'detail_with_image':sum(1 for d in details.values() if d.get('status')==200 and d.get('image')),
+            'image_candidate_count':len(image_candidates),
+            'image_probe_status_counts':dict(Counter(str(r.get('probe',{}).get('status')) for r in image_candidates)),
+            'verified_en_print_exact':len(verified_en),
+            'verified_es_card_localized':len(verified_es),
+            'verified_es_unique_source_ids':sum(1 for r in verified_es if r.get('source_id_unique_among_missing_es')),
+            'en_detail_missing_or_no_image':sum(1 for r in candidates if r['scope']=='print_exact' and not (r['id_exact'] and r['image_url'])),
+            'es_detail_missing_or_no_image':sum(1 for r in candidates if r['scope']=='card_localized' and not (r['id_exact'] and r['image_url'])),
+          }
+          report={**summary,
+            'verified_en_samples':verified_en[:100],
+            'verified_es_samples':verified_es[:100],
+            'unverified':[r for r in candidates if r not in verified][:200],
+          }
+          Path('artifacts/pokemon-tcgdex-detail-images-v4.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgdex-detail-images-v4-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgdex-detail-images-v4.json
+          retention-days: 30
