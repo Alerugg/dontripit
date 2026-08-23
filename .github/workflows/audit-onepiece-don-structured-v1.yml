@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'backend/app/scripts/audit_onepiece_don_structured_v1.py'
+      - 'backend/app/scripts/probe_onepiece_don_official_source_v1.py'
       - 'backend/app/scripts/apply_onepiece_don_structured_v1.py'
       - 'backend/app/data/onepiece_don_structured_v1.json'
       - '.github/workflows/audit-onepiece-don-structured-v1.yml'
@@ -24,18 +25,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install audit dependency
-        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
-      - name: Compile audit
-        run: python -m py_compile app/scripts/audit_onepiece_don_structured_v1.py
-      - name: Audit production Neon read-only
+      - name: Install audit dependencies
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9 pypdf==5.9.0
+      - name: Compile probes
+        run: |
+          python -m py_compile app/scripts/audit_onepiece_don_structured_v1.py
+          python -m py_compile app/scripts/probe_onepiece_don_official_source_v1.py
+      - name: Probe official Bandai DON list
+        env:
+          ONEPIECE_DON_OFFICIAL_URL: https://onepiece-cardgame.com/pdf/don-cardlist.pdf?v=260227
         run: |
           mkdir -p artifacts
+          ONEPIECE_DON_SOURCE_PROBE_OUTPUT=artifacts/onepiece-don-official-source-v1.json \
+          ONEPIECE_DON_SOURCE_PDF_OUTPUT=artifacts/onepiece-don-official-source-v1.pdf \
+            python app/scripts/probe_onepiece_don_official_source_v1.py
+      - name: Audit production Neon read-only
+        run: |
           ONEPIECE_DON_AUDIT_OUTPUT=artifacts/onepiece-don-structured-v1-audit.json \
             python app/scripts/audit_onepiece_don_structured_v1.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: onepiece-don-structured-v1-audit-${{ github.run_id }}
-          path: backend/artifacts/onepiece-don-structured-v1-audit.json
+          path: |
+            backend/artifacts/onepiece-don-structured-v1-audit.json
+            backend/artifacts/onepiece-don-official-source-v1.json
+            backend/artifacts/onepiece-don-official-source-v1.pdf
           retention-days: 90
