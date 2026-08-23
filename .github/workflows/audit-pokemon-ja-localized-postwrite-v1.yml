@@ -1,0 +1,171 @@
+name: Audit Pokemon JA Localized Postwrite V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-ja-localized-postwrite-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+      OUTPUT: backend/artifacts/pokemon-ja-localized-postwrite-v1.json
+
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+      - name: Checkout pinned TCGdex source
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Independently certify production JA image delta - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          ROOT=Path(os.environ['TCGDEX_CARDS_REPO'])/'data-asia'
+          PIN=os.environ['TCGDEX_CARDS_SHA']
+          ID_RE=re.compile(r'\bid\s*:\s*["\']([^"\']+)["\']')
+
+          set_to_asset_series={}
+          for path in ROOT.rglob('*.ts'):
+              rel=path.relative_to(ROOT)
+              if len(rel.parts)<2: continue
+              try: content=path.read_text(encoding='utf-8')
+              except UnicodeDecodeError: continue
+              if 'import { Set }' not in content or 'import serie from' not in content: continue
+              m=ID_RE.search(content)
+              if not m: continue
+              sid=m.group(1); series=rel.parts[0]
+              prior=set_to_asset_series.get(sid)
+              if prior and prior!=series: raise RuntimeError(f'conflicting asset series for {sid}')
+              set_to_asset_series[sid]=series
+          if len(set_to_asset_series)!=333:
+              raise RuntimeError(f'Asia set index drift: {len(set_to_asset_series)}')
+          set_ids=sorted(set_to_asset_series,key=len,reverse=True)
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on':
+                  raise RuntimeError('certifier connection is not read-only')
+
+              missing_by_language={str(r['language']):int(r['cnt']) for r in conn.execute(text('''
+                SELECT p.language,COUNT(*)::int cnt
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                GROUP BY p.language ORDER BY p.language
+              ''')).mappings().all()}
+
+              ja_rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.language,p.variant,p.collector_number,s.code set_code,
+                       im.id image_id,im.url,im.source,im.is_primary,
+                       ids.cnt ja_identifier_count,ids.external_id
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                JOIN print_images im ON im.print_id=p.id
+                LEFT JOIN LATERAL (
+                  SELECT COUNT(*)::int cnt,MIN(pi.external_id) external_id
+                  FROM print_identifiers pi WHERE pi.print_id=p.id AND pi.source='tcgdex:ja'
+                ) ids ON TRUE
+                WHERE g.slug='pokemon' AND im.source='tcgdex:ja'
+                ORDER BY p.id,im.id
+              ''')).mappings().all()]
+
+              ja_missing_by_set={str(r['set_code']):int(r['cnt']) for r in conn.execute(text('''
+                SELECT COALESCE(s.code,'') set_code,COUNT(*)::int cnt
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND p.language='ja'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                GROUP BY COALESCE(s.code,'') ORDER BY COALESCE(s.code,'')
+              ''')).mappings().all()}
+              conn.rollback()
+
+          expected_missing={'en':441,'es':806,'ja':4157}
+          if missing_by_language!=expected_missing:
+              raise RuntimeError(f'Pokemon missing-image delta mismatch: expected={expected_missing} actual={missing_by_language}')
+          if sum(missing_by_language.values())!=5404:
+              raise RuntimeError(f'Pokemon missing-image total mismatch: {sum(missing_by_language.values())}')
+
+          if len(ja_rows)!=4002:
+              raise RuntimeError(f'JA tcgdex image row delta mismatch: expected=4002 actual={len(ja_rows)}')
+          if len({int(r['print_id']) for r in ja_rows})!=4002:
+              raise RuntimeError('JA tcgdex source is not 1 row per Print')
+          if len({str(r['url']) for r in ja_rows})!=4002:
+              raise RuntimeError('duplicate JA tcgdex URLs detected')
+
+          violations=[]
+          for row in ja_rows:
+              if row.get('language')!='ja' or row.get('variant')!='default' or not bool(row.get('is_primary')):
+                  violations.append({'print_id':row['print_id'],'reason':'scope-or-primary'}); continue
+              if int(row.get('ja_identifier_count') or 0)!=1 or not row.get('external_id'):
+                  violations.append({'print_id':row['print_id'],'reason':'identifier-count'}); continue
+              ext=str(row['external_id'])
+              sid=next((x for x in set_ids if ext.startswith(x+'-')),None)
+              if not sid:
+                  violations.append({'print_id':row['print_id'],'reason':'no-pinned-set','external_id':ext}); continue
+              local=ext[len(sid)+1:]
+              expected=f'https://assets.tcgdex.net/ja/{set_to_asset_series[sid]}/{sid}/{local}/high.webp'
+              if str(row.get('url') or '')!=expected:
+                  violations.append({'print_id':row['print_id'],'reason':'url-identity-mismatch','actual':row.get('url'),'expected':expected})
+          if violations:
+              raise RuntimeError(f'JA localized image integrity violations: {violations[:20]} total={len(violations)}')
+
+          expected_residuals={
+            'ja-sm12a':16,
+            'ja-m4':0,
+            'ja-sm12':9,
+            'ja-sm10':9,
+            'ja-m1s':0,
+            'ja-sm11b':7,
+          }
+          for code,expected in expected_residuals.items():
+              actual=int(ja_missing_by_set.get(code,0))
+              if actual!=expected:
+                  raise RuntimeError(f'{code} JA residual mismatch: expected={expected} actual={actual}')
+
+          report={
+            'status':'pass','mode':'read-only-independent-postwrite','production_writes':0,
+            'source_version':PIN,'asia_sets_indexed':len(set_to_asset_series),
+            'pokemon_missing_by_language':missing_by_language,'pokemon_missing_total':sum(missing_by_language.values()),
+            'ja_tcgdex_image_rows':len(ja_rows),'ja_tcgdex_distinct_prints':len({int(r['print_id']) for r in ja_rows}),
+            'ja_tcgdex_distinct_urls':len({str(r['url']) for r in ja_rows}),'ja_integrity_violations':0,
+            'certified_written_delta':705,'certified_residuals':expected_residuals,
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False)+'\n',encoding='utf-8')
+          print(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-ja-localized-postwrite-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-ja-localized-postwrite-v1.json
+          retention-days: 30
