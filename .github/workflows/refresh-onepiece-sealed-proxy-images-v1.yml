@@ -1,0 +1,230 @@
+name: Refresh One Piece Sealed Proxy Images V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/refresh-onepiece-sealed-proxy-images-v1.yml'
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/refresh-onepiece-sealed-proxy-images-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-onepiece-sealed-proxy-images-v1
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PYTHONPATH: .
+      PRODUCT_MEDIA_PUBLIC_BASE_URL: https://api.dontripit.com
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile existing exact proxy pipeline
+        run: |
+          python -m py_compile \
+            app/routes/product_media.py \
+            app/scripts/sync_sealed_cardmarket_proxy_images_v1.py \
+            app/scripts/sync_sealed_cardmarket_proxy_images_v2.py \
+            tests/test_product_media_proxy.py
+          pytest -q tests/test_product_media_proxy.py
+      - name: Require production database
+        run: test -n "${DATABASE_URL_UNPOOLED:-}"
+      - name: Audit or apply One Piece exact proxy recovery
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PGOPTIONS: ${{ github.event_name == 'pull_request' && '-c default_transaction_read_only=on' || '' }}
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          from app.scripts import sync_sealed_cardmarket_proxy_images_v1 as v1
+          from app.scripts import sync_sealed_cardmarket_proxy_images_v2 as v2
+
+          event = os.environ['EVENT_NAME']
+          db_url = os.environ['DATABASE_URL_UNPOOLED']
+          public_base = os.environ['PRODUCT_MEDIA_PUBLIC_BASE_URL']
+          engine = create_engine(db_url, pool_pre_ping=True)
+
+          # V2 normally re-certifies every exact proxy-owned row across all games.
+          # This one-shot narrows only the eligibility probe to One Piece; all
+          # identity and DML functions remain the already-certified production path.
+          v1.ELIGIBLE_SQL = text(
+              'SELECT * FROM (' + v2.IDEMPOTENT_ELIGIBLE_SQL.text + ") scoped WHERE game='onepiece'"
+          )
+
+          def missing_onepiece() -> int:
+              with engine.connect() as conn:
+                  return int(conn.execute(text('''
+                    SELECT count(*)
+                    FROM product_variants pv
+                    JOIN products p ON p.id=pv.product_id
+                    JOIN games g ON g.id=p.game_id
+                    WHERE g.slug='onepiece'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM product_images pi WHERE pi.product_variant_id=pv.id
+                      )
+                  ''')).scalar_one())
+
+          def proxy_counts_by_game() -> dict[str, int]:
+              with engine.connect() as conn:
+                  rows = conn.execute(text('''
+                    SELECT g.slug, count(*)
+                    FROM product_images pi
+                    JOIN product_variants pv ON pv.id=pi.product_variant_id
+                    JOIN products p ON p.id=pv.product_id
+                    JOIN games g ON g.id=p.game_id
+                    WHERE pi.source='cardmarket_exact_proxy_v1'
+                    GROUP BY g.slug
+                    ORDER BY g.slug
+                  ''')).all()
+              return {str(game): int(count) for game, count in rows}
+
+          if event == 'pull_request':
+              with engine.connect() as conn:
+                  conn.execute(text('SET TRANSACTION READ ONLY'))
+                  assert conn.execute(text('SHOW transaction_read_only')).scalar_one() == 'on'
+
+          before_missing = missing_onepiece()
+          before_proxy = proxy_counts_by_game()
+
+          certification = v2.certify_snapshot(
+              engine,
+              max_workers=10,
+              timeout=12,
+              retries=2,
+          )
+
+          existing_ids = set()
+          with engine.connect() as conn:
+              existing_ids = {
+                  int(x) for x in conn.execute(text('''
+                    SELECT pi.product_variant_id
+                    FROM product_images pi
+                    JOIN product_variants pv ON pv.id=pi.product_variant_id
+                    JOIN products p ON p.id=pv.product_id
+                    JOIN games g ON g.id=p.game_id
+                    WHERE g.slug='onepiece'
+                  ''')).scalars().all()
+              }
+
+          recoverable = list(certification.get('recoverable') or [])
+          newly_recoverable = [r for r in recoverable if int(r['variant_id']) not in existing_ids]
+          unavailable_missing = [
+              r for r in list(certification.get('unavailable') or [])
+              if int(r['variant_id']) not in existing_ids
+          ]
+
+          compact_cert = {
+              key: value for key, value in certification.items()
+              if key not in {'recoverable', 'unavailable', 'hard_failures'}
+          }
+          report = {
+              'mode': 'audit' if event == 'pull_request' else 'apply',
+              'scope_game': 'onepiece',
+              'production_writes': 0,
+              'before_missing_onepiece_product_variants': before_missing,
+              'before_proxy_rows_by_game': before_proxy,
+              'certification': compact_cert,
+              'newly_recoverable_missing_count': len(newly_recoverable),
+              'newly_recoverable_missing_sample': [
+                  {
+                      'variant_id': int(r['variant_id']),
+                      'product_name': r['product_name'],
+                      'product_type': r['product_type'],
+                      'external_id': r['external_id'],
+                      'source_image_url': r['source_image_url'],
+                  }
+                  for r in newly_recoverable[:25]
+              ],
+              'still_unavailable_missing_count': len(unavailable_missing),
+              'still_unavailable_missing_sample': [
+                  {
+                      'variant_id': int(r['variant_id']),
+                      'product_name': r['product_name'],
+                      'product_type': r['product_type'],
+                      'external_id': r['external_id'],
+                      'status': r['status'],
+                  }
+                  for r in unavailable_missing[:25]
+              ],
+          }
+
+          assert int(certification.get('hard_failure_count') or 0) == 0, report
+          assert int(certification.get('source_url_collision_count') or 0) == 0, report
+          assert certification.get('control', {}).get('ok') is True, report
+
+          if event == 'pull_request':
+              report['gate'] = 'PASS'
+              Path('artifacts/onepiece-sealed-proxy-refresh-v1.json').write_text(
+                  json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False, default=str) + '\n'
+              )
+              print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False, default=str))
+              raise SystemExit(0)
+
+          assert certification.get('gate') == 'PASS', report
+          first = v1.apply_manifest(engine, recoverable, public_base_url=public_base)
+          second = v1.apply_manifest(engine, recoverable, public_base_url=public_base)
+          verification = v1.verify_materialized(engine, public_base_url=public_base)
+
+          after_missing = missing_onepiece()
+          after_proxy = proxy_counts_by_game()
+          report.update({
+              'first_pass': first,
+              'second_pass': second,
+              'verification': verification,
+              'after_missing_onepiece_product_variants': after_missing,
+              'after_proxy_rows_by_game': after_proxy,
+              'production_writes': int(first['material_writes']),
+          })
+
+          assert first['identity_changed'] == 0, report
+          assert first['inserted'] == len(newly_recoverable), report
+          assert second['inserted'] == 0 and second['material_writes'] == 0, report
+          assert verification['gate'] == 'PASS', report
+          assert before_missing - after_missing == first['inserted'], report
+
+          for game, count in before_proxy.items():
+              if game != 'onepiece':
+                  assert after_proxy.get(game, 0) == count, report
+          for game, count in after_proxy.items():
+              if game != 'onepiece':
+                  assert before_proxy.get(game, 0) == count, report
+
+          report['gate'] = 'PASS'
+          Path('artifacts/onepiece-sealed-proxy-refresh-v1.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False, default=str) + '\n'
+          )
+          print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False, default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-sealed-proxy-refresh-v1-${{ github.run_id }}
+          path: backend/artifacts/onepiece-sealed-proxy-refresh-v1.json
+          retention-days: 30
+          if-no-files-found: warn
