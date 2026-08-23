@@ -1,0 +1,51 @@
+{
+  "accepted_external_don_print_links": 0,
+  "apply_status": "apply_pass",
+  "canonical_don_prints": 0,
+  "cardmarket_as_of": "2026-08-23 04:57:30.899629+00:00",
+  "certified_at": "2026-08-23T11:51:03.473477+00:00",
+  "evidence": [
+    {
+      "claimed_label": null,
+      "evidence_key": "collaborator-bushiroad-premier-received",
+      "evidence_kind": "collaborator_physical",
+      "identity_status": "unresolved",
+      "organization": "Bushiroad / Premier Event Inc.",
+      "physical_received": true
+    },
+    {
+      "claimed_label": "ST-01",
+      "evidence_key": "osaka-championship-2023-minisite-test",
+      "evidence_kind": "official_event_test",
+      "identity_status": "unresolved",
+      "organization": "ONE PIECE CARD GAME",
+      "physical_received": false
+    }
+  ],
+  "extraction": {
+    "official_items": 262,
+    "page_furniture_images": 30,
+    "pages": 30,
+    "raw_images": 292,
+    "unique_item_images": 262
+  },
+  "idempotent_logical_state": true,
+  "market": {
+    "mapped": 0,
+    "n": 164,
+    "represented_products": 551,
+    "subject_rows": 117
+  },
+  "official": {
+    "mapped": 0,
+    "max_sequence": 262,
+    "min_sequence": 1,
+    "n": 262,
+    "unique_images": 262
+  },
+  "pdf_sha256": "cd518a04ea3ff1acdc1f3bc824ad53d0ca17d8ee2fd0a6427717e0bdaacbdfe0",
+  "source_sha": "e1c7493b83250233de01e49e81fc51482fcf07bd",
+  "status": "pass",
+  "workflow_run_attempt": "1",
+  "workflow_run_id": "32637554818"
+}
