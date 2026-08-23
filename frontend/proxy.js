@@ -7,6 +7,7 @@ const PUBLIC_PATHS = new Set([
   '/forgot-password',
   '/reset-password',
   '/privacy',
+  '/cookies',
   '/terms',
   '/pokemon',
   '/magic',

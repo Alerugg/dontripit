@@ -215,9 +215,11 @@
 }
 
 .v15-print-market-primary > small {
-  color: #7d7484;
-  font-size: .58rem;
-  line-height: 1.35;
+  margin-top: 2px;
+  color: #8d8495;
+  font-size: .64rem;
+  font-weight: 620;
+  line-height: 1.45;
 }
 
 .results-list .v15-result-price-row,
@@ -293,6 +295,24 @@
 
   .v15-result-price-row > span {
     font-size: .46rem;
+  }
+
+  .v15-price-window-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .v15-price-window-grid .ux-price-metric {
+    min-height: 64px;
+    padding: 8px 6px;
+  }
+
+  .v15-price-window-grid .ux-price-metric span {
+    font-size: .52rem;
+  }
+
+  .v15-price-window-grid .ux-price-metric strong {
+    font-size: .78rem;
+    white-space: nowrap;
   }
 }
 
