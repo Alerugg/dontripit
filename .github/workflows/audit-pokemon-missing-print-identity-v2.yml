@@ -1,0 +1,202 @@
+name: Audit Pokemon Missing Print Identity V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-missing-print-identity-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Audit Pokemon missing print identity READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+
+              def rows(sql):
+                  return [dict(r) for r in conn.execute(text(sql)).mappings().all()]
+
+              identity_by_language=rows('''
+                WITH missing AS (
+                  SELECT p.*
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT language,
+                       count(*)::bigint missing,
+                       count(*) FILTER (WHERE tcgdex_id IS NOT NULL)::bigint print_tcgdex_id_nonnull,
+                       count(DISTINCT tcgdex_id) FILTER (WHERE tcgdex_id IS NOT NULL)::bigint distinct_print_tcgdex_ids,
+                       count(*) FILTER (WHERE print_key IS NOT NULL)::bigint print_key_nonnull,
+                       count(DISTINCT print_key) FILTER (WHERE print_key IS NOT NULL)::bigint distinct_print_keys
+                FROM missing
+                GROUP BY language
+                ORDER BY language
+              ''')
+
+              card_identity_by_language=rows('''
+                WITH missing AS (
+                  SELECT p.id,p.language,p.card_id
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT m.language,
+                       count(*)::bigint missing,
+                       count(*) FILTER (WHERE c.tcgdex_id IS NOT NULL)::bigint card_tcgdex_id_nonnull,
+                       count(DISTINCT c.tcgdex_id) FILTER (WHERE c.tcgdex_id IS NOT NULL)::bigint distinct_card_tcgdex_ids
+                FROM missing m
+                JOIN cards c ON c.id=m.card_id
+                GROUP BY m.language
+                ORDER BY m.language
+              ''')
+
+              duplicate_physical=rows('''
+                WITH missing AS (
+                  SELECT p.*
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ), grouped AS (
+                  SELECT language,card_id,set_id,collector_number,
+                         COALESCE(rarity,'') rarity,COALESCE(is_foil,false) is_foil,COALESCE(variant,'') variant,
+                         count(*)::bigint n
+                  FROM missing
+                  GROUP BY language,card_id,set_id,collector_number,COALESCE(rarity,''),COALESCE(is_foil,false),COALESCE(variant,'')
+                )
+                SELECT language,
+                       sum(n)::bigint rows_in_groups,
+                       count(*)::bigint physical_groups,
+                       sum(n-1)::bigint duplicate_rows,
+                       count(*) FILTER (WHERE n>1)::bigint duplicate_groups,
+                       max(n)::bigint max_group_size
+                FROM grouped
+                GROUP BY language
+                ORDER BY language
+              ''')
+
+              exact_print_key_duplicates=rows('''
+                WITH missing AS (
+                  SELECT p.*
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT language,
+                       count(*)::bigint missing,
+                       count(*) FILTER (WHERE print_key IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM prints p2 WHERE p2.id<>missing.id AND p2.print_key=missing.print_key
+                       ))::bigint has_same_print_key_other_row,
+                       count(*) FILTER (WHERE print_key IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM prints p2 JOIN print_images pi2 ON pi2.print_id=p2.id
+                         WHERE p2.id<>missing.id AND p2.print_key=missing.print_key
+                       ))::bigint same_print_key_has_image
+                FROM missing
+                GROUP BY language
+                ORDER BY language
+              ''')
+
+              tcgdex_reuse=rows('''
+                WITH missing AS (
+                  SELECT p.*
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                )
+                SELECT language,
+                       count(*) FILTER (WHERE tcgdex_id IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM prints p2 WHERE p2.id<>missing.id AND p2.tcgdex_id=missing.tcgdex_id
+                       ))::bigint tcgdex_id_reused_other_print,
+                       count(*) FILTER (WHERE tcgdex_id IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM prints p2 JOIN print_images pi2 ON pi2.print_id=p2.id
+                         WHERE p2.id<>missing.id AND p2.tcgdex_id=missing.tcgdex_id
+                       ))::bigint same_tcgdex_id_has_image
+                FROM missing
+                GROUP BY language
+                ORDER BY language
+              ''')
+
+              examples=rows('''
+                WITH missing AS (
+                  SELECT p.id,p.card_id,p.set_id,p.collector_number,p.language,p.rarity,p.is_foil,p.variant,
+                         p.tcgdex_id,p.print_key,p.created_at,c.name card_name,s.code set_code
+                  FROM prints p
+                  JOIN cards c ON c.id=p.card_id
+                  JOIN games g ON g.id=c.game_id
+                  LEFT JOIN sets s ON s.id=p.set_id
+                  WHERE g.slug='pokemon'
+                    AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ), d AS (
+                  SELECT *,count(*) OVER (
+                    PARTITION BY language,card_id,set_id,collector_number,
+                                 COALESCE(rarity,''),COALESCE(is_foil,false),COALESCE(variant,'')
+                  ) physical_group_size
+                  FROM missing
+                )
+                SELECT * FROM d
+                WHERE physical_group_size>1 OR tcgdex_id IS NOT NULL
+                ORDER BY physical_group_size DESC,language,set_code,collector_number,id
+                LIMIT 120
+              ''')
+              conn.rollback()
+
+          report={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'identity_by_language':identity_by_language,
+            'card_identity_by_language':card_identity_by_language,
+            'duplicate_physical':duplicate_physical,
+            'exact_print_key_duplicates':exact_print_key_duplicates,
+            'tcgdex_reuse':tcgdex_reuse,
+            'examples':examples,
+          }
+          assert sum(int(r['missing']) for r in identity_by_language)==7573, report
+          Path('artifacts/pokemon-missing-print-identity-v2.json').write_text(
+            json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n'
+          )
+          print(json.dumps({k:v for k,v in report.items() if k!='examples'},indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-missing-print-identity-v2-${{ github.run_id }}
+          path: backend/artifacts/pokemon-missing-print-identity-v2.json
+          retention-days: 30
