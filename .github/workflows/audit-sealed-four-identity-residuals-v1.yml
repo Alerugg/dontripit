@@ -1,0 +1,117 @@
+name: Audit Sealed Four Identity Residuals V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-sealed-four-identity-residuals-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Classify missing ProductVariants outside exact one-to-one image gate READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                WITH latest AS (
+                  SELECT game_id,max(last_seen_at) latest_seen
+                  FROM external_catalog_products
+                  WHERE source='cardmarket' AND product_group='non_single'
+                  GROUP BY game_id
+                ), missing AS (
+                  SELECT pv.id variant_id,pv.language,pv.region,pv.packaging,
+                         p.id product_id,p.name product_name,p.product_type,g.id game_id,g.slug game,
+                         s.code set_code
+                  FROM product_variants pv
+                  JOIN products p ON p.id=pv.product_id
+                  JOIN games g ON g.id=p.game_id
+                  LEFT JOIN sets s ON s.id=p.set_id
+                  WHERE g.slug IN ('mtg','pokemon','yugioh','onepiece')
+                    AND NOT EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_variant_id=pv.id)
+                ), current_links AS (
+                  SELECT l.product_variant_id,l.external_product_id,l.link_status,l.confidence,l.reviewed,l.mapping_method,
+                         e.external_id,e.name external_name,e.category,e.category_id,e.last_seen_at,e.game_id,
+                         count(*) OVER(PARTITION BY l.external_product_id) variants_per_external,
+                         count(*) OVER(PARTITION BY l.product_variant_id) externals_per_variant
+                  FROM external_catalog_product_variant_links l
+                  JOIN external_catalog_products e ON e.id=l.external_product_id
+                  JOIN latest x ON x.game_id=e.game_id AND x.latest_seen=e.last_seen_at
+                  WHERE e.source='cardmarket' AND e.product_group='non_single'
+                ), strict_ids AS (
+                  SELECT DISTINCT product_variant_id
+                  FROM current_links
+                  WHERE link_status IN ('accepted','mapped','exact')
+                    AND confidence='exact' AND reviewed IS TRUE
+                    AND variants_per_external=1 AND externals_per_variant=1
+                )
+                SELECT m.*,
+                       COALESCE((SELECT count(*) FROM current_links cl WHERE cl.product_variant_id=m.variant_id),0)::bigint current_link_count,
+                       COALESCE((SELECT count(*) FROM current_links cl WHERE cl.product_variant_id=m.variant_id AND cl.link_status IN ('accepted','mapped','exact')),0)::bigint accepted_link_count,
+                       COALESCE((SELECT count(*) FROM current_links cl WHERE cl.product_variant_id=m.variant_id AND cl.confidence='exact'),0)::bigint exact_confidence_count,
+                       COALESCE((SELECT count(*) FROM current_links cl WHERE cl.product_variant_id=m.variant_id AND cl.reviewed IS TRUE),0)::bigint reviewed_count,
+                       COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                         'idProduct',cl.external_id,'external_name',cl.external_name,'category',cl.category,
+                         'link_status',cl.link_status,'confidence',cl.confidence,'reviewed',cl.reviewed,
+                         'mapping_method',cl.mapping_method,'variants_per_external',cl.variants_per_external,
+                         'externals_per_variant',cl.externals_per_variant
+                       ) ORDER BY cl.external_id) FROM current_links cl WHERE cl.product_variant_id=m.variant_id),'[]'::jsonb) links
+                FROM missing m
+                WHERE NOT EXISTS (SELECT 1 FROM strict_ids s WHERE s.product_variant_id=m.variant_id)
+                ORDER BY m.game,m.product_type,m.product_name,m.variant_id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          def reason(r):
+              links=r['links'] or []
+              if not links: return 'no_current_cardmarket_non_single_link'
+              if not any(x.get('link_status') in ('accepted','mapped','exact') for x in links): return 'link_not_accepted'
+              if not any(x.get('confidence')=='exact' for x in links): return 'confidence_not_exact'
+              if not any(x.get('reviewed') is True for x in links): return 'not_reviewed'
+              if any(int(x.get('variants_per_external') or 0)!=1 for x in links): return 'external_maps_multiple_variants'
+              if any(int(x.get('externals_per_variant') or 0)!=1 for x in links): return 'variant_maps_multiple_external_products'
+              return 'mixed_or_other'
+
+          for r in rows: r['classification']=reason(r)
+          report={'status':'pass','production_writes':0,'transaction_read_only':True,
+                  'residual_count':len(rows),'rows':rows}
+          assert len(rows)==4,report
+          Path('artifacts/sealed-four-identity-residuals-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sealed-four-identity-residuals-v1-${{ github.run_id }}
+          path: backend/artifacts/sealed-four-identity-residuals-v1.json
+          retention-days: 30
+          if-no-files-found: error
