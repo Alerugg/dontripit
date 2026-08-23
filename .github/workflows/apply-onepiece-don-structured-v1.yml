@@ -1,0 +1,94 @@
+name: Apply One Piece DON Structured V1
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/apply-onepiece-don-structured-v1.yml'
+      - 'backend/alembic/versions/20260823_40_add_onepiece_don_structured.py'
+      - 'backend/alembic/versions/20260823_41_add_onepiece_don_market_items.py'
+      - 'backend/app/onepiece_don_models.py'
+      - 'backend/app/search_v2_models.py'
+      - 'backend/app/search_v2/indexer.py'
+      - 'backend/app/scripts/apply_onepiece_don_structured_v1.py'
+      - 'backend/app/scripts/certify_onepiece_don_structured_v1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-onepiece-don-structured-v1
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend and DON dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'pypdf[image]==5.9.0'
+      - name: Compile DON implementation
+        run: |
+          python -m py_compile app/onepiece_don_models.py
+          python -m py_compile app/search_v2/indexer.py
+          python -m py_compile app/scripts/apply_onepiece_don_structured_v1.py
+          python -m py_compile app/scripts/certify_onepiece_don_structured_v1.py
+      - name: Apply schema
+        run: alembic upgrade head
+      - name: Materialize official and Cardmarket source inventories
+        env:
+          ONEPIECE_DON_APPLY: '1'
+          ONEPIECE_DON_APPLY_OUTPUT: artifacts/onepiece-don-structured-v1-apply-pass1.json
+        run: |
+          mkdir -p artifacts
+          python app/scripts/apply_onepiece_don_structured_v1.py
+      - name: Certify pass 1 read-only
+        env:
+          ONEPIECE_DON_CERT_OUTPUT: artifacts/onepiece-don-structured-v1-cert-pass1.json
+        run: python app/scripts/certify_onepiece_don_structured_v1.py
+      - name: Repeat materialization for idempotence
+        env:
+          ONEPIECE_DON_APPLY: '1'
+          ONEPIECE_DON_APPLY_OUTPUT: artifacts/onepiece-don-structured-v1-apply-pass2.json
+        run: python app/scripts/apply_onepiece_don_structured_v1.py
+      - name: Certify pass 2 read-only
+        env:
+          ONEPIECE_DON_CERT_OUTPUT: artifacts/onepiece-don-structured-v1-cert-pass2.json
+        run: python app/scripts/certify_onepiece_don_structured_v1.py
+      - name: Compare logical counts across both passes
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('artifacts/onepiece-don-structured-v1-cert-pass1.json').read_text())
+          b=json.loads(Path('artifacts/onepiece-don-structured-v1-cert-pass2.json').read_text())
+          keys=('official','evidence','market','canonical_don_prints','accepted_external_don_print_links')
+          left={k:a[k] for k in keys}; right={k:b[k] for k in keys}
+          if left != right:
+              raise AssertionError({'pass1':left,'pass2':right})
+          print(json.dumps({'idempotent_logical_state': True, 'state': right}, indent=2, default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-structured-v1-apply-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-structured-v1-*.json
+          retention-days: 90
