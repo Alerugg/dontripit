@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.onepiece_don_media import onepiece_don_proxy_path
 from app.search_v2.normalization import normalize_search_text
 
 
@@ -161,10 +162,7 @@ def onepiece_don_market_page(
     items: list[dict] = []
     for row in rows:
         product_id = str(row["cardmarket_id_product"] or row["representative_external_product_id"] or "").strip()
-        category_id = str(row["cardmarket_category_id"] or "").strip()
-        image_url = None
-        if product_id.isdigit() and category_id.isdigit():
-            image_url = f"https://product-images.s3.cardmarket.com/{category_id}/{product_id}/{product_id}.jpg"
+        image_url = onepiece_don_proxy_path(row["metacard_external_id"])
 
         items.append(
             {
