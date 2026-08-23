@@ -1,0 +1,183 @@
+name: Audit One Piece DON Image Expansion Token V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-onepiece-don-image-expansion-token-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Derive Cardmarket expansion directory token from exact physical links READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib,io,json,os,re,urllib.error,urllib.request
+          from collections import Counter,defaultdict
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          from pathlib import Path
+          from PIL import Image
+          from sqlalchemy import create_engine,text
+
+          HOST='product-images.s3.cardmarket.com'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36'
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              don=[dict(r) for r in conn.execute(text('''
+                WITH latest AS (SELECT max(source_as_of) x FROM onepiece_don_market_items WHERE source='cardmarket')
+                SELECT m.metacard_external_id,m.representative_external_product_id,m.name,m.subject,
+                       e.category_id,e.expansion_external_id
+                FROM onepiece_don_market_items m JOIN latest l ON l.x=m.source_as_of
+                JOIN games g ON g.slug='onepiece'
+                JOIN external_catalog_products e ON e.source='cardmarket' AND e.game_id=g.id
+                 AND e.product_group='single' AND e.external_id=m.representative_external_product_id
+                WHERE m.source='cardmarket' ORDER BY m.metacard_external_id
+              ''')).mappings().all()]
+              expansion_links=[dict(r) for r in conn.execute(text('''
+                SELECT e.expansion_external_id,s.code set_code,p.collector_number,count(*)::bigint n
+                FROM external_catalog_products e
+                JOIN games g ON g.id=e.game_id AND g.slug='onepiece'
+                JOIN external_catalog_print_links l ON l.external_product_id=e.id
+                 AND l.link_status IN ('accepted','mapped','exact')
+                JOIN prints p ON p.id=l.print_id
+                JOIN cards c ON c.id=p.card_id AND c.game_id=g.id
+                JOIN sets s ON s.id=p.set_id
+                WHERE e.source='cardmarket' AND e.product_group='single'
+                  AND e.expansion_external_id IN (
+                    WITH latest AS (SELECT max(source_as_of) x FROM onepiece_don_market_items WHERE source='cardmarket')
+                    SELECT DISTINCT ep.expansion_external_id
+                    FROM onepiece_don_market_items m JOIN latest ll ON ll.x=m.source_as_of
+                    JOIN games gg ON gg.slug='onepiece'
+                    JOIN external_catalog_products ep ON ep.source='cardmarket' AND ep.game_id=gg.id
+                     AND ep.product_group='single' AND ep.external_id=m.representative_external_product_id
+                  )
+                GROUP BY e.expansion_external_id,s.code,p.collector_number
+              ''')).mappings().all()]
+
+          by_expansion=defaultdict(Counter)
+          examples=defaultdict(list)
+          for r in expansion_links:
+              exp=str(r['expansion_external_id'] or '')
+              code=str(r['set_code'] or '').strip().upper()
+              if code:
+                  by_expansion[exp][code]+=int(r['n'] or 0)
+                  if len(examples[exp])<8:
+                      examples[exp].append({'set_code':code,'collector_number':r['collector_number'],'n':int(r['n'] or 0)})
+
+          def normalized_tokens(code):
+              c=str(code or '').strip().upper()
+              if not c: return []
+              vals=[c]
+              vals.append(c.replace('-',''))
+              # Cardmarket promo expansions conventionally append P to OPxx.
+              # Only try this when the canonical code itself carries a promo marker.
+              if c.endswith('-P'): vals.append(c[:-2]+'P')
+              return list(dict.fromkeys(x for x in vals if x))
+
+          def name_tokens(name):
+              n=str(name or '').upper()
+              vals=[]
+              for pat in (r'\b(OP\d{2}P?)\b',r'\b(PRB\d{1,2})\b',r'\b(EB\d{2}P?)\b',r'\b(ST-?\d{1,2})\b'):
+                  vals += re.findall(pat,n)
+              out=[]
+              for x in vals: out += normalized_tokens(x)
+              return list(dict.fromkeys(out))
+
+          def fetch(url):
+              req=urllib.request.Request(url,headers={'User-Agent':UA,'Accept':'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.1','Referer':'https://www.cardmarket.com/'})
+              try:
+                  with urllib.request.urlopen(req,timeout=12) as resp: body=resp.read(5*1024*1024+1)
+                  with Image.open(io.BytesIO(body)) as im: im.verify()
+                  with Image.open(io.BytesIO(body)) as im: w,h=im.size; fmt=im.format
+                  return {'ok':True,'status':200,'sha256':hashlib.sha256(body).hexdigest(),'bytes':len(body),'width':w,'height':h,'format':fmt}
+              except urllib.error.HTTPError as exc: return {'ok':False,'status':int(exc.code)}
+              except Exception as exc: return {'ok':False,'status':type(exc).__name__,'error':str(exc)}
+
+          def probe(row):
+              exp=str(row['expansion_external_id'] or '')
+              pid=str(row['representative_external_product_id'])
+              cat=str(row['category_id'] or '')
+              ranked=[code for code,_ in by_expansion.get(exp,Counter()).most_common()]
+              candidates=[]
+              for code in ranked:
+                  candidates.extend(normalized_tokens(code))
+              candidates.extend(name_tokens(row['name']))
+              candidates=list(dict.fromkeys(candidates))[:12]
+              attempts=[]
+              for token in candidates:
+                  url=f'https://{HOST}/{cat}/{token}/{pid}/{pid}.jpg'
+                  result=fetch(url)
+                  attempts.append({'token':token,'url':url,**result})
+                  if result['ok']:
+                      break
+              valid=next((a for a in attempts if a['ok']),None)
+              return {
+                  'metacard_id':str(row['metacard_external_id']),'idProduct':pid,'name':row['name'],'subject':row['subject'],
+                  'expansion_external_id':exp,'candidate_set_codes':ranked,'candidate_tokens':candidates,
+                  'expansion_link_examples':examples.get(exp,[]),'attempts':attempts,'valid':valid,
+              }
+
+          results=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              fs=[pool.submit(probe,r) for r in don]
+              for f in as_completed(fs): results.append(f.result())
+          results.sort(key=lambda r:r['metacard_id'])
+          valid=[r for r in results if r['valid']]
+          unresolved=[r for r in results if not r['valid']]
+          summary={
+              'status':'pass','production_writes':0,'transaction_read_only':True,'don_rows':len(results),
+              'expansions':{
+                  exp:{'set_codes':dict(counter.most_common()),'examples':examples.get(exp,[])}
+                  for exp,counter in sorted(by_expansion.items())
+              },
+              'rows_with_candidate_tokens':sum(1 for r in results if r['candidate_tokens']),
+              'valid_tokenized_images':len(valid),
+              'valid_token_counts':dict(sorted(Counter(r['valid']['token'] for r in valid).items())),
+              'valid_rows':valid,
+              'unresolved_rows':unresolved,
+          }
+          assert len(results)==164,summary
+          Path('artifacts/onepiece-don-image-expansion-token-v1.json').write_text(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps({
+              'status':'pass','production_writes':0,'don_rows':len(results),
+              'expansion_count':len(by_expansion),'rows_with_candidate_tokens':summary['rows_with_candidate_tokens'],
+              'valid_tokenized_images':len(valid),'valid_token_counts':summary['valid_token_counts'],
+              'unresolved':len(unresolved),
+              'valid_sample':[
+                {'idProduct':r['idProduct'],'name':r['name'],'expansion':r['expansion_external_id'],'token':r['valid']['token'],'url':r['valid']['url'],'sha256':r['valid']['sha256']}
+                for r in valid[:20]
+              ],
+          },indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onepiece-don-image-expansion-token-v1-${{ github.run_id }}
+          path: backend/artifacts/onepiece-don-image-expansion-token-v1.json
+          retention-days: 30
+          if-no-files-found: error
