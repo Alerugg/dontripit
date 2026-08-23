@@ -3,6 +3,7 @@ import { toApiGameSlug } from './games'
 const RESPONSE_CACHE = new Map()
 const FIVE_MINUTES = 5 * 60 * 1000
 const SEARCH_TIMEOUT_MS = 15000
+const FIRST_CARD_PAGE_TIMEOUT_MS = 30000
 const SUGGEST_TIMEOUT_MS = 8000
 
 function toQuery(params = {}) {
@@ -104,10 +105,14 @@ async function request(path, params, { ttlMs = 0, signal, timeoutMs = 0 } = {}) 
 }
 
 export async function searchCatalogPage(filters = {}, options = {}) {
+  const firstCanonicalCardPage = filters?.type === 'card'
+    && Number(filters?.include_counts) === 0
+    && Number(filters?.offset || 0) === 0
+  const defaultTimeoutMs = firstCanonicalCardPage ? FIRST_CARD_PAGE_TIMEOUT_MS : SEARCH_TIMEOUT_MS
   const payload = await request('/api/catalog/search', {
     ...filters,
     game: toApiGameSlug(filters?.game || ''),
-  }, { ...options, timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS })
+  }, { ...options, timeoutMs: options.timeoutMs ?? defaultTimeoutMs })
 
   if (Array.isArray(payload)) {
     return {
