@@ -1,0 +1,186 @@
+name: Audit Pokemon TCGplayer Image Identity V7
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-tcgplayer-image-identity-v7.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Audit explicit TCGplayer identities READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, time, requests
+          from collections import Counter
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          UA={'User-Agent':'Dontripit Pokemon TCGplayer image identity certifier/1.0','Accept':'application/json'}
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.tcgdex_id,p.collector_number,p.variant,p.is_foil,p.rarity,
+                       c.name card_name,s.code set_code
+                FROM prints p
+                JOIN cards c ON c.id=p.card_id
+                JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                WHERE g.slug='pokemon' AND p.language='en'
+                  AND p.tcgdex_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM print_images pi WHERE pi.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          def normalize_tcgplayer(value):
+              if value is None or isinstance(value,bool): return None
+              if isinstance(value,int): return value if value>0 else None
+              if isinstance(value,str) and value.strip().isdigit():
+                  n=int(value.strip()); return n if n>0 else None
+              if isinstance(value,dict):
+                  for key in ('productId','product_id','id'):
+                      v=normalize_tcgplayer(value.get(key))
+                      if v: return v
+              return None
+
+          def collect_variant_ids(node):
+              ids=[]
+              if isinstance(node,dict):
+                  tp=node.get('thirdParty') or node.get('thirdparty')
+                  if isinstance(tp,dict):
+                      v=normalize_tcgplayer(tp.get('tcgplayer'))
+                      if v: ids.append(v)
+                  for k,v in node.items():
+                      if k in ('thirdParty','thirdparty'): continue
+                      ids.extend(collect_variant_ids(v))
+              elif isinstance(node,list):
+                  for v in node: ids.extend(collect_variant_ids(v))
+              return ids
+
+          def fetch(row):
+              cid=str(row['tcgdex_id'])
+              s=requests.Session(); s.headers.update(UA)
+              url=f'https://api.tcgdex.net/v2/en/cards/{cid}'
+              for a in range(4):
+                  try:
+                      resp=s.get(url,timeout=20)
+                      if resp.status_code==429 or resp.status_code>=500:
+                          time.sleep(.25*(a+1)); continue
+                      if resp.status_code!=200: return row,{'status':resp.status_code}
+                      d=resp.json()
+                      top=None
+                      tp=d.get('thirdParty') or d.get('thirdparty')
+                      if isinstance(tp,dict): top=normalize_tcgplayer(tp.get('tcgplayer'))
+                      variant_ids=sorted(set(collect_variant_ids(d.get('variants'))))
+                      # Some API versions expose detailed variants separately.
+                      variant_ids=sorted(set(variant_ids + collect_variant_ids(d.get('variants_detailed'))))
+                      unique=sorted(set(([top] if top else []) + variant_ids))
+                      return row,{
+                        'status':200,'id':str(d.get('id') or ''),
+                        'top_tcgplayer':top,'variant_tcgplayer_ids':variant_ids,
+                        'unique_tcgplayer_ids':unique,
+                        'variant_shape':type(d.get('variants')).__name__,
+                        'variant_detailed_shape':type(d.get('variants_detailed')).__name__,
+                      }
+                  except Exception as exc:
+                      if a==3: return row,{'status':type(exc).__name__,'error':str(exc)}
+                      time.sleep(.25*(a+1))
+              return row,{'status':'exhausted'}
+
+          audited=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futs=[pool.submit(fetch,r) for r in rows]
+              for f in as_completed(futs):
+                  row,d=f.result(); audited.append({**row,'detail':d})
+
+          for r in audited:
+              d=r['detail']
+              ids=d.get('unique_tcgplayer_ids') or []
+              exact_id=bool(d.get('status')==200 and d.get('id')==str(r['tcgdex_id']))
+              # Conservative candidate: exact TCGdex identity, exactly one explicit
+              # TCGplayer product id anywhere in the card/variant payload. Multiple IDs
+              # remain unresolved because the canonical Print does not encode that mapping.
+              r['single_explicit_product_candidate']=bool(exact_id and len(ids)==1)
+              r['tcgplayer_product_id']=ids[0] if r['single_explicit_product_candidate'] else None
+              r['image_url']=(f"https://tcgplayer-cdn.tcgplayer.com/product/{ids[0]}_in_1000x1000.jpg" if r['single_explicit_product_candidate'] else None)
+
+          candidates=[r for r in audited if r['single_explicit_product_candidate']]
+          unique_products=sorted({r['tcgplayer_product_id'] for r in candidates})
+
+          def probe_product(pid):
+              url=f'https://tcgplayer-cdn.tcgplayer.com/product/{pid}_in_1000x1000.jpg'
+              s=requests.Session(); s.headers.update({'User-Agent':UA['User-Agent'],'Accept':'image/*'})
+              try:
+                  resp=s.get(url,timeout=20,stream=True)
+                  prefix=next(resp.iter_content(32),b'') if resp.status_code==200 else b''
+                  return pid,{'status':resp.status_code,'content_type':resp.headers.get('Content-Type'),'prefix_hex':prefix[:12].hex(),'url':url}
+              except Exception as exc:
+                  return pid,{'status':type(exc).__name__,'error':str(exc),'url':url}
+
+          probes={}
+          with ThreadPoolExecutor(max_workers=20) as pool:
+              futs=[pool.submit(probe_product,pid) for pid in unique_products]
+              for f in as_completed(futs): pid,v=f.result(); probes[pid]=v
+          for r in candidates: r['probe']=probes.get(r['tcgplayer_product_id'])
+
+          verified=[r for r in candidates if (r.get('probe') or {}).get('status')==200 and str((r.get('probe') or {}).get('content_type') or '').startswith('image/')]
+          product_to_prints=Counter(r['tcgplayer_product_id'] for r in candidates)
+          one_to_one=[r for r in verified if product_to_prints[r['tcgplayer_product_id']]==1]
+
+          summary={
+            'status':'pass','production_writes':0,'transaction_read_only':True,
+            'missing_en_exact':len(rows),
+            'detail_status_counts':dict(Counter(str(r['detail'].get('status')) for r in audited)),
+            'detail_exact_id':sum(1 for r in audited if r['detail'].get('status')==200 and r['detail'].get('id')==str(r['tcgdex_id'])),
+            'with_top_level_tcgplayer':sum(1 for r in audited if r['detail'].get('top_tcgplayer')),
+            'with_variant_tcgplayer_ids':sum(1 for r in audited if r['detail'].get('variant_tcgplayer_ids')),
+            'zero_explicit_product_ids':sum(1 for r in audited if len(r['detail'].get('unique_tcgplayer_ids') or [])==0),
+            'one_explicit_product_id':sum(1 for r in audited if len(r['detail'].get('unique_tcgplayer_ids') or [])==1),
+            'multiple_explicit_product_ids':sum(1 for r in audited if len(r['detail'].get('unique_tcgplayer_ids') or [])>1),
+            'candidate_prints':len(candidates),
+            'unique_candidate_products':len(unique_products),
+            'cdn_status_counts':dict(Counter(str(v.get('status')) for v in probes.values())),
+            'verified_candidate_prints':len(verified),
+            'verified_global_1to1_prints':len(one_to_one),
+          }
+          report={**summary,
+            'verified_one_to_one_samples':one_to_one[:100],
+            'verified_shared_product_samples':[r for r in verified if product_to_prints[r['tcgplayer_product_id']]>1][:100],
+            'multiple_product_samples':[r for r in audited if len(r['detail'].get('unique_tcgplayer_ids') or [])>1][:100],
+            'no_product_samples':[r for r in audited if len(r['detail'].get('unique_tcgplayer_ids') or [])==0][:100],
+          }
+          Path('artifacts/pokemon-tcgplayer-image-identity-v7.json').write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-tcgplayer-image-identity-v7-${{ github.run_id }}
+          path: backend/artifacts/pokemon-tcgplayer-image-identity-v7.json
+          retention-days: 30
