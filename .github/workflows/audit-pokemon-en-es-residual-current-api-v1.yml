@@ -1,0 +1,164 @@
+name: Audit Pokemon EN ES Residual Current API V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-en-es-residual-current-api-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      OUTPUT: backend/artifacts/pokemon-en-es-residual-current-api-v1.json
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Cross-check exact EN default and ES residuals with current TCGdex image index - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          python - <<'PY'
+          import datetime as dt, json, os
+          from collections import Counter
+          from pathlib import Path
+          import requests
+          from sqlalchemy import create_engine, text
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              if conn.execute(text('SHOW transaction_read_only')).scalar_one()!='on':
+                  raise RuntimeError('audit connection is not read-only')
+
+              missing_by_language={str(r['language']):int(r['cnt']) for r in conn.execute(text('''
+                SELECT p.language,COUNT(*)::int cnt
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                GROUP BY p.language ORDER BY p.language
+              ''')).mappings().all()}
+
+              en_default=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.collector_number,s.code set_code,
+                       ids.cnt tcgdex_identifier_count,ids.external_id
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                LEFT JOIN LATERAL (
+                  SELECT COUNT(*)::int cnt,MIN(pi.external_id) external_id
+                  FROM print_identifiers pi WHERE pi.print_id=p.id AND pi.source='tcgdex'
+                ) ids ON TRUE
+                WHERE g.slug='pokemon' AND p.language='en' AND p.variant='default'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+
+              en_v2=int(conn.execute(text('''
+                SELECT COUNT(*) FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                WHERE g.slug='pokemon' AND p.language='en' AND p.variant LIKE 'v2-%'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+              ''')).scalar_one())
+
+              es=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,p.collector_number,s.code set_code,
+                       ids.cnt tcgdex_identifier_count,ids.external_id
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                LEFT JOIN sets s ON s.id=p.set_id
+                LEFT JOIN LATERAL (
+                  SELECT COUNT(*)::int cnt,MIN(pi.external_id) external_id
+                  FROM print_identifiers pi WHERE pi.print_id=p.id AND pi.source='tcgdex:es'
+                ) ids ON TRUE
+                WHERE g.slug='pokemon' AND p.language='es'
+                  AND NOT EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id)
+                ORDER BY p.id
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if missing_by_language!={'en':441,'es':806,'ja':4157}:
+              raise RuntimeError(f'Pokemon missing baseline drift: {missing_by_language}')
+          if len(en_default)!=213: raise RuntimeError(f'EN default residual drift: {len(en_default)}')
+          if en_v2!=228: raise RuntimeError(f'EN v2 residual drift: {en_v2}')
+          if len(es)!=806: raise RuntimeError(f'ES residual drift: {len(es)}')
+
+          bad_en=[r for r in en_default if int(r.get('tcgdex_identifier_count') or 0)!=1 or not r.get('external_id')]
+          bad_es=[r for r in es if r.get('variant')!='default' or int(r.get('tcgdex_identifier_count') or 0)!=1 or not r.get('external_id')]
+          if bad_en: raise RuntimeError(f'EN default identifier violations: {bad_en[:20]} total={len(bad_en)}')
+          if bad_es: raise RuntimeError(f'ES identifier violations: {bad_es[:20]} total={len(bad_es)}')
+
+          def fetch_index(lang):
+              endpoint=f'https://api.tcgdex.net/v2/{lang}/cards'
+              resp=requests.get(endpoint,headers={'User-Agent':'Dontripit Pokemon residual image index auditor/1.0','Accept':'application/json'},timeout=90)
+              resp.raise_for_status()
+              data=resp.json()
+              if not isinstance(data,list) or len(data)<4000:
+                  raise RuntimeError(f'implausible {lang} card index: {len(data) if isinstance(data,list) else type(data).__name__}')
+              by_id={str(x.get('id')):x for x in data if isinstance(x,dict) and x.get('id')}
+              if len(by_id)!=len(data): raise RuntimeError(f'{lang} duplicate/malformed ids: list={len(data)} unique={len(by_id)}')
+              return endpoint,data,by_id
+
+          en_endpoint,en_cards,en_by_id=fetch_index('en')
+          es_endpoint,es_cards,es_by_id=fetch_index('es')
+
+          def classify(rows,by_id,lang):
+              absent=[]; null=[]; present=[]; mismatch=[]
+              for r in rows:
+                  ext=str(r['external_id']); card=by_id.get(ext)
+                  if card is None:
+                      absent.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code')}); continue
+                  image=card.get('image')
+                  if not image:
+                      null.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code')}); continue
+                  image=str(image)
+                  if not image.startswith(f'https://assets.tcgdex.net/{lang}/'):
+                      mismatch.append({'print_id':r['print_id'],'external_id':ext,'image':image})
+                  present.append({'print_id':r['print_id'],'external_id':ext,'set_code':r.get('set_code'),'image_base':image})
+              return absent,null,present,mismatch
+
+          en_absent,en_null,en_present,en_mismatch=classify(en_default,en_by_id,'en')
+          es_absent,es_null,es_present,es_mismatch=classify(es,es_by_id,'es')
+          if en_mismatch or es_mismatch:
+              raise RuntimeError(f'image base locale mismatch EN={en_mismatch[:10]} ES={es_mismatch[:10]}')
+
+          report={
+            'status':'pass','mode':'read-only-current-tcgdex-en-es-image-index','production_writes':0,
+            'retrieved_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),
+            'pokemon_missing_by_language':missing_by_language,
+            'en':{
+              'endpoint':en_endpoint,'api_cards_total':len(en_cards),'residual_default_total':len(en_default),'residual_v2_total':en_v2,
+              'default_ids_absent':len(en_absent),'default_image_base_null':len(en_null),'default_image_base_present':len(en_present),
+              'present_by_set':dict(Counter(str(x.get('set_code')) for x in en_present)),
+              'present':en_present,'absent':en_absent,
+            },
+            'es':{
+              'endpoint':es_endpoint,'api_cards_total':len(es_cards),'residual_total':len(es),
+              'ids_absent':len(es_absent),'image_base_null':len(es_null),'image_base_present':len(es_present),
+              'present_by_set':dict(Counter(str(x.get('set_code')) for x in es_present)),
+              'present':es_present,'absent':es_absent,
+            },
+          }
+          out=Path(os.environ['OUTPUT']); out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(report,indent=2,sort_keys=True,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          summary=json.loads(json.dumps(report))
+          summary['en'].pop('present',None); summary['en'].pop('absent',None)
+          summary['es'].pop('present',None); summary['es'].pop('absent',None)
+          print(json.dumps(summary,indent=2,sort_keys=True,ensure_ascii=False,default=str))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-en-es-residual-current-api-v1-${{ github.run_id }}
+          path: backend/artifacts/pokemon-en-es-residual-current-api-v1.json
+          retention-days: 30
