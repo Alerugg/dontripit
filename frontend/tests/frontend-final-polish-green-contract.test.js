@@ -7,6 +7,7 @@ const root = path.join(__dirname, '..')
 const client = fs.readFileSync(path.join(root, 'lib/catalog/client.js'), 'utf8')
 const marketCss = fs.readFileSync(path.join(root, 'app/price-first-market.css'), 'utf8')
 const proxy = fs.readFileSync(path.join(root, 'proxy.js'), 'utf8')
+const publicPaths = proxy.match(/const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\)/)?.[1] || ''
 
 test('interactive catalog requests fail closed instead of spinning forever', () => {
   assert.match(client, /const SEARCH_TIMEOUT_MS = 15000/)
@@ -24,10 +25,11 @@ test('mobile Cardmarket window keeps all three metrics balanced', () => {
 })
 
 test('all footer legal policies remain public while account surfaces stay protected', () => {
-  assert.match(proxy, /'\/privacy'/)
-  assert.match(proxy, /'\/cookies'/)
-  assert.match(proxy, /'\/terms'/)
-  assert.doesNotMatch(proxy, /'\/dashboard'/)
-  assert.doesNotMatch(proxy, /'\/collection'/)
-  assert.doesNotMatch(proxy, /'\/wishlist'/)
+  assert.ok(publicPaths, 'PUBLIC_PATHS block must be readable')
+  assert.match(publicPaths, /'\/privacy'/)
+  assert.match(publicPaths, /'\/cookies'/)
+  assert.match(publicPaths, /'\/terms'/)
+  assert.doesNotMatch(publicPaths, /'\/dashboard'/)
+  assert.doesNotMatch(publicPaths, /'\/collection'/)
+  assert.doesNotMatch(publicPaths, /'\/wishlist'/)
 })
