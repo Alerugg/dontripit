@@ -1,0 +1,108 @@
+name: Audit Pokemon V2 Upstream Global V5
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-pokemon-v2-upstream-global-v5.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      TCGDEX_CARDS_SHA: 771a8381c57c73182b9776657a15cd1166c66d36
+      TCGDEX_CARDS_REPO: ${{ github.workspace }}/tcgdex-cards
+    steps:
+      - name: Checkout Dontripit
+        uses: actions/checkout@v4
+      - name: Checkout exact historical TCGdex source
+        uses: actions/checkout@v4
+        with:
+          repository: tcgdex/cards-database
+          ref: 771a8381c57c73182b9776657a15cd1166c66d36
+          path: tcgdex-cards
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Cross-check DB-unique products against full pinned source READ ONLY
+        run: |
+          mkdir -p backend/artifacts
+          test "$(git -C "$TCGDEX_CARDS_REPO" rev-parse HEAD)" = "$TCGDEX_CARDS_SHA"
+          python - <<'PY'
+          import json, os, re
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          pin=os.environ['TCGDEX_CARDS_SHA']
+          root=Path(os.environ['TCGDEX_CARDS_REPO'])/'data'
+          occurrences=Counter()
+          pattern=re.compile(r'\btcgplayer\s*:\s*(\d+)\b')
+          for path in root.rglob('*.ts'):
+              try: content=path.read_text(encoding='utf-8')
+              except UnicodeDecodeError: continue
+              for m in pattern.finditer(content): occurrences[m.group(1)]+=1
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'],pool_pre_ping=True)
+          with engine.connect() as conn:
+              conn.execute(text('SET TRANSACTION READ ONLY'))
+              assert conn.execute(text('SHOW transaction_read_only')).scalar_one()=='on'
+              rows=[dict(r) for r in conn.execute(text('''
+                SELECT p.id print_id,p.variant,pa.source_version,pa.attributes_json,
+                       (SELECT pi.external_id FROM print_identifiers pi
+                        WHERE pi.print_id=p.id AND pi.source='tcgdex-variant-v2' LIMIT 1) exact_variant_id,
+                       EXISTS(SELECT 1 FROM print_images im WHERE im.print_id=p.id) has_image
+                FROM prints p JOIN cards c ON c.id=p.card_id JOIN games g ON g.id=c.game_id
+                JOIN print_attributes pa ON pa.print_id=p.id
+                WHERE g.slug='pokemon' AND p.language='en' AND COALESCE(p.variant,'') LIKE 'v2-%'
+              ''')).mappings().all()]
+              conn.rollback()
+
+          if len(rows)!=27241: raise RuntimeError(f'v2 count drift: {len(rows)}')
+          product_to_exact=defaultdict(set); normalized=[]
+          for r in rows:
+              if str(r['source_version'])!=pin: raise RuntimeError('source version drift')
+              attrs=r['attributes_json']; pv=attrs['physical_variant']
+              exact=f"{attrs['source_id']}#{pv['variant_hash']}"
+              if r['exact_variant_id']!=exact or r['variant']!=f"v2-{pv['variant_hash']}": raise RuntimeError('exact identity mismatch')
+              tp=pv.get('third_party') or {}; product=str(tp.get('tcgplayer')) if tp.get('tcgplayer') not in (None,'') else None
+              if product: product_to_exact[product].add(exact)
+              normalized.append({'print_id':r['print_id'],'has_image':r['has_image'],'exact':exact,'product':product})
+
+          residual=[x for x in normalized if not x['has_image']]
+          db_unique=[x for x in residual if x['product'] and len(product_to_exact[x['product']])==1]
+          source_unique=[x for x in db_unique if occurrences[x['product']]==1]
+          source_shared=[x for x in db_unique if occurrences[x['product']]>1]
+          source_missing=[x for x in db_unique if occurrences[x['product']]==0]
+          counts=Counter(occurrences[x['product']] for x in db_unique)
+          report={
+            'status':'pass','production_writes':0,'transaction_read_only':True,'source_version':pin,
+            'all_v2_prints':len(rows),'residual_v2_missing_images':len(residual),
+            'db_unique_exact_identity_rows':len(db_unique),
+            'upstream_globally_unique_rows':len(source_unique),
+            'upstream_reused_rows':len(source_shared),
+            'upstream_missing_product_rows':len(source_missing),
+            'upstream_occurrence_distribution':{str(k):v for k,v in sorted(counts.items())},
+            'source_shared_samples':source_shared[:100],
+            'source_missing_samples':source_missing[:100],
+          }
+          Path('backend/artifacts/pokemon-v2-upstream-global-v5.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in report.items() if not k.endswith('_samples')},indent=2))
+          if source_missing: raise RuntimeError(f'{len(source_missing)} DB candidate products absent from pinned source')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pokemon-v2-upstream-global-v5-${{ github.run_id }}
+          path: backend/artifacts/pokemon-v2-upstream-global-v5.json
+          retention-days: 30
