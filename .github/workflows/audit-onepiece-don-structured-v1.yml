@@ -61,12 +61,17 @@ jobs:
         run: |
           ONEPIECE_DON_AUDIT_OUTPUT=artifacts/onepiece-don-structured-v1-audit.json \
             python app/scripts/audit_onepiece_don_structured_v1.py
+      - name: Certify production structured state read-only
+        env:
+          ONEPIECE_DON_CERT_OUTPUT: artifacts/onepiece-don-structured-v1-cert-postapply.json
+        run: python app/scripts/certify_onepiece_don_structured_v1.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: onepiece-don-structured-v1-audit-${{ github.run_id }}
           path: |
             backend/artifacts/onepiece-don-structured-v1-audit.json
+            backend/artifacts/onepiece-don-structured-v1-cert-postapply.json
             backend/artifacts/onepiece-don-structured-v1-dry-run.json
             backend/artifacts/onepiece-don-official-source-v1.json
             backend/artifacts/onepiece-don-official-source-v1.pdf
