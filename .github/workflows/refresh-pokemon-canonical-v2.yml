@@ -87,6 +87,7 @@ jobs:
           import json
           import logging
           import time
+          import requests
           from app.ingest.run import run_ingest
 
           logging.basicConfig(
@@ -99,12 +100,33 @@ jobs:
           for lang in ('en', 'es', 'ja'):
               language_started = time.monotonic()
               print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
-              stats = run_ingest(
-                  'tcgdex_pokemon',
-                  lang=lang,
-                  incremental=True,
-                  fixture=False,
-              )
+              for attempt in range(1, 4):
+                  try:
+                      stats = run_ingest(
+                          'tcgdex_pokemon',
+                          lang=lang,
+                          incremental=True,
+                          fixture=False,
+                      )
+                      break
+                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                      if attempt == 3:
+                          raise
+                      wait_seconds = 5 * (2 ** (attempt - 1))
+                      print(
+                          json.dumps(
+                              {
+                                  'event': 'pokemon_refresh_transport_retry',
+                                  'language': lang,
+                                  'attempt': attempt,
+                                  'wait_seconds': wait_seconds,
+                                  'error_type': type(exc).__name__,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      time.sleep(wait_seconds)
               row = {
                   'language': lang,
                   'files_seen': int(stats.files_seen),
@@ -138,4 +160,32 @@ jobs:
       - name: Prove fresh TCGdex physical source parity in production
         env:
           PYTHONPATH: .
-        run: python -m app.scripts.prove_pokemon_tcgdex_parity_v2
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import requests
+          from app.scripts.prove_pokemon_tcgdex_parity_v2 import main
+
+          for attempt in range(1, 4):
+              try:
+                  main()
+                  break
+              except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                  if attempt == 3:
+                      raise
+                  wait_seconds = 5 * (2 ** (attempt - 1))
+                  print(
+                      json.dumps(
+                          {
+                              'event': 'pokemon_parity_transport_retry',
+                              'attempt': attempt,
+                              'wait_seconds': wait_seconds,
+                              'error_type': type(exc).__name__,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+                  time.sleep(wait_seconds)
+          PY
