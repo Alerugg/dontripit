@@ -16,7 +16,10 @@ concurrency:
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # GitHub-hosted jobs allow at most 360 minutes. The previous 180-minute
+    # ceiling and fixed 60-minute child wait could terminate a healthy child
+    # before its own certified timeout (Pokemon now permits 90 minutes).
+    timeout-minutes: 360
     env:
       # GitHub schedules only the default-branch workflow. Production catalog
       # work lives on catalog-v2, so never derive this target from github.ref_name.
@@ -37,13 +40,20 @@ jobs:
             // MTG canonical source writes remain deliberately excluded until the
             // finish-aware incremental writer is certified. Cardmarket MTG catalog,
             // exact accepted links and canonical prices remain refreshed below.
+            // Search latency is the final read-only customer-retention gate.
+            //
+            // waitMinutes is deliberately derived from each child's own job ceiling,
+            // plus bounded queue/cleanup headroom. The parent still fails closed at
+            // GitHub's 360-minute job ceiling; it no longer imposes a shorter generic
+            // 60-minute deadline on a healthy long-running child.
             const pipeline = [
-              ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
-              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh'],
-              ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
-              ['project-cardmarket-canonical-prices-v2.yml', 'Cardmarket exact canonical singles and sealed prices'],
-              ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
-              ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
+              ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh', 110],
+              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh', 105],
+              ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master', 60],
+              ['project-cardmarket-canonical-prices-v2.yml', 'Cardmarket exact canonical singles and sealed prices', 60],
+              ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths', 25],
+              ['sync-regional-tcg-content.yml', 'Regional official news and releases', 45],
+              ['certify-search-v2-production-latency-v1.yml', 'Search V2 production latency and result quality', 25],
             ];
 
             async function api(label, fn, attempts = 6) {
@@ -95,8 +105,8 @@ jobs:
               throw new Error(`Could not resolve dispatched run for ${workflowId} at ${expectedSha}`);
             }
 
-            async function waitForRun(workflowId, runId) {
-              const deadline = Date.now() + 60 * 60 * 1000;
+            async function waitForRun(workflowId, runId, waitMinutes) {
+              const deadline = Date.now() + waitMinutes * 60 * 1000;
               while (Date.now() < deadline) {
                 const response = await api(`get run ${runId}`, () => github.rest.actions.getWorkflowRun({
                   owner,
@@ -106,11 +116,11 @@ jobs:
                 if (response.data.status === 'completed') return response.data;
                 await sleep(10000);
               }
-              throw new Error(`${workflowId} run ${runId} exceeded the wait window`);
+              throw new Error(`${workflowId} run ${runId} exceeded its ${waitMinutes}-minute orchestrator wait budget`);
             }
 
             const summary = [];
-            for (const [workflowId, label] of pipeline) {
+            for (const [workflowId, label, waitMinutes] of pipeline) {
               const expectedSha = await branchSha();
               const dispatchedAt = Date.now();
               core.startGroup(`${label} (${workflowId})`);
@@ -121,12 +131,13 @@ jobs:
                 ref: targetRef,
               }));
               const resolved = await resolveRun(workflowId, expectedSha, dispatchedAt);
-              const completed = await waitForRun(workflowId, resolved.id);
+              const completed = await waitForRun(workflowId, resolved.id, waitMinutes);
               const row = {
                 workflow: workflowId,
                 run_id: completed.id,
                 conclusion: completed.conclusion,
                 head_sha: completed.head_sha,
+                wait_budget_minutes: waitMinutes,
               };
               summary.push(row);
               core.info(JSON.stringify(row));
@@ -140,8 +151,8 @@ jobs:
             await core.summary
               .addHeading('Daily Catalog V2')
               .addTable([
-                [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}],
-                ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion)]),
+                [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}, {data: 'Wait budget (min)', header: true}],
+                ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion), String(row.wait_budget_minutes)]),
               ])
               .write();
 
