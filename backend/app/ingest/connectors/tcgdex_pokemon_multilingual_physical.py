@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import requests
 from sqlalchemy import select
 
@@ -29,6 +31,35 @@ class PhysicalMultilingualTcgdexPokemonConnector(MultilingualTcgdexPokemonConnec
     metadata and skips it with a warning rather than fabricating a physical Set.
     Explicit set requests remain fail-closed.
     """
+
+    def _request_json(self, url: str, params: dict | None = None):
+        """Retry only transient transport failures for the exact TCGdex request.
+
+        The parent connector already retries bounded 429/5xx responses. Requests
+        can also fail before an HTTP response exists (for example ReadTimeout or
+        ConnectionError during TLS/read). Repeating the whole EN/ES/JA ingest for
+        one dropped request is unnecessarily expensive, so retry that URL here.
+
+        HTTP/data/identity errors are deliberately not caught and still fail
+        closed through the existing parent/physical guards.
+        """
+        wait_seconds = 0.5
+        for attempt in range(1, 4):
+            try:
+                return super()._request_json(url, params=params)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    raise
+                self.logger.warning(
+                    "ingest tcgdex transport_retry url=%s error_type=%s attempt=%s wait_seconds=%s",
+                    url,
+                    type(exc).__name__,
+                    attempt,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                wait_seconds *= 2
+        raise RuntimeError(f"TCGdex transport retry loop exhausted unexpectedly: {url}")
 
     def _upsert_card_identifier(
         self,
