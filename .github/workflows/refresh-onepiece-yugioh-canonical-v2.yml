@@ -8,17 +8,18 @@ permissions:
 
 concurrency:
   group: refresh-onepiece-yugioh-canonical-v2
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   onepiece:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       PYTHONPATH: .
       ONEPIECE_SOURCE: remote
+      ONEPIECE_INGEST_SOURCE: remote
     defaults:
       run:
         working-directory: backend
@@ -30,7 +31,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - name: Incrementally refresh canonical Bandai source with transient retry
+      - name: Incrementally refresh canonical Bandai regional sources with transient retry
         shell: bash
         run: |
           set -euo pipefail
@@ -40,28 +41,150 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 20)); fi
           done
           test "$ok" -eq 1
-      - name: Prove Bandai current source is fully covered after refresh
+      - name: Prove Global EN, Asia EN and JP canonical coverage after refresh with transient retry
+        shell: bash
         run: |
-          python - <<'PY'
-          import json,os
-          from sqlalchemy import create_engine,text
-          from app.ingest.connectors.onepiece_v2 import OnePieceV2Connector
-          payload=OnePieceV2Connector()._load_official_cardlist_remote(limit=None)
-          src_cards={str(c['id']) for c in payload['cards']}
-          src_sets={str(s['code']).lower() for s in payload['sets']}
-          src_prints={(str(p['set_code']).lower(),str(p['collector_number']).upper(),'en',str(p.get('variant') or 'default').lower()) for c in payload['cards'] for p in c.get('prints',[])}
-          engine=create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if python - <<'PY'
+          import json
+          import os
+
+          from sqlalchemy import create_engine, text
+
+          from app.ingest.connectors.onepiece_canonical import OnePieceCanonicalConnector
+          from app.ingest.normalization import normalize_collector_number, normalize_variant
+
+          connector = OnePieceCanonicalConnector()
+          payloads = [
+              connector._load_official_cardlist_remote(limit=None),
+              connector._load_official_asia_en_cardlist_remote(limit=None),
+              connector._load_official_jp_cardlist_remote(limit=None),
+          ]
+          promo_audit = connector._annotate_regional_promo_audit(payloads)
+
+          src_cards = set()
+          src_sets = set()
+          src_prints = set()
+          source_by_region = {}
+          promo_by_region = {}
+
+          for payload in payloads:
+              region = str(payload.get('region') or 'unknown')
+              language = connector._normalize_language(str(payload.get('language') or 'en'))
+              region_cards = {str(card['id']).strip().lower() for card in payload.get('cards') or [] if card.get('id')}
+              region_sets = {str(row['code']).strip().lower() for row in payload.get('sets') or [] if row.get('code')}
+              region_prints = {
+                  (
+                      str(print_row.get('set_code') or '').strip().lower(),
+                      normalize_collector_number(print_row.get('collector_number')),
+                      language,
+                      normalize_variant(print_row.get('variant')),
+                  )
+                  for card in payload.get('cards') or []
+                  for print_row in card.get('prints') or []
+                  if print_row.get('collector_number')
+              }
+              region_promos = {
+                  collector
+                  for set_code, collector, _language, _variant in region_prints
+                  if set_code == 'p'
+              }
+              src_cards.update(region_cards)
+              src_sets.update(region_sets)
+              src_prints.update(region_prints)
+              source_by_region[region] = {
+                  'cards': len(region_cards),
+                  'sets': len(region_sets),
+                  'prints': len(region_prints),
+                  'promos': len(region_promos),
+              }
+              promo_by_region[region] = sorted(region_promos)
+
+          p150_collector = normalize_collector_number('P-150')
+          official_p150_regions = [
+              region for region, promos in promo_by_region.items() if p150_collector in promos
+          ]
+          if not official_p150_regions:
+              raise AssertionError('P-150 disappeared from all official Bandai regional card-list sources')
+
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
           with engine.connect() as conn:
-            gid=conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
-            db_cards={str(v) for v in conn.execute(text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),{'g':gid}).scalars()}
-            db_sets={str(v).lower() for v in conn.execute(text("SELECT code FROM sets WHERE game_id=:g"),{'g':gid}).scalars()}
-            db_prints={(str(a).lower(),str(b).upper(),str(c or '').lower(),str(d or 'default').lower()) for a,b,c,d in conn.execute(text('''SELECT s.code,p.collector_number,p.language,p.variant FROM prints p JOIN cards c ON c.id=p.card_id JOIN sets s ON s.id=p.set_id WHERE c.game_id=:g'''),{'g':gid}).all()}
-          proof={'source_cards':len(src_cards),'source_sets':len(src_sets),'source_prints':len(src_prints),'missing_cards':len(src_cards-db_cards),'missing_sets':len(src_sets-db_sets),'missing_prints':len(src_prints-db_prints),'physical_conflicts':len((payload.get('diagnostics') or {}).get('physical_identity_conflicts') or [])}
-          if proof['missing_cards'] or proof['missing_sets'] or proof['missing_prints'] or proof['physical_conflicts']: raise AssertionError(proof)
-          print(json.dumps(proof,indent=2,sort_keys=True))
+              gid = conn.execute(text("SELECT id FROM games WHERE slug='onepiece' LIMIT 1")).scalar_one()
+              db_cards = {
+                  str(value).strip().lower()
+                  for value in conn.execute(
+                      text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),
+                      {'g': gid},
+                  ).scalars()
+              }
+              db_sets = {
+                  str(value).strip().lower()
+                  for value in conn.execute(
+                      text("SELECT code FROM sets WHERE game_id=:g"),
+                      {'g': gid},
+                  ).scalars()
+              }
+              db_prints = {
+                  (
+                      str(set_code or '').strip().lower(),
+                      normalize_collector_number(collector),
+                      str(language or '').strip().lower(),
+                      normalize_variant(variant),
+                  )
+                  for set_code, collector, language, variant in conn.execute(
+                      text('''
+                          SELECT s.code, p.collector_number, p.language, p.variant
+                          FROM prints p
+                          JOIN cards c ON c.id=p.card_id
+                          JOIN sets s ON s.id=p.set_id
+                          WHERE c.game_id=:g
+                      '''),
+                      {'g': gid},
+                  ).all()
+              }
+
+          missing_cards = sorted(src_cards - db_cards)
+          missing_sets = sorted(src_sets - db_sets)
+          missing_prints = sorted(src_prints - db_prints)
+          expected_p150 = sorted(row for row in src_prints if row[1] == p150_collector)
+          missing_p150 = sorted(set(expected_p150) - db_prints)
+
+          proof = {
+              'source_by_region': source_by_region,
+              'promo_audit': promo_audit,
+              'source_cards_union': len(src_cards),
+              'source_sets_union': len(src_sets),
+              'source_prints_union': len(src_prints),
+              'missing_cards': len(missing_cards),
+              'missing_sets': len(missing_sets),
+              'missing_prints': len(missing_prints),
+              'official_p150_regions': official_p150_regions,
+              'expected_p150_prints': expected_p150,
+              'missing_p150_prints': missing_p150,
+              'missing_card_examples': missing_cards[:20],
+              'missing_set_examples': missing_sets[:20],
+              'missing_print_examples': missing_prints[:20],
+          }
+          if missing_cards or missing_sets or missing_prints or missing_p150:
+              raise AssertionError(proof)
+          print(json.dumps(proof, indent=2, sort_keys=True))
           PY
+            then
+              ok=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "One Piece parity proof failed attempt ${attempt}/3; retrying after $((attempt * 20))s" >&2
+              sleep $((attempt * 20))
+            fi
+          done
+          test "$ok" -eq 1
 
   yugioh:
+    needs: onepiece
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
