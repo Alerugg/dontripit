@@ -3,6 +3,9 @@ name: Daily Catalog V2 Orchestrator
 on:
   schedule:
     - cron: '20 4 * * *'
+    # Temporary real schedule-event recertification window for 2026-08-24.
+    # Remove immediately after the run is created.
+    - cron: '30 17 * * *'
   workflow_dispatch:
 
 permissions:
