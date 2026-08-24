@@ -2,6 +2,18 @@ name: Refresh Pokemon Canonical V2
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - catalog-v2
+    paths:
+      - '.github/workflows/refresh-pokemon-canonical-v2.yml'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity.py'
+      - 'backend/app/scripts/prove_pokemon_tcgdex_parity_v2.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_incremental_guard.py'
+      - 'backend/app/ingest/registry.py'
 
 permissions:
   contents: read
@@ -13,10 +25,15 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # The certified EN/ES/JA refresh performs a full remote physical-catalog scan
+    # before the incremental writer can prove individual rows are already complete.
+    # The final replay on 2026-08-24 reached the old 55-minute job ceiling without
+    # any data/test error, so keep enough headroom for normal TCGdex/API variance.
+    timeout-minutes: 90
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
     defaults:
       run:
         working-directory: backend
@@ -40,14 +57,17 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
-      - name: Compile certified Pokemon physical writer
+      - name: Compile certified Pokemon physical writer and parity gate
         run: |
           python -m py_compile \
             app/ingest/run.py \
             app/ingest/registry.py \
             app/ingest/connectors/tcgdex_pokemon.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
-            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
+            app/scripts/prove_pokemon_tcgdex_parity.py \
+            app/scripts/prove_pokemon_tcgdex_parity_v2.py
 
       - name: Re-run focused Pokemon physical identity guards
         env:
@@ -56,7 +76,8 @@ jobs:
           unset DATABASE_URL DATABASE_URL_UNPOOLED
           pytest -q \
             tests/test_tcgdex_multilingual.py \
-            tests/test_tcgdex_physical_scope.py
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_en_legacy_incremental.py
 
       - name: Refresh certified EN ES JA physical catalog incrementally
         env:
@@ -64,16 +85,48 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import logging
+          import time
+          import requests
           from app.ingest.run import run_ingest
 
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s %(levelname)s %(name)s %(message)s',
+          )
+
           summary = []
+          refresh_started = time.monotonic()
           for lang in ('en', 'es', 'ja'):
-              stats = run_ingest(
-                  'tcgdex_pokemon',
-                  lang=lang,
-                  incremental=True,
-                  fixture=False,
-              )
+              language_started = time.monotonic()
+              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
+              for attempt in range(1, 4):
+                  try:
+                      stats = run_ingest(
+                          'tcgdex_pokemon',
+                          lang=lang,
+                          incremental=True,
+                          fixture=False,
+                      )
+                      break
+                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                      if attempt == 3:
+                          raise
+                      wait_seconds = 5 * (2 ** (attempt - 1))
+                      print(
+                          json.dumps(
+                              {
+                                  'event': 'pokemon_refresh_transport_retry',
+                                  'language': lang,
+                                  'attempt': attempt,
+                                  'wait_seconds': wait_seconds,
+                                  'error_type': type(exc).__name__,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      time.sleep(wait_seconds)
               row = {
                   'language': lang,
                   'files_seen': int(stats.files_seen),
@@ -81,13 +134,58 @@ jobs:
                   'inserted': int(stats.records_inserted),
                   'updated': int(stats.records_updated),
                   'errors': int(stats.errors),
+                  'elapsed_seconds': round(time.monotonic() - language_started, 3),
               }
-              print(json.dumps(row, sort_keys=True))
+              print(json.dumps(row, sort_keys=True), flush=True)
               summary.append(row)
               if row['errors'] != 0:
                   raise SystemExit(f'Pokemon {lang} refresh reported errors: {row!r}')
 
           if [row['language'] for row in summary] != ['en', 'es', 'ja']:
               raise SystemExit(f'Pokemon language coverage incomplete: {summary!r}')
-          print(json.dumps({'status': 'pass', 'languages': summary}, indent=2, sort_keys=True))
+          print(
+              json.dumps(
+                  {
+                      'status': 'pass',
+                      'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
+                      'languages': summary,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ),
+              flush=True,
+          )
+          PY
+
+      - name: Prove fresh TCGdex physical source parity in production
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import requests
+          from app.scripts.prove_pokemon_tcgdex_parity_v2 import main
+
+          for attempt in range(1, 4):
+              try:
+                  main()
+                  break
+              except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                  if attempt == 3:
+                      raise
+                  wait_seconds = 5 * (2 ** (attempt - 1))
+                  print(
+                      json.dumps(
+                          {
+                              'event': 'pokemon_parity_transport_retry',
+                              'attempt': attempt,
+                              'wait_seconds': wait_seconds,
+                              'error_type': type(exc).__name__,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+                  time.sleep(wait_seconds)
           PY
