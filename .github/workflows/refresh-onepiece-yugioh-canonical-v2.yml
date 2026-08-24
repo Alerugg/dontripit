@@ -41,9 +41,13 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 20)); fi
           done
           test "$ok" -eq 1
-      - name: Prove Global EN, Asia EN and JP canonical coverage after refresh
+      - name: Prove Global EN, Asia EN and JP canonical coverage after refresh with transient retry
+        shell: bash
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if python - <<'PY'
           import json
           import os
 
@@ -167,6 +171,16 @@ jobs:
               raise AssertionError(proof)
           print(json.dumps(proof, indent=2, sort_keys=True))
           PY
+            then
+              ok=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "One Piece parity proof failed attempt ${attempt}/3; retrying after $((attempt * 20))s" >&2
+              sleep $((attempt * 20))
+            fi
+          done
+          test "$ok" -eq 1
 
   yugioh:
     needs: onepiece
