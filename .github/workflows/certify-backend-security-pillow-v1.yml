@@ -21,29 +21,90 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Pillow candidate
+        uses: actions/checkout@v4
+        with:
+          path: candidate
+      - name: Checkout catalog-v2 baseline
+        uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+          path: baseline
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - name: Install exact backend requirements and test-only YGO parser
-        working-directory: backend
+      - name: Install isolated baseline and candidate environments
+        shell: bash
         run: |
-          pip install -r requirements.txt
-          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
-      - name: Run full backend test suite
-        working-directory: backend
-        run: pytest -q
-      - name: Require clean production dependency audit
+          set -euo pipefail
+          python -m venv /tmp/pillow-base
+          python -m venv /tmp/pillow-candidate
+          /tmp/pillow-base/bin/pip install --disable-pip-version-check -r baseline/backend/requirements.txt 'ijson==3.4.0.post0'
+          /tmp/pillow-candidate/bin/pip install --disable-pip-version-check -r candidate/backend/requirements.txt 'ijson==3.4.0.post0'
+          test "$(/tmp/pillow-base/bin/python -c 'import PIL; print(PIL.__version__)')" = "11.3.0"
+          test "$(/tmp/pillow-candidate/bin/python -c 'import PIL; print(PIL.__version__)')" = "12.3.0"
+      - name: Run full suite on baseline and candidate and require no regression
+        shell: bash
         run: |
-          python -m pip install --upgrade pip pip-audit
+          set -uo pipefail
           mkdir -p artifacts
-          pip-audit -r backend/requirements.txt -f json -o artifacts/backend-pip-audit-pillow-v1.json
+          (
+            cd baseline/backend
+            /tmp/pillow-base/bin/pytest -q --tb=short 2>&1 | tee ../../artifacts/pytest-baseline.txt
+            echo ${PIPESTATUS[0]} > ../../artifacts/pytest-baseline.exit
+          )
+          (
+            cd candidate/backend
+            /tmp/pillow-candidate/bin/pytest -q --tb=short 2>&1 | tee ../../artifacts/pytest-candidate.txt
+            echo ${PIPESTATUS[0]} > ../../artifacts/pytest-candidate.exit
+          )
+          python - <<'PY'
+          import json,re
+          from pathlib import Path
+          root=Path('artifacts')
+          def parse(name):
+              text=(root/name).read_text(errors='replace')
+              failed=sorted(set(re.findall(r'^FAILED\s+([^\s]+)', text, flags=re.M)))
+              summary=re.findall(r'(?m)^.*\b\d+ failed, \d+ passed.*$', text)
+              return {'failed_nodeids':failed,'summary':summary[-1] if summary else None}
+          base=parse('pytest-baseline.txt')
+          cand=parse('pytest-candidate.txt')
+          report={
+              'baseline_pillow':'11.3.0',
+              'candidate_pillow':'12.3.0',
+              'baseline':base,
+              'candidate':cand,
+              'same_failed_nodeids':base['failed_nodeids']==cand['failed_nodeids'],
+              'new_failures':sorted(set(cand['failed_nodeids'])-set(base['failed_nodeids'])),
+              'resolved_failures':sorted(set(base['failed_nodeids'])-set(cand['failed_nodeids'])),
+          }
+          (root/'pillow-suite-differential-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if not report['same_failed_nodeids']:
+              raise SystemExit('Pillow candidate changed full-suite failure set')
+          PY
+      - name: Require clean production dependency audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/pillow-candidate/bin/pip install --disable-pip-version-check pip-audit
+          /tmp/pillow-candidate/bin/pip-audit -r candidate/backend/requirements.txt -f json -o artifacts/backend-pip-audit-pillow-v1.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('artifacts/backend-pip-audit-pillow-v1.json').read_text())
+          vulns=[]
+          for dep in data.get('dependencies',[]):
+              for vuln in dep.get('vulns') or []:
+                  vulns.append({'name':dep.get('name'),'version':dep.get('version'),'id':vuln.get('id')})
+          print(json.dumps({'known_vulnerabilities':len(vulns),'vulns':vulns},indent=2))
+          if vulns:
+              raise SystemExit(f'candidate still has {len(vulns)} known vulnerabilities')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: backend-security-pillow-v1-${{ github.run_id }}
-          path: artifacts/backend-pip-audit-pillow-v1.json
+          path: artifacts/*
           retention-days: 30
           if-no-files-found: warn
