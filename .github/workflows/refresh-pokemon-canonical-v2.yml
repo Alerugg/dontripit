@@ -77,7 +77,8 @@ jobs:
           pytest -q \
             tests/test_tcgdex_multilingual.py \
             tests/test_tcgdex_physical_scope.py \
-            tests/test_tcgdex_en_legacy_incremental.py
+            tests/test_tcgdex_en_legacy_incremental.py \
+            tests/test_tcgdex_transport_retry.py
 
       - name: Refresh certified EN ES JA physical catalog incrementally
         env:
