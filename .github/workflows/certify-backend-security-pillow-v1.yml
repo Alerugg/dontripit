@@ -1,11 +1,12 @@
 name: Certify Backend Security Pillow V1
 
 on:
-  pull_request:
-    branches: [catalog-v2]
+  push:
+    branches: ['fix/security-pillow-12-3-v1']
     paths:
       - 'backend/requirements.txt'
       - '.github/workflows/certify-backend-security-pillow-v1.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
