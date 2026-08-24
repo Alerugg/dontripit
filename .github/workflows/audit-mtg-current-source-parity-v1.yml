@@ -1,0 +1,105 @@
+name: Audit MTG Current Source Parity V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-mtg-current-source-parity-v1.yml'
+      - 'backend/app/scripts/audit_mtg_current_source_parity_v1.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PGOPTIONS: '-c default_transaction_read_only=on'
+      PYTHONUNBUFFERED: '1'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify read-only production database contract
+        run: |
+          test -n "$DATABASE_URL_UNPOOLED"
+          python - <<'PY'
+          import os
+          import psycopg2
+          url = os.environ['DATABASE_URL_UNPOOLED']
+          if url.startswith('postgresql+psycopg2://'):
+              url = 'postgresql://' + url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          conn = psycopg2.connect(url)
+          try:
+              conn.set_session(readonly=True, autocommit=False)
+              with conn.cursor() as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  value = cur.fetchone()[0]
+                  print({'transaction_read_only': value})
+                  if str(value).lower() != 'on':
+                      raise SystemExit('production transaction is not read-only')
+              conn.rollback()
+          finally:
+              conn.close()
+          PY
+
+      - name: Compile exact MTG source builder and classifier
+        run: |
+          python -m py_compile \
+            app/mtg_identity_v2.py \
+            app/ingest/connectors/scryfall_mtg_v2.py \
+            app/scripts/build_mtg_v2_snapshot.py \
+            app/scripts/build_mtg_v2_snapshot_v22.py \
+            app/scripts/audit_mtg_current_source_parity_v1.py
+
+      - name: Re-run MTG exact identity guardrails without database access
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
+          pytest -q \
+            tests/test_mtg_identity_v2.py \
+            tests/test_mtg_snapshot_v22.py \
+            tests/test_mtg_write_quarantine_v2.py \
+            tests/test_scryfall_bulk_v2.py
+
+      - name: Build current exact Scryfall V2.2 source manifest
+        run: |
+          mkdir -p artifacts/mtg-current-source-v22 evidence
+          python -m app.scripts.build_mtg_v2_snapshot_v22 \
+            --output-dir artifacts/mtg-current-source-v22
+          cp artifacts/mtg-current-source-v22/manifest.json evidence/mtg-current-source-manifest-v22.json
+
+      - name: Classify current source against production read-only
+        run: |
+          python -m app.scripts.audit_mtg_current_source_parity_v1 \
+            --snapshot-dir artifacts/mtg-current-source-v22 \
+            --output evidence/mtg-current-source-parity-v1.json
+
+      - name: Upload compact evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-current-source-parity-v1-${{ github.run_id }}
+          path: backend/evidence/*.json
+          retention-days: 30
+          if-no-files-found: error
