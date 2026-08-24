@@ -1,10 +1,11 @@
 name: Audit YGO Current Print Drift Safety V1
 
 on:
-  pull_request:
-    branches: [catalog-v2]
+  push:
+    branches: ['audit/ygo-152-print-safety-v1']
     paths:
       - '.github/workflows/audit-ygo-152-print-safety-v1.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
