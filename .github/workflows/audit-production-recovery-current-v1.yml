@@ -1,0 +1,131 @@
+name: Audit Production Recovery Current V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-production-recovery-current-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read production baseline in forced read-only mode
+        id: db
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo 'DATABASE_URL secret is required'; exit 1; }
+          python -m pip install --quiet psycopg2-binary==2.9.9
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import psycopg2
+
+          conn=psycopg2.connect(os.environ['DATABASE_URL'])
+          conn.autocommit=True
+          with conn.cursor() as cur:
+              cur.execute('SHOW transaction_read_only')
+              ro=cur.fetchone()[0]
+              if ro != 'on': raise SystemExit(f'production connection not read-only: {ro}')
+              cur.execute('SHOW server_version_num')
+              major=int(cur.fetchone()[0])//10000
+              counts={}
+              for table in ('games','sets','cards','prints','users','user_sessions','user_collection_items','user_wishlist_items'):
+                  cur.execute(f'SELECT COUNT(*) FROM {table}')
+                  counts[table]=int(cur.fetchone()[0])
+          conn.close()
+          if counts['cards'] <= 0 or counts['prints'] <= 0:
+              raise SystemExit(f'invalid production baseline: {counts}')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as fh:
+              fh.write(f'major={major}\n')
+              for k,v in counts.items(): fh.write(f'{k}={v}\n')
+          Path('/tmp/recovery-baseline.json').write_text(json.dumps({'transaction_read_only':ro,'postgres_major':major,'counts':counts},indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'transaction_read_only':ro,'postgres_major':major,'counts':counts},indent=2,sort_keys=True))
+          PY
+      - name: Create logical backup from production
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/dontripit.dump
+          docker run --rm \
+            -e DATABASE_URL \
+            -e PGOPTIONS='-c default_transaction_read_only=on' \
+            "postgres:${{ steps.db.outputs.major }}" \
+            sh -lc 'pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL"' > /tmp/dontripit.dump
+          test -s /tmp/dontripit.dump
+          bytes=$(stat -c%s /tmp/dontripit.dump)
+          test "$bytes" -gt 1024
+          sha=$(sha256sum /tmp/dontripit.dump | awk '{print $1}')
+          echo "backup_bytes=$bytes"
+          echo "backup_sha256=$sha"
+          printf '{"backup_bytes":%s,"backup_sha256":"%s"}\n' "$bytes" "$sha" > /tmp/recovery-backup.json
+      - name: Restore backup into isolated PostgreSQL and verify exact counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f dri-restore-v1 >/dev/null 2>&1 || true; rm -f /tmp/dontripit.dump' EXIT
+          docker run -d --name dri-restore-v1 \
+            -e POSTGRES_PASSWORD=restore-only \
+            -e POSTGRES_DB=dontripit_restore \
+            "postgres:${{ steps.db.outputs.major }}" >/dev/null
+          for attempt in $(seq 1 30); do
+            if docker exec dri-restore-v1 pg_isready -U postgres -d dontripit_restore >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec dri-restore-v1 pg_isready -U postgres -d dontripit_restore >/dev/null
+          docker cp /tmp/dontripit.dump dri-restore-v1:/tmp/dontripit.dump
+          docker exec dri-restore-v1 pg_restore --username=postgres --dbname=dontripit_restore --no-owner --no-acl --exit-on-error /tmp/dontripit.dump
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          expected={
+              'games':int('${{ steps.db.outputs.games }}'),
+              'sets':int('${{ steps.db.outputs.sets }}'),
+              'cards':int('${{ steps.db.outputs.cards }}'),
+              'prints':int('${{ steps.db.outputs.prints }}'),
+              'users':int('${{ steps.db.outputs.users }}'),
+              'user_sessions':int('${{ steps.db.outputs.user_sessions }}'),
+              'user_collection_items':int('${{ steps.db.outputs.user_collection_items }}'),
+              'user_wishlist_items':int('${{ steps.db.outputs.user_wishlist_items }}'),
+          }
+          actual={}
+          for table in expected:
+              out=subprocess.check_output(['docker','exec','dri-restore-v1','psql','-U','postgres','-d','dontripit_restore','-Atc',f'SELECT COUNT(*) FROM {table}'],text=True)
+              actual[table]=int(out.strip())
+          failures={k:{'expected':expected[k],'actual':actual[k]} for k in expected if expected[k]!=actual[k]}
+          required=['users','user_sessions','user_collection_items','user_wishlist_items']
+          schema_out=subprocess.check_output(['docker','exec','dri-restore-v1','psql','-U','postgres','-d','dontripit_restore','-Atc',"SELECT relname FROM pg_class WHERE relkind='r' AND relname IN ('users','user_sessions','user_collection_items','user_wishlist_items') ORDER BY relname"],text=True)
+          restored_tables=[x for x in schema_out.splitlines() if x]
+          missing_required=sorted(set(required)-set(restored_tables))
+          report={'status':'fail' if failures or missing_required else 'pass','production_writes':0,'expected_counts':expected,'restored_counts':actual,'count_failures':failures,'missing_required_tables':missing_required}
+          Path('/tmp/recovery-restore.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if failures or missing_required: raise SystemExit('restore certification failed')
+          PY
+      - name: Assemble evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp /tmp/recovery-baseline.json artifacts/ 2>/dev/null || true
+          cp /tmp/recovery-backup.json artifacts/ 2>/dev/null || true
+          cp /tmp/recovery-restore.json artifacts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-recovery-current-v1-${{ github.run_id }}
+          path: artifacts/*.json
+          retention-days: 30
+          if-no-files-found: warn
