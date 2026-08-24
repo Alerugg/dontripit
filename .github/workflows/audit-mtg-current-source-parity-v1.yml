@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/audit-mtg-current-source-parity-v1.yml'
       - 'backend/app/scripts/audit_mtg_current_source_parity_v1.py'
+      - 'backend/app/scripts/audit_mtg_production_extra_prints_v1.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
       - 'backend/app/mtg_identity_v2.py'
@@ -64,14 +65,15 @@ jobs:
               conn.close()
           PY
 
-      - name: Compile exact MTG source builder and classifier
+      - name: Compile exact MTG source builders and classifiers
         run: |
           python -m py_compile \
             app/mtg_identity_v2.py \
             app/ingest/connectors/scryfall_mtg_v2.py \
             app/scripts/build_mtg_v2_snapshot.py \
             app/scripts/build_mtg_v2_snapshot_v22.py \
-            app/scripts/audit_mtg_current_source_parity_v1.py
+            app/scripts/audit_mtg_current_source_parity_v1.py \
+            app/scripts/audit_mtg_production_extra_prints_v1.py
 
       - name: Re-run MTG exact identity guardrails without database access
         run: |
@@ -94,6 +96,12 @@ jobs:
           python -m app.scripts.audit_mtg_current_source_parity_v1 \
             --snapshot-dir artifacts/mtg-current-source-v22 \
             --output evidence/mtg-current-source-parity-v1.json
+
+      - name: Classify production exact Prints outside current source read-only
+        run: |
+          python -m app.scripts.audit_mtg_production_extra_prints_v1 \
+            --snapshot-dir artifacts/mtg-current-source-v22 \
+            --output evidence/mtg-production-extra-prints-v1.json
 
       - name: Upload compact evidence
         if: always()
