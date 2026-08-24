@@ -4,27 +4,29 @@ from pathlib import Path
 
 from app.ingest.base import IngestStats
 from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
+from app.models import Print
+from app.scripts.build_yugioh_v2_snapshot_canonical import run as build_canonical_snapshot
+from app.scripts.reconcile_yugioh_canonical_prints_v1 import _load_source_prints, _plan
 
 
 class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
     """YGOPRODeck connector with release-aware incremental reads.
 
-    The legacy remote loader always started at offset zero. With a fixed limit,
-    scheduled jobs could repeatedly re-read the same first page forever. API v7
-    supports ``sort=new`` plus ``startdate``/``dateregion``; incremental jobs use
-    those parameters while full reconciliation keeps the original all-card path.
+    Daily source reads remain delta-only, but current physical canonical Print
+    drift is reconciled after the delta with a bounded insert-only safety gate.
+    This catches retrospective source additions such as newly published rarity
+    variants without re-enabling the old catalog-wide legacy/image repair.
 
-    The legacy connector also performs a catalog-wide Print repair after every
-    incremental batch. That sweep checks print keys and primary images row by row
-    across the full Yu-Gi-Oh catalog and can take longer than the production job
-    timeout even when only a few dozen cards changed. Current source rows already
-    self-heal through ``should_skip_existing_record`` + ``upsert`` and return
-    touched entity ids for targeted Search V2 reindexing, so the scheduled V2
-    freshness path deliberately leaves broad legacy/image cleanup to a full
-    reconciliation instead of coupling it to every daily refresh.
+    The broad inherited repair is still reserved for explicit full
+    reconciliation. The bounded current-source reconciler resolves every new
+    Print to one existing canonical Card and one existing global Set, rejects
+    tuple/id conflicts, refuses more than 500 writes, and returns touched ids so
+    SourceConnector can perform targeted Search V2 reindexing.
     """
 
     name = "ygoprodeck_yugioh"
+    canonical_print_reconcile_max_writes = 500
+    canonical_print_reconcile_output_dir = Path("/tmp/ygo-canonical-print-self-heal-v1")
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         fixture = bool(kwargs.get("fixture", False))
@@ -127,20 +129,76 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
 
         return cards
 
-    def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
-        """Keep the broad legacy repair out of daily incremental refreshes.
+    def _reconcile_current_canonical_prints(self, session, stats: IngestStats) -> dict:
+        output_dir = self.canonical_print_reconcile_output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        build_canonical_snapshot(output_dir=output_dir)
+        _manifest, source_rows = _load_source_prints(output_dir)
+        plan = _plan(
+            session,
+            source_rows,
+            max_writes=self.canonical_print_reconcile_max_writes,
+        )
 
-        The inherited implementation historically gates the sweep on
-        ``incremental=True``. V2 reverses where that maintenance belongs: daily
-        incremental runs skip it, while an explicit full reconciliation invokes
-        the inherited repair with its internal gate enabled.
-        """
-        if bool(kwargs.get("incremental", True)):
-            self.logger.info(
-                "ingest ygoprodeck_v2 legacy_repair_skipped "
-                "owner=full_reconciliation"
+        touched_cards: set[int] = set()
+        touched_sets: set[int] = set()
+        touched_prints: set[int] = set()
+        for item in plan["planned"]:
+            row = item["source"]
+            record = Print(
+                card_id=int(item["card_id"]),
+                set_id=int(item["set_id"]),
+                collector_number=str(row["collector_number"]),
+                language=row.get("language"),
+                rarity=row.get("rarity"),
+                is_foil=bool(row.get("is_foil", False)),
+                variant=str(row["variant"]),
+                print_key=str(row["print_key"]),
+                yugioh_id=str(row["yugioh_id"]),
             )
-            return {}
+            session.add(record)
+            session.flush()
+            stats.records_inserted += 1
+            touched_cards.add(int(record.card_id))
+            touched_sets.add(int(record.set_id))
+            touched_prints.add(int(record.id))
+
+        self.logger.info(
+            "ingest ygoprodeck_v2 canonical_print_reconcile_done "
+            "source_prints=%s missing_before=%s writes=%s max_writes=%s",
+            len(source_rows),
+            plan["missing_before"],
+            len(touched_prints),
+            self.canonical_print_reconcile_max_writes,
+        )
+        return {
+            "card_ids": touched_cards,
+            "set_ids": touched_sets,
+            "print_ids": touched_prints,
+        }
+
+    def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
+        """Self-heal exact current Prints while keeping broad legacy repair out.
+
+        Fixture runs intentionally stay local and deterministic. Remote daily
+        incremental runs reconcile only exact current canonical Print identities.
+        Explicit full reconciliation retains the inherited broad legacy repair.
+        """
+        incremental = bool(kwargs.get("incremental", True))
+        fixture = bool(kwargs.get("fixture", False))
+
+        if incremental:
+            if fixture:
+                self.logger.info(
+                    "ingest ygoprodeck_v2 canonical_print_reconcile_skipped "
+                    "reason=fixture"
+                )
+                return {}
+            self.logger.info(
+                "ingest ygoprodeck_v2 canonical_print_reconcile_start "
+                "mode=bounded_current_source"
+            )
+            return self._reconcile_current_canonical_prints(session, stats)
 
         repair_kwargs = dict(kwargs)
         repair_kwargs["incremental"] = True
