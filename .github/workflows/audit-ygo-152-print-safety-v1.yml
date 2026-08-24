@@ -5,6 +5,10 @@ on:
     branches: ['audit/ygo-152-print-safety-v1']
     paths:
       - '.github/workflows/audit-ygo-152-print-safety-v1.yml'
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-ygo-152-print-safety-v1.yml'
   workflow_dispatch:
 
 permissions:
