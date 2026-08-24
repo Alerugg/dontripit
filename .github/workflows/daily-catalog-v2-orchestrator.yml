@@ -3,6 +3,9 @@ name: Daily Catalog V2 Orchestrator
 on:
   schedule:
     - cron: '20 4 * * *'
+    # Temporary genuine schedule-event recertification window for 2026-08-25.
+    # Remove immediately after GitHub creates the run.
+    - cron: '0 1 * * *'
   workflow_dispatch:
 
 permissions:
