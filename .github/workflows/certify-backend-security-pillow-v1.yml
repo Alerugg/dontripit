@@ -27,13 +27,15 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install exact backend requirements
+      - name: Install exact backend requirements and test-only YGO parser
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install --disable-pip-version-check 'ijson==3.4.0.post0'
       - name: Run full backend test suite
         working-directory: backend
         run: pytest -q
-      - name: Require clean dependency audit
+      - name: Require clean production dependency audit
         run: |
           python -m pip install --upgrade pip pip-audit
           mkdir -p artifacts
