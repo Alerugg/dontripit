@@ -48,16 +48,22 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p artifacts
+          set +e
           (
             cd baseline/backend
             /tmp/pillow-base/bin/pytest -q --tb=short 2>&1 | tee ../../artifacts/pytest-baseline.txt
-            echo ${PIPESTATUS[0]} > ../../artifacts/pytest-baseline.exit
+            exit ${PIPESTATUS[0]}
           )
+          base_status=$?
           (
             cd candidate/backend
             /tmp/pillow-candidate/bin/pytest -q --tb=short 2>&1 | tee ../../artifacts/pytest-candidate.txt
-            echo ${PIPESTATUS[0]} > ../../artifacts/pytest-candidate.exit
+            exit ${PIPESTATUS[0]}
           )
+          candidate_status=$?
+          set -e
+          echo "$base_status" > artifacts/pytest-baseline.exit
+          echo "$candidate_status" > artifacts/pytest-candidate.exit
           python - <<'PY'
           import json,re
           from pathlib import Path
@@ -69,19 +75,24 @@ jobs:
               return {'failed_nodeids':failed,'summary':summary[-1] if summary else None}
           base=parse('pytest-baseline.txt')
           cand=parse('pytest-candidate.txt')
+          base_exit=int((root/'pytest-baseline.exit').read_text().strip())
+          cand_exit=int((root/'pytest-candidate.exit').read_text().strip())
           report={
               'baseline_pillow':'11.3.0',
               'candidate_pillow':'12.3.0',
+              'baseline_exit':base_exit,
+              'candidate_exit':cand_exit,
               'baseline':base,
               'candidate':cand,
               'same_failed_nodeids':base['failed_nodeids']==cand['failed_nodeids'],
+              'same_exit_semantics':(base_exit == 0) == (cand_exit == 0),
               'new_failures':sorted(set(cand['failed_nodeids'])-set(base['failed_nodeids'])),
               'resolved_failures':sorted(set(base['failed_nodeids'])-set(cand['failed_nodeids'])),
           }
           (root/'pillow-suite-differential-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
           print(json.dumps(report,indent=2,sort_keys=True))
-          if not report['same_failed_nodeids']:
-              raise SystemExit('Pillow candidate changed full-suite failure set')
+          if not report['same_failed_nodeids'] or not report['same_exit_semantics']:
+              raise SystemExit('Pillow candidate changed full-suite behavior')
           PY
       - name: Require clean production dependency audit
         shell: bash
