@@ -1,0 +1,169 @@
+name: Audit YGO Current Print Drift Safety V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-ygo-152-print-safety-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build fresh canonical YGO source snapshot
+        run: |
+          rm -rf /tmp/ygo-current
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-current
+      - name: Prove every missing canonical Print is safe and exactly resolvable
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root=Path('/tmp/ygo-current')
+          manifest=json.loads((root/'manifest.json').read_text())
+          source_print_rows=[json.loads(line) for line in (root/'prints.jsonl').read_text().splitlines() if line.strip()]
+          source_by_key={str(row['print_key']):row for row in source_print_rows}
+          if len(source_by_key) != len(source_print_rows):
+              raise SystemExit('source print_key uniqueness failed')
+
+          engine=create_engine(os.environ['DATABASE_URL_UNPOOLED'])
+          with engine.connect() as conn:
+              ro=conn.execute(text('SHOW transaction_read_only')).scalar_one()
+              if str(ro).lower() != 'on':
+                  raise SystemExit(f'connection is not read-only: {ro}')
+              gid=conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_keys={str(v) for v in conn.execute(text('''
+                  SELECT p.print_key FROM prints p JOIN cards c ON c.id=p.card_id
+                  WHERE c.game_id=:g AND p.print_key IS NOT NULL
+              '''),{'g':gid}).scalars()}
+              missing_keys=sorted(set(source_by_key)-db_keys)
+              missing=[source_by_key[key] for key in missing_keys]
+
+              failures=[]
+              safe=[]
+              classification=Counter()
+              for row in missing:
+                  card_rows=conn.execute(text('''
+                      SELECT id,card_key,name,yugoprodeck_id FROM cards
+                      WHERE game_id=:g AND yugoprodeck_id=:source_card_id
+                      ORDER BY id
+                  '''),{'g':gid,'source_card_id':str(row['source_card_id'])}).mappings().all()
+                  set_rows=conn.execute(text('''
+                      SELECT id,code,region,name FROM sets
+                      WHERE game_id=:g AND lower(code)=lower(:code)
+                      ORDER BY CASE WHEN lower(region)='global' THEN 0 ELSE 1 END,id
+                  '''),{'g':gid,'code':str(row['set_family'])}).mappings().all()
+                  global_sets=[r for r in set_rows if str(r['region'] or '').lower()=='global']
+
+                  if len(card_rows) != 1:
+                      failures.append({'print_key':row['print_key'],'reason':'card_resolution','matches':len(card_rows),'source_card_id':row['source_card_id']})
+                      classification['card_resolution_failure']+=1
+                      continue
+                  if len(global_sets) != 1:
+                      failures.append({'print_key':row['print_key'],'reason':'global_set_resolution','matches':len(global_sets),'all_code_matches':len(set_rows),'set_family':row['set_family']})
+                      classification['set_resolution_failure']+=1
+                      continue
+
+                  card=card_rows[0]; set_row=global_sets[0]
+                  tuple_rows=conn.execute(text('''
+                      SELECT id,print_key,yugioh_id,rarity,variant FROM prints
+                      WHERE card_id=:card_id AND set_id=:set_id
+                        AND collector_number=:collector
+                        AND coalesce(language,'')=coalesce(:language,'')
+                        AND is_foil=:is_foil AND variant=:variant
+                      ORDER BY id
+                  '''),{
+                      'card_id':card['id'],'set_id':set_row['id'],
+                      'collector':str(row['collector_number']),
+                      'language':row.get('language'),'is_foil':bool(row.get('is_foil',False)),
+                      'variant':str(row['variant']),
+                  }).mappings().all()
+                  yugioh_rows=conn.execute(text('''
+                      SELECT p.id,p.print_key,p.card_id,p.set_id,p.collector_number,p.language,p.variant
+                      FROM prints p WHERE p.yugioh_id=:yugioh_id ORDER BY p.id
+                  '''),{'yugioh_id':str(row['yugioh_id'])}).mappings().all()
+
+                  if tuple_rows:
+                      failures.append({'print_key':row['print_key'],'reason':'physical_tuple_conflict','existing':[dict(r) for r in tuple_rows]})
+                      classification['physical_tuple_conflict']+=1
+                      continue
+                  if yugioh_rows:
+                      failures.append({'print_key':row['print_key'],'reason':'yugioh_id_conflict','existing':[dict(r) for r in yugioh_rows]})
+                      classification['yugioh_id_conflict']+=1
+                      continue
+
+                  alternate_variants=conn.execute(text('''
+                      SELECT id,print_key,yugioh_id,rarity,variant FROM prints
+                      WHERE card_id=:card_id AND set_id=:set_id
+                        AND collector_number=:collector
+                        AND coalesce(language,'')=coalesce(:language,'')
+                        AND is_foil=:is_foil
+                      ORDER BY id
+                  '''),{
+                      'card_id':card['id'],'set_id':set_row['id'],
+                      'collector':str(row['collector_number']),
+                      'language':row.get('language'),'is_foil':bool(row.get('is_foil',False)),
+                  }).mappings().all()
+                  classification['safe_new_variant' if alternate_variants else 'safe_new_physical_tuple']+=1
+                  safe.append({
+                      **row,
+                      'resolved_card_id':int(card['id']),
+                      'resolved_card_key':str(card['card_key']),
+                      'resolved_set_id':int(set_row['id']),
+                      'resolved_set_code':str(set_row['code']),
+                      'resolved_set_region':str(set_row['region']),
+                      'existing_alternate_variants':[dict(r) for r in alternate_variants],
+                  })
+
+          report={
+              'status':'pass' if not failures and len(safe)==len(missing) else 'fail',
+              'production_writes':0,
+              'transaction_read_only':True,
+              'source_counts':manifest.get('counts',{}),
+              'source_prints':len(source_by_key),
+              'db_source_print_keys_covered':len(set(source_by_key)&db_keys),
+              'missing_prints':len(missing),
+              'safe_missing_prints':len(safe),
+              'classification':dict(sorted(classification.items())),
+              'failures':failures[:50],
+          }
+          evidence=Path('../evidence'); evidence.mkdir(exist_ok=True)
+          (evidence/'ygo-current-print-drift-preflight-v1.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          with (evidence/'ygo-current-safe-missing-prints-v1.jsonl').open('w') as fh:
+              for row in safe:
+                  fh.write(json.dumps(row,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if report['status'] != 'pass':
+              raise SystemExit('current canonical print drift is not safe for exact insert')
+          if not missing:
+              raise SystemExit('no current missing prints remain; one-shot is unnecessary')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-current-print-drift-preflight-v1-${{ github.run_id }}
+          path: evidence/*
+          retention-days: 30
+          if-no-files-found: warn
