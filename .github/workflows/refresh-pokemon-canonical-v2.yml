@@ -25,10 +25,15 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # The certified EN/ES/JA refresh performs a full remote physical-catalog scan
+    # before the incremental writer can prove individual rows are already complete.
+    # The final replay on 2026-08-24 reached the old 55-minute job ceiling without
+    # any data/test error, so keep enough headroom for normal TCGdex/API variance.
+    timeout-minutes: 90
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
     defaults:
       run:
         working-directory: backend
@@ -80,10 +85,20 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import logging
+          import time
           from app.ingest.run import run_ingest
 
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s %(levelname)s %(name)s %(message)s',
+          )
+
           summary = []
+          refresh_started = time.monotonic()
           for lang in ('en', 'es', 'ja'):
+              language_started = time.monotonic()
+              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
               stats = run_ingest(
                   'tcgdex_pokemon',
                   lang=lang,
@@ -97,15 +112,27 @@ jobs:
                   'inserted': int(stats.records_inserted),
                   'updated': int(stats.records_updated),
                   'errors': int(stats.errors),
+                  'elapsed_seconds': round(time.monotonic() - language_started, 3),
               }
-              print(json.dumps(row, sort_keys=True))
+              print(json.dumps(row, sort_keys=True), flush=True)
               summary.append(row)
               if row['errors'] != 0:
                   raise SystemExit(f'Pokemon {lang} refresh reported errors: {row!r}')
 
           if [row['language'] for row in summary] != ['en', 'es', 'ja']:
               raise SystemExit(f'Pokemon language coverage incomplete: {summary!r}')
-          print(json.dumps({'status': 'pass', 'languages': summary}, indent=2, sort_keys=True))
+          print(
+              json.dumps(
+                  {
+                      'status': 'pass',
+                      'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
+                      'languages': summary,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ),
+              flush=True,
+          )
           PY
 
       - name: Prove fresh TCGdex physical source parity in production
