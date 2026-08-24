@@ -1,3 +1,3 @@
 Trigger a fresh read-only #598 audit after the 2026-08-24 17:30 UTC real schedule window.
-Second poll after 17:32 UTC to capture any newly materialized event=schedule run.
+Third poll after 17:35 UTC to capture the genuine event=schedule run after scheduler delay.
 No production code or workflow semantics.
