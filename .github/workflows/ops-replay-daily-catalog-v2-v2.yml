@@ -1,0 +1,133 @@
+name: Ops Replay Daily Catalog V2 V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/ops-replay-daily-catalog-v2-v2.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ops-replay-daily-catalog-v2-v2
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TARGET_REF: catalog-v2
+      EXPECTED_SHA: bb3e803e3068c5e93eef8117c72686c7f06d234e
+    steps:
+      - name: Replay certified daily production children sequentially
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const targetRef = process.env.TARGET_REF;
+            const expectedSha = process.env.EXPECTED_SHA;
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            const pipeline = [
+              ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh'],
+              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh'],
+              ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master'],
+              ['project-cardmarket-canonical-prices-v2.yml', 'Cardmarket exact canonical singles and sealed prices'],
+              ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths'],
+              ['sync-regional-tcg-content.yml', 'Regional official news and releases'],
+              ['certify-search-v2-production-latency-v1.yml', 'Search V2 production latency and result quality'],
+            ];
+
+            async function api(label, fn, attempts = 6) {
+              let last;
+              for (let attempt = 1; attempt <= attempts; attempt += 1) {
+                try { return await fn(); }
+                catch (error) {
+                  last = error;
+                  const status = Number(error?.status || 0);
+                  const retryable = !status || status === 409 || status === 429 || status >= 500;
+                  if (!retryable || attempt === attempts) throw error;
+                  const waitMs = Math.min(30000, 1500 * (2 ** (attempt - 1)));
+                  core.warning(`${label} failed (${attempt}/${attempts}, status ${status || 'transport'}); retrying in ${waitMs}ms`);
+                  await sleep(waitMs);
+                }
+              }
+              throw last;
+            }
+
+            async function branchSha() {
+              const response = await api('resolve target branch', () => github.rest.repos.getBranch({owner, repo, branch: targetRef}));
+              return response.data.commit.sha;
+            }
+
+            async function resolveRun(workflowId, pinnedSha, dispatchedAt) {
+              for (let attempt = 1; attempt <= 90; attempt += 1) {
+                const response = await api(`list runs ${workflowId}`, () => github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id: workflowId, branch: targetRef, event: 'workflow_dispatch', per_page: 30,
+                }));
+                const lowerBound = dispatchedAt - 15000;
+                const candidates = response.data.workflow_runs
+                  .filter(run => run.head_branch === targetRef)
+                  .filter(run => run.head_sha === pinnedSha)
+                  .filter(run => Date.parse(run.created_at) >= lowerBound)
+                  .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+                if (candidates.length) return candidates[0];
+                await sleep(4000);
+              }
+              throw new Error(`Could not resolve dispatched run for ${workflowId} at ${pinnedSha}`);
+            }
+
+            async function waitForRun(workflowId, runId) {
+              const deadline = Date.now() + 60 * 60 * 1000;
+              while (Date.now() < deadline) {
+                const response = await api(`get run ${runId}`, () => github.rest.actions.getWorkflowRun({owner, repo, run_id: runId}));
+                if (response.data.status === 'completed') return response.data;
+                await sleep(10000);
+              }
+              throw new Error(`${workflowId} run ${runId} exceeded the wait window`);
+            }
+
+            const pinnedSha = await branchSha();
+            if (pinnedSha !== expectedSha) {
+              throw new Error(`Unexpected catalog-v2 SHA before replay: expected=${expectedSha}, actual=${pinnedSha}`);
+            }
+            core.info(`Pinned catalog-v2 SHA: ${pinnedSha}`);
+            const summary = [];
+
+            for (const [workflowId, label] of pipeline) {
+              const currentSha = await branchSha();
+              if (currentSha !== pinnedSha) {
+                throw new Error(`catalog-v2 moved during replay: pinned=${pinnedSha}, current=${currentSha}`);
+              }
+              const dispatchedAt = Date.now();
+              core.startGroup(`${label} (${workflowId})`);
+              await api(`dispatch ${workflowId}`, () => github.rest.actions.createWorkflowDispatch({owner, repo, workflow_id: workflowId, ref: targetRef}));
+              const resolved = await resolveRun(workflowId, pinnedSha, dispatchedAt);
+              const completed = await waitForRun(workflowId, resolved.id);
+              const row = {workflow: workflowId, run_id: completed.id, conclusion: completed.conclusion, head_sha: completed.head_sha};
+              summary.push(row);
+              core.info(JSON.stringify(row));
+              core.endGroup();
+              if (completed.conclusion !== 'success') {
+                core.setFailed(`${label} failed in run ${completed.id}: ${completed.conclusion}`);
+                break;
+              }
+            }
+
+            await core.summary
+              .addHeading('Ops replay Daily Catalog V2 V2')
+              .addRaw(`Pinned SHA: ${pinnedSha}`)
+              .addTable([
+                [{data:'Workflow',header:true},{data:'Run',header:true},{data:'Conclusion',header:true},{data:'SHA',header:true}],
+                ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion), String(row.head_sha)]),
+              ])
+              .write();
+
+            if (summary.length !== pipeline.length || summary.some(row => row.conclusion !== 'success')) {
+              throw new Error('Daily catalog replay did not complete successfully');
+            }
