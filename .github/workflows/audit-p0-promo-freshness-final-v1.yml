@@ -49,11 +49,13 @@ jobs:
 
       - name: Prove current Pokemon EN ES JA physical source parity - READ ONLY
         run: |
+          set -o pipefail
           mkdir -p artifacts
           python -m app.scripts.prove_pokemon_tcgdex_parity_v2 | tee artifacts/p0-pokemon-parity-v1.json
 
       - name: Prove current One Piece Global Asia JP source parity - READ ONLY
         run: |
+          set -o pipefail
           python - <<'PY' | tee artifacts/p0-onepiece-parity-v1.json
           import json, os
           from sqlalchemy import create_engine,text
@@ -122,14 +124,23 @@ jobs:
 
       - name: Probe current production promo anchors
         run: |
+          set -o pipefail
           python - <<'PY' | tee artifacts/p0-promo-live-probes-v1.json
           import json, requests
           from urllib.parse import urlencode
 
           base='https://api.dontripit.com'
           cases=[
-            {'game':'pokemon','q':'svp-202','collector':'202','mode':'exact_identifier'},
-            {'game':'onepiece','q':'P-150','collector':'P-150','mode':'exact_identifier'},
+            {
+              'game':'pokemon','q':'svp-202','mode':'exact_identifier',
+              'top_name_contains':'kangaskhan',
+              'identity_contract':'TCGdex exact identifier resolves canonical Card; physical svp-202 presence is independently proven by source parity'
+            },
+            {
+              'game':'onepiece','q':'P-150','mode':'exact_identifier',
+              'top_collector':'P-150',
+              'identity_contract':'exact physical collector result'
+            },
           ]
           rows=[]
           compact=lambda x: ''.join(ch for ch in str(x or '').casefold() if ch.isalnum())
@@ -139,14 +150,23 @@ jobs:
               if not items: raise AssertionError(f"empty production promo search: {case}")
               if payload.get('pagination_mode')!=case['mode']:
                   raise AssertionError(f"wrong mode for {case}: {payload.get('pagination_mode')}")
-              actual=items[0].get('collector_number')
-              # Pokemon TCGdex identifier includes set prefix, while collector_number is the local collector.
-              if case['game']=='pokemon':
-                  if compact(actual) not in {compact(case['collector']),compact(case['q'])}:
-                      raise AssertionError(f"wrong Pokemon promo collector: expected {case} got {actual!r}")
-              elif compact(actual)!=compact(case['collector']):
-                  raise AssertionError(f"wrong One Piece promo collector: expected {case} got {actual!r}")
-              rows.append({'game':case['game'],'query':case['q'],'status_code':r.status_code,'pagination_mode':payload.get('pagination_mode'),'count':payload.get('count'),'top_collector':actual,'top_name':items[0].get('name'),'response_time_ms':r.headers.get('x-app-response-time-ms')})
+              top=items[0]
+              if case.get('top_name_contains'):
+                  actual_name=str(top.get('name') or '').casefold()
+                  if case['top_name_contains'].casefold() not in actual_name:
+                      raise AssertionError(f"wrong Pokemon promo result: expected {case['top_name_contains']!r} in {top.get('name')!r}")
+              if case.get('top_collector'):
+                  actual_collector=top.get('collector_number')
+                  if compact(actual_collector)!=compact(case['top_collector']):
+                      raise AssertionError(f"wrong One Piece promo collector: expected {case['top_collector']!r} got {actual_collector!r}")
+              rows.append({
+                  'game':case['game'],'query':case['q'],'status_code':r.status_code,
+                  'pagination_mode':payload.get('pagination_mode'),'count':payload.get('count'),
+                  'top_collector':top.get('collector_number'),'top_name':top.get('name'),
+                  'top_card_id':top.get('card_id'),'top_print_id':top.get('print_id'),
+                  'response_time_ms':r.headers.get('x-app-response-time-ms'),
+                  'identity_contract':case['identity_contract'],
+              })
           report={'status':'pass','production_writes':0,'base_url':base,'cases':rows}
           print(json.dumps(report,indent=2,sort_keys=True))
           PY
