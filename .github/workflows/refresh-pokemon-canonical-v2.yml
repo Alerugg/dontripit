@@ -13,7 +13,9 @@ on:
       - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_incremental_guard.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_certified_refresh.py'
       - 'backend/app/ingest/registry.py'
+      - 'backend/tests/test_tcgdex_certified_refresh.py'
 
 permissions:
   contents: read
@@ -25,11 +27,6 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # The certified EN/ES/JA refresh performs a full remote physical-catalog scan
-    # before the incremental writer can prove individual rows are already complete.
-    # Two genuine scheduled certifications reached the former 90-minute ceiling
-    # inside the ingest step without a preceding identity/parity failure. Keep
-    # bounded headroom for the full three-language TCGdex scan and API variance.
     timeout-minutes: 120
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -67,6 +64,7 @@ jobs:
             app/ingest/connectors/tcgdex_pokemon_multilingual.py \
             app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
             app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
+            app/ingest/connectors/tcgdex_pokemon_certified_refresh.py \
             app/scripts/prove_pokemon_tcgdex_parity.py \
             app/scripts/prove_pokemon_tcgdex_parity_v2.py
 
@@ -79,7 +77,8 @@ jobs:
             tests/test_tcgdex_multilingual.py \
             tests/test_tcgdex_physical_scope.py \
             tests/test_tcgdex_en_legacy_incremental.py \
-            tests/test_tcgdex_transport_retry.py
+            tests/test_tcgdex_transport_retry.py \
+            tests/test_tcgdex_certified_refresh.py
 
       - name: Refresh certified EN ES JA physical catalog incrementally
         env:
@@ -88,8 +87,12 @@ jobs:
           python - <<'PY'
           import json
           import logging
+          from pathlib import Path
           import time
+          import traceback
+
           import requests
+
           from app.ingest.run import run_ingest
 
           logging.basicConfig(
@@ -97,67 +100,99 @@ jobs:
               format='%(asctime)s %(levelname)s %(name)s %(message)s',
           )
 
+          diagnostic_path = Path('pokemon-refresh-diagnostic.json')
           summary = []
           refresh_started = time.monotonic()
-          for lang in ('en', 'es', 'ja'):
-              language_started = time.monotonic()
-              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
-              for attempt in range(1, 4):
-                  try:
-                      stats = run_ingest(
-                          'tcgdex_pokemon',
-                          lang=lang,
-                          incremental=True,
-                          fixture=False,
-                      )
-                      break
-                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-                      if attempt == 3:
-                          raise
-                      wait_seconds = 5 * (2 ** (attempt - 1))
-                      print(
-                          json.dumps(
-                              {
-                                  'event': 'pokemon_refresh_transport_retry',
-                                  'language': lang,
-                                  'attempt': attempt,
-                                  'wait_seconds': wait_seconds,
-                                  'error_type': type(exc).__name__,
-                              },
-                              sort_keys=True,
-                          ),
-                          flush=True,
-                      )
-                      time.sleep(wait_seconds)
-              row = {
-                  'language': lang,
-                  'files_seen': int(stats.files_seen),
-                  'files_skipped': int(stats.files_skipped),
-                  'inserted': int(stats.records_inserted),
-                  'updated': int(stats.records_updated),
-                  'errors': int(stats.errors),
-                  'elapsed_seconds': round(time.monotonic() - language_started, 3),
-              }
-              print(json.dumps(row, sort_keys=True), flush=True)
-              summary.append(row)
-              if row['errors'] != 0:
-                  raise SystemExit(f'Pokemon {lang} refresh reported errors: {row!r}')
+          current_language = None
+          current_attempt = None
 
-          if [row['language'] for row in summary] != ['en', 'es', 'ja']:
-              raise SystemExit(f'Pokemon language coverage incomplete: {summary!r}')
-          print(
-              json.dumps(
-                  {
-                      'status': 'pass',
-                      'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
-                      'languages': summary,
-                  },
-                  indent=2,
-                  sort_keys=True,
-              ),
-              flush=True,
-          )
+          try:
+              for lang in ('en', 'es', 'ja'):
+                  current_language = lang
+                  language_started = time.monotonic()
+                  print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
+                  for attempt in range(1, 4):
+                      current_attempt = attempt
+                      try:
+                          stats = run_ingest(
+                              'tcgdex_pokemon',
+                              lang=lang,
+                              incremental=True,
+                              fixture=False,
+                          )
+                          break
+                      except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                          if attempt == 3:
+                              raise
+                          wait_seconds = 5 * (2 ** (attempt - 1))
+                          print(
+                              json.dumps(
+                                  {
+                                      'event': 'pokemon_refresh_transport_retry',
+                                      'language': lang,
+                                      'attempt': attempt,
+                                      'wait_seconds': wait_seconds,
+                                      'error_type': type(exc).__name__,
+                                  },
+                                  sort_keys=True,
+                              ),
+                              flush=True,
+                          )
+                          time.sleep(wait_seconds)
+                  row = {
+                      'language': lang,
+                      'files_seen': int(stats.files_seen),
+                      'files_skipped': int(stats.files_skipped),
+                      'inserted': int(stats.records_inserted),
+                      'updated': int(stats.records_updated),
+                      'errors': int(stats.errors),
+                      'elapsed_seconds': round(time.monotonic() - language_started, 3),
+                  }
+                  print(json.dumps(row, sort_keys=True), flush=True)
+                  summary.append(row)
+                  if row['errors'] != 0:
+                      raise RuntimeError(f'Pokemon {lang} refresh reported errors: {row!r}')
+
+              if [row['language'] for row in summary] != ['en', 'es', 'ja']:
+                  raise RuntimeError(f'Pokemon language coverage incomplete: {summary!r}')
+
+              result = {
+                  'status': 'pass',
+                  'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
+                  'languages': summary,
+              }
+              diagnostic_path.write_text(
+                  json.dumps(result, indent=2, sort_keys=True),
+                  encoding='utf-8',
+              )
+              print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+          except Exception as exc:
+              diagnostic = {
+                  'status': 'fail',
+                  'language': current_language,
+                  'attempt': current_attempt,
+                  'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
+                  'completed_languages': summary,
+                  'error_type': type(exc).__name__,
+                  'error': str(exc),
+                  'traceback': traceback.format_exc(),
+              }
+              diagnostic_path.write_text(
+                  json.dumps(diagnostic, indent=2, sort_keys=True),
+                  encoding='utf-8',
+              )
+              print(json.dumps(diagnostic, indent=2, sort_keys=True), flush=True)
+              raise
           PY
+
+      - name: Upload Pokemon refresh diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-refresh-diagnostic-${{ github.run_id }}
+          path: backend/pokemon-refresh-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Prove fresh TCGdex physical source parity in production
         env:
