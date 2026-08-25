@@ -1,0 +1,98 @@
+name: Audit YGO Missing Canonical Card V1
+
+on:
+  push:
+    branches:
+      - audit/ygo-missing-card-v1
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Build current canonical source and identify exact DB gap read-only
+        run: |
+          rm -rf /tmp/ygo-missing-card-v1
+          python -m app.scripts.build_yugioh_v2_snapshot_canonical --output-dir /tmp/ygo-missing-card-v1
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          root = Path('/tmp/ygo-missing-card-v1')
+          cards = [json.loads(line) for line in (root / 'cards.jsonl').read_text().splitlines() if line.strip()]
+          attrs = {
+              str(row['source_card_id']): row
+              for row in (
+                  json.loads(line)
+                  for line in (root / 'card_attributes.jsonl').read_text().splitlines()
+                  if line.strip()
+              )
+          }
+          prints = [json.loads(line) for line in (root / 'prints.jsonl').read_text().splitlines() if line.strip()]
+          print_counts = {}
+          for row in prints:
+              sid = str(row['source_card_id'])
+              print_counts[sid] = print_counts.get(sid, 0) + 1
+
+          engine = create_engine(os.getenv('DATABASE_URL_UNPOOLED') or os.environ['DATABASE_URL'])
+          with engine.connect() as conn:
+              gid = conn.execute(text("SELECT id FROM games WHERE slug='yugioh' LIMIT 1")).scalar_one()
+              db_keys = {
+                  str(v)
+                  for v in conn.execute(
+                      text("SELECT card_key FROM cards WHERE game_id=:g AND card_key IS NOT NULL"),
+                      {'g': gid},
+                  ).scalars()
+              }
+
+          missing = []
+          for row in cards:
+              if str(row['card_key']) in db_keys:
+                  continue
+              sid = str(row['source_card_id'])
+              missing.append({
+                  **row,
+                  'source_print_count': int(print_counts.get(sid, 0)),
+                  'attributes': (attrs.get(sid) or {}).get('attributes'),
+              })
+
+          report = {
+              'status': 'pass' if len(missing) == 1 else 'fail',
+              'production_writes': 0,
+              'source_cards': len(cards),
+              'missing_count': len(missing),
+              'missing_cards': missing,
+          }
+          print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
+          Path('/tmp/ygo-missing-card-v1/report.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + '\n',
+              encoding='utf-8',
+          )
+          if len(missing) != 1:
+              raise SystemExit(f'expected exactly one missing YGO canonical Card, found {len(missing)}')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-missing-card-v1-${{ github.run_id }}
+          path: /tmp/ygo-missing-card-v1/report.json
+          retention-days: 30
+          if-no-files-found: error
