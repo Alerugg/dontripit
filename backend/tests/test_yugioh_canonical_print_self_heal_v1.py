@@ -22,7 +22,7 @@ def test_fixture_incremental_skips_remote_canonical_reconcile(monkeypatch):
     def forbidden(*_args, **_kwargs):
         raise AssertionError("fixture incremental run must not call remote canonical reconciler")
 
-    monkeypatch.setattr(connector, "_reconcile_current_canonical_prints", forbidden)
+    monkeypatch.setattr(connector, "_reconcile_current_canonical_catalog", forbidden)
     result = connector.repair_legacy_records(
         object(),
         object(),
@@ -97,7 +97,7 @@ def test_current_reconcile_inserts_only_planned_exact_prints_and_returns_touched
     }
 
 
-def test_remote_incremental_routes_to_bounded_canonical_reconcile(monkeypatch):
+def test_remote_incremental_routes_to_bounded_canonical_catalog_reconcile(monkeypatch):
     connector = YgoProDeckYugiohV2Connector()
     expected = {"card_ids": {1}, "set_ids": {2}, "print_ids": {3}}
     calls = []
@@ -106,7 +106,7 @@ def test_remote_incremental_routes_to_bounded_canonical_reconcile(monkeypatch):
         calls.append((session, stats))
         return expected
 
-    monkeypatch.setattr(connector, "_reconcile_current_canonical_prints", fake_reconcile)
+    monkeypatch.setattr(connector, "_reconcile_current_canonical_catalog", fake_reconcile)
     session = object()
     stats = IngestStats()
     result = connector.repair_legacy_records(
