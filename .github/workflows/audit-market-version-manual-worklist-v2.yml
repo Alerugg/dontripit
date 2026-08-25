@@ -1,0 +1,265 @@
+name: Audit Market Version Manual Worklist V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-market-version-manual-worklist-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Export language-grouped commercial card versions READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+
+          import csv, json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          from sqlalchemy import select, text
+
+          from app import db
+          from app.external_catalog_models import ExternalCatalogPrintLink, ExternalCatalogProduct
+          from app.models import Card, Game, Print, PrintImage, Set
+
+          db.init_engine(os.environ['DATABASE_URL_UNPOOLED'])
+
+          def clean(v):
+              return '' if v is None else str(v).replace('\x00','').strip()
+
+          def cm_url(path):
+              path=clean(path)
+              if not path: return ''
+              if path.startswith('http://') or path.startswith('https://'): return path
+              return 'https://www.cardmarket.com' + (path if path.startswith('/') else '/' + path)
+
+          with db.SessionLocal() as session:
+              session.execute(text('SET TRANSACTION READ ONLY'))
+              assert session.execute(text('SHOW transaction_read_only')).scalar_one() == 'on'
+
+              print_rows = session.execute(
+                  select(
+                      Print.id, Print.card_id, Print.set_id, Print.collector_number,
+                      Print.language, Print.rarity, Print.is_foil, Print.variant,
+                      Print.print_key, Print.scryfall_id, Print.tcgdex_id, Print.yugioh_id,
+                      Card.name, Card.card_key,
+                      Set.code, Set.name, Set.region, Set.release_date,
+                      Game.slug,
+                  )
+                  .join(Card, Card.id == Print.card_id)
+                  .join(Set, Set.id == Print.set_id)
+                  .join(Game, Game.id == Set.game_id)
+              ).all()
+
+              link_rows = session.execute(
+                  select(
+                      ExternalCatalogPrintLink.print_id,
+                      ExternalCatalogPrintLink.link_status,
+                      ExternalCatalogPrintLink.confidence,
+                      ExternalCatalogPrintLink.reviewed,
+                      ExternalCatalogPrintLink.mapping_method,
+                      ExternalCatalogProduct.external_id,
+                      ExternalCatalogProduct.name,
+                      ExternalCatalogProduct.expansion_external_id,
+                      ExternalCatalogProduct.website_path,
+                      ExternalCatalogProduct.last_seen_at,
+                  )
+                  .join(ExternalCatalogProduct, ExternalCatalogProduct.id == ExternalCatalogPrintLink.external_product_id)
+                  .where(ExternalCatalogProduct.source == 'cardmarket')
+              ).all()
+
+              image_rows = session.execute(
+                  select(PrintImage.print_id, PrintImage.url, PrintImage.is_primary, PrintImage.source)
+              ).all()
+              session.rollback()
+
+          links_by_print=defaultdict(list)
+          for r in link_rows:
+              links_by_print[int(r[0])].append(r)
+
+          images_by_print=defaultdict(list)
+          for r in image_rows:
+              images_by_print[int(r[0])].append(r)
+
+          groups=defaultdict(list)
+          for r in print_rows:
+              (
+                  print_id, card_id, set_id, collector, language, rarity, is_foil, variant,
+                  print_key, scryfall_id, tcgdex_id, yugioh_id, card_name, card_key,
+                  set_code, set_name, set_region, release_date, game,
+              )=r
+              # Language is intentionally NOT part of this key. Region/set stays part of it,
+              # so western/global vs JP/OCG/Asia remain separate when the catalog models them separately.
+              key=(int(card_id), int(set_id), clean(collector), bool(is_foil), clean(variant) or 'default')
+              groups[key].append(r)
+
+          fields=[
+              'user_status','manual_cm_url','manual_cm_idProduct','manual_image_url','user_notes',
+              'action_class','game','card_name','card_id','card_key','set_code','set_name','set_region','set_release_date',
+              'collector_number','finish','variant','rarities','languages_available','print_ids','print_keys',
+              'cm_resolved_languages','cm_unresolved_languages','known_cm_idProducts','known_cm_urls','known_cm_product_names',
+              'known_cm_expansion_ids','known_cm_mapping_methods','known_cm_reviewed_flags','known_cm_last_seen_at',
+              'representative_image_available','representative_image_url','representative_image_source',
+              'image_languages_available','image_languages_missing','manual_search_hint'
+          ]
+
+          out=[]
+          summary=Counter()
+          by_game=Counter()
+          auto_by_game=Counter()
+          manual_by_game=Counter()
+          image_manual_by_game=Counter()
+
+          for key, items in groups.items():
+              items=sorted(items, key=lambda r: (clean(r[4]), int(r[0])))
+              first=items[0]
+              (
+                  _print_id, card_id, _set_id, collector, _language, _rarity, is_foil, variant,
+                  _print_key, _scryfall_id, _tcgdex_id, _yugioh_id, card_name, card_key,
+                  set_code, set_name, set_region, release_date, game,
+              )=first
+
+              languages=[]; print_ids=[]; print_keys=[]; rarities=[]
+              resolved_langs=[]; unresolved_langs=[]
+              known_ids=[]; known_urls=[]; known_names=[]; known_expansions=[]; known_methods=[]; reviewed_flags=[]; last_seen=[]
+              image_langs=[]; image_missing=[]; representative=[]
+
+              for item in items:
+                  pid=int(item[0]); lang=clean(item[4]) or 'unknown'
+                  languages.append(lang); print_ids.append(str(pid)); print_keys.append(clean(item[8])); rarities.append(clean(item[5]))
+
+                  accepted_exact=[]
+                  for link in links_by_print.get(pid, []):
+                      if clean(link[1]).lower()=='accepted' and clean(link[2]).lower()=='exact':
+                          accepted_exact.append(link)
+                  if accepted_exact:
+                      resolved_langs.append(lang)
+                      for link in accepted_exact:
+                          known_ids.append(clean(link[5])); known_names.append(clean(link[6])); known_expansions.append(clean(link[7]))
+                          known_urls.append(cm_url(link[8])); known_methods.append(clean(link[4])); reviewed_flags.append(str(bool(link[3])).lower())
+                          if link[9]: last_seen.append(link[9].isoformat())
+                  else:
+                      unresolved_langs.append(lang)
+
+                  images=images_by_print.get(pid, [])
+                  if images:
+                      image_langs.append(lang)
+                      prim=sorted(images, key=lambda x: (not bool(x[2]), int(x[0])))
+                      representative.append((clean(prim[0][1]), clean(prim[0][3]), lang))
+                  else:
+                      image_missing.append(lang)
+
+              def uniq(seq):
+                  seen=set(); out2=[]
+                  for x in seq:
+                      x=clean(x)
+                      if x and x not in seen:
+                          seen.add(x); out2.append(x)
+                  return out2
+
+              languages=uniq(languages); resolved_langs=uniq(resolved_langs); unresolved_langs=uniq(unresolved_langs)
+              known_ids=uniq(known_ids); known_urls=uniq(known_urls); known_names=uniq(known_names); known_expansions=uniq(known_expansions)
+              known_methods=uniq(known_methods); reviewed_flags=uniq(reviewed_flags); last_seen=uniq(last_seen)
+              rarities=uniq(rarities); image_langs=uniq(image_langs); image_missing=uniq(image_missing)
+
+              # One known exact Cardmarket product for this commercial version is enough to propagate
+              # language siblings after strict same-card/set/collector/finish/variant checks.
+              if unresolved_langs:
+                  if len(known_ids)==1:
+                      cm_action='auto_propagate_known_cm_to_language_siblings'
+                      auto_by_game[clean(game)] += 1
+                  elif len(known_ids)==0:
+                      cm_action='manual_cm_required'
+                      manual_by_game[clean(game)] += 1
+                  else:
+                      cm_action='manual_cm_conflict_multiple_known_products'
+                      manual_by_game[clean(game)] += 1
+              else:
+                  cm_action='cm_complete'
+
+              if representative:
+                  image_action='representative_image_available'
+                  rep_url, rep_source, rep_lang=representative[0]
+              else:
+                  image_action='manual_representative_image_required'
+                  image_manual_by_game[clean(game)] += 1
+                  rep_url=rep_source=rep_lang=''
+
+              if cm_action=='cm_complete' and image_action=='representative_image_available':
+                  continue
+
+              action_class=cm_action if image_action=='representative_image_available' else f'{cm_action}+{image_action}'
+              hint=' | '.join(x for x in [clean(card_name), f'set {clean(set_code)}', clean(set_name), f'collector {clean(collector)}', 'foil' if is_foil else 'nonfoil', clean(variant)] if x)
+
+              out.append({
+                  'user_status':'Pendiente','manual_cm_url':'','manual_cm_idProduct':'','manual_image_url':'','user_notes':'',
+                  'action_class':action_class,'game':clean(game),'card_name':clean(card_name),'card_id':int(card_id),'card_key':clean(card_key),
+                  'set_code':clean(set_code),'set_name':clean(set_name),'set_region':clean(set_region),'set_release_date':release_date.isoformat() if release_date else '',
+                  'collector_number':clean(collector),'finish':'foil' if is_foil else 'nonfoil','variant':clean(variant) or 'default','rarities':' | '.join(rarities),
+                  'languages_available':' | '.join(languages),'print_ids':' | '.join(print_ids),'print_keys':' | '.join(uniq(print_keys)),
+                  'cm_resolved_languages':' | '.join(resolved_langs),'cm_unresolved_languages':' | '.join(unresolved_langs),
+                  'known_cm_idProducts':' | '.join(known_ids),'known_cm_urls':' | '.join(known_urls),'known_cm_product_names':' | '.join(known_names),
+                  'known_cm_expansion_ids':' | '.join(known_expansions),'known_cm_mapping_methods':' | '.join(known_methods),
+                  'known_cm_reviewed_flags':' | '.join(reviewed_flags),'known_cm_last_seen_at':' | '.join(last_seen),
+                  'representative_image_available':'yes' if representative else 'no','representative_image_url':rep_url,
+                  'representative_image_source':rep_source,'image_languages_available':' | '.join(image_langs),'image_languages_missing':' | '.join(image_missing),
+                  'manual_search_hint':hint,
+              })
+              by_game[clean(game)] += 1
+              summary[action_class] += 1
+
+          order={'onepiece':1,'pokemon':2,'yugioh':3,'mtg':4,'riftbound':5}
+          out.sort(key=lambda r:(order.get(r['game'],99), r['action_class'], r['set_code'], r['collector_number'], r['card_name']))
+
+          csv_path=Path('artifacts/market-version-manual-worklist-v2.csv')
+          with csv_path.open('w',encoding='utf-8',newline='') as fh:
+              w=csv.DictWriter(fh, fieldnames=fields); w.writeheader(); w.writerows(out)
+
+          payload={
+              'status':'pass','production_writes':0,'transaction_read_only':True,
+              'grouping_contract':'one commercial version = card + set/region + collector + finish + variant; language excluded',
+              'cardmarket_resolved_contract':'accepted + exact; reviewed retained as evidence but not required to avoid false manual gaps',
+              'representative_image_contract':'any exact PrintImage in the same commercial-version group can represent the grouped version without rewriting sibling-language PrintImage identity',
+              'groups_scanned':len(groups),'worklist_rows':len(out),'by_game':dict(sorted(by_game.items())),
+              'auto_propagate_groups_by_game':dict(sorted(auto_by_game.items())),
+              'manual_cm_groups_by_game':dict(sorted(manual_by_game.items())),
+              'manual_representative_image_groups_by_game':dict(sorted(image_manual_by_game.items())),
+              'action_classes':dict(sorted(summary.items())),
+          }
+          Path('artifacts/market-version-manual-worklist-summary-v2.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps(payload,ensure_ascii=False,indent=2,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-version-manual-worklist-v2-${{ github.run_id }}
+          path: |
+            backend/artifacts/market-version-manual-worklist-v2.csv
+            backend/artifacts/market-version-manual-worklist-summary-v2.json
+          retention-days: 30
+          if-no-files-found: error
