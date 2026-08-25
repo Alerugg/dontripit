@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     # GitHub-hosted jobs allow at most 360 minutes. The previous 180-minute
     # ceiling and fixed 60-minute child wait could terminate a healthy child
-    # before its own certified timeout (Pokemon now permits 90 minutes).
+    # before its own certified timeout (Pokemon now permits 120 minutes).
     timeout-minutes: 360
     env:
       # GitHub schedules only the default-branch workflow. Production catalog
@@ -48,7 +48,7 @@ jobs:
             // 60-minute deadline on a healthy long-running child.
             const pipeline = [
               ['refresh-onepiece-yugioh-canonical-v2.yml', 'One Piece and Yu-Gi-Oh canonical refresh', 110],
-              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh', 105],
+              ['refresh-pokemon-canonical-v2.yml', 'Pokemon canonical EN ES JA physical refresh', 135],
               ['sync-cardmarket-master-production-v2.yml', 'Cardmarket multigame master', 60],
               ['project-cardmarket-canonical-prices-v2.yml', 'Cardmarket exact canonical singles and sealed prices', 60],
               ['sync-cardmarket-website-paths.yml', 'Cardmarket official website paths', 25],
