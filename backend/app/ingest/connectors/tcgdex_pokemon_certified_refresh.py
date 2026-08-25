@@ -3,33 +3,155 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+from sqlalchemy import select
 
 from app.ingest.connectors.tcgdex_pokemon_incremental_guard import (
     LegacyAwarePhysicalMultilingualTcgdexPokemonConnector,
 )
+from app.models import Card, Game, Print, PrintIdentifier, Set as CardSet
+from app.multilingual_models import CardIdentifier, PrintLocalization, SetIdentifier
 
 
 class CertifiedRefreshPokemonTCGDexConnector(
     LegacyAwarePhysicalMultilingualTcgdexPokemonConnector
 ):
-    """Production Pokémon writer with bounded parallel physical-set fetching.
+    """Production Pokémon writer with bounded network and DB catalog scans.
 
     The certified writer must inspect the complete EN/ES/JA physical catalog so
     incremental checksum/identity guards can prove that nothing disappeared.
     Historically that inspection fetched every ``/sets/{id}`` endpoint strictly
-    sequentially. A single language therefore required hundreds of network
-    round-trips before the incremental writer could skip unchanged rows, making
-    the production certification both slow and vulnerable to late transport
-    failures.
+    sequentially and then re-ran several identity queries for every unchanged
+    card. Both costs made a no-op certification unnecessarily slow and exposed
+    the long-running job to late transport/database failures.
 
-    Full, unfiltered catalog scans now fetch set details with a deliberately
-    small worker pool while consuming results in source-set order. Payloads,
-    identity rules, TCG Pocket exclusion, 404 recovery, and fail-closed behavior
-    are unchanged. Explicit set and limited probes retain the original serial
-    path so diagnostics stay deterministic.
+    Full, unfiltered catalog scans fetch set details with a deliberately small
+    worker pool while consuming results in source-set order. Incremental
+    completeness is also materialized once per DB session/language as an exact
+    set of identities, preserving the EN legacy contract and the stricter ES/JA
+    identifier + localization contract. Missing or inconsistent rows are never
+    considered complete and therefore continue through the normal self-healing
+    writer. Explicit set and limited probes retain the established serial path.
     """
 
     FULL_CATALOG_WORKERS = 4
+
+    def _certified_complete_identity_keys(self, session, language: str) -> set[tuple[str, str, str]]:
+        """Return exact identities that satisfy the existing skip contract.
+
+        This is deliberately a read-only acceleration. It converts the historical
+        per-card Set/Card/Print/identifier/localization lookups into one joined
+        query per language. Any identity absent from the materialized set is
+        treated as incomplete and follows the normal fail-closed upsert path.
+        """
+        language = self._assert_certified_language(language)
+        cache_session = getattr(self, "_complete_identity_cache_session", None)
+        if cache_session is not session:
+            self._complete_identity_cache_session = session
+            self._complete_identity_cache: dict[str, set[tuple[str, str, str]]] = {}
+
+        cached = self._complete_identity_cache.get(language)
+        if cached is not None:
+            return cached
+
+        game_id = session.execute(
+            select(Game.id).where(Game.slug == "pokemon")
+        ).scalar_one_or_none()
+        if game_id is None:
+            complete: set[tuple[str, str, str]] = set()
+            self._complete_identity_cache[language] = complete
+            return complete
+
+        if language == "en":
+            # Exact equivalent of LegacyAwarePhysicalMultilingualTcgdexPokemonConnector:
+            # canonical Set/Card TCGdex IDs plus an EN default non-foil Print whose
+            # TCGdex ID is that exact card identity. Language-qualified aliases and
+            # localizations are intentionally not required for legacy-complete EN.
+            rows = session.execute(
+                select(
+                    CardSet.tcgdex_id,
+                    Card.tcgdex_id,
+                    Print.collector_number,
+                )
+                .select_from(Print)
+                .join(CardSet, CardSet.id == Print.set_id)
+                .join(Card, Card.id == Print.card_id)
+                .where(
+                    CardSet.game_id == game_id,
+                    Card.game_id == game_id,
+                    CardSet.tcgdex_id.is_not(None),
+                    Card.tcgdex_id.is_not(None),
+                    Print.tcgdex_id.is_not(None),
+                    Print.tcgdex_id == Card.tcgdex_id,
+                    Print.language == "en",
+                    Print.is_foil.is_(False),
+                    Print.variant == "default",
+                )
+            ).all()
+        else:
+            source = self._source_namespace(language)
+            statement = (
+                select(
+                    SetIdentifier.external_id,
+                    CardIdentifier.external_id,
+                    Print.collector_number,
+                )
+                .select_from(Print)
+                .join(CardSet, CardSet.id == Print.set_id)
+                .join(Card, Card.id == Print.card_id)
+                .join(SetIdentifier, SetIdentifier.set_id == CardSet.id)
+                .join(CardIdentifier, CardIdentifier.card_id == Card.id)
+                .join(PrintIdentifier, PrintIdentifier.print_id == Print.id)
+                .join(PrintLocalization, PrintLocalization.print_id == Print.id)
+                .where(
+                    CardSet.game_id == game_id,
+                    Card.game_id == game_id,
+                    SetIdentifier.source == source,
+                    CardIdentifier.source == source,
+                    PrintIdentifier.source == source,
+                    PrintIdentifier.external_id == CardIdentifier.external_id,
+                    PrintLocalization.language == language,
+                    PrintLocalization.source == "tcgdex",
+                    Print.language == language,
+                    Print.is_foil.is_(False),
+                    Print.variant == "default",
+                    Print.tcgdex_id.is_(None),
+                )
+            )
+            if language == "es":
+                # ES overlays the exact shared international EN Set/Card identity.
+                statement = statement.where(
+                    CardSet.tcgdex_id == SetIdentifier.external_id,
+                    Card.tcgdex_id == CardIdentifier.external_id,
+                )
+            rows = session.execute(statement).all()
+
+        complete = {
+            (str(set_external_id), str(card_external_id), str(collector_number))
+            for set_external_id, card_external_id, collector_number in rows
+            if set_external_id and card_external_id and collector_number
+        }
+        self._complete_identity_cache[language] = complete
+        self.logger.info(
+            "ingest tcgdex certified_complete_cache lang=%s identities=%s",
+            language,
+            len(complete),
+        )
+        return complete
+
+    def _localized_state_complete(self, session, normalized: dict) -> bool:
+        language = self._assert_certified_language(normalized.get("language") or "en")
+        set_payload = normalized.get("set") or {}
+        card_payload = normalized.get("card") or {}
+        set_external_id = str(set_payload.get("tcgdex_id") or "").strip()
+        card_external_id = str(card_payload.get("id") or "").strip()
+        collector_number = str(card_payload.get("collector_number") or "").strip()
+        if not set_external_id or not card_external_id or not collector_number:
+            return False
+        return (
+            set_external_id,
+            card_external_id,
+            collector_number,
+        ) in self._certified_complete_identity_keys(session, language)
 
     def _load_remote(
         self,
