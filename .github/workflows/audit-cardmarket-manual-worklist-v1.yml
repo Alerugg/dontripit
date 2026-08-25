@@ -1,0 +1,309 @@
+name: Audit Cardmarket Manual Worklist V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-cardmarket-manual-worklist-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Export fresh unresolved exact Cardmarket Print worklist READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+
+          import csv
+          import json
+          import os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          from sqlalchemy import select, text
+
+          from app import db
+          from app.external_catalog_models import ExternalCatalogPrintLink, ExternalCatalogProduct
+          from app.models import Card, Game, Print, Set
+
+          database_url = os.environ.get('DATABASE_URL_UNPOOLED')
+          if not database_url:
+              raise SystemExit('DATABASE_URL_UNPOOLED is required')
+          db.init_engine(database_url)
+
+          def clean(value):
+              if value is None:
+                  return ''
+              return str(value).replace('\x00', '').strip()
+
+          def compact_evidence(value):
+              if not value:
+                  return ''
+              try:
+                  rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+              except Exception:
+                  rendered = str(value)
+              return rendered[:4000]
+
+          def market_url(path):
+              path = clean(path)
+              if not path:
+                  return ''
+              if path.startswith('http://') or path.startswith('https://'):
+                  return path
+              return 'https://www.cardmarket.com' + (path if path.startswith('/') else '/' + path)
+
+          fields = [
+              'priority_rank', 'roadmap_scope', 'mapping_state', 'game',
+              'print_id', 'print_key', 'card_id', 'card_name', 'card_key',
+              'set_id', 'set_code', 'set_name', 'set_region', 'set_release_date',
+              'collector_number', 'language', 'rarity', 'finish', 'is_foil', 'variant',
+              'scryfall_id', 'tcgdex_print_id', 'yugioh_print_id', 'riftbound_print_id',
+              'oracle_id', 'tcgdex_card_id', 'yugoprodeck_card_id', 'riftbound_card_id',
+              'existing_cm_link_count', 'existing_cm_product_ids', 'existing_cm_expansion_ids',
+              'existing_cm_product_names', 'existing_cm_categories', 'existing_cm_urls',
+              'existing_cm_link_states', 'existing_cm_mapping_methods', 'existing_cm_last_seen_at',
+              'existing_cm_evidence', 'manual_search_hint',
+          ]
+
+          with db.SessionLocal() as session:
+              session.execute(text('SET TRANSACTION READ ONLY'))
+              if session.execute(text('SHOW transaction_read_only')).scalar_one() != 'on':
+                  raise SystemExit('read-only transaction gate failed')
+
+              prints = session.execute(
+                  select(
+                      Print.id, Print.print_key, Print.card_id,
+                      Print.collector_number, Print.language, Print.rarity,
+                      Print.is_foil, Print.variant, Print.scryfall_id,
+                      Print.tcgdex_id, Print.yugioh_id, Print.riftbound_id,
+                      Card.name, Card.card_key, Card.oracle_id, Card.tcgdex_id,
+                      Card.yugoprodeck_id, Card.riftbound_id,
+                      Set.id, Set.code, Set.name, Set.region, Set.release_date,
+                      Game.slug,
+                  )
+                  .join(Card, Card.id == Print.card_id)
+                  .join(Set, Set.id == Print.set_id)
+                  .join(Game, Game.id == Set.game_id)
+                  .order_by(Game.slug, Set.code, Print.collector_number, Print.language, Print.variant, Print.id)
+              ).all()
+
+              links = session.execute(
+                  select(
+                      ExternalCatalogPrintLink.print_id,
+                      ExternalCatalogPrintLink.mapping_method,
+                      ExternalCatalogPrintLink.confidence,
+                      ExternalCatalogPrintLink.link_status,
+                      ExternalCatalogPrintLink.reviewed,
+                      ExternalCatalogPrintLink.evidence,
+                      ExternalCatalogProduct.external_id,
+                      ExternalCatalogProduct.name,
+                      ExternalCatalogProduct.category,
+                      ExternalCatalogProduct.expansion_external_id,
+                      ExternalCatalogProduct.website_path,
+                      ExternalCatalogProduct.last_seen_at,
+                  )
+                  .join(ExternalCatalogProduct, ExternalCatalogProduct.id == ExternalCatalogPrintLink.external_product_id)
+                  .where(ExternalCatalogProduct.source == 'cardmarket')
+              ).all()
+              session.rollback()
+
+          links_by_print = defaultdict(list)
+          for row in links:
+              links_by_print[int(row[0])].append(row)
+
+          game_priority = {'onepiece': 1, 'pokemon': 2, 'yugioh': 3, 'mtg': 4, 'riftbound': 5}
+          output = []
+          counts_game = Counter()
+          counts_state = Counter()
+          counts_language = Counter()
+
+          for p in prints:
+              (
+                  print_id, print_key, card_id, collector_number, language, rarity,
+                  is_foil, variant, scryfall_id, tcgdex_print_id, yugioh_print_id, riftbound_print_id,
+                  card_name, card_key, oracle_id, tcgdex_card_id, yugoprodeck_card_id, riftbound_card_id,
+                  set_id, set_code, set_name, set_region, set_release_date, game,
+              ) = p
+
+              current_links = list(links_by_print.get(int(print_id), []))
+              certified = [
+                  row for row in current_links
+                  if clean(row[3]).lower() == 'accepted'
+                  and clean(row[2]).lower() == 'exact'
+                  and bool(row[4])
+              ]
+              if certified:
+                  continue
+
+              statuses = {clean(row[3]).lower() for row in current_links if clean(row[3])}
+              confidences = {clean(row[2]).lower() for row in current_links if clean(row[2])}
+              reviewed_any = any(bool(row[4]) for row in current_links)
+              accepted_any = 'accepted' in statuses
+              exact_any = 'exact' in confidences
+
+              if not current_links:
+                  mapping_state = 'no_cardmarket_link'
+              elif accepted_any and not exact_any:
+                  mapping_state = 'accepted_not_exact'
+              elif exact_any and not reviewed_any:
+                  mapping_state = 'exact_not_reviewed'
+              elif statuses and statuses.issubset({'rejected', 'quarantined', 'blocked'}):
+                  mapping_state = 'rejected_or_quarantined_only'
+              elif statuses and statuses.issubset({'candidate', 'pending'}):
+                  mapping_state = 'candidate_only'
+              else:
+                  mapping_state = 'mixed_noncertified_links'
+
+              def ordered_unique(values):
+                  seen = set()
+                  result = []
+                  for value in values:
+                      value = clean(value)
+                      if value and value not in seen:
+                          seen.add(value)
+                          result.append(value)
+                  return result
+
+              # Put the most actionable existing evidence first.
+              current_links.sort(key=lambda row: (
+                  clean(row[3]).lower() != 'accepted',
+                  clean(row[2]).lower() != 'exact',
+                  not bool(row[4]),
+                  clean(row[6]),
+              ))
+
+              cm_ids = ordered_unique(row[6] for row in current_links)
+              cm_expansions = ordered_unique(row[9] for row in current_links)
+              cm_names = ordered_unique(row[7] for row in current_links)
+              cm_categories = ordered_unique(row[8] for row in current_links)
+              cm_urls = ordered_unique(market_url(row[10]) for row in current_links)
+              cm_states = ordered_unique(
+                  f"{clean(row[3])}:{clean(row[2])}:reviewed={str(bool(row[4])).lower()}" for row in current_links
+              )
+              cm_methods = ordered_unique(row[1] for row in current_links)
+              cm_last_seen = ordered_unique(row[11].isoformat() if row[11] else '' for row in current_links)
+              cm_evidence = ordered_unique(compact_evidence(row[5]) for row in current_links)
+
+              finish = 'foil' if bool(is_foil) else 'nonfoil'
+              hint_parts = [
+                  clean(card_name),
+                  f"set {clean(set_code)}" if clean(set_code) else '',
+                  clean(set_name),
+                  f"collector {clean(collector_number)}" if clean(collector_number) else '',
+                  f"lang {clean(language)}" if clean(language) else '',
+                  clean(rarity),
+                  finish,
+                  f"variant {clean(variant)}" if clean(variant) and clean(variant) != 'default' else '',
+              ]
+              manual_hint = ' | '.join(x for x in hint_parts if x)
+              scope = 'deferred_riftbound_api' if clean(game) == 'riftbound' else 'active'
+
+              row = {
+                  'priority_rank': game_priority.get(clean(game), 99),
+                  'roadmap_scope': scope,
+                  'mapping_state': mapping_state,
+                  'game': clean(game),
+                  'print_id': int(print_id),
+                  'print_key': clean(print_key),
+                  'card_id': int(card_id),
+                  'card_name': clean(card_name),
+                  'card_key': clean(card_key),
+                  'set_id': int(set_id),
+                  'set_code': clean(set_code),
+                  'set_name': clean(set_name),
+                  'set_region': clean(set_region),
+                  'set_release_date': set_release_date.isoformat() if set_release_date else '',
+                  'collector_number': clean(collector_number),
+                  'language': clean(language),
+                  'rarity': clean(rarity),
+                  'finish': finish,
+                  'is_foil': bool(is_foil),
+                  'variant': clean(variant),
+                  'scryfall_id': clean(scryfall_id),
+                  'tcgdex_print_id': clean(tcgdex_print_id),
+                  'yugioh_print_id': clean(yugioh_print_id),
+                  'riftbound_print_id': clean(riftbound_print_id),
+                  'oracle_id': clean(oracle_id),
+                  'tcgdex_card_id': clean(tcgdex_card_id),
+                  'yugoprodeck_card_id': clean(yugoprodeck_card_id),
+                  'riftbound_card_id': clean(riftbound_card_id),
+                  'existing_cm_link_count': len(current_links),
+                  'existing_cm_product_ids': ' | '.join(cm_ids),
+                  'existing_cm_expansion_ids': ' | '.join(cm_expansions),
+                  'existing_cm_product_names': ' | '.join(cm_names),
+                  'existing_cm_categories': ' | '.join(cm_categories),
+                  'existing_cm_urls': ' | '.join(cm_urls),
+                  'existing_cm_link_states': ' | '.join(cm_states),
+                  'existing_cm_mapping_methods': ' | '.join(cm_methods),
+                  'existing_cm_last_seen_at': ' | '.join(cm_last_seen),
+                  'existing_cm_evidence': ' | '.join(cm_evidence),
+                  'manual_search_hint': manual_hint,
+              }
+              output.append(row)
+              counts_game[row['game']] += 1
+              counts_state[row['mapping_state']] += 1
+              counts_language[f"{row['game']}:{row['language'] or 'unknown'}"] += 1
+
+          output.sort(key=lambda row: (
+              row['priority_rank'], row['roadmap_scope'] != 'active', row['game'],
+              row['set_code'], row['collector_number'], row['language'], row['variant'], row['print_id'],
+          ))
+
+          csv_path = Path('artifacts/cardmarket-manual-worklist-v1.csv')
+          with csv_path.open('w', encoding='utf-8', newline='') as fh:
+              writer = csv.DictWriter(fh, fieldnames=fields)
+              writer.writeheader()
+              writer.writerows(output)
+
+          summary = {
+              'status': 'pass',
+              'production_writes': 0,
+              'transaction_read_only': True,
+              'definition_of_resolved': 'Cardmarket link_status=accepted AND confidence=exact AND reviewed=true',
+              'canonical_prints_scanned': len(prints),
+              'cardmarket_links_scanned': len(links),
+              'unresolved_exact_prints': len(output),
+              'by_game': dict(sorted(counts_game.items())),
+              'by_mapping_state': dict(sorted(counts_state.items())),
+              'by_game_language': dict(sorted(counts_language.items())),
+              'catalog_v2_sha': os.environ.get('GITHUB_SHA', ''),
+          }
+          Path('artifacts/cardmarket-manual-worklist-summary-v1.json').write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-manual-worklist-v1-${{ github.run_id }}
+          path: |
+            backend/artifacts/cardmarket-manual-worklist-v1.csv
+            backend/artifacts/cardmarket-manual-worklist-summary-v1.json
+          retention-days: 30
+          if-no-files-found: error
