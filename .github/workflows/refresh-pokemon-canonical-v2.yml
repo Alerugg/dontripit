@@ -27,9 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     # The certified EN/ES/JA refresh performs a full remote physical-catalog scan
     # before the incremental writer can prove individual rows are already complete.
-    # The final replay on 2026-08-24 reached the old 55-minute job ceiling without
-    # any data/test error, so keep enough headroom for normal TCGdex/API variance.
-    timeout-minutes: 90
+    # Two genuine scheduled certifications reached the former 90-minute ceiling
+    # inside the ingest step without a preceding identity/parity failure. Keep
+    # bounded headroom for the full three-language TCGdex scan and API variance.
+    timeout-minutes: 120
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
