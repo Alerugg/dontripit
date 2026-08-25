@@ -16,7 +16,7 @@ def test_incremental_v2_uses_bounded_current_source_reconcile_not_catalog_wide_l
         return {"card_ids": {1}, "set_ids": {2}, "print_ids": {3}}
 
     monkeypatch.setattr(YgoProDeckYugiohConnector, "repair_legacy_records", fail_if_called)
-    monkeypatch.setattr(connector, "_reconcile_current_canonical_prints", fake_current_reconcile)
+    monkeypatch.setattr(connector, "_reconcile_current_canonical_catalog", fake_current_reconcile)
 
     stats = IngestStats()
     result = connector.repair_legacy_records(
@@ -37,7 +37,7 @@ def test_incremental_fixture_skips_remote_current_source_reconcile(monkeypatch):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("fixture maintenance must stay local")
 
-    monkeypatch.setattr(connector, "_reconcile_current_canonical_prints", fail_if_called)
+    monkeypatch.setattr(connector, "_reconcile_current_canonical_catalog", fail_if_called)
 
     assert connector.repair_legacy_records(
         "session",
