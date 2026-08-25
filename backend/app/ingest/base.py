@@ -29,6 +29,7 @@ class SourceConnector:
     uses_normalized_payload = False
     persist_raw_source_payload = True
     logger = logging.getLogger("app.ingest")
+    SOURCE_RECORD_PREFETCH_BATCH_SIZE = 500
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         if path is None:
@@ -134,6 +135,43 @@ class SourceConnector:
     def repair_legacy_records(self, session, source: Source, stats: IngestStats, **kwargs) -> dict:
         return {}
 
+    def _prefetch_source_records(
+        self,
+        session,
+        *,
+        source_id: int,
+        payloads: list[tuple[Path, dict, str]],
+    ) -> dict[str, SourceRecord]:
+        """Load existing checksum rows in bounded batches before the ingest loop.
+
+        Large authoritative sources can contain tens of thousands of payloads.
+        Looking up ``SourceRecord`` once per payload turns an otherwise
+        incremental no-op into tens of thousands of database round-trips. The
+        checksum contract is already unique per source, so a bounded ``IN``
+        prefetch preserves the exact lookup semantics while reducing those reads
+        to O(number_of_batches).
+
+        Keep batches small enough for SQLite test parameter limits and ordinary
+        production drivers. Newly-created records are added to the same map by
+        ``run`` so duplicate checksums within one load retain the old behavior.
+        """
+        checksums = list(dict.fromkeys(checksum for _path, _payload, checksum in payloads))
+        if not checksums:
+            return {}
+
+        batch_size = max(1, int(self.SOURCE_RECORD_PREFETCH_BATCH_SIZE))
+        records: dict[str, SourceRecord] = {}
+        for offset in range(0, len(checksums), batch_size):
+            batch = checksums[offset : offset + batch_size]
+            rows = session.execute(
+                select(SourceRecord).where(
+                    SourceRecord.source_id == source_id,
+                    SourceRecord.checksum.in_(batch),
+                )
+            ).scalars().all()
+            records.update({row.checksum: row for row in rows})
+        return records
+
     def run(self, session, path: str | Path | None = None, **kwargs) -> IngestStats:
         stats = IngestStats()
         source = self.ensure_source(session)
@@ -184,13 +222,23 @@ class SourceConnector:
                 kwargs.get("fixture"),
                 incremental,
             )
+            existing_records = self._prefetch_source_records(
+                session,
+                source_id=source.id,
+                payloads=payloads,
+            )
+            self.logger.info(
+                "ingest source_record_prefetch connector=%s payloads=%s existing=%s batch_size=%s",
+                self.name,
+                len(payloads),
+                len(existing_records),
+                self.SOURCE_RECORD_PREFETCH_BATCH_SIZE,
+            )
             touched_ids = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
             processed_payloads = 0
             for file_path, payload, checksum in payloads:
                 stats.files_seen += 1
-                existing_record = session.execute(
-                    select(SourceRecord).where(SourceRecord.source_id == source.id, SourceRecord.checksum == checksum)
-                ).scalar_one_or_none()
+                existing_record = existing_records.get(checksum)
                 if incremental and existing_record and self.should_skip_existing_record(existing_record, session=session, **kwargs):
                     stats.files_skipped += 1
                     self.logger.info(
@@ -202,13 +250,13 @@ class SourceConnector:
                     continue
 
                 if existing_record is None:
-                    session.add(
-                        SourceRecord(
-                            source_id=source.id,
-                            checksum=checksum,
-                            raw_json=self.source_record_payload(payload, **kwargs),
-                        )
+                    existing_record = SourceRecord(
+                        source_id=source.id,
+                        checksum=checksum,
+                        raw_json=self.source_record_payload(payload, **kwargs),
                     )
+                    session.add(existing_record)
+                    existing_records[checksum] = existing_record
                 normalized = self.normalize(payload, **kwargs)
                 normalized = self.validate_payload_contract(normalized)
                 upsert_result = self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
