@@ -25,9 +25,426 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  refresh:
+  preflight:
+    name: preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact dispatched ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile certified Pokemon physical writer and parity gate
+        run: |
+          python -m py_compile \
+            app/ingest/run.py \
+            app/ingest/registry.py \
+            app/ingest/connectors/tcgdex_pokemon.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
+            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
+            app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
+            app/ingest/connectors/tcgdex_pokemon_certified_refresh.py \
+            app/scripts/prove_pokemon_tcgdex_parity.py \
+            app/scripts/prove_pokemon_tcgdex_parity_v2.py
+
+      - name: Re-run focused Pokemon physical identity guards
+        env:
+          PYTHONPATH: .
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q \
+            tests/test_tcgdex_multilingual.py \
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_en_legacy_incremental.py \
+            tests/test_tcgdex_transport_retry.py \
+            tests/test_tcgdex_certified_refresh.py
+
+  refresh_en:
+    name: refresh-en
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
+      POKEMON_LANGUAGE: en
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact dispatched ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify production database secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Refresh certified EN physical catalog incrementally
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          import logging
+          import os
+          from pathlib import Path
+          import time
+          import traceback
+
+          import requests
+
+          from app.ingest.run import run_ingest
+
+          lang = os.environ['POKEMON_LANGUAGE']
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s %(levelname)s %(name)s %(message)s',
+          )
+          diagnostic_path = Path(f'pokemon-refresh-diagnostic-{lang}.json')
+          started = time.monotonic()
+          current_attempt = None
+
+          try:
+              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
+              for attempt in range(1, 4):
+                  current_attempt = attempt
+                  try:
+                      stats = run_ingest(
+                          'tcgdex_pokemon',
+                          lang=lang,
+                          incremental=True,
+                          fixture=False,
+                      )
+                      break
+                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                      if attempt == 3:
+                          raise
+                      wait_seconds = 5 * (2 ** (attempt - 1))
+                      print(json.dumps({
+                          'event': 'pokemon_refresh_transport_retry',
+                          'language': lang,
+                          'attempt': attempt,
+                          'wait_seconds': wait_seconds,
+                          'error_type': type(exc).__name__,
+                      }, sort_keys=True), flush=True)
+                      time.sleep(wait_seconds)
+
+              result = {
+                  'status': 'pass',
+                  'language': lang,
+                  'files_seen': int(stats.files_seen),
+                  'files_skipped': int(stats.files_skipped),
+                  'inserted': int(stats.records_inserted),
+                  'updated': int(stats.records_updated),
+                  'errors': int(stats.errors),
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+              }
+              if result['errors'] != 0:
+                  raise RuntimeError(f'Pokemon {lang} refresh reported errors: {result!r}')
+              diagnostic_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+          except Exception as exc:
+              diagnostic = {
+                  'status': 'fail',
+                  'language': lang,
+                  'attempt': current_attempt,
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+                  'error_type': type(exc).__name__,
+                  'error': str(exc),
+                  'traceback': traceback.format_exc(),
+              }
+              diagnostic_path.write_text(json.dumps(diagnostic, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(diagnostic, indent=2, sort_keys=True), flush=True)
+              raise
+          PY
+
+      - name: Upload EN refresh diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-refresh-en-${{ github.run_id }}
+          path: backend/pokemon-refresh-diagnostic-en.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  refresh_ja:
+    name: refresh-ja
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
+      POKEMON_LANGUAGE: ja
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact dispatched ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify production database secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Refresh certified JA physical catalog incrementally
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          import logging
+          import os
+          from pathlib import Path
+          import time
+          import traceback
+
+          import requests
+
+          from app.ingest.run import run_ingest
+
+          lang = os.environ['POKEMON_LANGUAGE']
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s %(levelname)s %(name)s %(message)s',
+          )
+          diagnostic_path = Path(f'pokemon-refresh-diagnostic-{lang}.json')
+          started = time.monotonic()
+          current_attempt = None
+
+          try:
+              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
+              for attempt in range(1, 4):
+                  current_attempt = attempt
+                  try:
+                      stats = run_ingest(
+                          'tcgdex_pokemon',
+                          lang=lang,
+                          incremental=True,
+                          fixture=False,
+                      )
+                      break
+                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                      if attempt == 3:
+                          raise
+                      wait_seconds = 5 * (2 ** (attempt - 1))
+                      print(json.dumps({
+                          'event': 'pokemon_refresh_transport_retry',
+                          'language': lang,
+                          'attempt': attempt,
+                          'wait_seconds': wait_seconds,
+                          'error_type': type(exc).__name__,
+                      }, sort_keys=True), flush=True)
+                      time.sleep(wait_seconds)
+
+              result = {
+                  'status': 'pass',
+                  'language': lang,
+                  'files_seen': int(stats.files_seen),
+                  'files_skipped': int(stats.files_skipped),
+                  'inserted': int(stats.records_inserted),
+                  'updated': int(stats.records_updated),
+                  'errors': int(stats.errors),
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+              }
+              if result['errors'] != 0:
+                  raise RuntimeError(f'Pokemon {lang} refresh reported errors: {result!r}')
+              diagnostic_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+          except Exception as exc:
+              diagnostic = {
+                  'status': 'fail',
+                  'language': lang,
+                  'attempt': current_attempt,
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+                  'error_type': type(exc).__name__,
+                  'error': str(exc),
+                  'traceback': traceback.format_exc(),
+              }
+              diagnostic_path.write_text(json.dumps(diagnostic, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(diagnostic, indent=2, sort_keys=True), flush=True)
+              raise
+          PY
+
+      - name: Upload JA refresh diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-refresh-ja-${{ github.run_id }}
+          path: backend/pokemon-refresh-diagnostic-ja.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  refresh_es:
+    name: refresh-es
+    needs: refresh_en
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
+      POKEMON_LANGUAGE: es
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout exact dispatched ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify production database secret
+        run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Refresh certified ES physical catalog incrementally
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          import json
+          import logging
+          import os
+          from pathlib import Path
+          import time
+          import traceback
+
+          import requests
+
+          from app.ingest.run import run_ingest
+
+          lang = os.environ['POKEMON_LANGUAGE']
+          logging.basicConfig(
+              level=logging.INFO,
+              format='%(asctime)s %(levelname)s %(name)s %(message)s',
+          )
+          diagnostic_path = Path(f'pokemon-refresh-diagnostic-{lang}.json')
+          started = time.monotonic()
+          current_attempt = None
+
+          try:
+              print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
+              for attempt in range(1, 4):
+                  current_attempt = attempt
+                  try:
+                      stats = run_ingest(
+                          'tcgdex_pokemon',
+                          lang=lang,
+                          incremental=True,
+                          fixture=False,
+                      )
+                      break
+                  except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                      if attempt == 3:
+                          raise
+                      wait_seconds = 5 * (2 ** (attempt - 1))
+                      print(json.dumps({
+                          'event': 'pokemon_refresh_transport_retry',
+                          'language': lang,
+                          'attempt': attempt,
+                          'wait_seconds': wait_seconds,
+                          'error_type': type(exc).__name__,
+                      }, sort_keys=True), flush=True)
+                      time.sleep(wait_seconds)
+
+              result = {
+                  'status': 'pass',
+                  'language': lang,
+                  'files_seen': int(stats.files_seen),
+                  'files_skipped': int(stats.files_skipped),
+                  'inserted': int(stats.records_inserted),
+                  'updated': int(stats.records_updated),
+                  'errors': int(stats.errors),
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+              }
+              if result['errors'] != 0:
+                  raise RuntimeError(f'Pokemon {lang} refresh reported errors: {result!r}')
+              diagnostic_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+          except Exception as exc:
+              diagnostic = {
+                  'status': 'fail',
+                  'language': lang,
+                  'attempt': current_attempt,
+                  'elapsed_seconds': round(time.monotonic() - started, 3),
+                  'error_type': type(exc).__name__,
+                  'error': str(exc),
+                  'traceback': traceback.format_exc(),
+              }
+              diagnostic_path.write_text(json.dumps(diagnostic, indent=2, sort_keys=True), encoding='utf-8')
+              print(json.dumps(diagnostic, indent=2, sort_keys=True), flush=True)
+              raise
+          PY
+
+      - name: Upload ES refresh diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pokemon-refresh-es-${{ github.run_id }}
+          path: backend/pokemon-refresh-diagnostic-es.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  parity:
+    name: parity
+    needs:
+      - refresh_en
+      - refresh_es
+      - refresh_ja
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -55,145 +472,6 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
-      - name: Compile certified Pokemon physical writer and parity gate
-        run: |
-          python -m py_compile \
-            app/ingest/run.py \
-            app/ingest/registry.py \
-            app/ingest/connectors/tcgdex_pokemon.py \
-            app/ingest/connectors/tcgdex_pokemon_multilingual.py \
-            app/ingest/connectors/tcgdex_pokemon_multilingual_physical.py \
-            app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
-            app/ingest/connectors/tcgdex_pokemon_certified_refresh.py \
-            app/scripts/prove_pokemon_tcgdex_parity.py \
-            app/scripts/prove_pokemon_tcgdex_parity_v2.py
-
-      - name: Re-run focused Pokemon physical identity guards
-        env:
-          PYTHONPATH: .
-        run: |
-          unset DATABASE_URL DATABASE_URL_UNPOOLED
-          pytest -q \
-            tests/test_tcgdex_multilingual.py \
-            tests/test_tcgdex_physical_scope.py \
-            tests/test_tcgdex_en_legacy_incremental.py \
-            tests/test_tcgdex_transport_retry.py \
-            tests/test_tcgdex_certified_refresh.py
-
-      - name: Refresh certified EN ES JA physical catalog incrementally
-        env:
-          PYTHONPATH: .
-        run: |
-          python - <<'PY'
-          import json
-          import logging
-          from pathlib import Path
-          import time
-          import traceback
-
-          import requests
-
-          from app.ingest.run import run_ingest
-
-          logging.basicConfig(
-              level=logging.INFO,
-              format='%(asctime)s %(levelname)s %(name)s %(message)s',
-          )
-
-          diagnostic_path = Path('pokemon-refresh-diagnostic.json')
-          summary = []
-          refresh_started = time.monotonic()
-          current_language = None
-          current_attempt = None
-
-          try:
-              for lang in ('en', 'es', 'ja'):
-                  current_language = lang
-                  language_started = time.monotonic()
-                  print(json.dumps({'event': 'pokemon_refresh_start', 'language': lang}), flush=True)
-                  for attempt in range(1, 4):
-                      current_attempt = attempt
-                      try:
-                          stats = run_ingest(
-                              'tcgdex_pokemon',
-                              lang=lang,
-                              incremental=True,
-                              fixture=False,
-                          )
-                          break
-                      except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-                          if attempt == 3:
-                              raise
-                          wait_seconds = 5 * (2 ** (attempt - 1))
-                          print(
-                              json.dumps(
-                                  {
-                                      'event': 'pokemon_refresh_transport_retry',
-                                      'language': lang,
-                                      'attempt': attempt,
-                                      'wait_seconds': wait_seconds,
-                                      'error_type': type(exc).__name__,
-                                  },
-                                  sort_keys=True,
-                              ),
-                              flush=True,
-                          )
-                          time.sleep(wait_seconds)
-                  row = {
-                      'language': lang,
-                      'files_seen': int(stats.files_seen),
-                      'files_skipped': int(stats.files_skipped),
-                      'inserted': int(stats.records_inserted),
-                      'updated': int(stats.records_updated),
-                      'errors': int(stats.errors),
-                      'elapsed_seconds': round(time.monotonic() - language_started, 3),
-                  }
-                  print(json.dumps(row, sort_keys=True), flush=True)
-                  summary.append(row)
-                  if row['errors'] != 0:
-                      raise RuntimeError(f'Pokemon {lang} refresh reported errors: {row!r}')
-
-              if [row['language'] for row in summary] != ['en', 'es', 'ja']:
-                  raise RuntimeError(f'Pokemon language coverage incomplete: {summary!r}')
-
-              result = {
-                  'status': 'pass',
-                  'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
-                  'languages': summary,
-              }
-              diagnostic_path.write_text(
-                  json.dumps(result, indent=2, sort_keys=True),
-                  encoding='utf-8',
-              )
-              print(json.dumps(result, indent=2, sort_keys=True), flush=True)
-          except Exception as exc:
-              diagnostic = {
-                  'status': 'fail',
-                  'language': current_language,
-                  'attempt': current_attempt,
-                  'elapsed_seconds': round(time.monotonic() - refresh_started, 3),
-                  'completed_languages': summary,
-                  'error_type': type(exc).__name__,
-                  'error': str(exc),
-                  'traceback': traceback.format_exc(),
-              }
-              diagnostic_path.write_text(
-                  json.dumps(diagnostic, indent=2, sort_keys=True),
-                  encoding='utf-8',
-              )
-              print(json.dumps(diagnostic, indent=2, sort_keys=True), flush=True)
-              raise
-          PY
-
-      - name: Upload Pokemon refresh diagnostic
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pokemon-refresh-diagnostic-${{ github.run_id }}
-          path: backend/pokemon-refresh-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Prove fresh TCGdex physical source parity in production
         env:
           PYTHONPATH: .
@@ -201,7 +479,9 @@ jobs:
           python - <<'PY'
           import json
           import time
+
           import requests
+
           from app.scripts.prove_pokemon_tcgdex_parity_v2 import main
 
           for attempt in range(1, 4):
@@ -212,17 +492,11 @@ jobs:
                   if attempt == 3:
                       raise
                   wait_seconds = 5 * (2 ** (attempt - 1))
-                  print(
-                      json.dumps(
-                          {
-                              'event': 'pokemon_parity_transport_retry',
-                              'attempt': attempt,
-                              'wait_seconds': wait_seconds,
-                              'error_type': type(exc).__name__,
-                          },
-                          sort_keys=True,
-                      ),
-                      flush=True,
-                  )
+                  print(json.dumps({
+                      'event': 'pokemon_parity_transport_retry',
+                      'attempt': attempt,
+                      'wait_seconds': wait_seconds,
+                      'error_type': type(exc).__name__,
+                  }, sort_keys=True), flush=True)
                   time.sleep(wait_seconds)
           PY
