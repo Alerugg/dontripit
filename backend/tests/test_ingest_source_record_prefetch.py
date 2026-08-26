@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, func, select
 
 from app import db
+import app.ingest.base as ingest_base
 from app.ingest.base import SourceConnector
 from app.models import SourceRecord
 
@@ -27,6 +28,43 @@ class BulkChecksumProbeConnector(SourceConnector):
 
     def upsert(self, session, payload, stats, **kwargs):
         raise AssertionError("prefetched existing payloads must be skipped")
+
+
+class ProvenanceOnlyProbeConnector(SourceConnector):
+    name = "provenance_only_probe"
+
+    def load(self, path=None, **kwargs):
+        return [(Path("provenance.json"), {"value": 1}, "a" * 64)]
+
+    def upsert(self, session, payload, stats, **kwargs):
+        return {self.CATALOG_UNCHANGED_RESULT_KEY: True}
+
+
+class LegacyEmptyResultProbeConnector(SourceConnector):
+    name = "legacy_empty_result_probe"
+
+    def load(self, path=None, **kwargs):
+        return [(Path("legacy.json"), {"value": 2}, "b" * 64)]
+
+    def upsert(self, session, payload, stats, **kwargs):
+        # Existing connectors historically return {} even after possible catalog
+        # writes, so this must retain the conservative full-reindex fallback.
+        return {}
+
+
+class MixedCatalogChangeProbeConnector(SourceConnector):
+    name = "mixed_catalog_change_probe"
+
+    def load(self, path=None, **kwargs):
+        return [
+            (Path("provenance.json"), {"kind": "provenance"}, "c" * 64),
+            (Path("changed.json"), {"kind": "changed"}, "d" * 64),
+        ]
+
+    def upsert(self, session, payload, stats, **kwargs):
+        if payload["kind"] == "provenance":
+            return {self.CATALOG_UNCHANGED_RESULT_KEY: True}
+        return {"card_id": 123}
 
 
 def test_large_incremental_noop_prefetches_source_records_in_bounded_batches(client):
@@ -67,3 +105,67 @@ def test_large_incremental_noop_prefetches_source_records_in_bounded_batches(cli
     # 1201 checksums at the default 500-row batch size => exactly 3 reads,
     # rather than the historical 1201 SourceRecord round-trips.
     assert len(source_record_prefetch_queries) == 3
+
+
+def test_explicit_provenance_only_upsert_persists_source_record_without_reindex(client, monkeypatch):
+    connector = ProvenanceOnlyProbeConnector()
+    reindex_calls: list[dict] = []
+
+    def capture_reindex(_session, **kwargs):
+        reindex_calls.append(kwargs)
+
+    monkeypatch.setattr(ingest_base, "rebuild_search_documents", capture_reindex)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, incremental=True)
+        session.commit()
+
+    with db.SessionLocal() as session:
+        source_record_count = session.execute(
+            select(func.count(SourceRecord.id))
+        ).scalar_one()
+
+    assert stats.files_seen == 1
+    assert stats.files_skipped == 0
+    assert source_record_count == 1
+    assert reindex_calls == []
+
+
+def test_legacy_empty_upsert_result_keeps_full_reindex_fallback(client, monkeypatch):
+    connector = LegacyEmptyResultProbeConnector()
+    reindex_calls: list[dict] = []
+
+    def capture_reindex(_session, **kwargs):
+        reindex_calls.append(kwargs)
+
+    monkeypatch.setattr(ingest_base, "rebuild_search_documents", capture_reindex)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, incremental=True)
+        session.commit()
+
+    assert stats.files_seen == 1
+    assert len(reindex_calls) == 1
+    assert reindex_calls[0] == {}
+
+
+def test_mixed_provenance_and_catalog_change_keeps_targeted_reindex(client, monkeypatch):
+    connector = MixedCatalogChangeProbeConnector()
+    reindex_calls: list[dict] = []
+
+    def capture_reindex(_session, **kwargs):
+        reindex_calls.append(kwargs)
+
+    monkeypatch.setattr(ingest_base, "rebuild_search_documents", capture_reindex)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, incremental=True)
+        session.commit()
+
+    assert stats.files_seen == 2
+    assert len(reindex_calls) == 1
+    assert reindex_calls[0] == {
+        "card_ids": {123},
+        "set_ids": set(),
+        "print_ids": set(),
+    }

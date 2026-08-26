@@ -165,10 +165,11 @@ class CertifiedRefreshPokemonTCGDexConnector(
 
         This guard uses the exact same fail-closed completeness contract as the
         incremental skip path. Anything incomplete still falls through to the
-        normal self-healing writer.
+        normal self-healing writer. The explicit catalog-unchanged marker lets the
+        generic runner preserve provenance without scheduling a search reindex.
         """
         if self._localized_state_complete(session, payload):
-            return {}
+            return {self.CATALOG_UNCHANGED_RESULT_KEY: True}
         return super().upsert(session, payload, stats, **kwargs)
 
     def _upsert_set_identifier(
