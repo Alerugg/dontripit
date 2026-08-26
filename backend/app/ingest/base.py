@@ -30,6 +30,7 @@ class SourceConnector:
     persist_raw_source_payload = True
     logger = logging.getLogger("app.ingest")
     SOURCE_RECORD_PREFETCH_BATCH_SIZE = 500
+    CATALOG_UNCHANGED_RESULT_KEY = "_catalog_unchanged"
 
     def load(self, path: str | Path | None = None, **kwargs) -> list[tuple[Path, dict, str]]:
         if path is None:
@@ -90,6 +91,21 @@ class SourceConnector:
 
     def touched_entity_ids(self) -> dict[str, set[int]]:
         return {}
+
+    @classmethod
+    def upsert_result_changed_catalog(cls, result: dict | None) -> bool:
+        """Whether an upsert result represents possible catalog mutations.
+
+        Existing connectors preserve the historical conservative behavior: an
+        empty or unstructured result may still have mutated catalog rows and must
+        therefore retain the full-reindex fallback. A connector may explicitly
+        return ``{_catalog_unchanged: True}`` only when it persisted provenance
+        without changing any searchable catalog entity.
+        """
+        return not (
+            isinstance(result, dict)
+            and result.get(cls.CATALOG_UNCHANGED_RESULT_KEY) is True
+        )
 
     @staticmethod
     def collect_touched_entity_ids(result: dict | None) -> dict[str, set[int]]:
@@ -236,6 +252,7 @@ class SourceConnector:
             )
             touched_ids = {"card_ids": set(), "set_ids": set(), "print_ids": set()}
             processed_payloads = 0
+            catalog_processed_payloads = 0
             for file_path, payload, checksum in payloads:
                 stats.files_seen += 1
                 existing_record = existing_records.get(checksum)
@@ -261,11 +278,14 @@ class SourceConnector:
                 normalized = self.validate_payload_contract(normalized)
                 upsert_result = self.upsert(session, normalized, stats, source_name=source.name, **kwargs)
                 processed_payloads += 1
+                if self.upsert_result_changed_catalog(upsert_result):
+                    catalog_processed_payloads += 1
                 if processed_payloads == 1 or processed_payloads % 10 == 0:
                     self.logger.info(
-                        "ingest progress connector=%s processed=%s files_seen=%s inserted=%s updated=%s skipped=%s",
+                        "ingest progress connector=%s processed=%s catalog_processed=%s files_seen=%s inserted=%s updated=%s skipped=%s",
                         self.name,
                         processed_payloads,
+                        catalog_processed_payloads,
                         stats.files_seen,
                         stats.records_inserted,
                         stats.records_updated,
@@ -301,10 +321,16 @@ class SourceConnector:
                         print_ids=touched_ids["print_ids"],
                     )
                     self.logger.info("ingest reindex_done connector=%s mode=targeted", self.name)
-                elif processed_payloads > 0:
+                elif catalog_processed_payloads > 0:
                     self.logger.info("ingest reindex_start connector=%s mode=full_fallback", self.name)
                     rebuild_search_documents(session)
                     self.logger.info("ingest reindex_done connector=%s mode=full_fallback", self.name)
+                elif processed_payloads > 0:
+                    self.logger.info(
+                        "ingest reindex_skip connector=%s reason=provenance_only processed=%s",
+                        self.name,
+                        processed_payloads,
+                    )
             else:
                 self.logger.info("ingest reindex_start connector=%s mode=full_refresh", self.name)
                 rebuild_search_documents(session)
