@@ -52,6 +52,21 @@ class LegacyEmptyResultProbeConnector(SourceConnector):
         return {}
 
 
+class MixedCatalogChangeProbeConnector(SourceConnector):
+    name = "mixed_catalog_change_probe"
+
+    def load(self, path=None, **kwargs):
+        return [
+            (Path("provenance.json"), {"kind": "provenance"}, "c" * 64),
+            (Path("changed.json"), {"kind": "changed"}, "d" * 64),
+        ]
+
+    def upsert(self, session, payload, stats, **kwargs):
+        if payload["kind"] == "provenance":
+            return {self.CATALOG_UNCHANGED_RESULT_KEY: True}
+        return {"card_id": 123}
+
+
 def test_large_incremental_noop_prefetches_source_records_in_bounded_batches(client):
     connector = BulkChecksumProbeConnector(count=1201)
     payloads = connector.load()
@@ -132,3 +147,25 @@ def test_legacy_empty_upsert_result_keeps_full_reindex_fallback(client, monkeypa
     assert stats.files_seen == 1
     assert len(reindex_calls) == 1
     assert reindex_calls[0] == {}
+
+
+def test_mixed_provenance_and_catalog_change_keeps_targeted_reindex(client, monkeypatch):
+    connector = MixedCatalogChangeProbeConnector()
+    reindex_calls: list[dict] = []
+
+    def capture_reindex(_session, **kwargs):
+        reindex_calls.append(kwargs)
+
+    monkeypatch.setattr(ingest_base, "rebuild_search_documents", capture_reindex)
+
+    with db.SessionLocal() as session:
+        stats = connector.run(session, incremental=True)
+        session.commit()
+
+    assert stats.files_seen == 2
+    assert len(reindex_calls) == 1
+    assert reindex_calls[0] == {
+        "card_ids": {123},
+        "set_ids": set(),
+        "print_ids": set(),
+    }
