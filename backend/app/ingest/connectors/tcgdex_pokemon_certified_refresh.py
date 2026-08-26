@@ -153,6 +153,119 @@ class CertifiedRefreshPokemonTCGDexConnector(
             collector_number,
         ) in self._certified_complete_identity_keys(session, language)
 
+    def upsert(self, session, payload: dict, stats, **kwargs) -> dict:
+        """Avoid rewriting physical rows that already satisfy the certified state.
+
+        A source checksum can legitimately be new after connector-normalization
+        changes even when the physical Set/Card/Print identity in production is
+        already complete. ``SourceConnector.run`` has already staged the new
+        SourceRecord before calling this method. Re-running the multilingual
+        writer in that case is unnecessary and, historically, caused tens of
+        thousands of alias/localization writes during recertification.
+
+        This guard uses the exact same fail-closed completeness contract as the
+        incremental skip path. Anything incomplete still falls through to the
+        normal self-healing writer.
+        """
+        if self._localized_state_complete(session, payload):
+            return {}
+        return super().upsert(session, payload, stats, **kwargs)
+
+    def _upsert_set_identifier(
+        self,
+        session,
+        *,
+        set_row: CardSet,
+        language: str,
+        external_id: str,
+        stats,
+    ) -> None:
+        """Create a language-qualified set alias once per session.
+
+        Production sessions run with autoflush disabled. During a backfill, the
+        first card in a set can therefore stage a SetIdentifier that subsequent
+        cards cannot see through SQL until a later flush. The parent helper then
+        stages the same unique ``(source, external_id)`` row repeatedly and the
+        eventual flush fails with ``uq_set_identifier_source_external``.
+
+        Keep a session-local identity map so pending aliases participate in the
+        same collision checks as persisted aliases without adding per-card
+        flushes or weakening uniqueness.
+        """
+        source = self._source_namespace(language)
+        cache_session = getattr(self, "_set_identifier_cache_session", None)
+        if cache_session is not session:
+            self._set_identifier_cache_session = session
+            self._set_identifier_by_external: dict[tuple[str, str], SetIdentifier] = {}
+            self._set_identifier_by_entity: dict[tuple[int, str], SetIdentifier] = {}
+
+        external_key = (source, external_id)
+        entity_key = (int(set_row.id), source)
+        cached_external = self._set_identifier_by_external.get(external_key)
+        if cached_external is not None:
+            if cached_external.set_id != set_row.id:
+                raise RuntimeError(
+                    "TCGdex set identifier collision: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_set_id={cached_external.set_id} target_set_id={set_row.id}"
+                )
+            self._set_identifier_by_entity[entity_key] = cached_external
+            return
+
+        cached_entity = self._set_identifier_by_entity.get(entity_key)
+        if cached_entity is not None:
+            if cached_entity.external_id != external_id:
+                raise RuntimeError(
+                    "TCGdex set source identity changed unexpectedly: "
+                    f"set_id={set_row.id} source={source} "
+                    f"old={cached_entity.external_id} new={external_id}"
+                )
+            self._set_identifier_by_external[external_key] = cached_entity
+            return
+
+        by_external = session.execute(
+            select(SetIdentifier).where(
+                SetIdentifier.source == source,
+                SetIdentifier.external_id == external_id,
+            )
+        ).scalar_one_or_none()
+        if by_external is not None:
+            if by_external.set_id != set_row.id:
+                raise RuntimeError(
+                    "TCGdex set identifier collision: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_set_id={by_external.set_id} target_set_id={set_row.id}"
+                )
+            self._set_identifier_by_external[external_key] = by_external
+            self._set_identifier_by_entity[entity_key] = by_external
+            return
+
+        by_entity = session.execute(
+            select(SetIdentifier).where(
+                SetIdentifier.set_id == set_row.id,
+                SetIdentifier.source == source,
+            )
+        ).scalar_one_or_none()
+        if by_entity is not None:
+            if by_entity.external_id != external_id:
+                raise RuntimeError(
+                    "TCGdex set source identity changed unexpectedly: "
+                    f"set_id={set_row.id} source={source} "
+                    f"old={by_entity.external_id} new={external_id}"
+                )
+            identifier = by_entity
+        else:
+            identifier = SetIdentifier(
+                set_id=set_row.id,
+                source=source,
+                external_id=external_id,
+            )
+            session.add(identifier)
+            stats.records_inserted += 1
+
+        self._set_identifier_by_external[external_key] = identifier
+        self._set_identifier_by_entity[entity_key] = identifier
+
     def _load_remote(
         self,
         limit: int | None = None,
