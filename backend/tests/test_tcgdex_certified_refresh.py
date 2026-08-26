@@ -196,7 +196,7 @@ def test_certified_upsert_does_not_rewrite_legacy_complete_en_for_new_provenance
         card_aliases = session.execute(select(func.count(CardIdentifier.id))).scalar_one()
         localizations = session.execute(select(func.count(PrintLocalization.id))).scalar_one()
 
-    assert result == {}
+    assert result == {connector.CATALOG_UNCHANGED_RESULT_KEY: True}
     assert stats.records_inserted == 0
     assert stats.records_updated == 0
     # Legacy-complete EN does not require multilingual aliases/localizations.
