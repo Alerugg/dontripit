@@ -3,9 +3,15 @@ from __future__ import annotations
 import threading
 import time
 
+from sqlalchemy import func, select
+
+from app import db
+from app.ingest.base import IngestStats
 from app.ingest.connectors.tcgdex_pokemon_certified_refresh import (
     CertifiedRefreshPokemonTCGDexConnector,
 )
+from app.models import Card, Game, Print, Set
+from app.multilingual_models import CardIdentifier, PrintLocalization, SetIdentifier
 
 
 class ConcurrentProbeConnector(CertifiedRefreshPokemonTCGDexConnector):
@@ -74,3 +80,126 @@ def test_targeted_refresh_keeps_the_existing_serial_path():
 
     assert [row["id"] for row in rows] == ["base1-1"]
     assert connector.max_active_set_requests == 1
+
+
+def test_set_identifier_backfill_is_idempotent_before_session_flush(client):
+    connector = CertifiedRefreshPokemonTCGDexConnector()
+    stats = IngestStats()
+
+    with db.SessionLocal() as session:
+        game = Game(slug="pokemon", name="Pokémon")
+        session.add(game)
+        session.flush()
+        set_row = Set(
+            game_id=game.id,
+            code="base1",
+            tcgdex_id="base1",
+            name="Base Set",
+        )
+        session.add(set_row)
+        session.flush()
+
+        # Production uses autoflush-disabled sessions. Reproduce the exact failure:
+        # several cards from one set ask for the same language-qualified set alias
+        # before any unrelated Card/Print creation happens to flush pending rows.
+        with session.no_autoflush:
+            connector._upsert_set_identifier(
+                session,
+                set_row=set_row,
+                language="en",
+                external_id="base1",
+                stats=stats,
+            )
+            connector._upsert_set_identifier(
+                session,
+                set_row=set_row,
+                language="en",
+                external_id="base1",
+                stats=stats,
+            )
+
+        session.flush()
+        count = session.execute(
+            select(func.count(SetIdentifier.id)).where(
+                SetIdentifier.source == "tcgdex:en",
+                SetIdentifier.external_id == "base1",
+            )
+        ).scalar_one()
+
+    assert count == 1
+    assert stats.records_inserted == 1
+
+
+def test_certified_upsert_does_not_rewrite_legacy_complete_en_for_new_provenance(client):
+    connector = CertifiedRefreshPokemonTCGDexConnector()
+
+    with db.SessionLocal() as session:
+        game = Game(slug="pokemon", name="Pokémon")
+        session.add(game)
+        session.flush()
+        set_row = Set(
+            game_id=game.id,
+            code="base1",
+            tcgdex_id="base1",
+            name="Base Set",
+        )
+        card_row = Card(
+            game_id=game.id,
+            name="Alakazam",
+            tcgdex_id="base1-1",
+            card_key="pokemon:base1:1",
+        )
+        session.add_all([set_row, card_row])
+        session.flush()
+        session.add(
+            Print(
+                set_id=set_row.id,
+                card_id=card_row.id,
+                collector_number="1",
+                language="en",
+                rarity="unknown",
+                is_foil=False,
+                variant="default",
+                tcgdex_id="base1-1",
+            )
+        )
+        session.commit()
+
+    payload = {
+        "language": "en",
+        "set": {
+            "tcgdex_id": "base1",
+            "code": "base1",
+            "name": "Base Set",
+            "released_at": None,
+        },
+        "card": {
+            "id": "base1-1",
+            "collector_number": "1",
+            "name": "Alakazam",
+            "card_key": "pokemon:base1:1",
+            "image": None,
+        },
+        "localization": {
+            "card_name": "Alakazam",
+            "set_name": "Base Set",
+            "details": {},
+        },
+    }
+
+    with db.SessionLocal() as session:
+        stats = IngestStats()
+        result = connector.upsert(session, payload, stats)
+        session.flush()
+
+        set_aliases = session.execute(select(func.count(SetIdentifier.id))).scalar_one()
+        card_aliases = session.execute(select(func.count(CardIdentifier.id))).scalar_one()
+        localizations = session.execute(select(func.count(PrintLocalization.id))).scalar_one()
+
+    assert result == {}
+    assert stats.records_inserted == 0
+    assert stats.records_updated == 0
+    # Legacy-complete EN does not require multilingual aliases/localizations.
+    assert set_aliases == 0
+    assert card_aliases == 0
+    assert localizations == 0
