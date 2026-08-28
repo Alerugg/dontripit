@@ -1,0 +1,112 @@
+name: P0 Final Schedule Gate Watcher
+
+on:
+  push:
+    paths:
+      - '.github/workflows/p0-final-schedule-gate-watcher.yml'
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Capture genuine schedule and remove temporary gate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const masterPath = '.github/workflows/daily-catalog-v2-orchestrator.yml';
+            const selfPath = '.github/workflows/p0-final-schedule-gate-watcher.yml';
+            const workflowId = 'daily-catalog-v2-orchestrator.yml';
+            const cutoff = Date.parse('2026-08-28T23:40:00Z');
+            const temporaryCronLine = "    - cron: '47 23 28 8 *'\n";
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            let found = null;
+            for (let attempt = 1; attempt <= 360; attempt += 1) {
+              const response = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                event: 'schedule',
+                per_page: 20,
+              });
+              const candidates = response.data.workflow_runs
+                .filter(run => Date.parse(run.created_at) >= cutoff)
+                .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+              if (candidates.length) {
+                found = candidates[0];
+                break;
+              }
+              await sleep(10000);
+            }
+
+            if (!found) {
+              throw new Error('No genuine scheduled Daily Catalog V2 run appeared inside the buffered watcher window');
+            }
+
+            const master = await github.rest.repos.getContent({owner, repo, path: masterPath, ref: 'main'});
+            if (Array.isArray(master.data) || !master.data.content || !master.data.sha) {
+              throw new Error('Could not resolve master workflow content');
+            }
+            const current = Buffer.from(master.data.content, 'base64').toString('utf8');
+            if (!current.includes(temporaryCronLine)) {
+              throw new Error('Temporary certification cron is missing; refusing unexpected rewrite');
+            }
+            const cleaned = current.replace(temporaryCronLine, '');
+            if (cleaned.includes("cron: '47 23 28 8 *'")) {
+              throw new Error('Temporary certification cron was not removed exactly once');
+            }
+            if (!cleaned.includes("cron: '20 4 * * *'")) {
+              throw new Error('Permanent production cron missing after cleanup');
+            }
+
+            const cleanup = await github.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path: masterPath,
+              message: 'chore(actions): remove captured P0 schedule certification window',
+              sha: master.data.sha,
+              content: Buffer.from(cleaned, 'utf8').toString('base64'),
+              branch: 'main',
+            });
+
+            const self = await github.rest.repos.getContent({owner, repo, path: selfPath, ref: 'main'});
+            let selfCleanupSha = null;
+            if (!Array.isArray(self.data) && self.data.sha) {
+              const deletion = await github.rest.repos.deleteFile({
+                owner,
+                repo,
+                path: selfPath,
+                message: 'chore(actions): remove completed P0 schedule gate watcher',
+                sha: self.data.sha,
+                branch: 'main',
+              });
+              selfCleanupSha = deletion.data.commit.sha;
+            }
+
+            const body = [
+              '### P0 genuine scheduled master captured',
+              '',
+              `- master run: ${found.id}`,
+              `- event: ${found.event}`,
+              `- status at capture: ${found.status}`,
+              `- conclusion at capture: ${found.conclusion ?? 'pending'}`,
+              `- main head_sha: ${found.head_sha}`,
+              `- created_at: ${found.created_at}`,
+              `- url: ${found.html_url}`,
+              `- temporary cron cleanup commit: ${cleanup.data.commit.sha}`,
+              `- watcher self-cleanup commit: ${selfCleanupSha ?? 'not-created'}`,
+              '',
+              'The permanent `20 4 * * *` schedule remains. This watcher performs no production-data writes.'
+            ].join('\n');
+
+            await github.rest.issues.createComment({owner, repo, issue_number: 598, body});
+            core.info(body);
