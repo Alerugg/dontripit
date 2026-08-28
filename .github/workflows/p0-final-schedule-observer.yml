@@ -13,7 +13,7 @@ permissions:
 jobs:
   observe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Resolve genuine scheduled master run
         uses: actions/github-script@v7
@@ -23,11 +23,11 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const workflowId = 'daily-catalog-v2-orchestrator.yml';
-            const cutoff = Date.parse('2026-08-28T22:54:00Z');
+            const cutoff = Date.parse('2026-08-28T23:04:00Z');
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
             let found = null;
-            for (let attempt = 1; attempt <= 60; attempt += 1) {
+            for (let attempt = 1; attempt <= 180; attempt += 1) {
               const response = await github.rest.actions.listWorkflowRuns({
                 owner,
                 repo,
