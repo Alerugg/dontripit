@@ -51,3 +51,33 @@ def test_shard_config_rejects_invalid_index(monkeypatch):
 
     with pytest.raises(RuntimeError, match="0 <= index < count"):
         connector._pokemon_shard_config()
+
+
+def test_legacy_es_trainer_gallery_rename_is_narrow_and_explicit():
+    connector = DuplicateSafeCertifiedRefreshPokemonTCGDexConnector()
+
+    assert connector._is_approved_legacy_set_id_rename(
+        source="tcgdex:es",
+        old_external_id="swsh10.5tg",
+        new_external_id="swsh10tg",
+    )
+    assert connector._is_approved_legacy_set_id_rename(
+        source="tcgdex:es",
+        old_external_id="swsh12.5tg",
+        new_external_id="swsh12tg",
+    )
+    assert not connector._is_approved_legacy_set_id_rename(
+        source="tcgdex:en",
+        old_external_id="swsh10.5tg",
+        new_external_id="swsh10tg",
+    )
+    assert not connector._is_approved_legacy_set_id_rename(
+        source="tcgdex:es",
+        old_external_id="swsh10.5gg",
+        new_external_id="swsh10gg",
+    )
+    assert not connector._is_approved_legacy_set_id_rename(
+        source="tcgdex:es",
+        old_external_id="swsh10.5tg",
+        new_external_id="different-set",
+    )
