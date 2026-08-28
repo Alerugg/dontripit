@@ -1,5 +1,6 @@
 name: Certify Search V2 Production Latency V1
 
+# Ephemeral P0 recertification trigger after the Yu-Gi-Oh localized fallback optimization.
 on:
   workflow_dispatch:
   pull_request:
