@@ -162,7 +162,8 @@ def normal_yugioh_search(
           JOIN prints p ON p.id=pl.print_id
           JOIN cards c ON c.id=p.card_id
           JOIN games g ON g.id=c.game_id
-          WHERE g.slug='yugioh'
+          WHERE :include_localized
+            AND g.slug='yugioh'
             AND pl.card_name IS NOT NULL
             AND lower(pl.language)=lower(coalesce(p.language,''))
             AND lower(coalesce(p.language,'')) IN ('es','ja')
@@ -264,11 +265,14 @@ def normal_yugioh_search(
         LIMIT :limit
         """
     )
+    requested_languages = set(display_language.split(",")) if display_language else set()
+    include_localized = (not q_norm) or bool(requested_languages & {"es", "ja"})
     params = {
         "q_norm": q_norm,
         "q_code": q_code,
         "q_raw": q_raw,
         "display_language": display_language,
+        "include_localized": include_localized,
         "prefix": f"{q_norm}%",
         "contains": f"%{q_norm}%",
         "localized_contains": f"%{q_raw}%",
@@ -278,6 +282,14 @@ def normal_yugioh_search(
         **token_params,
     }
     rows = session.execute(sql, params).mappings().all()
+    # Default ASCII searches should not pay for the ES/JA localization scan on
+    # the common path. If canonical/profile signals found nothing, retry once
+    # with localizations enabled so Spanish/Japanese localized names remain
+    # searchable without an explicit language parameter.
+    if not rows and not include_localized and display_language is None:
+        params["include_localized"] = True
+        rows = session.execute(sql, params).mappings().all()
+
     return [
         {
             "type": "card",
