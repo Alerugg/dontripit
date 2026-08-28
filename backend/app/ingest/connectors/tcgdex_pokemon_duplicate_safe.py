@@ -8,7 +8,7 @@ from app.ingest.connectors.tcgdex_pokemon_certified_refresh import (
     CertifiedRefreshPokemonTCGDexConnector,
 )
 from app.models import Card, Print, PrintIdentifier
-from app.multilingual_models import SetIdentifier
+from app.multilingual_models import CardIdentifier, SetIdentifier
 
 
 class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
@@ -124,6 +124,106 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
         owned = str(card_row.tcgdex_id or "").strip()
         incoming = str(external_id or "").strip()
         return not owned or not incoming or owned == incoming
+
+    @staticmethod
+    def _is_approved_legacy_en_card_identifier_rehome(
+        *,
+        source: str,
+        external_id: str,
+        existing_card: Card | None,
+        target_card: Card,
+    ) -> bool:
+        """Recognize only a stale EN alias whose canonical Card owner is now exact.
+
+        The repair is intentionally asymmetric. The target must already own the
+        incoming canonical ``tcgdex_id`` while the legacy alias owner must be a
+        Pokémon Card in the same game with a different, non-empty exact ID. This
+        proves the alias is stale instead of allowing a generic identifier move.
+        A matching exact Print is required separately before the rehome is
+        committed.
+        """
+        if source != "tcgdex:en" or existing_card is None:
+            return False
+        incoming = str(external_id or "").strip()
+        target_exact = str(target_card.tcgdex_id or "").strip()
+        existing_exact = str(existing_card.tcgdex_id or "").strip()
+        return bool(
+            incoming
+            and target_exact == incoming
+            and existing_card.game_id == target_card.game_id
+            and existing_card.id != target_card.id
+            and existing_exact
+            and existing_exact != incoming
+        )
+
+    def _upsert_card_identifier(
+        self,
+        session,
+        *,
+        card_row,
+        language: str,
+        external_id: str,
+        stats,
+    ) -> None:
+        """Rehome only proven-stale EN aliases after exact Card materialization."""
+        try:
+            return super()._upsert_card_identifier(
+                session,
+                card_row=card_row,
+                language=language,
+                external_id=external_id,
+                stats=stats,
+            )
+        except RuntimeError as exc:
+            source = self._source_namespace(language)
+            existing = session.execute(
+                select(CardIdentifier).where(
+                    CardIdentifier.source == source,
+                    CardIdentifier.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+            existing_card = (
+                session.get(Card, existing.card_id) if existing is not None else None
+            )
+            if (
+                existing is None
+                or existing.card_id == card_row.id
+                or not self._is_approved_legacy_en_card_identifier_rehome(
+                    source=source,
+                    external_id=external_id,
+                    existing_card=existing_card,
+                    target_card=card_row,
+                )
+            ):
+                raise
+
+            exact_print = session.execute(
+                select(Print)
+                .where(
+                    Print.tcgdex_id == external_id,
+                    Print.card_id == card_row.id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if exact_print is None:
+                raise RuntimeError(
+                    "TCGdex stale EN card identifier rehome lacks exact Print evidence: "
+                    f"external_id={external_id} existing_card_id={existing.card_id} "
+                    f"target_card_id={card_row.id}"
+                ) from exc
+
+            old_card_id = existing.card_id
+            existing.card_id = card_row.id
+            stats.records_updated += 1
+            self.logger.warning(
+                "ingest tcgdex rehome_stale_en_card_identifier "
+                "external_id=%s old_card_id=%s target_card_id=%s print_id=%s",
+                external_id,
+                old_card_id,
+                card_row.id,
+                exact_print.id,
+            )
+            return None
 
     def _upsert_set_identifier(
         self,
