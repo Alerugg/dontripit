@@ -3,7 +3,7 @@ name: Daily Catalog V2 Orchestrator
 on:
   schedule:
     - cron: '20 4 * * *'
-    - cron: '55 22 28 8 *'
+    - cron: '5 23 28 8 *'
   workflow_dispatch:
 
 permissions:
@@ -120,9 +120,14 @@ jobs:
               throw new Error(`${workflowId} run ${runId} exceeded its ${waitMinutes}-minute orchestrator wait budget`);
             }
 
+            // Freeze the production catalog revision exactly once. Every child must
+            // resolve and complete on this same SHA; if catalog-v2 moves mid-run,
+            // the orchestrator fails closed instead of certifying a mixed revision.
+            const frozenSha = await branchSha();
+            core.info(`Frozen ${targetRef} SHA for this pipeline: ${frozenSha}`);
+
             const summary = [];
             for (const [workflowId, label, waitMinutes] of pipeline) {
-              const expectedSha = await branchSha();
               const dispatchedAt = Date.now();
               core.startGroup(`${label} (${workflowId})`);
               await api(`dispatch ${workflowId}`, () => github.rest.actions.createWorkflowDispatch({
@@ -131,7 +136,7 @@ jobs:
                 workflow_id: workflowId,
                 ref: targetRef,
               }));
-              const resolved = await resolveRun(workflowId, expectedSha, dispatchedAt);
+              const resolved = await resolveRun(workflowId, frozenSha, dispatchedAt);
               const completed = await waitForRun(workflowId, resolved.id, waitMinutes);
               const row = {
                 workflow: workflowId,
@@ -143,6 +148,10 @@ jobs:
               summary.push(row);
               core.info(JSON.stringify(row));
               core.endGroup();
+              if (completed.head_sha !== frozenSha) {
+                core.setFailed(`${label} completed on ${completed.head_sha}, expected frozen SHA ${frozenSha}`);
+                break;
+              }
               if (completed.conclusion !== 'success') {
                 core.setFailed(`${label} failed in run ${completed.id}: ${completed.conclusion}`);
                 break;
@@ -151,12 +160,13 @@ jobs:
 
             await core.summary
               .addHeading('Daily Catalog V2')
+              .addRaw(`Frozen catalog SHA: ${frozenSha}\n\n`)
               .addTable([
                 [{data: 'Workflow', header: true}, {data: 'Run', header: true}, {data: 'Conclusion', header: true}, {data: 'Wait budget (min)', header: true}],
                 ...summary.map(row => [row.workflow, String(row.run_id), String(row.conclusion), String(row.wait_budget_minutes)]),
               ])
               .write();
 
-            if (summary.length !== pipeline.length || summary.some(row => row.conclusion !== 'success')) {
-              throw new Error('Daily catalog pipeline did not complete successfully');
+            if (summary.length !== pipeline.length || summary.some(row => row.conclusion !== 'success' || row.head_sha !== frozenSha)) {
+              throw new Error('Daily catalog pipeline did not complete successfully on one frozen catalog SHA');
             }
