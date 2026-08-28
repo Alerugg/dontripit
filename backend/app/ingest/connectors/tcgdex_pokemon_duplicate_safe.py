@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.ingest.connectors.tcgdex_pokemon_certified_refresh import (
     CertifiedRefreshPokemonTCGDexConnector,
 )
-from app.models import Card, Print
+from app.models import Card, Print, PrintIdentifier
 from app.multilingual_models import SetIdentifier
 
 
@@ -100,6 +100,24 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
             and new_external_id == old_external_id[:-4] + "tg"
         )
 
+    @staticmethod
+    def _is_approved_legacy_print_id_rename(
+        *,
+        source: str,
+        old_external_id: str,
+        new_external_id: str,
+    ) -> bool:
+        """Allow the matching ES Trainer Gallery rename on print identifiers only."""
+        if source != "tcgdex:es":
+            return False
+        old_external_id = str(old_external_id or "").strip()
+        new_external_id = str(new_external_id or "").strip()
+        marker = ".5tg-"
+        if not old_external_id.startswith("swsh") or marker not in old_external_id:
+            return False
+        expected = old_external_id.replace(marker, "tg-", 1)
+        return new_external_id == expected
+
     def _upsert_set_identifier(
         self,
         session,
@@ -165,6 +183,64 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
                 self._set_identifier_by_external.pop(old_key, None)
                 self._set_identifier_by_external[new_key] = existing
                 self._set_identifier_by_entity[entity_key] = existing
+            return None
+
+    def _upsert_language_identifier(
+        self,
+        session,
+        *,
+        print_row: Print,
+        language: str,
+        external_id: str,
+        stats,
+    ) -> None:
+        """Repair the matching legacy ES Trainer Gallery print alias only."""
+        try:
+            return super()._upsert_language_identifier(
+                session,
+                print_row=print_row,
+                language=language,
+                external_id=external_id,
+                stats=stats,
+            )
+        except RuntimeError as exc:
+            source = self._source_namespace(language)
+            existing = session.execute(
+                select(PrintIdentifier).where(
+                    PrintIdentifier.print_id == print_row.id,
+                    PrintIdentifier.source == source,
+                )
+            ).scalar_one_or_none()
+            if existing is None or not self._is_approved_legacy_print_id_rename(
+                source=source,
+                old_external_id=existing.external_id,
+                new_external_id=external_id,
+            ):
+                raise
+
+            by_new_external = session.execute(
+                select(PrintIdentifier).where(
+                    PrintIdentifier.source == source,
+                    PrintIdentifier.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+            if by_new_external is not None and by_new_external.print_id != print_row.id:
+                raise RuntimeError(
+                    "TCGdex approved print rename collides with another print: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_print_id={by_new_external.print_id} target_print_id={print_row.id}"
+                ) from exc
+
+            old_external_id = existing.external_id
+            existing.external_id = external_id
+            stats.records_updated += 1
+            self.logger.warning(
+                "ingest tcgdex migrate_legacy_print_identifier source=%s print_id=%s old=%s new=%s",
+                source,
+                print_row.id,
+                old_external_id,
+                external_id,
+            )
             return None
 
     def _load_remote(
