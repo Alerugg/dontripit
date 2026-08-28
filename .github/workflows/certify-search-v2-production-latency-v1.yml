@@ -1,5 +1,6 @@
 name: Certify Search V2 Production Latency V1
 
+# Ephemeral P0 final recertification trigger; no production behavior change.
 on:
   workflow_dispatch:
   pull_request:
