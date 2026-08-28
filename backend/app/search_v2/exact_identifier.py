@@ -45,10 +45,10 @@ def exact_structured_identifier_search(
     engine should run. A list (including an empty list) means the query is an
     identifier and must fail closed instead of returning unrelated fuzzy cards.
 
-    Pokémon's TCGdex ID is the canonical Card key, so it never needs to scan the
-    Print projection to discover the candidate Card. MTG IDs are set+collector;
-    querying those two indexed projection columns separately avoids the previous
-    runtime concatenation that forced a wide PrintSearchProfile scan.
+    Both games resolve through the indexed print-search projection. This is
+    required for Pokémon because canonical identity consolidation can replace a
+    TCGdex-shaped Card key while the exact physical set + collector identity is
+    preserved on the Print projection.
     """
     if game not in {"pokemon", "mtg"}:
         return None
@@ -64,28 +64,17 @@ def exact_structured_identifier_search(
 
     set_code, collector = parts
     bounded_limit = max(1, min(int(limit or 24), 100))
-    pokemon_card_key = f"pokemon:tcgdex:{q_code}" if game == "pokemon" else ""
 
-    if game == "pokemon":
-        candidate_sql = """
-          SELECT c.id AS card_id, 0 AS source_rank
-          FROM cards c
-          JOIN games g ON g.id=c.game_id
-          WHERE g.slug='pokemon'
-            AND lower(c.card_key)=:pokemon_card_key
-          LIMIT :limit
-        """
-    else:
-        candidate_sql = """
-          SELECT DISTINCT psp.card_id, 0 AS source_rank
-          FROM print_search_profiles psp
-          JOIN games g ON g.id=psp.game_id
-          WHERE g.slug='mtg'
-            AND psp.normalized_set_code=:set_code
-            AND psp.normalized_collector_number=:collector
-          ORDER BY psp.card_id ASC
-          LIMIT :limit
-        """
+    candidate_sql = """
+      SELECT DISTINCT psp.card_id, 0 AS source_rank
+      FROM print_search_profiles psp
+      JOIN games g ON g.id=psp.game_id
+      WHERE g.slug=:game
+        AND psp.normalized_set_code=:set_code
+        AND psp.normalized_collector_number=:collector
+      ORDER BY psp.card_id ASC
+      LIMIT :limit
+    """
 
     rows = session.execute(
         text(
@@ -150,8 +139,6 @@ def exact_structured_identifier_search(
         ),
         {
             "game": game,
-            "q_code": q_code,
-            "pokemon_card_key": pokemon_card_key,
             "set_code": set_code,
             "collector": collector,
             "limit": bounded_limit,
