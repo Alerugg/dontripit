@@ -57,7 +57,7 @@ jobs:
 
           expected = [
               'refresh-onepiece-yugioh-canonical-v2.yml',
-              'refresh-pokemon-canonical-v2.yml',
+              'refresh-pokemon-canonical-v2-sharded.yml',
               'sync-cardmarket-master-production-v2.yml',
               'project-cardmarket-canonical-prices-v2.yml',
               'sync-cardmarket-website-paths.yml',
@@ -87,6 +87,12 @@ jobs:
               failures.append('main orchestrator no longer pins TARGET_REF=catalog-v2')
           if 'push:' in text.split('permissions:', 1)[0]:
               failures.append('main orchestrator unexpectedly has a push trigger')
+          if 'const frozenSha = await branchSha();' not in text:
+              failures.append('orchestrator does not freeze catalog-v2 SHA once at pipeline start')
+          if 'resolveRun(workflowId, frozenSha, dispatchedAt)' not in text:
+              failures.append('orchestrator does not resolve every child against the frozen SHA')
+          if "row.head_sha !== frozenSha" not in text:
+              failures.append('orchestrator does not fail closed on child SHA drift')
 
           positions = []
           for workflow in expected:
@@ -115,6 +121,7 @@ jobs:
               'target_ref': 'catalog-v2',
               'cron_utc': '20 4 * * *',
               'pipeline': expected,
+              'frozen_sha_contract': True,
               'registered_on_main': [w for w in expected if (main_root / w).exists()],
               'registered_on_catalog_v2': [w for w in expected if (catalog_root / w).exists()],
               'failures': failures,
@@ -127,18 +134,28 @@ jobs:
               raise SystemExit('scheduler contract failed: ' + ' | '.join(failures))
           PY
 
-      - name: Prove latest daily run is fresh/successful and production deploy matches catalog-v2 HEAD
+      - name: Prove latest daily run and all seven children share production catalog SHA
         run: |
           python - <<'PY'
           import json
           import os
           from datetime import datetime, timezone
           from pathlib import Path
+          from urllib.parse import quote
           from urllib.request import Request, urlopen
 
           repo = os.environ['GITHUB_REPOSITORY']
           token = os.environ['GITHUB_TOKEN']
           api = 'https://api.github.com'
+          expected = [
+              'refresh-onepiece-yugioh-canonical-v2.yml',
+              'refresh-pokemon-canonical-v2-sharded.yml',
+              'sync-cardmarket-master-production-v2.yml',
+              'project-cardmarket-canonical-prices-v2.yml',
+              'sync-cardmarket-website-paths.yml',
+              'sync-regional-tcg-content.yml',
+              'certify-search-v2-production-latency-v1.yml',
+          ]
 
           def get_json(url: str, *, github: bool = False):
               headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'dontripit-production-hardening-v1'}
@@ -164,14 +181,55 @@ jobs:
               failures.append('no completed scheduled Daily Catalog V2 orchestrator run found')
               latest = None
               age_hours = None
+              child_evidence = []
           else:
               latest = completed[0]
               created = datetime.fromisoformat(str(latest['created_at']).replace('Z', '+00:00'))
+              updated = datetime.fromisoformat(str(latest['updated_at']).replace('Z', '+00:00'))
               age_hours = (datetime.now(timezone.utc) - created).total_seconds() / 3600.0
+              if latest.get('event') != 'schedule':
+                  failures.append(f"latest orchestrator event is {latest.get('event')!r}, expected 'schedule'")
               if latest.get('conclusion') != 'success':
                   failures.append(f"latest scheduled orchestrator run concluded {latest.get('conclusion')}")
               if age_hours > 36:
                   failures.append(f'latest scheduled orchestrator run is stale: {age_hours:.2f}h')
+
+              lower = created.timestamp() - 30
+              upper = updated.timestamp() + 30
+              child_evidence = []
+              for workflow in expected:
+                  payload = get_json(
+                      f'{api}/repos/{repo}/actions/workflows/{quote(workflow)}/runs?event=workflow_dispatch&branch=catalog-v2&per_page=30',
+                      github=True,
+                  )
+                  candidates = []
+                  for run in payload.get('workflow_runs', []):
+                      ts = datetime.fromisoformat(str(run['created_at']).replace('Z', '+00:00')).timestamp()
+                      if lower <= ts <= upper and run.get('head_sha') == catalog_sha:
+                          candidates.append(run)
+                  candidates.sort(key=lambda run: run.get('created_at', ''), reverse=True)
+                  if not candidates:
+                      failures.append(f'{workflow}: no dispatch on frozen catalog SHA within master run window')
+                      continue
+                  run = candidates[0]
+                  evidence = {
+                      'workflow': workflow,
+                      'run_id': run.get('id'),
+                      'event': run.get('event'),
+                      'status': run.get('status'),
+                      'conclusion': run.get('conclusion'),
+                      'head_sha': run.get('head_sha'),
+                      'created_at': run.get('created_at'),
+                  }
+                  child_evidence.append(evidence)
+                  if run.get('event') != 'workflow_dispatch':
+                      failures.append(f"{workflow}: child event {run.get('event')!r} != 'workflow_dispatch'")
+                  if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+                      failures.append(f"{workflow}: child run {run.get('id')} is not completed/success")
+                  if run.get('head_sha') != catalog_sha:
+                      failures.append(f"{workflow}: child SHA {run.get('head_sha')} != frozen catalog SHA {catalog_sha}")
+              if len(child_evidence) != len(expected):
+                  failures.append(f'only {len(child_evidence)}/{len(expected)} child runs proven on frozen catalog SHA')
 
           health = get_json('https://api.dontripit.com/api/health')
           if health.get('ok') is not True:
@@ -191,6 +249,7 @@ jobs:
                   'status': r.get('status'),
                   'conclusion': r.get('conclusion'),
                   'head_sha': r.get('head_sha'),
+                  'event': r.get('event'),
               }
               for r in runs_payload.get('workflow_runs', [])[:5]
           ]
@@ -204,10 +263,12 @@ jobs:
                   'id': latest.get('id'),
                   'created_at': latest.get('created_at'),
                   'updated_at': latest.get('updated_at'),
+                  'event': latest.get('event'),
                   'conclusion': latest.get('conclusion'),
                   'head_sha': latest.get('head_sha'),
                   'age_hours': round(age_hours, 3) if age_hours is not None else None,
               },
+              'children_on_frozen_catalog_sha': child_evidence,
               'recent_scheduled_orchestrator_runs': recent,
               'failures': failures,
           }
