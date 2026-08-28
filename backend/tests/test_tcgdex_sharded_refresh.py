@@ -5,6 +5,7 @@ import pytest
 from app.ingest.connectors.tcgdex_pokemon_duplicate_safe import (
     DuplicateSafeCertifiedRefreshPokemonTCGDexConnector,
 )
+from app.models import Card
 
 
 def test_shard_partition_is_disjoint_complete_and_deterministic():
@@ -111,3 +112,15 @@ def test_legacy_es_trainer_gallery_print_rename_is_narrow_and_explicit():
         old_external_id="other.5tg-TG01",
         new_external_id="othertg-TG01",
     )
+
+
+def test_card_identity_reuse_never_overwrites_another_exact_tcgdex_id():
+    connector = DuplicateSafeCertifiedRefreshPokemonTCGDexConnector()
+
+    unclaimed = Card(game_id=1, name="Unclaimed", card_key="shared", tcgdex_id=None)
+    exact = Card(game_id=1, name="Exact", card_key="shared", tcgdex_id="swsh10tg-TG15")
+    claimed_other = Card(game_id=1, name="Other", card_key="shared", tcgdex_id="swsh10-069")
+
+    assert connector._card_can_accept_tcgdex_identity(unclaimed, "swsh10tg-TG15")
+    assert connector._card_can_accept_tcgdex_identity(exact, "swsh10tg-TG15")
+    assert not connector._card_can_accept_tcgdex_identity(claimed_other, "swsh10tg-TG15")
