@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from app import db
 from app.search_v2.advanced import advanced_onepiece_search
+from app.search_v2.contract import SEARCH_V2_DEFAULT_LIMIT, SEARCH_V2_MAX_LIMIT
 from app.search_v2.exact_identifier import exact_structured_identifier_search
 from app.search_v2.exhaustive_name_query import exhaustive_name_page
 from app.search_v2.facet_values import onepiece_facet_values
@@ -50,7 +51,7 @@ def _query(value) -> str:
 
 def _access_limit(maximum: int) -> int:
     plan = (getattr(g, "api_meta", None) or {}).get("plan")
-    return min(maximum, 50) if plan == "public" else maximum
+    return min(maximum, SEARCH_V2_MAX_LIMIT) if plan == "public" else maximum
 
 
 def _yugioh_display_language(value) -> str | None:
@@ -134,7 +135,12 @@ def search_v2():
     if not q:
         return jsonify({"error": "q is required"}), 400
     game = str(request.args.get("game") or "").strip().lower() or None
-    limit = _bounded_int(request.args.get("limit"), default=24, minimum=1, maximum=_access_limit(MAX_SEARCH_LIMIT))
+    limit = _bounded_int(
+        request.args.get("limit"),
+        default=SEARCH_V2_DEFAULT_LIMIT,
+        minimum=1,
+        maximum=_access_limit(MAX_SEARCH_LIMIT),
+    )
     offset = _bounded_int(request.args.get("offset"), default=0, minimum=0, maximum=MAX_SEARCH_OFFSET)
     try:
         language = _yugioh_display_language(request.args.get("language")) if game == "yugioh" else None
