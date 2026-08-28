@@ -57,20 +57,22 @@ class _FakeSession:
         return _Result([])
 
 
-def test_pokemon_tcgdex_identifier_uses_exact_card_key_and_fails_closed():
+def test_pokemon_identifier_uses_separate_indexed_print_columns_and_fails_closed():
     session = _FakeSession()
     result = exact_structured_identifier_search(
         session,
-        query="BASE1 4",
+        query="SVP 202",
         game="pokemon",
         limit=24,
     )
     assert result == []
-    assert session.params["q_code"] == "base1-4"
-    assert session.params["pokemon_card_key"] == "pokemon:tcgdex:base1-4"
-    assert session.params["set_code"] == "base1"
-    assert session.params["collector"] == "4"
-    assert "lower(c.card_key)=:pokemon_card_key" in session.sql
+    assert session.params["game"] == "pokemon"
+    assert session.params["set_code"] == "svp"
+    assert session.params["collector"] == "202"
+    assert "psp.normalized_set_code=:set_code" in session.sql
+    assert "psp.normalized_collector_number=:collector" in session.sql
+    assert "card_key" not in session.sql.split("WITH ranked_cards AS MATERIALIZED", 1)[1].split(")", 1)[0]
+    assert "|| '-' ||" not in session.sql
 
 
 def test_mtg_set_collector_identifier_uses_separate_indexed_columns():
@@ -82,8 +84,7 @@ def test_mtg_set_collector_identifier_uses_separate_indexed_columns():
         limit=24,
     )
     assert result == []
-    assert session.params["q_code"] == "lea-1"
-    assert session.params["pokemon_card_key"] == ""
+    assert session.params["game"] == "mtg"
     assert session.params["set_code"] == "lea"
     assert session.params["collector"] == "1"
     assert "psp.normalized_set_code=:set_code" in session.sql
