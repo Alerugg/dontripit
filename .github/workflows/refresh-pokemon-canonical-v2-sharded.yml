@@ -9,6 +9,7 @@ on:
       - '.github/workflows/refresh-pokemon-canonical-v2-sharded.yml'
       - 'backend/app/scripts/run_pokemon_refresh_shard.py'
       - 'backend/app/scripts/prove_pokemon_tcgdex_parity_v2.py'
+      - 'backend/app/ingest/connectors/tcgdex_pokemon_identity_rehome.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_duplicate_safe.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_certified_refresh.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_incremental_guard.py'
@@ -62,6 +63,7 @@ jobs:
             app/ingest/connectors/tcgdex_pokemon_incremental_guard.py \
             app/ingest/connectors/tcgdex_pokemon_certified_refresh.py \
             app/ingest/connectors/tcgdex_pokemon_duplicate_safe.py \
+            app/ingest/connectors/tcgdex_pokemon_identity_rehome.py \
             app/scripts/run_pokemon_refresh_shard.py \
             app/scripts/prove_pokemon_tcgdex_parity_v2.py
 
