@@ -118,6 +118,13 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
         expected = old_external_id.replace(marker, "tg-", 1)
         return new_external_id == expected
 
+    @staticmethod
+    def _card_can_accept_tcgdex_identity(card_row: Card, external_id: str) -> bool:
+        """Return whether reusing ``card_row`` cannot overwrite another source identity."""
+        owned = str(card_row.tcgdex_id or "").strip()
+        incoming = str(external_id or "").strip()
+        return not owned or not incoming or owned == incoming
+
     def _upsert_set_identifier(
         self,
         session,
@@ -305,15 +312,29 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
             if exact is not None:
                 return exact
 
-            # A legacy Print can retain the exact source identity even when the
-            # parent Card still needs its tcgdex_id backfilled.
+            # A legacy Print may retain the exact source identity while the
+            # parent Card has no TCGdex identity yet. Reuse that parent only when
+            # doing so cannot replace a different exact Card identity.
             print_row = session.execute(
                 select(Print).where(Print.tcgdex_id == tcgdex_card_id)
             ).scalar_one_or_none()
             if print_row is not None:
                 print_card = session.get(Card, print_row.card_id)
-                if print_card is not None and print_card.game_id == game_id:
+                if (
+                    print_card is not None
+                    and print_card.game_id == game_id
+                    and self._card_can_accept_tcgdex_identity(print_card, tcgdex_card_id)
+                ):
                     return print_card
+                if print_card is not None and print_card.game_id == game_id:
+                    self.logger.info(
+                        "ingest tcgdex print_identity_requires_new_card "
+                        "print_id=%s parent_card_id=%s parent_external_id=%s external_id=%s",
+                        print_row.id,
+                        print_card.id,
+                        print_card.tcgdex_id or "<missing>",
+                        tcgdex_card_id,
+                    )
 
         if card_key:
             matches = session.execute(
@@ -322,7 +343,18 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
                 .order_by(Card.id)
             ).scalars().all()
             if len(matches) == 1:
-                return matches[0]
+                only = matches[0]
+                if self._card_can_accept_tcgdex_identity(only, tcgdex_card_id):
+                    return only
+                self.logger.info(
+                    "ingest tcgdex single_card_key_new_external_identity "
+                    "card_key=%s card_id=%s owned_external_id=%s external_id=%s",
+                    card_key,
+                    only.id,
+                    only.tcgdex_id or "<missing>",
+                    tcgdex_card_id or "<missing>",
+                )
+                return None
             if len(matches) > 1:
                 unclaimed = [
                     row for row in matches if not str(row.tcgdex_id or "").strip()
@@ -362,5 +394,8 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
                 select(Card).where(Card.game_id == game_id, Card.name == card_name)
             ).scalars().all()
             if len(matches) == 1:
-                return matches[0]
+                only = matches[0]
+                if self._card_can_accept_tcgdex_identity(only, tcgdex_card_id):
+                    return only
+                return None
         return None
