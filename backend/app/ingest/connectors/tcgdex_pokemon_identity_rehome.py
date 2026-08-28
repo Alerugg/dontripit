@@ -12,20 +12,47 @@ from app.multilingual_models import CardIdentifier
 class ExactIdentityRehomeCertifiedPokemonTCGDexConnector(
     DuplicateSafeCertifiedRefreshPokemonTCGDexConnector
 ):
-    """Repair stale EN Card/Print ownership only with exact TCGdex evidence.
+    """Repair stale Card/Print ownership only with exact TCGdex evidence.
 
-    Historical production rows can retain an exact EN CardIdentifier and exact
-    Print TCGdex id on a legacy Card while the current canonical writer has just
-    materialized the distinct Card that owns that exact TCGdex id. This layer
-    permits one narrow repair: the exact Print and the exact CardIdentifier may
-    move together from that same legacy Card to the exact target Card.
+    Historical production rows can retain an exact language-qualified
+    CardIdentifier on a legacy Card while the current canonical writer has
+    already materialized the distinct Card that owns that exact TCGdex id. The
+    exact Print can be either still on the same legacy Card or already rehomed
+    to the exact target Card.
 
-    Any duplicate Print identity, third-party Print owner, language mismatch, or
-    non-exact target identity still fails closed.
+    This layer permits only that narrow repair for certified EN/ES/JA TCGdex
+    namespaces. Any duplicate Print identity, third-party Print owner, language
+    mismatch, or non-exact target identity still fails closed.
     """
 
-    @staticmethod
+    _EXACT_REHOME_SOURCES = frozenset({"tcgdex:en", "tcgdex:es", "tcgdex:ja"})
+
+    @classmethod
+    def _is_approved_exact_card_identifier_rehome(
+        cls,
+        *,
+        source: str,
+        external_id: str,
+        existing_card: Card | None,
+        target_card: Card,
+    ) -> bool:
+        if source not in cls._EXACT_REHOME_SOURCES or existing_card is None:
+            return False
+        incoming = str(external_id or "").strip()
+        target_exact = str(target_card.tcgdex_id or "").strip()
+        existing_exact = str(existing_card.tcgdex_id or "").strip()
+        return bool(
+            incoming
+            and target_exact == incoming
+            and existing_card.game_id == target_card.game_id
+            and existing_card.id != target_card.id
+            and existing_exact
+            and existing_exact != incoming
+        )
+
+    @classmethod
     def _exact_print_owner_allows_rehome(
+        cls,
         *,
         source: str,
         external_id: str,
@@ -35,7 +62,7 @@ class ExactIdentityRehomeCertifiedPokemonTCGDexConnector(
     ) -> bool:
         if exact_print is None:
             return False
-        if not ExactIdentityRehomeCertifiedPokemonTCGDexConnector._is_approved_legacy_en_card_identifier_rehome(
+        if not cls._is_approved_exact_card_identifier_rehome(
             source=source,
             external_id=external_id,
             existing_card=existing_card,
@@ -88,8 +115,9 @@ class ExactIdentityRehomeCertifiedPokemonTCGDexConnector(
             ).scalars().all()
             if len(exact_prints) != 1:
                 raise RuntimeError(
-                    "TCGdex stale EN identity rehome requires one exact Print: "
-                    f"external_id={external_id} exact_print_count={len(exact_prints)}"
+                    "TCGdex stale exact identity rehome requires one exact Print: "
+                    f"source={source} external_id={external_id} "
+                    f"exact_print_count={len(exact_prints)}"
                 ) from exc
 
             exact_print = exact_prints[0]
@@ -101,8 +129,9 @@ class ExactIdentityRehomeCertifiedPokemonTCGDexConnector(
                 exact_print=exact_print,
             ):
                 raise RuntimeError(
-                    "TCGdex stale EN identity rehome has inconsistent Print owner: "
-                    f"external_id={external_id} existing_card_id={existing.card_id} "
+                    "TCGdex stale exact identity rehome has inconsistent Print owner: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_card_id={existing.card_id} "
                     f"target_card_id={card_row.id} print_id={exact_print.id} "
                     f"print_card_id={exact_print.card_id}"
                 ) from exc
@@ -116,9 +145,10 @@ class ExactIdentityRehomeCertifiedPokemonTCGDexConnector(
             existing.card_id = card_row.id
             stats.records_updated += 1
             self.logger.warning(
-                "ingest tcgdex rehome_stale_en_exact_identity "
-                "external_id=%s old_card_id=%s target_card_id=%s print_id=%s "
-                "print_rehomed=%s",
+                "ingest tcgdex rehome_stale_exact_identity "
+                "source=%s external_id=%s old_card_id=%s target_card_id=%s "
+                "print_id=%s print_rehomed=%s",
+                source,
                 external_id,
                 old_card_id,
                 card_row.id,
