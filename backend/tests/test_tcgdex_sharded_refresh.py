@@ -124,3 +124,43 @@ def test_card_identity_reuse_never_overwrites_another_exact_tcgdex_id():
     assert connector._card_can_accept_tcgdex_identity(unclaimed, "swsh10tg-TG15")
     assert connector._card_can_accept_tcgdex_identity(exact, "swsh10tg-TG15")
     assert not connector._card_can_accept_tcgdex_identity(claimed_other, "swsh10tg-TG15")
+
+
+def test_stale_en_card_identifier_rehome_requires_exact_target_and_distinct_legacy_owner():
+    connector = DuplicateSafeCertifiedRefreshPokemonTCGDexConnector()
+
+    legacy = Card(id=10, game_id=1, name="Legacy", card_key="shared", tcgdex_id="swsh10tg-TG05")
+    target = Card(id=20, game_id=1, name="Exact", card_key="shared", tcgdex_id="ex16-9")
+    unclaimed = Card(id=30, game_id=1, name="Unclaimed", card_key="shared", tcgdex_id=None)
+    other_game = Card(id=40, game_id=2, name="Other game", card_key="shared", tcgdex_id="swsh10tg-TG05")
+
+    assert connector._is_approved_legacy_en_card_identifier_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+    )
+    assert not connector._is_approved_legacy_en_card_identifier_rehome(
+        source="tcgdex:es",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+    )
+    assert not connector._is_approved_legacy_en_card_identifier_rehome(
+        source="tcgdex:en",
+        external_id="different-id",
+        existing_card=legacy,
+        target_card=target,
+    )
+    assert not connector._is_approved_legacy_en_card_identifier_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=unclaimed,
+        target_card=target,
+    )
+    assert not connector._is_approved_legacy_en_card_identifier_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=other_game,
+        target_card=target,
+    )
