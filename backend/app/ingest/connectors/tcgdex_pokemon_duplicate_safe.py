@@ -8,6 +8,7 @@ from app.ingest.connectors.tcgdex_pokemon_certified_refresh import (
     CertifiedRefreshPokemonTCGDexConnector,
 )
 from app.models import Card, Print
+from app.multilingual_models import SetIdentifier
 
 
 class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
@@ -72,6 +73,99 @@ class DuplicateSafeCertifiedRefreshPokemonTCGDexConnector(
             for position, item in enumerate(ordered)
             if position % shard_count == shard_index
         ]
+
+    @staticmethod
+    def _is_approved_legacy_set_id_rename(
+        *,
+        source: str,
+        old_external_id: str,
+        new_external_id: str,
+    ) -> bool:
+        """Allow only the known Spanish Trainer Gallery ID normalization.
+
+        Production contains legacy Spanish aliases such as ``swsh10.5tg`` while
+        the current TCGdex ES catalog now publishes ``swsh10tg``. This is the
+        same physical Trainer Gallery, not a different canonical set. Keep the
+        migration deliberately narrow: ES only, Sword & Shield only, and only
+        the mechanical ``.5tg`` -> ``tg`` normalization. Every other identity
+        change remains fail-closed.
+        """
+        if source != "tcgdex:es":
+            return False
+        old_external_id = str(old_external_id or "").strip()
+        new_external_id = str(new_external_id or "").strip()
+        return (
+            old_external_id.startswith("swsh")
+            and old_external_id.endswith(".5tg")
+            and new_external_id == old_external_id[:-4] + "tg"
+        )
+
+    def _upsert_set_identifier(
+        self,
+        session,
+        *,
+        set_row,
+        language: str,
+        external_id: str,
+        stats,
+    ) -> None:
+        """Repair the certified legacy ES Trainer Gallery alias, otherwise fail closed."""
+        try:
+            return super()._upsert_set_identifier(
+                session,
+                set_row=set_row,
+                language=language,
+                external_id=external_id,
+                stats=stats,
+            )
+        except RuntimeError as exc:
+            source = self._source_namespace(language)
+            existing = session.execute(
+                select(SetIdentifier).where(
+                    SetIdentifier.set_id == set_row.id,
+                    SetIdentifier.source == source,
+                )
+            ).scalar_one_or_none()
+            if existing is None or not self._is_approved_legacy_set_id_rename(
+                source=source,
+                old_external_id=existing.external_id,
+                new_external_id=external_id,
+            ):
+                raise
+
+            by_new_external = session.execute(
+                select(SetIdentifier).where(
+                    SetIdentifier.source == source,
+                    SetIdentifier.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+            if by_new_external is not None and by_new_external.set_id != set_row.id:
+                raise RuntimeError(
+                    "TCGdex approved set rename collides with another set: "
+                    f"source={source} external_id={external_id} "
+                    f"existing_set_id={by_new_external.set_id} target_set_id={set_row.id}"
+                ) from exc
+
+            old_external_id = existing.external_id
+            existing.external_id = external_id
+            stats.records_updated += 1
+            self.logger.warning(
+                "ingest tcgdex migrate_legacy_set_identifier source=%s set_id=%s old=%s new=%s",
+                source,
+                set_row.id,
+                old_external_id,
+                external_id,
+            )
+
+            cache_session = getattr(self, "_set_identifier_cache_session", None)
+            if cache_session is session:
+                old_key = (source, old_external_id)
+                new_key = (source, external_id)
+                entity_key = (int(set_row.id), source)
+                self._set_identifier_by_external.pop(old_key, None)
+                self._set_identifier_by_external[new_key] = existing
+                self._set_identifier_by_entity[entity_key] = existing
+            return None
 
     def _load_remote(
         self,
