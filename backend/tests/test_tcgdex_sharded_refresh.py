@@ -5,7 +5,10 @@ import pytest
 from app.ingest.connectors.tcgdex_pokemon_duplicate_safe import (
     DuplicateSafeCertifiedRefreshPokemonTCGDexConnector,
 )
-from app.models import Card
+from app.ingest.connectors.tcgdex_pokemon_identity_rehome import (
+    ExactIdentityRehomeCertifiedPokemonTCGDexConnector,
+)
+from app.models import Card, Print
 
 
 def test_shard_partition_is_disjoint_complete_and_deterministic():
@@ -163,4 +166,43 @@ def test_stale_en_card_identifier_rehome_requires_exact_target_and_distinct_lega
         external_id="ex16-9",
         existing_card=other_game,
         target_card=target,
+    )
+
+
+def test_exact_print_owner_rehome_accepts_same_legacy_owner_or_exact_target_only():
+    connector = ExactIdentityRehomeCertifiedPokemonTCGDexConnector()
+
+    legacy = Card(id=10, game_id=1, name="Legacy", card_key="shared", tcgdex_id="swsh10tg-TG05")
+    target = Card(id=20, game_id=1, name="Exact", card_key="shared", tcgdex_id="ex16-9")
+    print_on_legacy = Print(id=100, card_id=10, set_id=1, collector_number="9", language="en", tcgdex_id="ex16-9", rarity="unknown", is_foil=False, variant="default")
+    print_on_target = Print(id=101, card_id=20, set_id=1, collector_number="9", language="en", tcgdex_id="ex16-9", rarity="unknown", is_foil=False, variant="default")
+    print_on_third = Print(id=102, card_id=30, set_id=1, collector_number="9", language="en", tcgdex_id="ex16-9", rarity="unknown", is_foil=False, variant="default")
+
+    assert connector._exact_print_owner_allows_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+        exact_print=print_on_legacy,
+    )
+    assert connector._exact_print_owner_allows_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+        exact_print=print_on_target,
+    )
+    assert not connector._exact_print_owner_allows_rehome(
+        source="tcgdex:en",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+        exact_print=print_on_third,
+    )
+    assert not connector._exact_print_owner_allows_rehome(
+        source="tcgdex:es",
+        external_id="ex16-9",
+        existing_card=legacy,
+        target_card=target,
+        exact_print=print_on_legacy,
     )
