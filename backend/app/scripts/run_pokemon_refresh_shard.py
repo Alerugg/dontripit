@@ -9,7 +9,40 @@ import traceback
 
 import requests
 
+from app.ingest.connectors.tcgdex_pokemon import TcgdexPokemonConnector
 from app.ingest.run import run_ingest
+
+
+def _configure_tcgdex_endpoint() -> str:
+    """Apply one process-wide TCGdex endpoint selected before ingest starts.
+
+    Production normally uses api.tcgdex.net. GitHub Actions may select an
+    official local TCGdex server when the remote endpoint has no transport
+    reachability. The template must remain language-qualified so every
+    multilingual/physical guard keeps using the exact same API contract.
+    """
+    template = os.getenv("TCGDEX_BASE_URL_TEMPLATE", "").strip()
+    if not template:
+        return TcgdexPokemonConnector.base_url_template
+    if "{lang}" not in template:
+        raise RuntimeError(
+            "TCGDEX_BASE_URL_TEMPLATE must contain the {lang} placeholder"
+        )
+    template = template.rstrip("/")
+    TcgdexPokemonConnector.base_url_template = template
+    print(
+        json.dumps(
+            {
+                "event": "pokemon_tcgdex_endpoint_configured",
+                "template": template,
+                "source_mode": os.getenv("TCGDEX_SOURCE_MODE", "configured"),
+                "fallback_image": os.getenv("TCGDEX_FALLBACK_IMAGE", "") or None,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return template
 
 
 def _shard_config() -> tuple[int, int]:
@@ -40,6 +73,7 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _configure_tcgdex_endpoint()
 
     diagnostic_path = _diagnostic_path(language, shard_index, shard_count)
     started = time.monotonic()
