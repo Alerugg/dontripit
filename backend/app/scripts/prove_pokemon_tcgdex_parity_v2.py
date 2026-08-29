@@ -13,6 +13,7 @@ from app.scripts.prove_pokemon_tcgdex_parity import (
     LANGUAGES,
     _source_manifest,
 )
+from app.scripts.run_pokemon_refresh_shard import _configure_tcgdex_endpoint
 
 
 def _database_manifest(conn, *, game_id: int, language: str) -> dict[str, set[str]]:
@@ -178,6 +179,7 @@ def _database_manifest(conn, *, game_id: int, language: str) -> dict[str, set[st
 
 
 def main() -> None:
+    _configure_tcgdex_endpoint()
     connector = PhysicalMultilingualTcgdexPokemonConnector()
     source_manifests = {
         language: _source_manifest(connector, language=language)
