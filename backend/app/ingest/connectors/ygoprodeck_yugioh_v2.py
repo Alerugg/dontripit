@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy import select
 
 from app.ingest.base import IngestStats
 from app.ingest.connectors.ygoprodeck_yugioh import YgoProDeckYugiohConnector
-from app.models import Card, Game, Print
+from app.models import Card, Game, Print, Set
 from app.scripts.build_yugioh_v2_snapshot_canonical import run as build_canonical_snapshot
 from app.scripts.reconcile_yugioh_canonical_prints_v1 import _load_source_prints, _plan
 
@@ -15,22 +16,25 @@ from app.scripts.reconcile_yugioh_canonical_prints_v1 import _load_source_prints
 class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
     """YGOPRODeck connector with release-aware incremental reads.
 
-    Daily source reads remain delta-only, but current canonical Card/Print drift
-    is reconciled after the delta with bounded insert-only safety gates. Cards
-    are reconciled first because YGOPRODeck can publish a canonical Card before
-    any physical set/print evidence exists; those zero-print Cards must still be
-    materialized by their exact source identity so current-source parity remains
-    complete. Prints are then reconciled against the same fresh snapshot.
+    Daily source reads remain delta-only, but current canonical Set/Card/Print
+    drift is reconciled after the delta with bounded insert-only safety gates.
+    Sets are reconciled first because a newly published physical family must
+    exist before any exact Print can safely reference it. Cards are reconciled
+    next because YGOPRODeck can publish a canonical Card before any physical
+    set/print evidence exists; those zero-print Cards must still be materialized
+    by their exact source identity. Prints are then reconciled against the same
+    fresh snapshot.
 
     The broad inherited repair is still reserved for explicit full
-    reconciliation. The bounded current-source Card reconciler never matches by
-    name, never rewrites an existing Card, rejects source-id/card-key conflicts,
-    refuses more than 50 inserts, and returns touched ids for targeted Search V2
-    reindexing. The Print reconciler retains its existing exact identity, tuple,
-    and 500-write safeguards.
+    reconciliation. The bounded current-source reconcilers never match by name,
+    never rewrite an existing identity, reject source-id/code/key conflicts,
+    refuse more than their small write ceilings, and return touched ids for
+    targeted Search V2 reindexing. The Print reconciler retains its existing
+    exact identity, tuple, and 500-write safeguards.
     """
 
     name = "ygoprodeck_yugioh"
+    canonical_set_reconcile_max_writes = 10
     canonical_card_reconcile_max_writes = 50
     canonical_print_reconcile_max_writes = 500
     canonical_print_reconcile_output_dir = Path("/tmp/ygo-canonical-print-self-heal-v1")
@@ -137,17 +141,27 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
         return cards
 
     @staticmethod
-    def _load_source_cards(output_dir: Path) -> list[dict]:
-        path = output_dir / "cards.jsonl"
+    def _load_jsonl_rows(output_dir: Path, filename: str, entity: str) -> list[dict]:
+        path = output_dir / filename
         rows: list[dict] = []
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
             row = json.loads(line)
             if not isinstance(row, dict):
-                raise RuntimeError(f"invalid canonical YGO Card row at line {line_number}")
+                raise RuntimeError(
+                    f"invalid canonical YGO {entity} row at line {line_number}"
+                )
             rows.append(row)
         return rows
+
+    @classmethod
+    def _load_source_sets(cls, output_dir: Path) -> list[dict]:
+        return cls._load_jsonl_rows(output_dir, "sets.jsonl", "Set")
+
+    @classmethod
+    def _load_source_cards(cls, output_dir: Path) -> list[dict]:
+        return cls._load_jsonl_rows(output_dir, "cards.jsonl", "Card")
 
     @staticmethod
     def _merge_reconcile_results(*results: dict) -> dict:
@@ -156,6 +170,146 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
             for key in merged:
                 merged[key].update(result.get(key) or set())
         return merged
+
+    def _reconcile_current_canonical_sets_from_snapshot(
+        self,
+        session,
+        stats: IngestStats,
+        output_dir: Path,
+    ) -> dict:
+        game_id = session.execute(select(Game.id).where(Game.slug == "yugioh")).scalar_one_or_none()
+        if game_id is None:
+            raise RuntimeError("cannot reconcile current YGO Sets: yugioh Game row is missing")
+
+        source_rows = self._load_source_sets(output_dir)
+        existing_rows = session.execute(select(Set).where(Set.game_id == game_id)).scalars().all()
+
+        by_yugioh_id: dict[str, Set] = {}
+        by_global_code: dict[str, Set] = {}
+        duplicate_global_codes: set[str] = set()
+        for row in existing_rows:
+            source_id = str(row.yugioh_id or "").strip()
+            if source_id:
+                prior = by_yugioh_id.get(source_id)
+                if prior is not None and prior.id != row.id:
+                    raise RuntimeError(
+                        "current canonical YGO Set yugioh_id collision: "
+                        f"yugioh_id={source_id} ids={[prior.id, row.id]}"
+                    )
+                by_yugioh_id[source_id] = row
+
+            code = str(row.code or "").strip()
+            region = str(row.region or "").strip().casefold()
+            if code and region == "global":
+                code_key = code.casefold()
+                prior = by_global_code.get(code_key)
+                if prior is not None and prior.id != row.id:
+                    duplicate_global_codes.add(code_key)
+                else:
+                    by_global_code[code_key] = row
+
+        if duplicate_global_codes:
+            raise RuntimeError(
+                "current canonical YGO Set GLOBAL code ambiguity requires explicit review: "
+                f"codes={sorted(duplicate_global_codes)}"
+            )
+
+        missing: list[tuple[dict, str, str, str, date | None]] = []
+        seen_source_ids: set[str] = set()
+        seen_codes: set[str] = set()
+        for row in source_rows:
+            code = str(row.get("code") or "").strip()
+            name = str(row.get("name") or "").strip()
+            source_id = str(row.get("yugioh_id") or "").strip()
+            raw_release_date = str(row.get("release_date") or "").strip()
+            if not code or not name or not source_id:
+                raise RuntimeError(
+                    "invalid current canonical YGO Set identity: "
+                    f"code={code!r} name={name!r} yugioh_id={source_id!r}"
+                )
+            if source_id in seen_source_ids or code.casefold() in seen_codes:
+                raise RuntimeError(
+                    "duplicate current canonical YGO Set identity in snapshot: "
+                    f"code={code!r} yugioh_id={source_id!r}"
+                )
+            seen_source_ids.add(source_id)
+            seen_codes.add(code.casefold())
+
+            try:
+                release_date = date.fromisoformat(raw_release_date) if raw_release_date else None
+            except ValueError as exc:
+                raise RuntimeError(
+                    "invalid current canonical YGO Set release date: "
+                    f"code={code!r} release_date={raw_release_date!r}"
+                ) from exc
+
+            id_owner = by_yugioh_id.get(source_id)
+            code_owner = by_global_code.get(code.casefold())
+            if id_owner is not None and code_owner is not None and id_owner.id != code_owner.id:
+                raise RuntimeError(
+                    "current canonical YGO Set identity collision: "
+                    f"code={code} code_owner={code_owner.id} "
+                    f"yugioh_id={source_id} id_owner={id_owner.id}"
+                )
+
+            existing = id_owner or code_owner
+            if existing is not None:
+                existing_code = str(existing.code or "").strip()
+                existing_region = str(existing.region or "").strip().casefold()
+                existing_source_id = str(existing.yugioh_id or "").strip()
+                if existing_code.casefold() != code.casefold() or existing_region != "global":
+                    raise RuntimeError(
+                        "current canonical YGO Set identity drift requires explicit review: "
+                        f"set_id={existing.id} code={code!r} existing_code={existing_code!r} "
+                        f"region='global' existing_region={existing_region!r} "
+                        f"yugioh_id={source_id!r} existing_yugioh_id={existing_source_id!r}"
+                    )
+                if existing_source_id and existing_source_id != source_id:
+                    raise RuntimeError(
+                        "current canonical YGO Set source identity conflict requires explicit review: "
+                        f"set_id={existing.id} code={code!r} yugioh_id={source_id!r} "
+                        f"existing_yugioh_id={existing_source_id!r}"
+                    )
+                continue
+
+            missing.append((row, code, name, source_id, release_date))
+
+        if len(missing) > self.canonical_set_reconcile_max_writes:
+            raise RuntimeError(
+                "current canonical YGO Set reconcile exceeded bounded write ceiling: "
+                f"missing={len(missing)} max_writes={self.canonical_set_reconcile_max_writes}"
+            )
+
+        touched_sets: set[int] = set()
+        for _row, code, name, source_id, release_date in missing:
+            record = Set(
+                game_id=int(game_id),
+                code=code,
+                region="global",
+                name=name,
+                release_date=release_date,
+                yugioh_id=source_id,
+            )
+            session.add(record)
+            session.flush()
+            stats.records_inserted += 1
+            touched_sets.add(int(record.id))
+            by_yugioh_id[source_id] = record
+            by_global_code[code.casefold()] = record
+
+        self.logger.info(
+            "ingest ygoprodeck_v2 canonical_set_reconcile_done "
+            "source_sets=%s missing_before=%s writes=%s max_writes=%s",
+            len(source_rows),
+            len(missing),
+            len(touched_sets),
+            self.canonical_set_reconcile_max_writes,
+        )
+        return {
+            "card_ids": set(),
+            "set_ids": touched_sets,
+            "print_ids": set(),
+        }
 
     def _reconcile_current_canonical_cards_from_snapshot(
         self,
@@ -308,16 +462,17 @@ class YgoProDeckYugiohV2Connector(YgoProDeckYugiohConnector):
         return self._reconcile_current_canonical_prints_from_snapshot(session, stats, output_dir)
 
     def _reconcile_current_canonical_catalog(self, session, stats: IngestStats) -> dict:
-        """Build one fresh snapshot, then self-heal exact Cards before Prints."""
+        """Build one fresh snapshot, then self-heal exact Sets, Cards and Prints."""
         output_dir = self.canonical_print_reconcile_output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         build_canonical_snapshot(output_dir=output_dir)
+        set_result = self._reconcile_current_canonical_sets_from_snapshot(session, stats, output_dir)
         card_result = self._reconcile_current_canonical_cards_from_snapshot(session, stats, output_dir)
         print_result = self._reconcile_current_canonical_prints_from_snapshot(session, stats, output_dir)
-        return self._merge_reconcile_results(card_result, print_result)
+        return self._merge_reconcile_results(set_result, card_result, print_result)
 
     def repair_legacy_records(self, session, source, stats: IngestStats, **kwargs) -> dict:
-        """Self-heal exact current Cards/Prints while keeping broad repair out.
+        """Self-heal exact current Sets/Cards/Prints while keeping broad repair out.
 
         Fixture runs intentionally stay local and deterministic. Remote daily
         incremental runs reconcile only exact current canonical identities.
