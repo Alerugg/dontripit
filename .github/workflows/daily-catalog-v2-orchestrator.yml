@@ -3,7 +3,6 @@ name: Daily Catalog V2 Orchestrator
 on:
   schedule:
     - cron: '20 4 * * *'
-    - cron: '47 23 28 8 *'
   workflow_dispatch:
 
 permissions:
