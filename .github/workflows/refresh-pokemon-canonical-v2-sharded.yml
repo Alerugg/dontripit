@@ -7,6 +7,7 @@ on:
       - catalog-v2
     paths:
       - '.github/workflows/refresh-pokemon-canonical-v2-sharded.yml'
+      - 'backend/scripts/select_tcgdex_endpoint.sh'
       - 'backend/app/scripts/run_pokemon_refresh_shard.py'
       - 'backend/app/scripts/prove_pokemon_tcgdex_parity_v2.py'
       - 'backend/app/ingest/connectors/tcgdex_pokemon_identity_rehome.py'
@@ -32,15 +33,17 @@ jobs:
     name: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      tcgdex_fallback_image: ${{ steps.freeze_tcgdex_fallback.outputs.image }}
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact dispatched ref
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -80,6 +83,59 @@ jobs:
             tests/test_tcgdex_certified_refresh.py \
             tests/test_tcgdex_sharded_refresh.py
 
+      - name: Verify configurable TCGdex endpoint contract
+        env:
+          PYTHONPATH: .
+          TCGDEX_BASE_URL_TEMPLATE: http://127.0.0.1:3000/v2/{lang}
+          TCGDEX_SOURCE_MODE: preflight_contract_test
+        run: |
+          python - <<'PY'
+          from app.ingest.connectors.tcgdex_pokemon_multilingual_physical import PhysicalMultilingualTcgdexPokemonConnector
+          from app.scripts.run_pokemon_refresh_shard import _configure_tcgdex_endpoint
+
+          selected = _configure_tcgdex_endpoint()
+          assert selected == 'http://127.0.0.1:3000/v2/{lang}'
+          assert PhysicalMultilingualTcgdexPokemonConnector().base_url_template == selected
+          PY
+
+      - name: Freeze and validate official TCGdex fallback image
+        id: freeze_tcgdex_fallback
+        run: |
+          set -euo pipefail
+          image='ghcr.io/tcgdex/server:edge'
+          docker pull "$image"
+          frozen="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+          test -n "$frozen"
+          echo "image=$frozen" >> "$GITHUB_OUTPUT"
+          echo "Frozen official TCGdex fallback image: $frozen"
+
+          docker rm -f tcgdex-preflight >/dev/null 2>&1 || true
+          docker run -d \
+            --name tcgdex-preflight \
+            -p 127.0.0.1:3000:3000 \
+            -e CI=1 \
+            -e MAX_WORKERS=2 \
+            "$frozen" >/dev/null
+          trap 'docker rm -f tcgdex-preflight >/dev/null 2>&1 || true' EXIT
+
+          ready=0
+          for _attempt in $(seq 1 30); do
+            if curl --silent --show-error --fail --connect-timeout 2 --max-time 5 \
+              http://127.0.0.1:3000/ping >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != '1' ]]; then
+            docker logs tcgdex-preflight || true
+            exit 1
+          fi
+          for lang in en es ja; do
+            curl --silent --show-error --fail --connect-timeout 2 --max-time 15 \
+              "http://127.0.0.1:3000/v2/${lang}/series" >/dev/null
+          done
+
   refresh_en:
     name: refresh-en-${{ matrix.shard_name }}-of-10
     needs: preflight
@@ -117,15 +173,16 @@ jobs:
       POKEMON_LANGUAGE: en
       POKEMON_SHARD_INDEX: ${{ matrix.shard_index }}
       POKEMON_SHARD_COUNT: '10'
+      TCGDEX_FALLBACK_IMAGE: ${{ needs.preflight.outputs.tcgdex_fallback_image }}
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact dispatched ref
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -140,10 +197,17 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
+      - name: Select one TCGdex endpoint for this shard
+        run: bash scripts/select_tcgdex_endpoint.sh
+
       - name: Refresh certified EN shard incrementally
         env:
           PYTHONPATH: .
         run: python -m app.scripts.run_pokemon_refresh_shard
+
+      - name: Stop local TCGdex fallback
+        if: always()
+        run: docker rm -f tcgdex-fallback >/dev/null 2>&1 || true
 
       - name: Upload EN shard diagnostic
         if: always()
@@ -166,15 +230,16 @@ jobs:
       POKEMON_LANGUAGE: ja
       POKEMON_SHARD_INDEX: '0'
       POKEMON_SHARD_COUNT: '1'
+      TCGDEX_FALLBACK_IMAGE: ${{ needs.preflight.outputs.tcgdex_fallback_image }}
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact dispatched ref
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -189,10 +254,17 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
+      - name: Select one TCGdex endpoint for JA
+        run: bash scripts/select_tcgdex_endpoint.sh
+
       - name: Refresh certified JA physical catalog incrementally
         env:
           PYTHONPATH: .
         run: python -m app.scripts.run_pokemon_refresh_shard
+
+      - name: Stop local TCGdex fallback
+        if: always()
+        run: docker rm -f tcgdex-fallback >/dev/null 2>&1 || true
 
       - name: Upload JA refresh diagnostic
         if: always()
@@ -205,7 +277,9 @@ jobs:
 
   refresh_es:
     name: refresh-es-${{ matrix.shard_name }}-of-10
-    needs: refresh_en
+    needs:
+      - preflight
+      - refresh_en
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -240,15 +314,16 @@ jobs:
       POKEMON_LANGUAGE: es
       POKEMON_SHARD_INDEX: ${{ matrix.shard_index }}
       POKEMON_SHARD_COUNT: '10'
+      TCGDEX_FALLBACK_IMAGE: ${{ needs.preflight.outputs.tcgdex_fallback_image }}
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact dispatched ref
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -263,10 +338,17 @@ jobs:
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
 
+      - name: Select one TCGdex endpoint for this shard
+        run: bash scripts/select_tcgdex_endpoint.sh
+
       - name: Refresh certified ES shard incrementally
         env:
           PYTHONPATH: .
         run: python -m app.scripts.run_pokemon_refresh_shard
+
+      - name: Stop local TCGdex fallback
+        if: always()
+        run: docker rm -f tcgdex-fallback >/dev/null 2>&1 || true
 
       - name: Upload ES shard diagnostic
         if: always()
@@ -280,6 +362,7 @@ jobs:
   parity:
     name: parity
     needs:
+      - preflight
       - refresh_en
       - refresh_es
       - refresh_ja
@@ -289,15 +372,17 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
       PYTHONUNBUFFERED: '1'
+      POKEMON_LANGUAGE: en
+      TCGDEX_FALLBACK_IMAGE: ${{ needs.preflight.outputs.tcgdex_fallback_image }}
     defaults:
       run:
         working-directory: backend
 
     steps:
-      - name: Checkout exact dispatched ref
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -311,6 +396,9 @@ jobs:
 
       - name: Verify production database secret
         run: test -n "${DATABASE_URL_UNPOOLED}${DATABASE_URL}"
+
+      - name: Select one TCGdex endpoint for parity
+        run: bash scripts/select_tcgdex_endpoint.sh
 
       - name: Prove fresh TCGdex physical source parity in production
         env:
@@ -340,3 +428,7 @@ jobs:
                   }, sort_keys=True), flush=True)
                   time.sleep(wait_seconds)
           PY
+
+      - name: Stop local TCGdex fallback
+        if: always()
+        run: docker rm -f tcgdex-fallback >/dev/null 2>&1 || true
