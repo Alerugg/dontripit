@@ -32,6 +32,28 @@ CARD_ALIAS_TO_CANONICAL = {
     "300302053": "300302018",  # Spell of Mask (Skill Card) -> Spell of Mask
 }
 
+# cardinfo can expose reviewed live products/promos before cardsets.php catches up.
+# This is an exact allowlist, never a generic unknown-release bypass. Unknown
+# names and collector-code families still fail closed.
+VERIFIED_LIVE_RELEASE_FALLBACKS = {
+    "Limited Pack World Championship 2026": {
+        "set_name": "Limited Pack World Championship 2026",
+        "set_code": "26LP",
+        "num_of_cards": 21,
+        "tcg_date": "2026-08-29",
+        "_resolution": "verified_live_release_fallback",
+        "_evidence": "konami_official_2026-08-29+live_cardinfo_26LP",
+    },
+    "Crocs collaboration card": {
+        "set_name": "Crocs collaboration card",
+        "set_code": "CRC1",
+        "num_of_cards": 1,
+        "tcg_date": None,
+        "_resolution": "verified_live_release_fallback",
+        "_evidence": "live_cardinfo_CRC1-EN001+konami_crocs_collaboration_reveal",
+    },
+}
+
 # Proven bad card-to-code assignments. Never rewrite these source collector codes.
 # Quarantine the raw rows and keep the independently correct source row instead.
 SOURCE_PRINT_EXCLUSIONS: dict[tuple[str, str], dict] = {
@@ -189,6 +211,12 @@ def _resolve_release(
     candidates = release_by_fold.get(_fold(source_release_name)) or []
     if len(candidates) == 1:
         return candidates[0]
+    fallback = VERIFIED_LIVE_RELEASE_FALLBACKS.get(source_release_name)
+    if fallback is not None:
+        release = dict(fallback)
+        release_by_name[source_release_name] = release
+        release_by_fold[_fold(source_release_name)].append(release)
+        return release
     raise AssertionError(f"card_sets row cannot map to official release: {source_release_name!r}")
 
 
@@ -442,6 +470,13 @@ def run(*, output_dir: Path) -> dict:
                 release_name = _clean(release.get("set_name"))
                 release_code = _clean(release.get("set_code")).upper()
                 release_date = _parse_date(release.get("tcg_date"))
+                if release.get("_resolution") == "verified_live_release_fallback":
+                    expected_prefix = f"{release_code}-"
+                    if not full_code.startswith(expected_prefix):
+                        raise AssertionError(
+                            f"verified live release code mismatch: release={release_name!r} "
+                            f"expected_prefix={expected_prefix!r} code={full_code!r}"
+                        )
                 if not full_code or len(full_code) > 50:
                     raise AssertionError(
                         f"Invalid collector code card={source_card_id} code={full_code!r}"
@@ -610,7 +645,7 @@ def run(*, output_dir: Path) -> dict:
 
     release_rows = []
     for release in sorted(
-        releases,
+        release_by_name.values(),
         key=lambda row: (
             _clean(row.get("tcg_date")) or "9999-12-31",
             _clean(row.get("set_name")),
@@ -630,6 +665,8 @@ def run(*, output_dir: Path) -> dict:
                 "metadata": {
                     "num_of_cards": release.get("num_of_cards"),
                     "source_set_code": _clean(release.get("set_code")).upper() or None,
+                    "resolution": release.get("_resolution") or "cardsets.php",
+                    "evidence": release.get("_evidence"),
                 },
             }
         )
@@ -749,7 +786,7 @@ def run(*, output_dir: Path) -> dict:
             "card_aliases": CARD_ALIAS_TO_CANONICAL,
             "set": "collector-number family; no-hyphen rows use unanimous same-release fallback without rewriting the raw code",
             "print": "canonical Card id + raw full collector code + canonical human rarity; raw rarity/rareness-code aliases remain provenance",
-            "release": "unique official cardsets.php release name",
+            "release": "unique cardsets.php release name, plus exact reviewed live-release fallbacks only while the registry lags",
             "source_conflicts": "proven bad source card-to-code assignments are quarantined, never silently repaired",
             "artwork": "all source art candidates retained at Card level; Print image is representative/unresolved only",
         },
