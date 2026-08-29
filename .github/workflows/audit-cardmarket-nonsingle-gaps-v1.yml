@@ -1,0 +1,142 @@
+name: Audit Cardmarket Non-Single Gaps V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-cardmarket-nonsingle-gaps-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install psycopg2-binary==2.9.9
+      - name: Enumerate current non-single identity gaps READ ONLY
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          dsn=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('DATABASE_URL_UNPOOLED/DATABASE_URL is required')
+          conn=psycopg2.connect(dsn)
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute("SET LOCAL statement_timeout='90s'")
+                  cur.execute('''
+                    WITH latest AS (
+                      SELECT game_id, max(last_seen_at) AS seen_at
+                      FROM external_catalog_products
+                      WHERE source='cardmarket' AND product_group='non_single'
+                      GROUP BY game_id
+                    )
+                    SELECT e.id AS external_product_id,e.external_id,g.slug AS game,e.name,e.category,
+                           e.category_id,e.expansion_external_id,e.website_path,e.last_seen_at,
+                           pi.product_variant_id AS identifier_variant_id,
+                           p.id AS identifier_product_id,
+                           p.name AS identifier_product_name,
+                           p.product_type AS identifier_product_type,
+                           COALESCE(lc.accepted_link_count,0) AS accepted_link_count,
+                           lc.accepted_variant_ids,
+                           COALESCE(pc.latest_price_rows,0) AS latest_price_rows,
+                           pc.latest_price_as_of,
+                           COALESCE(nc.exact_name_candidate_count,0) AS exact_name_candidate_count,
+                           nc.exact_name_candidate_product_ids
+                    FROM external_catalog_products e
+                    JOIN games g ON g.id=e.game_id
+                    JOIN latest x ON x.game_id=e.game_id AND x.seen_at=e.last_seen_at
+                    LEFT JOIN product_identifiers pi
+                      ON pi.source='cardmarket' AND pi.external_id=e.external_id
+                    LEFT JOIN product_variants pv ON pv.id=pi.product_variant_id
+                    LEFT JOIN products p ON p.id=pv.product_id
+                    LEFT JOIN LATERAL (
+                      SELECT count(*) AS accepted_link_count,
+                             array_agg(l.product_variant_id ORDER BY l.product_variant_id) AS accepted_variant_ids
+                      FROM external_catalog_product_variant_links l
+                      WHERE l.external_product_id=e.id
+                        AND l.link_status IN ('accepted','mapped','exact')
+                        AND l.confidence='exact'
+                    ) lc ON TRUE
+                    LEFT JOIN LATERAL (
+                      SELECT count(*) AS latest_price_rows,max(s.as_of) AS latest_price_as_of
+                      FROM external_market_price_snapshots s
+                      WHERE s.external_product_id=e.id
+                        AND s.as_of=(SELECT max(s2.as_of) FROM external_market_price_snapshots s2 WHERE s2.external_product_id=e.id)
+                    ) pc ON TRUE
+                    LEFT JOIN LATERAL (
+                      SELECT count(*) AS exact_name_candidate_count,
+                             array_agg(cp.id ORDER BY cp.id) AS exact_name_candidate_product_ids
+                      FROM products cp
+                      WHERE cp.game_id=e.game_id AND lower(cp.name)=lower(e.name)
+                    ) nc ON TRUE
+                    WHERE e.source='cardmarket'
+                      AND e.product_group='non_single'
+                      AND g.slug IN ('mtg','yugioh','pokemon','onepiece')
+                    ORDER BY g.slug,e.category,e.name,e.external_id
+                  ''')
+                  rows=[dict(r) for r in cur.fetchall()]
+          finally:
+              conn.close()
+
+          total=len(rows)
+          identified=[r for r in rows if r['identifier_variant_id'] is not None]
+          gaps=[r for r in rows if r['identifier_variant_id'] is None]
+          linked_without_identifier=[r for r in gaps if int(r['accepted_link_count'] or 0)>0]
+          truly_unmaterialized=[r for r in gaps if int(r['accepted_link_count'] or 0)==0]
+          by_game=Counter(r['game'] for r in gaps)
+          by_category=Counter(f"{r['game']}|{r['category']}" for r in gaps)
+          priced=Counter(r['game'] for r in gaps if int(r['latest_price_rows'] or 0)>0)
+          exact_name=Counter(r['game'] for r in gaps if int(r['exact_name_candidate_count'] or 0)>0)
+          for r in rows:
+              if r.get('last_seen_at') is not None: r['last_seen_at']=r['last_seen_at'].isoformat()
+              if r.get('latest_price_as_of') is not None: r['latest_price_as_of']=r['latest_price_as_of'].isoformat()
+          report={
+            'mode':'read_only',
+            'current_non_single_total':total,
+            'identified':len(identified),
+            'gap_count':len(gaps),
+            'linked_without_identifier_count':len(linked_without_identifier),
+            'truly_unmaterialized_count':len(truly_unmaterialized),
+            'gap_by_game':dict(sorted(by_game.items())),
+            'gap_by_game_category':dict(sorted(by_category.items())),
+            'gap_with_current_price_by_game':dict(sorted(priced.items())),
+            'gap_with_exact_name_candidate_by_game':dict(sorted(exact_name.items())),
+            'gaps':gaps,
+          }
+          Path('/tmp/cardmarket-nonsingle-gaps.json').write_text(json.dumps(report,indent=2,sort_keys=True,default=str)+'\n')
+          print(json.dumps({k:v for k,v in report.items() if k!='gaps'},indent=2,sort_keys=True))
+          print('\nGAPS:')
+          for r in gaps:
+              print(json.dumps({
+                'game':r['game'],'external_id':r['external_id'],'name':r['name'],'category':r['category'],
+                'category_id':r['category_id'],'accepted_link_count':int(r['accepted_link_count'] or 0),
+                'latest_price_rows':int(r['latest_price_rows'] or 0),
+                'exact_name_candidate_count':int(r['exact_name_candidate_count'] or 0),
+                'website_path':r['website_path'],
+              },sort_keys=True,default=str))
+          assert report['mode']=='read_only'
+          assert report['gap_count'] < 200, report
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-nonsingle-gaps-v1-${{ github.run_id }}
+          path: /tmp/cardmarket-nonsingle-gaps.json
+          retention-days: 90
+          if-no-files-found: warn
