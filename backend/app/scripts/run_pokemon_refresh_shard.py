@@ -58,7 +58,11 @@ def main() -> int:
             ),
             flush=True,
         )
-        for attempt in range(1, 4):
+        # TCGdex can occasionally lose network reachability for several minutes
+        # from GitHub-hosted runners even after individual request retries. Keep
+        # data/identity failures fail-closed, but give transport-only outages a
+        # wider bounded recovery window before abandoning the whole shard.
+        for attempt in range(1, 6):
             current_attempt = attempt
             try:
                 stats = run_ingest(
@@ -69,9 +73,9 @@ def main() -> int:
                 )
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-                if attempt == 3:
+                if attempt == 5:
                     raise
-                wait_seconds = 5 * (2 ** (attempt - 1))
+                wait_seconds = min(120, 10 * (2 ** (attempt - 1)))
                 print(
                     json.dumps(
                         {
