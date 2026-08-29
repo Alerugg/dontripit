@@ -127,22 +127,6 @@ jobs:
           '''
           text = text.replace(anchor, replacement, 1)
 
-          anchor = '''            "official_release_rows": len(releases),
-                      },
-          '''
-          if text.count(anchor) != 1:
-              raise SystemExit('manifest source anchor drifted')
-          replacement = '''            "official_release_rows": len(releases),
-                          "catalog_release_rows": len(release_rows),
-                          "verified_live_release_fallbacks": sorted(
-                              name
-                              for name, release in release_by_name.items()
-                              if release.get("_resolution") == "verified_live_release_fallback"
-                          ),
-                      },
-          '''
-          text = text.replace(anchor, replacement, 1)
-
           anchor = '''            "release": "unique official cardsets.php release name",
           '''
           if text.count(anchor) != 1:
