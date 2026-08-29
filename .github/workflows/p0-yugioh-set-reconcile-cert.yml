@@ -1,0 +1,36 @@
+name: P0 YuGiOh Set Reconcile Cert
+
+on:
+  push:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/p0-yugioh-set-reconcile-cert.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: catalog-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile YuGiOh current-source reconciler
+        run: python -m py_compile backend/app/ingest/connectors/ygoprodeck_yugioh_v2.py
+      - name: Run exact bounded reconciliation tests
+        working-directory: backend
+        run: >-
+          pytest -q
+          tests/test_yugioh_canonical_set_self_heal_v1.py
+          tests/test_yugioh_canonical_card_self_heal_v1.py
+          tests/test_yugioh_canonical_print_self_heal_v1.py
