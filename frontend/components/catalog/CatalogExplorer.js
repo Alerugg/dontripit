@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import CatalogResults from './ResultsGrid'
+import DonMarketResults from './DonMarketResults'
 import StatePanel from './StatePanel'
 import SearchBar from './SearchBar'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
-import { fetchCatalogCounts, searchCatalogPage as searchCatalog, suggestCatalog } from '../../lib/catalog/client'
+import { fetchCatalogCounts, searchCatalogPage as searchCatalog, searchOnePieceDonPage, suggestCatalog, suggestOnePieceDon } from '../../lib/catalog/client'
 import { GAME_OPTIONS, getGameConfig } from '../../lib/catalog/games'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
@@ -74,6 +75,9 @@ function ExplorerFilters({
   physicalFiltersActive,
   pricedOnly,
   setPricedOnly,
+  donOnly,
+  setDonOnly,
+  donOnlyAvailable,
   currentGameConfig,
 }) {
   return (
@@ -107,6 +111,16 @@ function ExplorerFilters({
         <small className="v6-filter-hint">No usamos el precio de otra edición para completar huecos.</small>
       </div>
 
+      {donOnlyAvailable ? (
+        <div className="filter-group v13-exact-price-filter">
+          <label className="checkbox-row">
+            <input type="checkbox" checked={donOnly} onChange={(event) => setDonOnly(event.target.checked)} />
+            <span>Solo DON!!</span>
+          </label>
+          <small className="v6-filter-hint">Filtra por personaje usando únicamente identidades DON!! certificadas. No mezcla cartas normales ni inventa Print ID.</small>
+        </div>
+      ) : null}
+
       {currentGameConfig && (
         <div className="filter-group muted-block panel-soft v13-scope-card">
           <p className="filter-label">Scope activo</p>
@@ -132,6 +146,7 @@ export default function CatalogExplorer({
   initialLanguage = '',
   initialGame = '',
   initialPricedOnly = false,
+  initialDonOnly = false,
   initialPage = 1,
 }) {
   const router = useRouter()
@@ -145,6 +160,7 @@ export default function CatalogExplorer({
   const [sort, setSort] = useState(initialSort)
   const [language, setLanguage] = useState(initialLanguage)
   const [pricedOnly, setPricedOnly] = useState(Boolean(initialPricedOnly))
+  const [donOnly, setDonOnly] = useState(Boolean(initialDonOnly) && (scopedGame || initialGame) === 'onepiece')
   const [page, setPage] = useState(Math.max(0, Number(initialPage || 1) - 1))
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
@@ -167,7 +183,21 @@ export default function CatalogExplorer({
       return
     }
     setPage(0)
-  }, [submittedQuery, game, scopedGame, type, sort, language, pricedOnly])
+  }, [submittedQuery, game, scopedGame, type, sort, language, pricedOnly, donOnly])
+
+  useEffect(() => {
+    const activeGame = scopedGame || game
+    if (activeGame !== 'onepiece' && donOnly) setDonOnly(false)
+  }, [donOnly, game, scopedGame])
+
+  useEffect(() => {
+    if (!donOnly) return
+    setType('')
+    setSort('relevance')
+    setLanguage('')
+    setPricedOnly(false)
+    setView('grid')
+  }, [donOnly])
 
   useEffect(() => {
     if (!debouncedInput) {
@@ -182,10 +212,12 @@ export default function CatalogExplorer({
     async function loadSuggestions() {
       setSuggestionsLoading(true)
       try {
-        const nextSuggestions = await suggestCatalog(
-          { q: debouncedInput, game: scopedGame || game, limit: 8 },
-          { signal: controller.signal },
-        )
+        const nextSuggestions = donOnly
+          ? await suggestOnePieceDon({ q: debouncedInput, limit: 8 }, { signal: controller.signal })
+          : await suggestCatalog(
+              { q: debouncedInput, game: scopedGame || game, limit: 8 },
+              { signal: controller.signal },
+            )
         if (!cancelled) setSuggestions(nextSuggestions)
       } catch (requestError) {
         if (!cancelled && requestError?.name !== 'AbortError') setSuggestions([])
@@ -199,7 +231,7 @@ export default function CatalogExplorer({
       cancelled = true
       controller.abort()
     }
-  }, [debouncedInput, game, scopedGame])
+  }, [debouncedInput, donOnly, game, scopedGame])
 
   useEffect(() => {
     if (!submittedQuery) {
@@ -234,6 +266,22 @@ export default function CatalogExplorer({
       setCounts({ card: null, print: null, set: null, all: null })
 
       try {
+        if (donOnly) {
+          const result = await searchOnePieceDonPage({
+            q: submittedQuery,
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
+          }, { signal: controller.signal })
+          if (cancelled) return
+          setItems(result.items)
+          setTotal(result.total)
+          setCounts({ card: 0, print: 0, set: 0, all: result.total })
+          setTruncated(false)
+          setIntegrity('')
+          setLoading(false)
+          return
+        }
+
         const result = await searchCatalog({
           ...filters,
           include_counts: deferCounts ? 0 : 1,
@@ -278,7 +326,7 @@ export default function CatalogExplorer({
       cancelled = true
       controller.abort()
     }
-  }, [submittedQuery, game, scopedGame, type, language, pricedOnly, sort, page])
+  }, [submittedQuery, game, scopedGame, type, language, pricedOnly, sort, page, donOnly])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -290,10 +338,11 @@ export default function CatalogExplorer({
     if (sort !== 'relevance') params.set('sort', sort)
     if (language && (type === 'print' || type === '')) params.set('language', language)
     if (pricedOnly && (type === 'print' || type === '')) params.set('priced', '1')
+    if (donOnly) params.set('don', '1')
     if (page > 0) params.set('page', String(page + 1))
     const next = params.toString()
     window.history.replaceState(window.history.state, '', next ? `${pathname}?${next}` : pathname)
-  }, [game, language, page, pathname, pricedOnly, scopedGame, sort, submittedQuery, type, view])
+  }, [donOnly, game, language, page, pathname, pricedOnly, scopedGame, sort, submittedQuery, type, view])
 
   const currentGame = scopedGame || game
   const currentGameConfig = getGameConfig(currentGame)
@@ -315,6 +364,13 @@ export default function CatalogExplorer({
 
   const handleSuggestionSelect = (item) => {
     const title = item.title || item.name || ''
+    if (item.type === 'don_market') {
+      const subject = item.subject || title
+      setInputValue(subject)
+      setSuggestions([])
+      if (subject) setSubmittedQuery(subject)
+      return
+    }
     const href = resolveSuggestionHref(item)
     setInputValue(title)
     setSuggestions([])
@@ -330,7 +386,7 @@ export default function CatalogExplorer({
   const submitFullSearch = () => {
     const clean = inputValue.trim()
     if (!clean) return
-    if (!submittedQuery && !type) {
+    if (!donOnly && !submittedQuery && !type) {
       setType('card')
       setView('grid')
       setSort('relevance')
@@ -350,8 +406,9 @@ export default function CatalogExplorer({
     if (!nextSorts.some((option) => option.value === sort)) setSort('relevance')
   }
 
-  const physicalFiltersActive = type === 'print' || type === ''
-  const activeFilterCount = (allowGameSelect && game ? 1 : 0) + (language ? 1 : 0) + (pricedOnly ? 1 : 0)
+  const donOnlyAvailable = currentGame === 'onepiece'
+  const physicalFiltersActive = !donOnly && (type === 'print' || type === '')
+  const activeFilterCount = (allowGameSelect && game ? 1 : 0) + (language ? 1 : 0) + (pricedOnly ? 1 : 0) + (donOnly ? 1 : 0)
   const filterProps = {
     allowGameSelect,
     game,
@@ -361,6 +418,9 @@ export default function CatalogExplorer({
     physicalFiltersActive,
     pricedOnly,
     setPricedOnly,
+    donOnly,
+    setDonOnly,
+    donOnlyAvailable,
     currentGameConfig,
   }
 
@@ -391,25 +451,29 @@ export default function CatalogExplorer({
             suggestions={suggestions}
             suggestionsLoading={suggestionsLoading}
             onSuggestionSelect={handleSuggestionSelect}
-            placeholder={currentGame ? `Busca dentro de ${currentGameConfig?.name || currentGame}` : 'Pikachu, Luffy, Black Lotus, Dark Magician…'}
+            placeholder={donOnly ? 'Luffy, Zoro, DON…' : currentGame ? `Busca dentro de ${currentGameConfig?.name || currentGame}` : 'Pikachu, Luffy, Black Lotus, Dark Magician…'}
           />
         </div>
 
-        <div className="v5-result-tabs v13-result-tabs" role="tablist" aria-label="Tipo de resultado">
-          {RESULT_TYPES.map((option) => (
-            <button
-              key={option.value || 'all'}
-              type="button"
-              role="tab"
-              aria-selected={type === option.value}
-              className={`v5-result-tab ${type === option.value ? 'is-active' : ''}`}
-              onClick={() => changeType(option.value)}
-            >
-              {option.label}
-              <span className="v7-result-count">{formatCount(counts[option.countKey])}</span>
-            </button>
-          ))}
-        </div>
+        {!donOnly ? (
+          <div className="v5-result-tabs v13-result-tabs" role="tablist" aria-label="Tipo de resultado">
+            {RESULT_TYPES.map((option) => (
+              <button
+                key={option.value || 'all'}
+                type="button"
+                role="tab"
+                aria-selected={type === option.value}
+                className={`v5-result-tab ${type === option.value ? 'is-active' : ''}`}
+                onClick={() => changeType(option.value)}
+              >
+                {option.label}
+                <span className="v7-result-count">{formatCount(counts[option.countKey])}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="v7-integrity-note" role="status">Solo DON!! activo · resultados source-owned certificados</div>
+        )}
       </div>
 
       <details className="v13-mobile-filters">
@@ -436,14 +500,16 @@ export default function CatalogExplorer({
             </p>
 
             <div className="v13-results-controls">
-              <label className="v13-sort-control">
-                <span>Ordenar</span>
-                <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
-                  {availableSorts.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
+              {!donOnly ? (
+                <label className="v13-sort-control">
+                  <span>Ordenar</span>
+                  <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
+                    {availableSorts.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
 
               <div className="segmented v13-view-toggle" aria-label="Vista de resultados">
                 <button type="button" aria-pressed={view === 'list'} className={view === 'list' ? 'segmented-active' : ''} onClick={() => setView('list')}>Filas</button>
@@ -462,8 +528,8 @@ export default function CatalogExplorer({
           )}
           {submittedQuery && loading && <StatePanel title="Cargando catálogo" description="Consultando la página exacta de resultados." />}
           {submittedQuery && !loading && error && <StatePanel title="No pudimos cargar el catálogo" description={`${error || 'Intenta de nuevo en unos segundos.'} No mostramos datos parciales para evitar información incorrecta.`} error />}
-          {submittedQuery && !loading && !error && total === 0 && <StatePanel title="Sin resultados por ahora" description="Prueba otro término, cambia los filtros o vuelve al explorador global." />}
-          {!loading && !error && items.length > 0 && <CatalogResults items={items} view={view} />}
+          {submittedQuery && !loading && !error && total === 0 && <StatePanel title="Sin resultados por ahora" description={donOnly ? 'No encontramos un DON!! certificado para ese personaje o término.' : 'Prueba otro término, cambia los filtros o vuelve al explorador global.'} />}
+          {!loading && !error && items.length > 0 && (donOnly ? <DonMarketResults items={items} total={total} /> : <CatalogResults items={items} view={view} />)}
 
           {!loading && !error && total > PAGE_SIZE && (
             <nav className="pagination-row v13-pagination" aria-label="Paginación de resultados">

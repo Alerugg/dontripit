@@ -21,12 +21,14 @@ function buildMeta(item) {
 function typeLabel(type) {
   if (type === 'set') return 'Set'
   if (type === 'print') return 'Print'
+  if (type === 'don_market') return 'DON!!'
   return 'Carta'
 }
 
 function actionLabel(item) {
   if (item.type === 'set') return 'Abrir set'
   if (item.type === 'print' || item.type === 'card') return 'Abrir carta'
+  if (item.type === 'don_market') return 'Buscar DON!!'
   return 'Buscar'
 }
 

@@ -144,6 +144,7 @@ export default function GameHubPage({ game, initialExplorerState = {} }) {
             initialSort={initialExplorerState.sort || 'relevance'}
             initialLanguage={initialExplorerState.language || ''}
             initialPricedOnly={Boolean(initialExplorerState.pricedOnly)}
+            initialDonOnly={Boolean(initialExplorerState.donOnly)}
             initialPage={initialExplorerState.page || 1}
           />
 
