@@ -27,11 +27,17 @@ jobs:
 
           route_path = Path('frontend/app/api/catalog/search/route.js')
           route = route_path.read_text()
-          old = """  const paginationMode = String(payload.pagination_mode || '')\n  const exactIdentifierMode = paginationMode === 'exact_identifier'\n  const canonicalNameMode = paginationMode === 'canonical_name' && Number.isFinite(exactTotal)\n"""
-          new = """  const paginationMode = String(payload.pagination_mode || '')\n  const exactIdentifierMode = payload.pagination_mode === 'exact_identifier'\n  const canonicalNameMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)\n"""
-          if old not in route:
+          old_modes = """  const paginationMode = String(payload.pagination_mode || '')\n  const exactIdentifierMode = paginationMode === 'exact_identifier'\n  const canonicalNameMode = paginationMode === 'canonical_name' && Number.isFinite(exactTotal)\n"""
+          new_modes = """  const paginationMode = String(payload.pagination_mode || '')\n  const exactIdentifierMode = payload.pagination_mode === 'exact_identifier'\n  const canonicalNameMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)\n"""
+          if old_modes not in route:
               raise SystemExit('route pagination contract target not found')
-          route_path.write_text(route.replace(old, new, 1))
+          route = route.replace(old_modes, new_modes, 1)
+
+          old_page = """  if (!requireAll) {\n    const rows = toItems(payload).map(normalizeItem)\n    const inferredTotal = Number.isFinite(exactTotal)\n      ? exactTotal\n      : (payload.has_more ? offset + rows.length + 1 : offset + rows.length)\n    return {\n      ok: true,\n      rows,\n      total: inferredTotal,\n      totalPrints: Number(payload.total_prints || 0),\n      truncated: false,\n      canonicalMode: true,\n      exactIdentifierMode,\n      paginationMode,\n    }\n  }\n"""
+          new_page = """  if (!requireAll) {\n    const rows = toItems(payload).map(normalizeItem)\n    if (canonicalNameMode) {\n      return {\n        ok: true,\n        rows,\n        total: exactTotal,\n        totalPrints: Number(payload.total_prints || 0),\n        truncated: false,\n        canonicalMode: true,\n        exactIdentifierMode,\n        paginationMode,\n      }\n    }\n\n    const inferredTotal = Number.isFinite(exactTotal)\n      ? exactTotal\n      : (payload.has_more ? offset + rows.length + 1 : offset + rows.length)\n    return {\n      ok: true,\n      rows,\n      total: inferredTotal,\n      totalPrints: Number(payload.total_prints || 0),\n      truncated: false,\n      canonicalMode: true,\n      exactIdentifierMode,\n      paginationMode,\n    }\n  }\n"""
+          if old_page not in route:
+              raise SystemExit('route total contract target not found')
+          route_path.write_text(route.replace(old_page, new_page, 1))
 
           explorer_path = Path('frontend/components/catalog/CatalogExplorer.js')
           explorer = explorer_path.read_text()
