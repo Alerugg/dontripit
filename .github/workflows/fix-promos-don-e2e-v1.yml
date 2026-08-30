@@ -55,7 +55,7 @@ jobs:
 
       - name: Test promo and DON frontend contracts
         working-directory: frontend
-        run: node --test tests/promos-don-search-contract.test.mjs tests/explorerPage.test.mjs
+        run: node --test tests/promos-don-search-contract.test.mjs tests/bffRoutesSyntax.test.mjs
 
       - name: Build frontend
         working-directory: frontend
