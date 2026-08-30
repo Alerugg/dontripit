@@ -157,8 +157,8 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
   const rawTotal = payload.total
   const exactTotal = rawTotal === null || rawTotal === undefined ? null : Number(rawTotal)
   const paginationMode = String(payload.pagination_mode || '')
-  const exactIdentifierMode = paginationMode === 'exact_identifier'
-  const canonicalNameMode = paginationMode === 'canonical_name' && Number.isFinite(exactTotal)
+  const exactIdentifierMode = payload.pagination_mode === 'exact_identifier'
+  const canonicalNameMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)
 
   // exact_identifier is a first-class Search V2 mode. Falling back to /api/v1/search
   // here makes certified promo/collector lookups such as P-150 disappear in the UI.
@@ -173,6 +173,19 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
 
   if (!requireAll) {
     const rows = toItems(payload).map(normalizeItem)
+    if (canonicalNameMode) {
+      return {
+        ok: true,
+        rows,
+        total: exactTotal,
+        totalPrints: Number(payload.total_prints || 0),
+        truncated: false,
+        canonicalMode: true,
+        exactIdentifierMode,
+        paginationMode,
+      }
+    }
+
     const inferredTotal = Number.isFinite(exactTotal)
       ? exactTotal
       : (payload.has_more ? offset + rows.length + 1 : offset + rows.length)

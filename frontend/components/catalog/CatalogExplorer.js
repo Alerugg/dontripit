@@ -407,7 +407,8 @@ export default function CatalogExplorer({
   }
 
   const donOnlyAvailable = currentGame === 'onepiece'
-  const physicalFiltersActive = !donOnly && (type === 'print' || type === '')
+  const physicalFiltersActive = type === 'print' || type === ''
+  const effectivePhysicalFiltersActive = !donOnly && physicalFiltersActive
   const activeFilterCount = (allowGameSelect && game ? 1 : 0) + (language ? 1 : 0) + (pricedOnly ? 1 : 0) + (donOnly ? 1 : 0)
   const filterProps = {
     allowGameSelect,
@@ -415,7 +416,7 @@ export default function CatalogExplorer({
     setGame,
     language,
     setLanguage,
-    physicalFiltersActive,
+    physicalFiltersActive: effectivePhysicalFiltersActive,
     pricedOnly,
     setPricedOnly,
     donOnly,
