@@ -40,6 +40,20 @@ function normalizeV2Card(item = {}) {
   }
 }
 
+function normalizeV2DirectItem(item = {}) {
+  if (item?.type !== 'print') return normalizeV2Card(item)
+  const id = item.print_id || item.id
+  return {
+    ...item,
+    type: 'print',
+    id,
+    print_id: id,
+    title: item.name || item.title,
+    name: item.name || item.title,
+    primary_image_url: item.primary_image_url || item.image_url || null,
+  }
+}
+
 function marketPrice(item) {
   const raw = item?.market?.display_price
   if (raw === null || raw === undefined || raw === '') return null
@@ -140,28 +154,54 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
   if (!first.ok) return { ok: false, upstream: first, rows: [], total: 0, truncated: false }
 
   const payload = first.payload || {}
-  const exactTotal = Number(payload.total)
-  const canonicalMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)
+  const rawTotal = payload.total
+  const exactTotal = rawTotal === null || rawTotal === undefined ? null : Number(rawTotal)
+  const paginationMode = String(payload.pagination_mode || '')
+  const exactIdentifierMode = payload.pagination_mode === 'exact_identifier'
+  const canonicalNameMode = payload.pagination_mode === 'canonical_name' && Number.isFinite(exactTotal)
 
-  if (!canonicalMode) {
+  // exact_identifier is a first-class Search V2 mode. Falling back to /api/v1/search
+  // here makes certified promo/collector lookups such as P-150 disappear in the UI.
+  if (!canonicalNameMode && !exactIdentifierMode) {
     const fallback = await fetchAllLegacyRows({ q, game, type: 'card' })
     return fallback.ok
-      ? { ...fallback, total: fallback.rows.length, canonicalMode: false }
+      ? { ...fallback, total: fallback.rows.length, canonicalMode: false, exactIdentifierMode: false, paginationMode }
       : fallback
   }
 
+  const normalizeItem = exactIdentifierMode ? normalizeV2DirectItem : normalizeV2Card
+
   if (!requireAll) {
+    const rows = toItems(payload).map(normalizeItem)
+    if (canonicalNameMode) {
+      return {
+        ok: true,
+        rows,
+        total: exactTotal,
+        totalPrints: Number(payload.total_prints || 0),
+        truncated: false,
+        canonicalMode: true,
+        exactIdentifierMode,
+        paginationMode,
+      }
+    }
+
+    const inferredTotal = Number.isFinite(exactTotal)
+      ? exactTotal
+      : (payload.has_more ? offset + rows.length + 1 : offset + rows.length)
     return {
       ok: true,
-      rows: toItems(payload).map(normalizeV2Card),
-      total: exactTotal,
+      rows,
+      total: inferredTotal,
       totalPrints: Number(payload.total_prints || 0),
       truncated: false,
       canonicalMode: true,
+      exactIdentifierMode,
+      paginationMode,
     }
   }
 
-  const rows = toItems(payload).map(normalizeV2Card)
+  const rows = toItems(payload).map(normalizeItem)
   let currentPayload = payload
   let nextOffset = Number(currentPayload.next_offset)
   while (currentPayload.has_more !== false && Number.isFinite(nextOffset) && rows.length < MAX_KIND_RESULTS) {
@@ -170,7 +210,7 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
       timeoutMs: 20000,
     })
     if (!page.ok) return { ok: false, upstream: page, rows: [], total: 0, truncated: false }
-    const pageItems = toItems(page.payload).map(normalizeV2Card)
+    const pageItems = toItems(page.payload).map(normalizeItem)
     if (!pageItems.length) break
     rows.push(...pageItems)
     currentPayload = page.payload || {}
@@ -179,13 +219,16 @@ async function fetchCanonicalCardSource({ q, game, requireAll = false, limit = 2
     nextOffset = following
   }
 
+  const resolvedTotal = Number.isFinite(exactTotal) ? exactTotal : rows.length
   return {
     ok: true,
     rows: uniqueRows(rows).slice(0, MAX_KIND_RESULTS),
-    total: exactTotal,
+    total: resolvedTotal,
     totalPrints: Number(payload.total_prints || 0),
-    truncated: rows.length < exactTotal,
+    truncated: rows.length < resolvedTotal,
     canonicalMode: true,
+    exactIdentifierMode,
+    paginationMode,
   }
 }
 
@@ -305,6 +348,7 @@ export async function GET(request) {
     let selectedRows = cardsSource.canonicalMode
       ? cardsSource.rows
       : cardsSource.rows.slice(offset, offset + limit)
+    selectedRows = (await enrichPrintsWithMarket(selectedRows)).rows
     selectedRows = (await enrichCardsWithMatchedPrintMarket(selectedRows)).rows
 
     const selectedTotal = Number(cardsSource.total || cardsSource.rows.length)

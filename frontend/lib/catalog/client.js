@@ -174,6 +174,32 @@ export async function suggestCatalog(filters = {}, options = {}) {
   return Array.isArray(payload) ? payload : payload?.items || []
 }
 
+export async function searchOnePieceDonPage(filters = {}, options = {}) {
+  const payload = await request('/api/search-v2/don', {
+    q: filters?.q || '',
+    limit: filters?.limit || 24,
+    offset: filters?.offset || 0,
+  }, { ...options, timeoutMs: options.timeoutMs ?? SEARCH_TIMEOUT_MS })
+
+  return {
+    items: payload?.items || [],
+    total: Number(payload?.total ?? 0),
+    limit: Number(payload?.limit ?? filters?.limit ?? 24),
+    offset: Number(payload?.offset ?? filters?.offset ?? 0),
+    has_more: Boolean(payload?.has_more),
+    next_offset: payload?.next_offset ?? null,
+    identity_scope: payload?.identity_scope || 'source_owned',
+  }
+}
+
+export async function suggestOnePieceDon(filters = {}, options = {}) {
+  const payload = await request('/api/search-v2/don/suggest', {
+    q: filters?.q || '',
+    limit: filters?.limit || 8,
+  }, { ...options, timeoutMs: options.timeoutMs ?? SUGGEST_TIMEOUT_MS })
+  return payload?.items || []
+}
+
 export function fetchCardById(id) {
   return request(`/api/catalog/cards/${id}`, {}, { ttlMs: FIVE_MINUTES })
 }

@@ -70,6 +70,7 @@ export default async function GamePage({ params, searchParams }) {
     sort: VALID_SORTS.has(query?.sort) ? query.sort : 'relevance',
     language: VALID_LANGUAGES.has(query?.language || '') ? (query?.language || '') : '',
     pricedOnly: query?.priced === '1',
+    donOnly: game.slug === 'onepiece' && query?.don === '1',
     page: positivePage(query?.page),
   }
 
