@@ -163,3 +163,6 @@ def test_manifest_apply_is_idempotent(monkeypatch):
     assert row["url"] == "https://api.dontripit.com/media/product-variants/7/cardmarket-image"
     assert row["source"] == sync.SOURCE
     assert bool(row["is_primary"]) is True
+
+
+# Operational marker: fresh sealed read-only audit trigger, 2026-08-30.

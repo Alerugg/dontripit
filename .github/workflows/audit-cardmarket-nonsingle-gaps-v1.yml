@@ -1,0 +1,310 @@
+name: Export Card Price + Image Worklist V2
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/audit-cardmarket-nonsingle-gaps-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Export current physical Print gaps READ ONLY
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          from __future__ import annotations
+
+          import csv
+          import json
+          import os
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          from sqlalchemy import select, text
+
+          from app import db
+          from app.external_catalog_models import ExternalCatalogPrintLink, ExternalCatalogProduct
+          from app.jobs.cardmarket_link_price_projection import build_link_price_projection_plan
+          from app.models import Card, Game, Print, PrintImage, Set
+
+          GAMES = ('mtg', 'yugioh', 'pokemon', 'onepiece')
+          ACCEPTED = {'accepted', 'mapped', 'exact'}
+
+          def clean(value):
+              return '' if value is None else str(value).replace('\x00', '').strip()
+
+          def cm_url(path):
+              path = clean(path)
+              if not path:
+                  return ''
+              if path.startswith('http://') or path.startswith('https://'):
+                  return path
+              return 'https://www.cardmarket.com' + (path if path.startswith('/') else '/' + path)
+
+          dsn = os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          if not dsn:
+              raise RuntimeError('DATABASE_URL_UNPOOLED/DATABASE_URL is required')
+          db.init_engine(dsn)
+
+          with db.SessionLocal() as session:
+              session.execute(text('SET TRANSACTION READ ONLY'))
+              assert session.execute(text('SHOW transaction_read_only')).scalar_one() == 'on'
+
+              print_rows = session.execute(
+                  select(
+                      Print.id,
+                      Print.collector_number,
+                      Print.language,
+                      Print.rarity,
+                      Print.is_foil,
+                      Print.variant,
+                      Print.print_key,
+                      Card.name,
+                      Set.code,
+                      Set.name,
+                      Set.region,
+                      Game.slug,
+                  )
+                  .join(Card, Card.id == Print.card_id)
+                  .join(Set, Set.id == Print.set_id)
+                  .join(Game, Game.id == Card.game_id)
+                  .where(Game.slug.in_(GAMES))
+                  .order_by(Game.slug, Set.code, Print.collector_number, Card.name, Print.id)
+              ).all()
+
+              image_rows = session.execute(
+                  select(PrintImage.print_id, PrintImage.url, PrintImage.is_primary, PrintImage.source)
+                  .where(PrintImage.url.is_not(None))
+              ).all()
+
+              link_rows = session.execute(
+                  select(
+                      ExternalCatalogPrintLink.print_id,
+                      ExternalCatalogPrintLink.link_status,
+                      ExternalCatalogPrintLink.confidence,
+                      ExternalCatalogPrintLink.reviewed,
+                      ExternalCatalogPrintLink.mapping_method,
+                      ExternalCatalogProduct.external_id,
+                      ExternalCatalogProduct.website_path,
+                      ExternalCatalogProduct.last_seen_at,
+                  )
+                  .join(
+                      ExternalCatalogProduct,
+                      ExternalCatalogProduct.id == ExternalCatalogPrintLink.external_product_id,
+                  )
+                  .where(
+                      ExternalCatalogProduct.source == 'cardmarket',
+                      ExternalCatalogProduct.product_group == 'single',
+                  )
+              ).all()
+
+              price_plans = {
+                  game: build_link_price_projection_plan(session, game_slug=game)
+                  for game in GAMES
+              }
+              session.rollback()
+
+          images_by_print = defaultdict(list)
+          for print_id, url, is_primary, source in image_rows:
+              if clean(url):
+                  images_by_print[int(print_id)].append((clean(url), bool(is_primary), clean(source)))
+
+          links_by_print = defaultdict(list)
+          for row in link_rows:
+              links_by_print[int(row[0])].append(row)
+
+          priceable_by_game = {}
+          price_payload_by_print = {}
+          plan_summary = {}
+          for game, plan in price_plans.items():
+              plan_summary[game] = plan.summary()
+              ids = set()
+              for payload in plan.snapshots:
+                  pid = int(payload['entity_id'])
+                  ids.add(pid)
+                  price_payload_by_print[pid] = payload
+              priceable_by_game[game] = ids
+
+          def preferred_image(print_id):
+              rows = images_by_print.get(print_id, [])
+              if not rows:
+                  return ('', '')
+              rows = sorted(rows, key=lambda r: (not r[1], r[0]))
+              return rows[0][0], rows[0][2]
+
+          def preferred_cm(print_id):
+              rows = links_by_print.get(print_id, [])
+              if not rows:
+                  return ('', '', 0, '')
+              accepted_exact = [
+                  r for r in rows
+                  if clean(r[1]).lower() in ACCEPTED and clean(r[2]).lower() == 'exact'
+              ]
+              accepted_any = [r for r in rows if clean(r[1]).lower() in ACCEPTED]
+              pool = accepted_exact or accepted_any or rows
+              pool = sorted(
+                  pool,
+                  key=lambda r: (
+                      0 if bool(r[3]) else 1,
+                      '' if r[7] is None else r[7].isoformat(),
+                      clean(r[5]),
+                  ),
+                  reverse=False,
+              )
+              chosen = pool[0]
+              exact_count = len(accepted_exact)
+              status = f"{clean(chosen[1])}/{clean(chosen[2])}/reviewed={str(bool(chosen[3])).lower()}"
+              return clean(chosen[5]), cm_url(chosen[6]), exact_count, status
+
+          out = []
+          by_game_union = Counter()
+          by_game_price = Counter()
+          by_game_image = Counter()
+          by_game_both = Counter()
+          missing_price = 0
+          missing_image = 0
+          missing_both = 0
+          missing_price_with_image = 0
+          missing_price_with_cm = 0
+          missing_price_without_cm = 0
+
+          for row in print_rows:
+              (
+                  print_id, collector, language, rarity, is_foil, variant, print_key,
+                  card_name, set_code, set_name, set_region, game,
+              ) = row
+              print_id = int(print_id)
+              game = clean(game)
+              image_url, image_source = preferred_image(print_id)
+              cm_id, cm_link, exact_count, cm_status = preferred_cm(print_id)
+              missing_price_flag = print_id not in priceable_by_game.get(game, set())
+              missing_image_flag = not bool(image_url)
+
+              if not (missing_price_flag or missing_image_flag):
+                  continue
+
+              by_game_union[game] += 1
+              if missing_price_flag:
+                  missing_price += 1
+                  by_game_price[game] += 1
+                  if not missing_image_flag:
+                      missing_price_with_image += 1
+                  if cm_link:
+                      missing_price_with_cm += 1
+                  else:
+                      missing_price_without_cm += 1
+              if missing_image_flag:
+                  missing_image += 1
+                  by_game_image[game] += 1
+              if missing_price_flag and missing_image_flag:
+                  missing_both += 1
+                  by_game_both[game] += 1
+
+              price_payload = price_payload_by_print.get(print_id) or {}
+              out.append({
+                  'tcg': game,
+                  'set_code': clean(set_code),
+                  'collector_number': clean(collector),
+                  'card_name': clean(card_name),
+                  'language': clean(language),
+                  'rarity': clean(rarity),
+                  'finish': 'foil' if bool(is_foil) else 'nonfoil',
+                  'variant': clean(variant),
+                  'missing_price': bool(missing_price_flag),
+                  'missing_image': bool(missing_image_flag),
+                  'cardmarket_url': cm_link,
+                  'cardmarket_external_id': cm_id,
+                  'cardmarket_link_status': cm_status,
+                  'current_image_url': image_url,
+                  'current_image_source': image_source,
+                  'print_id': print_id,
+                  'print_key': clean(print_key),
+                  'set_name': clean(set_name),
+                  'set_region': clean(set_region),
+                  'exact_link_count': int(exact_count),
+                  'current_price_as_of': clean(price_plans[game].as_of.isoformat() if price_plans[game].as_of else ''),
+                  'current_price_idProduct': clean((price_payload.get('raw_json') or {}).get('idProduct')),
+              })
+
+          out.sort(key=lambda r: (
+              r['tcg'], r['set_code'], r['collector_number'], r['card_name'],
+              r['language'], r['variant'], r['print_id'],
+          ))
+
+          report = {
+              'mode': 'read_only',
+              'production_writes': 0,
+              'scope': 'canonical_physical_prints_only_mtg_yugioh_pokemon_onepiece',
+              'sealed_excluded': True,
+              'total_physical_prints': len(print_rows),
+              'pending_union': len(out),
+              'missing_price_count': missing_price,
+              'missing_image_count': missing_image,
+              'missing_both_count': missing_both,
+              'missing_price_with_image_count': missing_price_with_image,
+              'missing_price_with_existing_cardmarket_url_count': missing_price_with_cm,
+              'missing_price_without_existing_cardmarket_url_count': missing_price_without_cm,
+              'pending_by_game': dict(sorted(by_game_union.items())),
+              'missing_price_by_game': dict(sorted(by_game_price.items())),
+              'missing_image_by_game': dict(sorted(by_game_image.items())),
+              'missing_both_by_game': dict(sorted(by_game_both.items())),
+              'price_projection_summary': plan_summary,
+              'rows': out,
+          }
+
+          json_path = Path('artifacts/card-price-image-worklist-v2.json')
+          csv_path = Path('artifacts/card-price-image-worklist-v2.csv')
+          json_path.write_text(
+              json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str) + '\n',
+              encoding='utf-8',
+          )
+          fields = list(out[0].keys()) if out else [
+              'tcg','set_code','collector_number','card_name','language','rarity','finish','variant',
+              'missing_price','missing_image','cardmarket_url','cardmarket_external_id',
+              'cardmarket_link_status','current_image_url','current_image_source','print_id','print_key',
+              'set_name','set_region','exact_link_count','current_price_as_of','current_price_idProduct',
+          ]
+          with csv_path.open('w', encoding='utf-8', newline='') as fh:
+              writer = csv.DictWriter(fh, fieldnames=fields)
+              writer.writeheader()
+              writer.writerows(out)
+
+          summary = {k: v for k, v in report.items() if k not in {'rows', 'price_projection_summary'}}
+          summary['price_projection_summary'] = plan_summary
+          print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+          assert report['mode'] == 'read_only'
+          assert report['production_writes'] == 0
+          assert report['pending_union'] == len(report['rows'])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: card-price-image-worklist-v2-${{ github.run_id }}
+          path: |
+            backend/artifacts/card-price-image-worklist-v2.json
+            backend/artifacts/card-price-image-worklist-v2.csv
+          retention-days: 90
+          if-no-files-found: error
