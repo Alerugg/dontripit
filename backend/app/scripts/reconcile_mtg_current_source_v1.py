@@ -34,7 +34,7 @@ class Plan:
         return len(self.new_sets) + len(self.new_cards) + len(self.new_prints) + len(self.collector_corrections)
 
 
-def _jsonl(path: Path) -> dict[str, dict]:
+def _jsonl(path: Path, *, key_field: str) -> dict[str, dict]:
     rows: dict[str, dict] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw in enumerate(handle, start=1):
@@ -44,9 +44,9 @@ def _jsonl(path: Path) -> dict[str, dict]:
             row = json.loads(line)
             if not isinstance(row, dict):
                 raise AssertionError(f"{path.name}:{line_number} is not an object")
-            key = row.get("code") or row.get("card_key") or row.get("print_key")
+            key = row.get(key_field)
             if not key:
-                raise AssertionError(f"{path.name}:{line_number} has no identity key")
+                raise AssertionError(f"{path.name}:{line_number} has no {key_field}")
             key = str(key)
             if key in rows:
                 raise AssertionError(f"duplicate snapshot identity {key!r} in {path.name}")
@@ -71,9 +71,9 @@ def load_snapshot(snapshot_dir: Path) -> tuple[dict[str, dict], dict[str, dict],
         if int(gates.get(key, -1)) != 0:
             raise AssertionError(f"snapshot gate {key} is not zero")
 
-    sets = _jsonl(snapshot_dir / "sets.jsonl")
-    cards = _jsonl(snapshot_dir / "cards.jsonl")
-    prints = _jsonl(snapshot_dir / "prints.jsonl")
+    sets = _jsonl(snapshot_dir / "sets.jsonl", key_field="code")
+    cards = _jsonl(snapshot_dir / "cards.jsonl", key_field="card_key")
+    prints = _jsonl(snapshot_dir / "prints.jsonl", key_field="print_key")
     counts = manifest.get("counts") or {}
     if len(sets) != int(counts.get("sets") or -1):
         raise AssertionError("snapshot set count mismatch")
@@ -140,7 +140,6 @@ def _economics(session, game_id: int) -> dict[str, int]:
         "prices": int(session.execute(select(func.count(Price.id)).where(Price.game_id == game_id)).scalar_one()),
         "products": int(session.execute(select(func.count(Product.id)).where(Product.game_id == game_id)).scalar_one()),
     }
-    # PriceSnapshot has no game_id; classify only card/print entities owned by MTG.
     card_ids = select(Card.id).where(Card.game_id == game_id)
     print_ids = select(Print.id).join(Card, Card.id == Print.card_id).where(Card.game_id == game_id)
     values["price_snapshots"] = int(
@@ -326,7 +325,6 @@ def run(*, snapshot_dir: Path, output: Path, apply: bool, confirm: str | None) -
         if apply:
             if confirm != CONFIRM_TOKEN:
                 raise AssertionError("production apply requires exact confirmation token")
-            # Guard against accidental read-only workflow use for the writer.
             read_only = str(session.execute(text("SHOW transaction_read_only")).scalar_one()).lower()
             if read_only == "on":
                 raise AssertionError("cannot apply MTG reconciliation in a read-only transaction")
