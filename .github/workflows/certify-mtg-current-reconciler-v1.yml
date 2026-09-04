@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/certify-mtg-current-reconciler-v1.yml'
       - 'backend/app/scripts/reconcile_mtg_current_source_v1.py'
+      - 'backend/app/scripts/audit_mtg_current_delta_v1.py'
       - 'backend/app/scripts/diagnose_mtg_logical_conflicts_v1.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
@@ -76,6 +77,7 @@ jobs:
             app/scripts/build_mtg_v2_snapshot.py \
             app/scripts/build_mtg_v2_snapshot_v22.py \
             app/scripts/diagnose_mtg_logical_conflicts_v1.py \
+            app/scripts/audit_mtg_current_delta_v1.py \
             app/scripts/reconcile_mtg_current_source_v1.py
 
       - name: Run bounded reconciler safety tests
@@ -103,6 +105,12 @@ jobs:
             --output-dir artifacts/mtg-current-v22
           cp artifacts/mtg-current-v22/manifest.json evidence/mtg-current-source-manifest-v22.json
 
+      - name: Audit unbounded current delta against production
+        run: |
+          python -m app.scripts.audit_mtg_current_delta_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-delta-audit-v1.json
+
       - name: Dry-run bounded reconciliation against production
         run: |
           python -m app.scripts.reconcile_mtg_current_source_v1 \
@@ -110,6 +118,7 @@ jobs:
             --output evidence/mtg-current-reconciler-dry-run-v1.json
 
       - name: Prove generic Scryfall writer remains quarantined
+        if: always()
         run: |
           unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
           pytest -q tests/test_mtg_write_quarantine_v2.py
