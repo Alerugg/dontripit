@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/certify-mtg-current-reconciler-v1.yml'
       - 'backend/app/scripts/reconcile_mtg_current_source_v1.py'
+      - 'backend/app/scripts/diagnose_mtg_logical_conflicts_v1.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot.py'
       - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
       - 'backend/app/mtg_identity_v2.py'
@@ -74,6 +75,7 @@ jobs:
             app/ingest/connectors/scryfall_mtg_v2.py \
             app/scripts/build_mtg_v2_snapshot.py \
             app/scripts/build_mtg_v2_snapshot_v22.py \
+            app/scripts/diagnose_mtg_logical_conflicts_v1.py \
             app/scripts/reconcile_mtg_current_source_v1.py
 
       - name: Run bounded reconciler safety tests
@@ -86,6 +88,13 @@ jobs:
             tests/test_mtg_snapshot_v22.py \
             tests/test_mtg_write_quarantine_v2.py \
             tests/test_scryfall_bulk_v2.py
+
+      - name: Diagnose current Scryfall logical Card conflicts
+        run: |
+          mkdir -p evidence
+          unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
+          python -m app.scripts.diagnose_mtg_logical_conflicts_v1 \
+            --output evidence/mtg-current-logical-conflicts-v1.json
 
       - name: Build fresh Scryfall MTG V2.2 snapshot
         run: |
