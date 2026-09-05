@@ -1,0 +1,137 @@
+name: Certify MTG Current Reconciler V1
+
+on:
+  pull_request:
+    branches: [catalog-v2]
+    paths:
+      - '.github/workflows/certify-mtg-current-reconciler-v1.yml'
+      - 'backend/app/scripts/reconcile_mtg_current_source_v1.py'
+      - 'backend/app/scripts/reconcile_mtg_current_source_batched_v1.py'
+      - 'backend/app/scripts/audit_mtg_current_delta_v1.py'
+      - 'backend/app/scripts/diagnose_mtg_logical_conflicts_v1.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot.py'
+      - 'backend/app/scripts/build_mtg_v2_snapshot_v22.py'
+      - 'backend/app/mtg_identity_v2.py'
+      - 'backend/app/ingest/connectors/scryfall_mtg_v2.py'
+      - 'backend/tests/test_mtg_current_source_reconciler_v1.py'
+      - 'backend/tests/test_mtg_current_source_batched_reconciler_v1.py'
+      - 'backend/tests/test_mtg_current_source_reconciler_static_contract.py'
+      - 'backend/tests/test_mtg_write_quarantine_v2.py'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PGOPTIONS: '-c default_transaction_read_only=on'
+      PYTHONUNBUFFERED: '1'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Verify production DB is read-only
+        run: |
+          test -n "$DATABASE_URL_UNPOOLED"
+          python - <<'PY'
+          import os
+          import psycopg2
+          url = os.environ['DATABASE_URL_UNPOOLED']
+          if url.startswith('postgresql+psycopg2://'):
+              url = 'postgresql://' + url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          conn = psycopg2.connect(url)
+          try:
+              conn.set_session(readonly=True, autocommit=False)
+              with conn.cursor() as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  value = str(cur.fetchone()[0]).lower()
+                  print({'transaction_read_only': value})
+                  if value != 'on':
+                      raise SystemExit('production transaction is not read-only')
+              conn.rollback()
+          finally:
+              conn.close()
+          PY
+
+      - name: Compile MTG reconciler and source tooling
+        run: |
+          python -m py_compile \
+            app/mtg_identity_v2.py \
+            app/ingest/connectors/scryfall_mtg_v2.py \
+            app/scripts/build_mtg_v2_snapshot.py \
+            app/scripts/build_mtg_v2_snapshot_v22.py \
+            app/scripts/diagnose_mtg_logical_conflicts_v1.py \
+            app/scripts/audit_mtg_current_delta_v1.py \
+            app/scripts/reconcile_mtg_current_source_v1.py \
+            app/scripts/reconcile_mtg_current_source_batched_v1.py
+
+      - name: Run bounded reconciler safety tests
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
+          pytest -q \
+            tests/test_mtg_current_source_reconciler_v1.py \
+            tests/test_mtg_current_source_batched_reconciler_v1.py \
+            tests/test_mtg_current_source_reconciler_static_contract.py \
+            tests/test_mtg_identity_v2.py \
+            tests/test_mtg_snapshot_v22.py \
+            tests/test_mtg_write_quarantine_v2.py \
+            tests/test_scryfall_bulk_v2.py
+
+      - name: Diagnose current Scryfall logical Card conflicts
+        run: |
+          mkdir -p evidence
+          unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
+          python -m app.scripts.diagnose_mtg_logical_conflicts_v1 \
+            --output evidence/mtg-current-logical-conflicts-v1.json
+
+      - name: Build fresh Scryfall MTG V2.2 snapshot
+        run: |
+          mkdir -p artifacts/mtg-current-v22 evidence
+          python -m app.scripts.build_mtg_v2_snapshot_v22 \
+            --output-dir artifacts/mtg-current-v22
+          cp artifacts/mtg-current-v22/manifest.json evidence/mtg-current-source-manifest-v22.json
+
+      - name: Audit unbounded current delta against production
+        run: |
+          python -m app.scripts.audit_mtg_current_delta_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-delta-audit-v1.json
+
+      - name: Dry-run deterministic batched reconciliation against production
+        run: |
+          python -m app.scripts.reconcile_mtg_current_source_batched_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-reconciler-batched-dry-run-v1.json
+
+      - name: Prove generic Scryfall writer remains quarantined
+        if: always()
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED PGOPTIONS
+          pytest -q tests/test_mtg_write_quarantine_v2.py
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-current-reconciler-v1-${{ github.run_id }}
+          path: backend/evidence/*.json
+          retention-days: 30
+          if-no-files-found: error
