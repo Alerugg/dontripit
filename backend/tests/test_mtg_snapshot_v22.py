@@ -84,3 +84,39 @@ def test_stable_rules_fields_remain_logical_card_attributes():
     assert attrs["oracle_text"] == "Draw a card."
     assert attrs["colors"] == ["U"]
     assert attrs["color_identity"] == ["U"]
+
+
+def test_order_insensitive_logical_lists_are_canonicalized():
+    first = _card(
+        colors=["U", "R"],
+        color_identity=["R", "U"],
+        keywords=["Storm", "Buyback"],
+        produced_mana=["U", "R"],
+    )
+    second = _card(
+        colors=["R", "U"],
+        color_identity=["U", "R"],
+        keywords=["Buyback", "Storm"],
+        produced_mana=["R", "U"],
+    )
+
+    assert card_attributes(first) == card_attributes(second)
+    assert card_attributes(first)["keywords"] == ["Buyback", "Storm"]
+
+
+def test_face_order_is_preserved_but_face_colors_are_canonicalized():
+    first = _card(
+        card_faces=[
+            {"name": "Front", "colors": ["U", "R"]},
+            {"name": "Back", "colors": ["G"]},
+        ]
+    )
+    second = _card(
+        card_faces=[
+            {"name": "Front", "colors": ["R", "U"]},
+            {"name": "Back", "colors": ["G"]},
+        ]
+    )
+
+    assert card_attributes(first) == card_attributes(second)
+    assert [face["name"] for face in card_attributes(first)["faces"]] == ["Front", "Back"]
