@@ -1,0 +1,133 @@
+name: Apply MTG Current Reconciler V1
+
+on:
+  push:
+    branches:
+      - p1/mtg-bounded-current-reconciler-v1
+    paths:
+      - '.github/workflows/apply-mtg-current-reconciler-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONUNBUFFERED: '1'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile and test batched reconciler
+        run: |
+          python -m py_compile \
+            app/mtg_identity_v2.py \
+            app/scripts/build_mtg_v2_snapshot_v22.py \
+            app/scripts/audit_mtg_current_delta_v1.py \
+            app/scripts/reconcile_mtg_current_source_v1.py \
+            app/scripts/reconcile_mtg_current_source_batched_v1.py
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q \
+            tests/test_mtg_current_source_reconciler_v1.py \
+            tests/test_mtg_current_source_batched_reconciler_v1.py \
+            tests/test_mtg_current_source_reconciler_static_contract.py \
+            tests/test_mtg_write_quarantine_v2.py
+
+      - name: Verify production connection is writable
+        run: |
+          test -n "$DATABASE_URL_UNPOOLED"
+          python - <<'PY'
+          import os
+          import psycopg2
+          url = os.environ['DATABASE_URL_UNPOOLED']
+          if url.startswith('postgresql+psycopg2://'):
+              url = 'postgresql://' + url[len('postgresql+psycopg2://'):]
+          elif url.startswith('postgres://'):
+              url = 'postgresql://' + url[len('postgres://'):]
+          conn = psycopg2.connect(url)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  value = str(cur.fetchone()[0]).lower()
+                  print({'transaction_read_only': value})
+                  if value != 'off':
+                      raise SystemExit('production transaction is not writable')
+              conn.rollback()
+          finally:
+              conn.close()
+          PY
+
+      - name: Build fresh Scryfall MTG V2.2 snapshot
+        run: |
+          mkdir -p artifacts/mtg-current-v22 evidence
+          python -m app.scripts.build_mtg_v2_snapshot_v22 \
+            --output-dir artifacts/mtg-current-v22
+          cp artifacts/mtg-current-v22/manifest.json evidence/mtg-current-source-manifest-v22.json
+
+      - name: Audit unbounded delta before apply
+        run: |
+          python -m app.scripts.audit_mtg_current_delta_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-delta-before-apply-v1.json
+
+      - name: Dry-run deterministic batches before apply
+        run: |
+          python -m app.scripts.reconcile_mtg_current_source_batched_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-batched-preflight-v1.json
+
+      - name: Apply deterministic bounded batches
+        env:
+          MTG_RECONCILE_BATCH_CONFIRM: APPLY_MTG_CURRENT_SOURCE_BATCHED_V1
+        run: |
+          python -m app.scripts.reconcile_mtg_current_source_batched_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-batched-apply-v1.json \
+            --apply \
+            --confirm APPLY_MTG_CURRENT_SOURCE_BATCHED_V1
+
+      - name: Prove second pass is zero writes
+        run: |
+          python -m app.scripts.reconcile_mtg_current_source_batched_v1 \
+            --snapshot-dir artifacts/mtg-current-v22 \
+            --output evidence/mtg-current-batched-second-pass-v1.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('evidence/mtg-current-batched-second-pass-v1.json').read_text())
+          if report['planned_writes'] != 0 or report['final_delta_writes'] != 0:
+              raise SystemExit(f"second pass is not zero writes: {report}")
+          if report['economics_baseline'] != report['economics_final']:
+              raise SystemExit('economic invariants changed')
+          print({'second_pass_planned_writes': 0, 'economics_unchanged': True})
+          PY
+
+      - name: Prove generic Scryfall writer remains quarantined
+        run: |
+          unset DATABASE_URL DATABASE_URL_UNPOOLED
+          pytest -q tests/test_mtg_write_quarantine_v2.py
+
+      - name: Upload apply evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtg-current-batched-apply-v1-${{ github.run_id }}
+          path: backend/evidence/*.json
+          retention-days: 30
+          if-no-files-found: error
