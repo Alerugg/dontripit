@@ -1,0 +1,45 @@
+name: Audit YGO Cardmarket Variant Metadata V6
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - '.github/workflows/audit-ygo-cardmarket-variant-metadata-v6.yml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile V6 audit
+        run: python -m py_compile scripts/audit_yugioh_cardmarket_variant_metadata_v6.py
+        working-directory: backend
+      - name: Audit YGO Cardmarket variant metadata READ ONLY
+        env:
+          REPORT_PATH: /tmp/ygo-variant-metadata-v6.json
+        run: python scripts/audit_yugioh_cardmarket_variant_metadata_v6.py
+        working-directory: backend
+      - name: Gate read-only audit
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-variant-metadata-v6.json'))
+          assert d['mode']=='read_only', d
+          assert d['summary']['production_writes']==0, d
+          print('YGO_VARIANT_METADATA_V6_GATE=PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ygo-cardmarket-variant-metadata-v6-${{ github.run_id }}
+          path: /tmp/ygo-variant-metadata-v6.json
+          retention-days: 90
