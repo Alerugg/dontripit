@@ -1,0 +1,51 @@
+name: Audit YGO Cardmarket Konami Bridge V3 P1
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - '.github/workflows/audit-ygo-cardmarket-konami-bridge-v3-p1.yml'
+      - 'backend/scripts/audit_yugioh_cardmarket_konami_bridge_v3.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Compile V3 audit
+        working-directory: backend
+        run: python -m py_compile scripts/audit_yugioh_cardmarket_konami_bridge_v3.py
+      - name: Read-only YGO rarity-aware bridge V3 audit
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_konami_bridge_v3.py
+          --min-linked 5
+          --min-informative 5
+          --min-support 5
+          --min-evidence-coverage 0.25
+          --min-purity 0.95
+          --min-margin 3
+          --ordinal-min-support 3
+          --report /tmp/ygo-cardmarket-konami-bridge-v3.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-konami-bridge-v3-${{ github.run_id }}
+          path: /tmp/ygo-cardmarket-konami-bridge-v3.json
+          retention-days: 30
+          if-no-files-found: error
