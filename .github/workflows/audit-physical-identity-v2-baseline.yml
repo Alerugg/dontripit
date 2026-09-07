@@ -1,0 +1,48 @@
+name: Audit Physical Identity V2 Baseline
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - '.github/workflows/audit-physical-identity-v2-baseline.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ''
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile baseline audit
+        run: python -m py_compile scripts/audit_physical_identity_v2_baseline.py
+        working-directory: backend
+      - name: Run baseline READ ONLY
+        env:
+          REPORT_PATH: /tmp/physical-identity-v2-baseline.json
+        run: python scripts/audit_physical_identity_v2_baseline.py
+        working-directory: backend
+      - name: Gate read-only baseline
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/physical-identity-v2-baseline.json'))
+          s=d['summary']
+          assert s['mode']=='read_only', s
+          assert s['production_writes']==0, s
+          assert set(s['games'])=={'mtg','pokemon','yugioh','onepiece'}, s
+          print('PHYSICAL_IDENTITY_V2_BASELINE_GATE=PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: physical-identity-v2-baseline-${{ github.run_id }}
+          path: /tmp/physical-identity-v2-baseline.json
+          retention-days: 90
