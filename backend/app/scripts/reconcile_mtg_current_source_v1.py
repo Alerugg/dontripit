@@ -19,6 +19,16 @@ MAX_NEW_SETS = 10
 MAX_NEW_CARDS = 50
 MAX_NEW_PRINTS = 500
 MAX_COLLECTOR_CORRECTIONS = 100
+EXACT_IDENTIFIER_SOURCE = "scryfall_finish"
+
+
+def _exact_print_identifier(source: dict) -> tuple[str, str]:
+    """Return the certified MTG V2.3 finish-aware PrintIdentifier identity."""
+    scryfall_id = str(source.get("scryfall_id") or "").strip().lower()
+    finish = str(source.get("variant") or "").strip().lower()
+    if not scryfall_id or not finish:
+        raise AssertionError("MTG exact PrintIdentifier requires scryfall_id and finish")
+    return EXACT_IDENTIFIER_SOURCE, f"{scryfall_id}:{finish}"
 
 
 @dataclass(frozen=True)
@@ -271,7 +281,14 @@ def apply_plan(session, *, game_id: int, plan: Plan, source_sets: dict[str, dict
         )
         session.add(row)
         session.flush()
-        session.add(PrintIdentifier(print_id=row.id, source="scryfall", external_id=str(src.get("scryfall_id") or "")))
+        identifier_source, identifier_external_id = _exact_print_identifier(src)
+        session.add(
+            PrintIdentifier(
+                print_id=row.id,
+                source=identifier_source,
+                external_id=identifier_external_id,
+            )
+        )
         touched["print_ids"].add(row.id)
         touched["card_ids"].add(card_id)
         touched["set_ids"].add(set_id)
@@ -374,6 +391,8 @@ def run(*, snapshot_dir: Path, output: Path, apply: bool, confirm: str | None) -
             "price_writes": 0,
             "historical_or_localized_extra_prints_preserved": True,
             "generic_scryfall_writer_quarantine_relaxed": False,
+            "exact_print_identifier_source": EXACT_IDENTIFIER_SOURCE,
+            "exact_print_external_id_format": "<scryfall_id>:<finish>",
             "ceilings": {
                 "new_sets": MAX_NEW_SETS,
                 "new_cards": MAX_NEW_CARDS,
