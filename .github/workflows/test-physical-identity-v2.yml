@@ -1,0 +1,26 @@
+name: Test Physical Identity V2
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - 'backend/app/physical_identity_v2.py'
+      - 'backend/tests/test_physical_identity_v2.py'
+      - '.github/workflows/test-physical-identity-v2.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Run physical identity v2 tests
+        run: pytest -q tests/test_physical_identity_v2.py
+        working-directory: backend
