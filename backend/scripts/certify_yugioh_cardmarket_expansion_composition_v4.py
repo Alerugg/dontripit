@@ -47,6 +47,11 @@ def evidence(row: dict) -> dict:
     }
 
 
+def _int_counter(mapping: dict, key: str, default: int) -> int:
+    value = mapping.get(key)
+    return default if value is None else int(value)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Certify the fixed, conservative YGO Cardmarket expansion composition profile. Read-only."
@@ -62,11 +67,11 @@ def main() -> int:
         raise SystemExit("Expected a yugioh V4 report")
 
     source_summary = source.get("summary") or {}
-    if int(source_summary.get("production_writes") or -1) != 0:
+    if _int_counter(source_summary, "production_writes", -1) != 0:
         raise SystemExit("Calibration report is not proven read-only")
-    if int(source_summary.get("raw_gold_wrong") or -1) != 0:
+    if _int_counter(source_summary, "raw_gold_wrong", -1) != 0:
         raise SystemExit("Raw composition top-1 has a goldset error; refusing certification")
-    if int(source_summary.get("raw_gold_correct") or 0) < 300:
+    if _int_counter(source_summary, "raw_gold_correct", 0) < 300:
         raise SystemExit("Insufficient raw gold coverage for V4 certification")
 
     predictions = list(source.get("predictions") or [])
@@ -97,9 +102,9 @@ def main() -> int:
         "resolver": "cardmarket_konami_expansion_composition_v4",
         "fixed_profile": PROFILE,
         "summary": {
-            "raw_gold_predictions": int(source_summary.get("gold_predictions") or 0),
-            "raw_gold_correct": int(source_summary.get("raw_gold_correct") or 0),
-            "raw_gold_wrong": int(source_summary.get("raw_gold_wrong") or 0),
+            "raw_gold_predictions": _int_counter(source_summary, "gold_predictions", 0),
+            "raw_gold_correct": _int_counter(source_summary, "raw_gold_correct", 0),
+            "raw_gold_wrong": _int_counter(source_summary, "raw_gold_wrong", 0),
             "fixed_profile_gold_accepted": len(gold),
             "fixed_profile_gold_correct": len(gold) - len(wrong_gold),
             "fixed_profile_gold_wrong": len(wrong_gold),
