@@ -89,7 +89,10 @@ def claims_from_card(card: dict, *, language: str = "en", region: str = "interna
         descriptor = PhysicalIdentityDescriptor(
             game="pokemon",
             source="tcgdex",
-            source_print_id=f"{card_id}:{variant_id}",
+            # TCGdex card/variant ids can collide across locale catalogs (notably JA).
+            # Qualify the source object so shard/global certification cannot merge
+            # different regional physical objects merely because the opaque ids match.
+            source_print_id=f"{language}:{region}:{card_id}:{variant_id}",
             card_concept=name,
             release=release_id,
             collector_number=IdentityValue.known(local_id),
@@ -110,6 +113,8 @@ def claims_from_card(card: dict, *, language: str = "en", region: str = "interna
             source_facts={
                 "tcgdex_card_id": card_id,
                 "tcgdex_variant_id": variant_id,
+                "language": language,
+                "region": region,
                 "variant_type": variant_type,
                 "subtype": subtype or None,
                 "foil": foil or None,
