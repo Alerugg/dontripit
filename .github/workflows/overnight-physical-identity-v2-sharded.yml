@@ -1,0 +1,344 @@
+name: Overnight Physical Identity V2 - 108 Shards
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - 'backend/app/physical_identity_v2.py'
+      - 'backend/app/identity_sources/**'
+      - 'backend/scripts/prepare_physical_identity_v2_shards.py'
+      - 'backend/scripts/run_physical_identity_v2_shard.py'
+      - 'backend/scripts/certify_physical_identity_v2_shards.py'
+      - 'backend/tests/test_*physical_identity_v2.py'
+      - '.github/workflows/overnight-physical-identity-v2-sharded.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physical-identity-v2-overnight-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  validate:
+    name: Validate shadow identity engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile overnight pipeline
+        run: >-
+          python -m py_compile
+          scripts/prepare_physical_identity_v2_shards.py
+          scripts/run_physical_identity_v2_shard.py
+          scripts/certify_physical_identity_v2_shards.py
+        working-directory: backend
+      - name: Run identity V2 focused tests
+        run: >-
+          pytest -q
+          tests/test_physical_identity_v2.py
+          tests/test_tcgdex_pokemon_physical_identity_v2.py
+          tests/test_scryfall_mtg_physical_identity_v2.py
+          tests/test_yugioh_onepiece_physical_identity_v2.py
+        working-directory: backend
+
+  prepare-pokemon:
+    name: Prepare Pokemon 48-way manifest
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Enumerate EN ES JA once and partition deterministically
+        run: python scripts/prepare_physical_identity_v2_shards.py --game pokemon --shard-count 48 --out-dir /tmp/manifests
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-manifest-pokemon-${{ github.run_id }}
+          path: /tmp/manifests/pokemon
+          compression-level: 0
+          retention-days: 7
+
+  prepare-mtg:
+    name: Prepare MTG 24-way manifest
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Download Scryfall bulk once and partition compact identity facts
+        run: python scripts/prepare_physical_identity_v2_shards.py --game mtg --shard-count 24 --out-dir /tmp/manifests
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-manifest-mtg-${{ github.run_id }}
+          path: /tmp/manifests/mtg
+          compression-level: 0
+          retention-days: 7
+
+  prepare-yugioh:
+    name: Prepare YGO 24-way manifest
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Download YGOPRODeck once and partition release/print facts
+        run: python scripts/prepare_physical_identity_v2_shards.py --game yugioh --shard-count 24 --out-dir /tmp/manifests
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-manifest-yugioh-${{ github.run_id }}
+          path: /tmp/manifests/yugioh
+          compression-level: 0
+          retention-days: 7
+
+  prepare-onepiece:
+    name: Prepare One Piece 12-way manifest
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Download Bandai global Asia JP once and partition physical cards
+        run: python scripts/prepare_physical_identity_v2_shards.py --game onepiece --shard-count 12 --out-dir /tmp/manifests
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-manifest-onepiece-${{ github.run_id }}
+          path: /tmp/manifests/onepiece
+          compression-level: 0
+          retention-days: 7
+
+  ingest-pokemon:
+    name: Pokemon shard ${{ matrix.shard }}/48
+    needs: prepare-pokemon
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-manifest-pokemon-${{ github.run_id }}
+          path: /tmp/manifest
+      - name: Fetch only this shard's full TCGdex cards with bounded retries
+        run: >-
+          python scripts/run_physical_identity_v2_shard.py
+          --game pokemon
+          --shard-index ${{ matrix.shard }}
+          --shard-count 48
+          --manifest-root /tmp/manifest
+          --out-dir /tmp/result
+          --retry-passes 3
+          --pokemon-throttle-seconds 0.12
+        working-directory: backend
+      - name: Preserve shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-shard-pokemon-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/result
+          if-no-files-found: warn
+          retention-days: 30
+
+  ingest-mtg:
+    name: MTG shard ${{ matrix.shard }}/24
+    needs: prepare-mtg
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-manifest-mtg-${{ github.run_id }}
+          path: /tmp/manifest
+      - name: Build MTG physical finish claims
+        run: >-
+          python scripts/run_physical_identity_v2_shard.py
+          --game mtg --shard-index ${{ matrix.shard }} --shard-count 24
+          --manifest-root /tmp/manifest --out-dir /tmp/result --retry-passes 1
+        working-directory: backend
+      - name: Preserve shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-shard-mtg-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/result
+          if-no-files-found: warn
+          retention-days: 30
+
+  ingest-yugioh:
+    name: YGO shard ${{ matrix.shard }}/24
+    needs: prepare-yugioh
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-manifest-yugioh-${{ github.run_id }}
+          path: /tmp/manifest
+      - name: Build YGO release plus print-code plus rarity claims
+        run: >-
+          python scripts/run_physical_identity_v2_shard.py
+          --game yugioh --shard-index ${{ matrix.shard }} --shard-count 24
+          --manifest-root /tmp/manifest --out-dir /tmp/result --retry-passes 1
+        working-directory: backend
+      - name: Preserve shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/result
+          if-no-files-found: warn
+          retention-days: 30
+
+  ingest-onepiece:
+    name: One Piece shard ${{ matrix.shard }}/12
+    needs: prepare-onepiece
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-manifest-onepiece-${{ github.run_id }}
+          path: /tmp/manifest
+      - name: Build Bandai exact suffix and regional claims
+        run: >-
+          python scripts/run_physical_identity_v2_shard.py
+          --game onepiece --shard-index ${{ matrix.shard }} --shard-count 12
+          --manifest-root /tmp/manifest --out-dir /tmp/result --retry-passes 1
+        working-directory: backend
+      - name: Preserve shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-shard-onepiece-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/result
+          if-no-files-found: warn
+          retention-days: 30
+
+  certify:
+    name: Global lossless shard certification
+    needs: [ingest-pokemon, ingest-mtg, ingest-yugioh, ingest-onepiece]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: mkdir -p /tmp/results /tmp/cert
+      - name: Download every shard artifact from this run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: identity-v2-shard-*-${{ github.run_id }}
+          path: /tmp/results
+          merge-multiple: false
+      - name: Reconcile all shards and fail on any loss or identity conflict
+        run: >-
+          python backend/scripts/certify_physical_identity_v2_shards.py
+          --results-root /tmp/results
+          --out-dir /tmp/cert
+          --expected-json '{"pokemon":48,"mtg":24,"yugioh":24,"onepiece":12}'
+      - name: Upload global certification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-global-cert-${{ github.run_id }}
+          path: /tmp/cert
+          if-no-files-found: warn
+          retention-days: 90
