@@ -1,0 +1,54 @@
+name: Audit CardTrader Identity Bridge V2
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - '.github/workflows/audit-cardtrader-identity-bridge-v2.yml'
+  workflow_dispatch:
+    inputs:
+      max_expansions_per_game:
+        description: 'Newest CardTrader expansions to probe per game'
+        required: false
+        default: '3'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      CARDTRADER_API_TOKEN: ${{ secrets.CARDTRADER_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile CardTrader probe
+        run: python -m py_compile scripts/audit_cardtrader_identity_bridge_v2.py
+        working-directory: backend
+      - name: Probe CardTrader READ ONLY
+        run: |
+          MAX="${{ github.event.inputs.max_expansions_per_game }}"
+          if [ -z "$MAX" ]; then MAX=3; fi
+          python scripts/audit_cardtrader_identity_bridge_v2.py \
+            --max-expansions-per-game "$MAX" \
+            --report /tmp/cardtrader-identity-bridge-v2.json
+        working-directory: backend
+      - name: Gate read-only probe
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/cardtrader-identity-bridge-v2.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status'] in {'ok','missing_token'}, d
+          print('CARDTRADER_IDENTITY_BRIDGE_V2_GATE='+d['status'].upper())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardtrader-identity-bridge-v2-${{ github.run_id }}
+          path: /tmp/cardtrader-identity-bridge-v2.json
+          retention-days: 90
