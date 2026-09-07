@@ -1,0 +1,224 @@
+name: Apply YGO Cardmarket Konami Bridge V3 Live
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - '.github/workflows/apply-ygo-cardmarket-konami-bridge-v3-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile YGO V3 paths
+        working-directory: backend
+        run: >-
+          python -m py_compile
+          scripts/audit_yugioh_cardmarket_konami_bridge_v3.py
+          scripts/apply_yugioh_cardmarket_konami_bridge_v3.py
+          scripts/project_cardmarket_link_prices.py
+
+      - name: Capture YGO current price baseline
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          conn=psycopg2.connect(url)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT id FROM games WHERE slug='yugioh'")
+                  gid=cur.fetchone()[0]
+                  cur.execute("SELECT id FROM price_sources WHERE name='cardmarket'")
+                  src=cur.fetchone(); sid=src[0] if src else None
+                  cur.execute("SELECT count(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(gid,))
+                  total=cur.fetchone()[0]
+                  latest=None; priced=0
+                  if sid is not None:
+                      cur.execute("SELECT max(ps.as_of) FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id WHERE ps.entity_type='print' AND ps.source_id=%s AND c.game_id=%s",(sid,gid))
+                      latest=cur.fetchone()[0]
+                      if latest is not None:
+                          cur.execute("SELECT count(DISTINCT ps.entity_id) FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id WHERE ps.entity_type='print' AND ps.source_id=%s AND c.game_id=%s AND ps.as_of=%s",(sid,gid,latest))
+                          priced=cur.fetchone()[0]
+                  out={'game':'yugioh','canonical_prints':total,'latest_as_of':latest.isoformat() if latest else None,'current_priced_prints':priced,'missing_current_price':total-priced}
+                  print('YGO_PRICE_BASELINE='+json.dumps(out,separators=(',',':')))
+                  open('/tmp/ygo-price-before.json','w').write(json.dumps(out,indent=2)+'\n')
+              conn.rollback()
+          finally: conn.close()
+          PY
+
+      - name: Fresh read-only V3 certification
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_konami_bridge_v3.py
+          --min-linked 5
+          --min-informative 5
+          --min-support 5
+          --min-evidence-coverage 0.25
+          --min-purity 0.95
+          --min-margin 3
+          --ordinal-min-support 3
+          --report /tmp/ygo-v3-cert.json
+
+      - name: Gate fresh V3 certification
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-v3-cert.json'))
+          s=d['summary']
+          assert s['write_ready'] is True, s
+          assert s['loo_alt_wrong'] == 0, s
+          assert s['loo_alt_predictable'] > 0, s
+          assert s['duplicate_target_prints'] == 0, s
+          assert 0 < s['safe_candidate_external_products'] <= 500, s
+          assert s['safe_candidate_link_rows'] >= s['safe_candidate_external_products'], s
+          print('YGO_V3_CERT_GATE=PASS')
+          PY
+
+      - name: YGO V3 exact-link dry-run preflight
+        working-directory: backend
+        run: >-
+          python scripts/apply_yugioh_cardmarket_konami_bridge_v3.py
+          /tmp/ygo-v3-cert.json
+          --report /tmp/ygo-v3-apply-preflight.json
+
+      - name: Gate exact-link preflight
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-v3-apply-preflight.json'))
+          assert d['write_ready'] is True, d
+          assert not d['blockers'], d
+          assert d['candidate_links'] > 0, d
+          print('YGO_V3_APPLY_PREFLIGHT_GATE=PASS')
+          PY
+
+      - name: APPLY certified YGO V3 exact links
+        working-directory: backend
+        run: >-
+          python scripts/apply_yugioh_cardmarket_konami_bridge_v3.py
+          /tmp/ygo-v3-cert.json
+          --apply
+          --report /tmp/ygo-v3-apply.json
+
+      - name: Prove YGO V3 idempotence
+        working-directory: backend
+        run: |
+          python scripts/apply_yugioh_cardmarket_konami_bridge_v3.py /tmp/ygo-v3-cert.json --apply --report /tmp/ygo-v3-apply-second.json
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-v3-apply-second.json'))
+          assert d['write_ready'] is True, d
+          assert d['candidate_links'] == 0, d
+          assert d['affected_rows'] == 0, d
+          assert d['ambiguous_targets_after'] == 0, d
+          print('YGO_V3_IDEMPOTENCE_GATE=PASS')
+          PY
+
+      - name: Project YGO prices through new exact links dry-run
+        working-directory: backend
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --report /tmp/ygo-price-projection-preflight.json
+
+      - name: Gate price projection
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-price-projection-preflight.json'))
+          assert d['write_ready'] is True, d
+          assert d['ambiguous_print_links'] == 0, d
+          assert d['cross_game_links'] == 0, d
+          print('YGO_PRICE_PROJECTION_GATE=PASS')
+          PY
+
+      - name: APPLY YGO price projection
+        working-directory: backend
+        run: python scripts/project_cardmarket_link_prices.py --game yugioh --apply --report /tmp/ygo-price-projection.json
+
+      - name: Post-apply V3 recertification
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_konami_bridge_v3.py
+          --min-linked 5
+          --min-informative 5
+          --min-support 5
+          --min-evidence-coverage 0.25
+          --min-purity 0.95
+          --min-margin 3
+          --ordinal-min-support 3
+          --report /tmp/ygo-v3-post-cert.json
+
+      - name: Assert post-apply V3 state
+        run: |
+          python - <<'PY'
+          import json
+          pre=json.load(open('/tmp/ygo-v3-cert.json'))['summary']
+          post=json.load(open('/tmp/ygo-v3-post-cert.json'))['summary']
+          applied=json.load(open('/tmp/ygo-v3-apply.json'))
+          assert applied['affected_rows'] > 0, applied
+          assert applied['ambiguous_targets_after'] == 0, applied
+          assert post['loo_alt_wrong'] == 0, post
+          assert post['duplicate_target_prints'] == 0, post
+          assert post['safe_candidate_external_products'] == 0, post
+          print('YGO_V3_POST_APPLY_GATE=PASS')
+          PY
+
+      - name: Capture YGO current price result
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import json, os, psycopg2
+          before=json.load(open('/tmp/ygo-price-before.json'))
+          url=os.getenv('DATABASE_URL_UNPOOLED') or os.getenv('DATABASE_URL')
+          conn=psycopg2.connect(url)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT id FROM games WHERE slug='yugioh'")
+                  gid=cur.fetchone()[0]
+                  cur.execute("SELECT id FROM price_sources WHERE name='cardmarket'")
+                  sid=cur.fetchone()[0]
+                  cur.execute("SELECT count(*) FROM prints p JOIN cards c ON c.id=p.card_id WHERE c.game_id=%s",(gid,))
+                  total=cur.fetchone()[0]
+                  cur.execute("SELECT max(ps.as_of) FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id WHERE ps.entity_type='print' AND ps.source_id=%s AND c.game_id=%s",(sid,gid))
+                  latest=cur.fetchone()[0]
+                  cur.execute("SELECT count(DISTINCT ps.entity_id) FROM price_snapshots ps JOIN prints p ON p.id=ps.entity_id JOIN cards c ON c.id=p.card_id WHERE ps.entity_type='print' AND ps.source_id=%s AND c.game_id=%s AND ps.as_of=%s",(sid,gid,latest))
+                  priced=cur.fetchone()[0]
+                  out={'game':'yugioh','canonical_prints':total,'latest_as_of':latest.isoformat(),'current_priced_prints':priced,'missing_current_price':total-priced,'recovered_prices':before['missing_current_price']-(total-priced)}
+                  print('YGO_PRICE_RESULT='+json.dumps(out,separators=(',',':')))
+                  open('/tmp/ygo-price-after.json','w').write(json.dumps(out,indent=2)+'\n')
+              conn.rollback()
+          finally: conn.close()
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-konami-bridge-v3-live-${{ github.run_id }}
+          path: |
+            /tmp/ygo-v3-cert.json
+            /tmp/ygo-v3-apply-preflight.json
+            /tmp/ygo-v3-apply.json
+            /tmp/ygo-v3-apply-second.json
+            /tmp/ygo-v3-post-cert.json
+            /tmp/ygo-price-before.json
+            /tmp/ygo-price-projection-preflight.json
+            /tmp/ygo-price-projection.json
+            /tmp/ygo-price-after.json
+          retention-days: 90
+          if-no-files-found: warn
