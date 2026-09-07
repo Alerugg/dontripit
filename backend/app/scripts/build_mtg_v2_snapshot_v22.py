@@ -11,6 +11,19 @@ SNAPSHOT_SCHEMA_VERSION = "mtg-canonical-v2.2"
 _BASE_PRINT_ATTRIBUTES = base._print_attributes
 
 
+def _norm_semantic_set_list(value: object) -> list:
+    """Canonicalize Scryfall arrays whose order has no semantic meaning."""
+
+    normalized = {clean(item) for item in base._norm_list(value) if clean(item)}
+    return sorted(normalized)
+
+
+def _face_payload(face: dict) -> dict:
+    payload = base._face_payload(face)
+    payload["colors"] = _norm_semantic_set_list(face.get("colors"))
+    return payload
+
+
 def card_attributes(card: dict) -> dict:
     """Immutable logical Card attributes only.
 
@@ -18,6 +31,11 @@ def card_attributes(card: dict) -> dict:
     and `reserved` for one Oracle identity (for example a tournament-legal
     original versus a commemorative/non-tournament printing). Those two fields
     therefore must not participate in logical Card fingerprinting.
+
+    Scryfall also does not guarantee a stable ordering for set-like arrays such
+    as `keywords`, `colors`, `color_identity`, and `produced_mana`. Their order
+    is not rules-significant, so canonicalize them before fingerprinting while
+    preserving the order of `card_faces`, which is significant.
     """
 
     return {
@@ -26,16 +44,16 @@ def card_attributes(card: dict) -> dict:
         "mana_value": card.get("cmc"),
         "type_line": clean(card.get("type_line")) or None,
         "oracle_text": clean(card.get("oracle_text")) or None,
-        "colors": base._norm_list(card.get("colors")),
-        "color_identity": base._norm_list(card.get("color_identity")),
-        "keywords": base._norm_list(card.get("keywords")),
+        "colors": _norm_semantic_set_list(card.get("colors")),
+        "color_identity": _norm_semantic_set_list(card.get("color_identity")),
+        "keywords": _norm_semantic_set_list(card.get("keywords")),
         "power": clean(card.get("power")) or None,
         "toughness": clean(card.get("toughness")) or None,
         "loyalty": clean(card.get("loyalty")) or None,
         "defense": clean(card.get("defense")) or None,
-        "produced_mana": base._norm_list(card.get("produced_mana")),
+        "produced_mana": _norm_semantic_set_list(card.get("produced_mana")),
         "faces": [
-            base._face_payload(face)
+            _face_payload(face)
             for face in base._norm_list(card.get("card_faces"))
             if isinstance(face, dict)
         ],
