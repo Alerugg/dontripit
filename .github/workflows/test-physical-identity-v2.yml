@@ -5,7 +5,9 @@ on:
     branches: [p0/physical-identity-ingest-v2]
     paths:
       - 'backend/app/physical_identity_v2.py'
+      - 'backend/app/identity_sources/**'
       - 'backend/tests/test_physical_identity_v2.py'
+      - 'backend/tests/test_tcgdex_pokemon_physical_identity_v2.py'
       - '.github/workflows/test-physical-identity-v2.yml'
   workflow_dispatch:
 
@@ -22,5 +24,8 @@ jobs:
       - run: pip install -r requirements.txt
         working-directory: backend
       - name: Run physical identity v2 tests
-        run: pytest -q tests/test_physical_identity_v2.py
+        run: >-
+          pytest -q
+          tests/test_physical_identity_v2.py
+          tests/test_tcgdex_pokemon_physical_identity_v2.py
         working-directory: backend
