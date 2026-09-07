@@ -1,0 +1,52 @@
+name: Audit TCGdex Pokemon Variant Detail V2
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - '.github/workflows/audit-tcgdex-pokemon-variant-detail-v2.yml'
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: 'Deterministic full-card sample size'
+        required: false
+        default: '200'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile TCGdex variant audit
+        run: python -m py_compile scripts/audit_tcgdex_pokemon_variant_detail_v2.py
+        working-directory: backend
+      - name: Audit TCGdex detailed variants READ ONLY
+        run: |
+          SAMPLE="${{ github.event.inputs.sample }}"
+          if [ -z "$SAMPLE" ]; then SAMPLE=200; fi
+          python scripts/audit_tcgdex_pokemon_variant_detail_v2.py \
+            --sample "$SAMPLE" \
+            --report /tmp/tcgdex-pokemon-variant-detail-v2.json
+        working-directory: backend
+      - name: Gate source audit
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/tcgdex-pokemon-variant-detail-v2.json'))['summary']
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['cards_loaded'] > 0, d
+          print('TCGDEX_POKEMON_VARIANT_DETAIL_V2_GATE=PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tcgdex-pokemon-variant-detail-v2-${{ github.run_id }}
+          path: /tmp/tcgdex-pokemon-variant-detail-v2.json
+          retention-days: 90
