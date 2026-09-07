@@ -179,6 +179,14 @@ def resolve_identity(
     Exact source IDs and deterministic unique matches are allowed to return EXACT.
     Fuzzy similarity can only return UNIQUE_HIGH_CONFIDENCE and is never treated as
     an auto-write decision by this module.
+
+    Pokemon and One Piece have an additional commercial-variant hazard: a canonical
+    Don’tRipIt Print can retain the original set/card code while ``variant`` represents
+    a later market reprint/parallel. The V1 gold set proved that expansion+name (and OP
+    collector code) alone can therefore select a different Cardmarket idProduct even
+    when only one product remains in the set-level expansion bucket. Until a
+    variant-aware expansion/reprint bridge is certified, those C-level matches are
+    deliberately review-only rather than EXACT.
     """
     valid_known = tuple(dict.fromkeys(pid for pid in identity.known_product_ids if pid in products_by_id))
     missing_known = tuple(pid for pid in identity.known_product_ids if pid not in products_by_id)
@@ -262,6 +270,18 @@ def resolve_identity(
         exact = [product for product in pool if product.strict_name == name_key]
 
     if len(exact) == 1:
+        if identity.game in {"pokemon", "onepiece"}:
+            return _decision(
+                "UNIQUE_HIGH_CONFIDENCE",
+                "C_unique_exact_composite_variant_unproven",
+                exact[0].product_id,
+                exact,
+                evidence={
+                    "trusted_expansion_ids": list(expansion_ids),
+                    "review_required": True,
+                    "reason": "game_requires_variant_aware_reprint_bridge_before_C_can_be_exact",
+                },
+            )
         return _decision(
             "EXACT",
             "C_expansion_identity_unique_exact",
