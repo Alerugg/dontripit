@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -14,6 +16,15 @@ from psycopg2.extras import RealDictCursor
 def numkey(value: str):
     raw = str(value or "")
     return (0, int(raw)) if raw.isdigit() else (1, raw)
+
+
+def norm_rarity(value: str | None) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    if text.endswith("rare") and text != "rare":
+        text = text[:-4]
+    return text
 
 
 def main() -> int:
@@ -81,8 +92,7 @@ def main() -> int:
                 continue
             product_count = len(products)
             for ordinal, product in enumerate(products, start=1):
-                rarities = {x["rarity"] for x in product["links"] if x["rarity"]}
-                variants = {x["variant"] for x in product["links"] if x["variant"]}
+                rarities = {norm_rarity(x["rarity"]) for x in product["links"] if norm_rarity(x["rarity"])}
                 if len(rarities) != 1:
                     continue
                 rarity = next(iter(rarities))
@@ -97,7 +107,6 @@ def main() -> int:
                         "ordinal": ordinal,
                         "idProduct": product["idProduct"],
                         "rarity": rarity,
-                        "variant": next(iter(variants)) if len(variants) == 1 else None,
                     }
                 )
 
@@ -128,25 +137,26 @@ def main() -> int:
                         }
                     )
 
-        # True leave-one-card-group-out validation. For each known observation,
-        # remove every observation from that card/metacard group before learning
-        # the expansion/product-count/ordinal rule.
         loo_predictable = loo_correct = loo_wrong = 0
+        loo_by_ordinal = defaultdict(Counter)
         loo_wrong_samples = []
         for obs in observations:
             slot = (obs["product_count"], obs["ordinal"])
             training = expansion_counts[obs["expansion"]][slot].copy()
             heldout = group_counts[obs["group_key"]][slot]
             training.subtract(heldout)
-            training += Counter()  # drop zero/negative keys
+            training += Counter()
             predicted = rule(training)
             if predicted is None:
                 continue
             loo_predictable += 1
+            loo_by_ordinal[obs["ordinal"]]["predictable"] += 1
             if predicted == obs["rarity"]:
                 loo_correct += 1
+                loo_by_ordinal[obs["ordinal"]]["correct"] += 1
             else:
                 loo_wrong += 1
+                loo_by_ordinal[obs["ordinal"]]["wrong"] += 1
                 if len(loo_wrong_samples) < 50:
                     loo_wrong_samples.append(
                         {
@@ -160,10 +170,21 @@ def main() -> int:
                         }
                     )
 
+        ordinal_summary = {}
+        for ordinal, counts in sorted(loo_by_ordinal.items()):
+            pred = counts["predictable"]
+            ordinal_summary[str(ordinal)] = {
+                "predictable": pred,
+                "correct": counts["correct"],
+                "wrong": counts["wrong"],
+                "precision": round(counts["correct"] / pred, 8) if pred else None,
+            }
+
         payload = {
             "mode": "read_only",
             "game": "yugioh",
             "validation": "leave_one_card_group_out",
+            "rarity_normalization": "nfkd-casefold-alnum-strip-trailing-rare",
             "min_support": args.min_support,
             "summary": {
                 "mapped_multi_product_observations": len(observations),
@@ -174,11 +195,12 @@ def main() -> int:
                 "loo_precision": round(loo_correct / loo_predictable, 8) if loo_predictable else None,
                 "write_rule_ready": loo_predictable > 0 and loo_wrong == 0,
             },
+            "loo_by_ordinal": ordinal_summary,
             "perfect_full_expansion_slot_rules": full_rules,
             "loo_wrong_samples": loo_wrong_samples,
         }
         args.report.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print("YGO_VERSION_ORDINAL_LOO=" + json.dumps(payload["summary"], separators=(",", ":")))
+        print("YGO_VERSION_ORDINAL_LOO=" + json.dumps({**payload["summary"], "loo_by_ordinal": ordinal_summary}, separators=(",", ":")))
         conn.rollback()
     finally:
         conn.close()
