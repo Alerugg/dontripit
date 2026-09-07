@@ -32,7 +32,10 @@ def claims_from_payload(payload: dict) -> list[OnePiecePrintClaim]:
             variant = str(row.get("variant") or "default").strip().lower() or "default"
             variant_family = str(row.get("variant_family") or "").strip().lower()
             rarity = str(row.get("rarity") or "").strip()
-            source_print_id = str(row.get("id") or "").strip() or f"{collector}:{variant}:{language}:{region}"
+            raw_source_print_id = str(row.get("id") or "").strip() or f"{collector}:{variant}"
+            # Official print ids repeat across the global/Asia/JP mirrors. Region and
+            # language are therefore part of source identity, not merely display facts.
+            source_print_id = f"{language or 'unknown'}:{region or 'unknown'}:{raw_source_print_id}"
             if not set_code or not collector:
                 continue
 
@@ -70,7 +73,9 @@ def claims_from_payload(payload: dict) -> list[OnePiecePrintClaim]:
                 size=IdentityValue.not_applicable(),
                 source_facts={
                     "official_card_id": card_id,
-                    "official_source_print_id": source_print_id,
+                    "official_source_print_id": raw_source_print_id,
+                    "language": language or None,
+                    "region": region or None,
                     "variant": variant,
                     "variant_family": variant_family or None,
                     "image_url": row.get("image_url"),
