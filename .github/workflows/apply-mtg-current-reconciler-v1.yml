@@ -47,6 +47,7 @@ jobs:
             tests/test_mtg_current_source_reconciler_v1.py \
             tests/test_mtg_current_source_batched_reconciler_v1.py \
             tests/test_mtg_current_source_reconciler_static_contract.py \
+            tests/test_mtg_finish_identifier_v23_contract.py \
             tests/test_mtg_write_quarantine_v2.py
 
       - name: Verify production connection is writable
