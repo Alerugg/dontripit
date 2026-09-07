@@ -81,7 +81,7 @@ def test_onepiece_collector_is_preserved_and_duplicate_products_fail_closed():
     assert result.candidate_ids == ("690368", "690369")
 
 
-def test_onepiece_unique_collector_match_is_exact():
+def test_onepiece_unique_collector_match_requires_variant_review_in_v1():
     by_id, by_expansion = indexes(
         "onepiece",
         [product("690370", "Usopp (OP01-004)", "5229")],
@@ -92,7 +92,8 @@ def test_onepiece_unique_collector_match_is_exact():
         products_by_expansion=by_expansion,
         trusted_expansion_ids=("5229",),
     )
-    assert result.category == "EXACT"
+    assert result.category == "UNIQUE_HIGH_CONFIDENCE"
+    assert result.method == "C_unique_exact_composite_variant_unproven"
     assert result.product_id == "690370"
 
 
@@ -114,6 +115,22 @@ def test_pokemon_descriptor_is_not_destroyed_and_base_only_requires_review():
     assert result.category == "UNIQUE_HIGH_CONFIDENCE"
     assert result.method == "D_pokemon_unique_base_name_in_expansion"
     assert result.product_id == "273532"
+
+
+def test_pokemon_strict_name_in_expansion_still_requires_variant_review_in_v1():
+    by_id, by_expansion = indexes(
+        "pokemon",
+        [product("276166", "Steven's Advice", "1543")],
+    )
+    result = resolve_identity(
+        identity("pokemon", name="Steven's Advice", collector="92"),
+        products_by_id=by_id,
+        products_by_expansion=by_expansion,
+        trusted_expansion_ids=("1543",),
+    )
+    assert result.category == "UNIQUE_HIGH_CONFIDENCE"
+    assert result.method == "C_unique_exact_composite_variant_unproven"
+    assert result.product_id == "276166"
 
 
 def test_pokemon_multiple_descriptors_are_ambiguous():
@@ -158,6 +175,18 @@ def test_mtg_scryfall_cardmarket_id_is_exact_when_current_catalog_contains_it():
     assert result.category == "EXACT"
     assert result.method == "B_scryfall_cardmarket_id"
     assert result.product_id == "2"
+
+
+def test_yugioh_unique_exact_inside_trusted_expansion_can_remain_exact():
+    by_id, by_expansion = indexes("yugioh", [product("101788", '"A" Cell Breeding Device', "200")])
+    result = resolve_identity(
+        identity("yugioh", name='"A" Cell Breeding Device'),
+        products_by_id=by_id,
+        products_by_expansion=by_expansion,
+        trusted_expansion_ids=("200",),
+    )
+    assert result.category == "EXACT"
+    assert result.method == "C_expansion_identity_unique_exact"
 
 
 def test_no_crosswalk_fails_closed_instead_of_global_fuzzy_match():
