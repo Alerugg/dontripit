@@ -1,0 +1,103 @@
+name: Audit YGO Cardmarket Duplicate Price Selector V5
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - 'backend/scripts/audit_yugioh_cardmarket_duplicate_price_selector_v5.py'
+      - '.github/workflows/audit-ygo-cardmarket-duplicate-price-selector-v5.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile V5 selector paths
+        working-directory: backend
+        run: >-
+          python -m py_compile
+          scripts/audit_yugioh_cardmarket_expansion_composition_v4.py
+          scripts/certify_yugioh_cardmarket_expansion_composition_v4.py
+          scripts/audit_yugioh_cardmarket_konami_bridge_v4.py
+          scripts/audit_yugioh_cardmarket_duplicate_targets_v5.py
+          scripts/audit_yugioh_cardmarket_duplicate_price_selector_v5.py
+
+      - name: Fresh V4 composition calibration
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_expansion_composition_v4.py
+          --min-linked 5
+          --min-informative 5
+          --min-support 5
+          --min-evidence-coverage 0.25
+          --min-purity 0.95
+          --min-margin 3
+          --report /tmp/ygo-v5-composition.json
+
+      - name: Fresh V4 expansion certification
+        working-directory: backend
+        run: >-
+          python scripts/certify_yugioh_cardmarket_expansion_composition_v4.py
+          /tmp/ygo-v5-composition.json
+          --report /tmp/ygo-v5-expansion-cert.json
+
+      - name: Fresh V4 product residual
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_konami_bridge_v4.py
+          /tmp/ygo-v5-expansion-cert.json
+          --report /tmp/ygo-v5-product-audit.json
+
+      - name: Fresh V5 duplicate diagnostic
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_duplicate_targets_v5.py
+          /tmp/ygo-v5-product-audit.json
+          /tmp/ygo-v5-expansion-cert.json
+          --report /tmp/ygo-v5-duplicate-diagnostic.json
+
+      - name: Backtest current-price selector V5
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_duplicate_price_selector_v5.py
+          /tmp/ygo-v5-expansion-cert.json
+          /tmp/ygo-v5-duplicate-diagnostic.json
+          --report /tmp/ygo-v5-price-selector.json
+
+      - name: Assert read-only selector audit
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/ygo-v5-price-selector.json'))['summary']
+          assert d['production_writes'] == 0, d
+          assert d['eligible_parallel_backtest_targets'] > 0, d
+          assert d['unique_current_price_predictable'] > 0, d
+          print('YGO_DUPLICATE_PRICE_SELECTOR_V5_GATE=PASS')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-duplicate-price-selector-v5-${{ github.run_id }}
+          path: |
+            /tmp/ygo-v5-expansion-cert.json
+            /tmp/ygo-v5-duplicate-diagnostic.json
+            /tmp/ygo-v5-price-selector.json
+          retention-days: 90
+          if-no-files-found: error
