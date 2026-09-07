@@ -7,7 +7,6 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
@@ -93,7 +92,7 @@ def _request_json(session: requests.Session, url: str, *, attempts: int = 5) -> 
     raise RuntimeError(f"Request failed after {attempts} attempts: {url}: {last_error}")
 
 
-def _pokemon_object(row: dict, session: requests.Session) -> tuple[list, list[dict]]:
+def _pokemon_object(row: dict, session: requests.Session) -> tuple[list, list[dict], dict | None]:
     language = str(row.get("language") or "en").strip().lower()
     region = str(row.get("region") or ("jp" if language == "ja" else "international")).strip()
     external_id = str(row.get("id") or "").strip()
@@ -102,7 +101,22 @@ def _pokemon_object(row: dict, session: requests.Session) -> tuple[list, list[di
     card = _request_json(session, f"https://api.tcgdex.net/v2/{language}/cards/{external_id}")
     claims = pokemon_claims_from_card(card, language=language, region=region)
     if not claims:
-        raise RuntimeError(f"TCGdex full card produced zero detailed physical claims: {language}/{external_id}")
+        return [], [], {
+            "type": "unresolved_source_data",
+            "reason": "tcgdex_full_card_has_no_detailed_physical_variants",
+            "source": "tcgdex",
+            "language": language,
+            "region": region,
+            "source_object_id": external_id,
+            "source_facts": {
+                "name": card.get("name"),
+                "localId": card.get("localId"),
+                "rarity": card.get("rarity"),
+                "set": card.get("set"),
+                "variants": card.get("variants"),
+                "variants_detailed": card.get("variants_detailed"),
+            },
+        }
     market = []
     for claim in claims:
         if claim.cardmarket_id:
@@ -115,7 +129,7 @@ def _pokemon_object(row: dict, session: requests.Session) -> tuple[list, list[di
                     source_object_id=claim.variant_id,
                 )
             )
-    return claims, market
+    return claims, market, None
 
 
 def _local_object(game: str, row: dict) -> tuple[list, list[dict]]:
@@ -146,6 +160,17 @@ def _local_object(game: str, row: dict) -> tuple[list, list[dict]]:
     raise RuntimeError(f"Unsupported local game: {game}")
 
 
+def _unresolved_local(game: str, row: dict) -> dict:
+    source = {"mtg": "scryfall", "yugioh": "ygoprodeck", "onepiece": "onepiece_official"}[game]
+    return {
+        "type": "unresolved_source_data",
+        "reason": "source_object_has_no_certifiable_physical_claim",
+        "source": source,
+        "game": game,
+        "source_object": row,
+    }
+
+
 def _write_checkpoint(path: Path, payload: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -171,6 +196,7 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     descriptor_path = args.out_dir / "descriptors.ndjson"
     market_path = args.out_dir / "market_claims.ndjson"
+    unresolved_path = args.out_dir / "unresolved.ndjson"
     error_path = args.out_dir / "errors.ndjson"
     summary_path = args.out_dir / "summary.json"
 
@@ -180,6 +206,7 @@ def main() -> int:
     direct_market_ids: set[str] = set()
     conflicts: list[dict] = []
     completed_objects = 0
+    unresolved_objects = 0
     descriptor_count = 0
     market_claim_count = 0
     pending = list(enumerate(rows))
@@ -190,7 +217,9 @@ def main() -> int:
 
     with descriptor_path.open("w", encoding="utf-8", buffering=1) as descriptor_file, market_path.open(
         "w", encoding="utf-8", buffering=1
-    ) as market_file, error_path.open("w", encoding="utf-8", buffering=1) as error_file:
+    ) as market_file, unresolved_path.open("w", encoding="utf-8", buffering=1) as unresolved_file, error_path.open(
+        "w", encoding="utf-8", buffering=1
+    ) as error_file:
         for pass_index in range(args.retry_passes + 1):
             if not pending:
                 break
@@ -201,14 +230,22 @@ def main() -> int:
 
             for row_index, row in current:
                 try:
+                    unresolved = None
                     if args.game == "pokemon":
-                        claims, market_claims = _pokemon_object(row, session)
+                        claims, market_claims, unresolved = _pokemon_object(row, session)
                         if args.pokemon_throttle_seconds > 0:
                             time.sleep(args.pokemon_throttle_seconds)
                     else:
                         claims, market_claims = _local_object(args.game, row)
                         if not claims:
-                            raise RuntimeError("source object produced zero physical claims")
+                            unresolved = _unresolved_local(args.game, row)
+
+                    if unresolved is not None:
+                        unresolved.update({"row_index": row_index, "shard_index": args.shard_index})
+                        unresolved_file.write(json.dumps(unresolved, ensure_ascii=False, separators=(",", ":"), default=str) + "\n")
+                        unresolved_objects += 1
+                        completed_objects += 1
+                        continue
 
                     for claim in claims:
                         descriptor = claim.descriptor
@@ -240,7 +277,7 @@ def main() -> int:
                         market_claim_count += 1
 
                     completed_objects += 1
-                except Exception as exc:  # fail the shard only after bounded retry passes
+                except Exception as exc:  # technical/source transport errors retry; source incompleteness does not
                     failure = {
                         "type": "source_object_error",
                         "row_index": row_index,
@@ -265,6 +302,7 @@ def main() -> int:
                             "shard_count": args.shard_count,
                             "manifest_rows": len(rows),
                             "completed_objects": completed_objects,
+                            "unresolved_source_objects": unresolved_objects,
                             "pending_objects": len(pending),
                             "final_error_objects": len(final_errors),
                             "descriptors": descriptor_count,
@@ -282,6 +320,7 @@ def main() -> int:
         "manifest": str(manifest),
         "manifest_rows": len(rows),
         "completed_objects": completed_objects,
+        "unresolved_source_objects": unresolved_objects,
         "final_error_objects": len(final_errors),
         "descriptors": descriptor_count,
         "unique_fingerprints": len(fingerprints),
