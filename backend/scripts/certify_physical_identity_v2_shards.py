@@ -83,6 +83,8 @@ def main() -> int:
     cross_shard_source_conflicts: list[dict] = []
     fingerprints_by_game: dict[str, set[str]] = defaultdict(set)
     descriptor_records_by_game: dict[str, int] = defaultdict(int)
+    unresolved_records_by_game: dict[str, int] = defaultdict(int)
+    unresolved_reason_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     market_fingerprints: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     market_sources: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     market_claim_rows_by_game: dict[str, int] = defaultdict(int)
@@ -91,6 +93,7 @@ def main() -> int:
         artifact_dir = Path(summary["_artifact_dir"])
         descriptor_path = artifact_dir / "descriptors.ndjson"
         market_path = artifact_dir / "market_claims.ndjson"
+        unresolved_path = artifact_dir / "unresolved.ndjson"
         if descriptor_path.exists():
             for row in _iter_ndjson(descriptor_path):
                 fingerprint = str(row.get("fingerprint") or "")
@@ -124,6 +127,11 @@ def main() -> int:
                     source_identity_owner[key] = fingerprint
                 fingerprints_by_game[game].add(fingerprint)
                 descriptor_records_by_game[game] += 1
+
+        if unresolved_path.exists():
+            for row in _iter_ndjson(unresolved_path):
+                unresolved_records_by_game[game] += 1
+                unresolved_reason_counts[game][str(row.get("reason") or "unknown")] += 1
 
         if market_path.exists():
             for row in _iter_ndjson(market_path):
@@ -163,6 +171,8 @@ def main() -> int:
             "received_shards": len(game_summaries),
             "manifest_rows": sum(int(row.get("manifest_rows") or 0) for row in game_summaries),
             "completed_objects": sum(int(row.get("completed_objects") or 0) for row in game_summaries),
+            "unresolved_source_objects": unresolved_records_by_game.get(game, 0),
+            "unresolved_reason_counts": dict(unresolved_reason_counts.get(game, {})),
             "final_error_objects": sum(int(row.get("final_error_objects") or 0) for row in game_summaries),
             "descriptor_records": descriptor_records_by_game.get(game, 0),
             "unique_physical_fingerprints": len(fingerprints_by_game.get(game, set())),
@@ -193,7 +203,7 @@ def main() -> int:
         "cross_shard_source_conflicts": cross_shard_source_conflicts[:1000],
         "games": totals_by_game,
         "production_writes": 0,
-        "coverage_gate_note": "This certifier gates complete lossless shadow ingestion. The >=99% Cardmarket accounting gate remains a later resolver/cutover certification.",
+        "coverage_gate_note": "Source-incomplete objects are explicitly quarantined as unresolved_source_data and do not count as technical shard failure. The >=99% Cardmarket accounting gate remains a later resolver/cutover certification.",
     }
     (args.out_dir / "summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print("IDENTITY_V2_GLOBAL_CERT=" + json.dumps({
