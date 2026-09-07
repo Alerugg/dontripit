@@ -44,7 +44,7 @@ jobs:
           python -m py_compile \
             app/jobs/cardmarket_identity_resolver.py \
             scripts/audit_cardmarket_identity_resolver_v1.py \
-            scripts/apply_cardmarket_identity_resolver_v1_exact.py
+            scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py
           pytest -q tests/test_cardmarket_identity_resolver_v1.py
 
       - name: Download current official Cardmarket singles catalogs and Price Guides
@@ -129,9 +129,9 @@ jobs:
           }, indent=2, sort_keys=True))
           PY
 
-      - name: Exact-link preflight - rollback only
+      - name: Exact-link preflight with contradiction quarantine - rollback only
         run: |
-          python scripts/apply_cardmarket_identity_resolver_v1_exact.py \
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
             --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
             --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
             --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply-preflight.json
@@ -139,17 +139,29 @@ jobs:
           import json
           from pathlib import Path
           r = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/exact-apply-preflight.json').read_text())
+          p = r['preflight']
           assert r['mode'] == 'dry_run', r
           assert r['production_writes'] == 0, r
-          assert r['preflight']['write_ready'] is True, r
-          for key in ('missing_or_cross_game_prints','missing_external_products','conflicting_existing_target_links','incompatible_existing_product_links'):
-              assert r['preflight'][key] == 0, (key, r)
-          print(json.dumps(r, indent=2, sort_keys=True))
+          assert p['write_ready'] is True, r
+          assert p['missing_or_cross_game_prints'] == 0, r
+          assert p['missing_external_products'] == 0, r
+          assert p['safe_rows'] >= 150000, r
+          assert p['quarantined_rows'] <= 5000, r
+          print(json.dumps({
+              'certified_exact_rows': r['certified_exact_rows'],
+              'safe_rows': p['safe_rows'],
+              'candidate_links': p['candidate_links'],
+              'already_exact_same_pair': p['already_exact_same_pair'],
+              'quarantined_rows': p['quarantined_rows'],
+              'quarantined_rows_by_game': p['quarantined_rows_by_game'],
+              'quarantined_target_conflict_prints': p['quarantined_target_conflict_prints'],
+              'quarantined_incompatible_products': p['quarantined_incompatible_products'],
+          }, indent=2, sort_keys=True))
           PY
 
-      - name: APPLY certified EXACT Cardmarket identities
+      - name: APPLY collision-free certified EXACT Cardmarket identities
         run: |
-          python scripts/apply_cardmarket_identity_resolver_v1_exact.py \
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
             --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
             --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
             --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply.json \
@@ -159,14 +171,21 @@ jobs:
           from pathlib import Path
           r = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/exact-apply.json').read_text())
           assert r['preflight']['write_ready'] is True, r
-          assert r['apply']['certified_pairs_after'] == r['certified_exact_rows'], r
-          assert r['apply']['ambiguous_target_prints_after'] == 0, r
-          print(json.dumps(r, indent=2, sort_keys=True))
+          assert r['apply']['safe_pairs_after'] == r['preflight']['safe_rows'], r
+          assert r['apply']['ambiguous_safe_prints_after'] == 0, r
+          assert r['apply']['applied_to_quarantined'] == 0, r
+          print(json.dumps({
+              'safe_rows': r['preflight']['safe_rows'],
+              'affected_rows': r['apply']['affected_rows'],
+              'safe_pairs_after': r['apply']['safe_pairs_after'],
+              'quarantined_rows': r['preflight']['quarantined_rows'],
+              'ambiguous_safe_prints_after': r['apply']['ambiguous_safe_prints_after'],
+          }, indent=2, sort_keys=True))
           PY
 
       - name: Prove exact-link idempotence
         run: |
-          python scripts/apply_cardmarket_identity_resolver_v1_exact.py \
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
             --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
             --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
             --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply-second-pass.json \
@@ -178,8 +197,9 @@ jobs:
           assert r['preflight']['write_ready'] is True, r
           assert r['preflight']['candidate_links'] == 0, r
           assert r['apply']['affected_rows'] == 0, r
-          assert r['apply']['certified_pairs_after'] == r['certified_exact_rows'], r
-          assert r['apply']['ambiguous_target_prints_after'] == 0, r
+          assert r['apply']['safe_pairs_after'] == r['preflight']['safe_rows'], r
+          assert r['apply']['ambiguous_safe_prints_after'] == 0, r
+          assert r['apply']['applied_to_quarantined'] == 0, r
           print(json.dumps(r, indent=2, sort_keys=True))
           PY
 
