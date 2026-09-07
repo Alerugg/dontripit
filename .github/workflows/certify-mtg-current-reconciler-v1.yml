@@ -16,6 +16,7 @@ on:
       - 'backend/tests/test_mtg_current_source_reconciler_v1.py'
       - 'backend/tests/test_mtg_current_source_batched_reconciler_v1.py'
       - 'backend/tests/test_mtg_current_source_reconciler_static_contract.py'
+      - 'backend/tests/test_mtg_finish_identifier_v23_contract.py'
       - 'backend/tests/test_mtg_write_quarantine_v2.py'
 
 permissions:
@@ -90,6 +91,7 @@ jobs:
             tests/test_mtg_current_source_reconciler_v1.py \
             tests/test_mtg_current_source_batched_reconciler_v1.py \
             tests/test_mtg_current_source_reconciler_static_contract.py \
+            tests/test_mtg_finish_identifier_v23_contract.py \
             tests/test_mtg_identity_v2.py \
             tests/test_mtg_snapshot_v22.py \
             tests/test_mtg_write_quarantine_v2.py \
