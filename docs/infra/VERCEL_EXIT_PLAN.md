@@ -45,14 +45,21 @@ Prepared files:
 - Request timeout: `120s`
 - Public ingress: enabled; API product/auth middleware remains application-controlled
 
+The Cloud Run workflow explicitly preserves two Vercel production behaviors that would otherwise change on another runtime:
+
+- `PUBLIC_HUB_CATALOG_ENABLED=true` so bounded public catalog reads remain available.
+- `API_REQUEST_METRICS_DB_ENABLED=false` so every request does not add a synchronous Neon metrics write.
+
 ## One-time Google Cloud bootstrap
 
 Run in Google Cloud Shell after creating/selecting a project with billing enabled:
 
 ```bash
+git clone https://github.com/Alerugg/dontripit.git
+cd dontripit
+git checkout infra/exit-vercel-cloud-run
 export PROJECT_ID="YOUR_GCP_PROJECT_ID"
-curl -fsSL https://raw.githubusercontent.com/Alerugg/dontripit/infra/exit-vercel-cloud-run/infra/gcp/bootstrap-cloud-run.sh -o /tmp/bootstrap-cloud-run.sh
-bash /tmp/bootstrap-cloud-run.sh
+bash infra/gcp/bootstrap-cloud-run.sh
 ```
 
 The script prints the exact GitHub repository variables to create.
@@ -79,17 +86,19 @@ Create under:
 
 `GitHub -> Alerugg/dontripit -> Settings -> Secrets and variables -> Actions -> Secrets`
 
-Required for API parity:
+Required for the production API:
 
 - `NEON_DATABASE_URL` — production Neon pooled PostgreSQL URL
-- `INTERNAL_API_KEY` — same value used by the production frontend/backend contract
-- `ADMIN_CONSOLE_USERNAME`
-- `ADMIN_CONSOLE_PASSWORD`
+- `INTERNAL_API_KEY` — exact same value used by the production Next.js BFF/backend contract
 
-Required to preserve password recovery if configured in production:
+Optional but required if those production features are currently in use:
 
-- `RESEND_API_KEY`
-- `AUTH_EMAIL_FROM`
+- `ADMIN_TOKEN` — protects backend admin routes that expect `X-Admin-Token`
+- `ADMIN_API_KEY` — environment-level admin API key used by the API middleware
+- `RESEND_API_KEY` — Resend credential for password recovery
+- `AUTH_EMAIL_FROM` — verified sender used for password recovery
+
+The existing `ADMIN_CONSOLE_USERNAME` / `ADMIN_CONSOLE_PASSWORD` values belong to the console/frontend layer and are not required by the Flask container itself.
 
 Do not copy Vercel system variables such as `VERCEL`, `VERCEL_URL`, or `VERCEL_GIT_COMMIT_SHA`.
 
