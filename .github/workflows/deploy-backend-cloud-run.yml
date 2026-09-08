@@ -26,13 +26,14 @@ jobs:
           PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           DEPLOYER_SA: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
           ADMIN_USER: ${{ secrets.ADMIN_CONSOLE_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_CONSOLE_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in PROJECT_ID WIF_PROVIDER DEPLOYER_SA DATABASE_URL INTERNAL_API_KEY ADMIN_USER ADMIN_PASSWORD; do
+          for name in PROJECT_ID WIF_PROVIDER DEPLOYER_SA RUNTIME_SA DATABASE_URL INTERNAL_API_KEY ADMIN_USER ADMIN_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub variable/secret: ${name}" >&2
               exit 1
@@ -43,6 +44,7 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v3
         with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
@@ -62,9 +64,8 @@ jobs:
           docker build --pull -t "${IMAGE}" ./backend
           docker push "${IMAGE}"
 
-      - name: Deploy Cloud Run revision
+      - name: Prepare Cloud Run environment file
         env:
-          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
           ADMIN_USER: ${{ secrets.ADMIN_CONSOLE_USERNAME }}
@@ -73,11 +74,39 @@ jobs:
           AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
         run: |
           set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "SOURCE_VERSION": os.environ["GITHUB_SHA"],
+              "DATABASE_URL": os.environ["DATABASE_URL"],
+              "INTERNAL_API_KEY": os.environ["INTERNAL_API_KEY"],
+              "ADMIN_CONSOLE_USERNAME": os.environ["ADMIN_USER"],
+              "ADMIN_CONSOLE_PASSWORD": os.environ["ADMIN_PASSWORD"],
+              "PUBLIC_SITE_URL": "https://dontripit.com",
+              "RESEND_API_KEY": os.environ.get("RESEND_API_KEY", ""),
+              "AUTH_EMAIL_FROM": os.environ.get("AUTH_EMAIL_FROM", ""),
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "cloudrun-env.json"
+          path.write_text(json.dumps(payload), encoding="utf-8")
+          path.chmod(0o600)
+          print(f"Wrote Cloud Run environment file to {path}")
+          PY
+
+      - name: Deploy Cloud Run revision
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
           gcloud run deploy "${GCP_CLOUD_RUN_SERVICE}" \
             --project="${PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --platform=managed \
             --image="${IMAGE}" \
+            --service-account="${RUNTIME_SA}" \
             --allow-unauthenticated \
             --port=8080 \
             --cpu=1 \
@@ -86,7 +115,7 @@ jobs:
             --max=2 \
             --concurrency=20 \
             --timeout=120 \
-            --set-env-vars="SOURCE_VERSION=${GITHUB_SHA},DATABASE_URL=${DATABASE_URL},INTERNAL_API_KEY=${INTERNAL_API_KEY},ADMIN_CONSOLE_USERNAME=${ADMIN_USER},ADMIN_CONSOLE_PASSWORD=${ADMIN_PASSWORD},PUBLIC_SITE_URL=https://dontripit.com,RESEND_API_KEY=${RESEND_API_KEY},AUTH_EMAIL_FROM=${AUTH_EMAIL_FROM}"
+            --env-vars-file="${RUNNER_TEMP}/cloudrun-env.json"
 
       - name: Verify health endpoint
         env:
@@ -96,3 +125,7 @@ jobs:
           SERVICE_URL="$(gcloud run services describe "${GCP_CLOUD_RUN_SERVICE}" --project="${PROJECT_ID}" --region="${GCP_REGION}" --format='value(status.url)')"
           echo "Cloud Run URL: ${SERVICE_URL}"
           curl --fail --show-error --silent --retry 5 --retry-delay 3 "${SERVICE_URL}/api/health"
+
+      - name: Remove temporary environment file
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/cloudrun-env.json"
