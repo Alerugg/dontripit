@@ -1,0 +1,63 @@
+name: Audit YGO OCG Historical Evidence V3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_historical_evidence_v3.py
+      - .github/workflows/audit-ygo-ocg-historical-evidence-v3.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile historical evidence audit
+        run: python -m py_compile scripts/audit_yugioh_ocg_historical_evidence_v3.py
+
+      - name: Inventory YGO OCG historical evidence READ ONLY
+        env:
+          YGO_OCG_HISTORICAL_EVIDENCE_V3_OUTPUT: /tmp/yugioh-ocg-historical-evidence-v3.json
+        run: python scripts/audit_yugioh_ocg_historical_evidence_v3.py
+
+      - name: Gate zero-write evidence inventory
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-historical-evidence-v3.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert d['target_rows'] > 0, d
+          assert all(v['rows']==v['unique_products']==v['unique_prints'] for v in d['methods'].values()), d
+          print('YGO_OCG_HISTORICAL_EVIDENCE_V3_GATE=PASS')
+          print('TARGET_ROWS=', d['target_rows'])
+          PY
+
+      - name: Upload evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-historical-evidence-v3-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-historical-evidence-v3.json
+          if-no-files-found: warn
+          retention-days: 90
