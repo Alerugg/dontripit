@@ -1,0 +1,284 @@
+name: Apply Cardmarket Identity Resolver V1 Exact Live
+
+on:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - .github/workflows/apply-cardmarket-identity-resolver-v1-exact-live.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-cardmarket-identity-resolver-v1-exact-live
+  cancel-in-progress: false
+
+jobs:
+  certify-apply-and-price:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PYTHONPATH: .
+      PYTHONUNBUFFERED: '1'
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Compile exact apply path and run resolver safety tests
+        run: |
+          python -m py_compile \
+            app/jobs/cardmarket_identity_resolver.py \
+            scripts/audit_cardmarket_identity_resolver_v1.py \
+            scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py
+          pytest -q tests/test_cardmarket_identity_resolver_v1.py
+
+      - name: Download current official Cardmarket singles catalogs and Price Guides
+        run: |
+          mkdir -p artifacts/cardmarket-inputs
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          import time
+          from pathlib import Path
+          from urllib import request
+
+          root = Path('artifacts/cardmarket-inputs')
+          sources = {
+              'products_singles_1.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json',
+              'products_singles_3.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json',
+              'products_singles_6.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json',
+              'products_singles_18.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json',
+              'price_guide_1.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json',
+              'price_guide_3.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_3.json',
+              'price_guide_6.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json',
+              'price_guide_18.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json',
+          }
+          headers = {'User-Agent': 'Dontripit-Cardmarket-Identity-Resolver/1.0 (+certified exact apply)'}
+          for filename, url in sources.items():
+              for attempt in range(1, 4):
+                  try:
+                      req = request.Request(url, headers=headers)
+                      with request.urlopen(req, timeout=90) as response:
+                          content = response.read()
+                      if len(content) < 100:
+                          raise RuntimeError(f'{filename} unexpectedly small: {len(content)} bytes')
+                      payload = json.loads(content.decode('utf-8-sig'))
+                      if not isinstance(payload, (dict, list)):
+                          raise RuntimeError(f'{filename} unsupported JSON root')
+                      (root / filename).write_bytes(content)
+                      print(f'downloaded {filename}: {len(content)} bytes')
+                      break
+                  except Exception:
+                      if attempt == 3:
+                          raise
+                      time.sleep(attempt * 2)
+          PY
+
+      - name: Fresh production certification - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          rm -rf artifacts/cardmarket-identity-resolver-v1-live
+          python scripts/audit_cardmarket_identity_resolver_v1.py \
+            --catalog mtg=artifacts/cardmarket-inputs/products_singles_1.json \
+            --catalog yugioh=artifacts/cardmarket-inputs/products_singles_3.json \
+            --catalog pokemon=artifacts/cardmarket-inputs/products_singles_6.json \
+            --catalog onepiece=artifacts/cardmarket-inputs/products_singles_18.json \
+            --price-guide mtg=artifacts/cardmarket-inputs/price_guide_1.json \
+            --price-guide yugioh=artifacts/cardmarket-inputs/price_guide_3.json \
+            --price-guide pokemon=artifacts/cardmarket-inputs/price_guide_6.json \
+            --price-guide onepiece=artifacts/cardmarket-inputs/price_guide_18.json \
+            --outdir artifacts/cardmarket-identity-resolver-v1-live
+
+      - name: Gate fresh certification before any permanent write
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/summary.json').read_text())
+          assert s['status'] == 'pass', s
+          assert s['mode'] == 'READ_ONLY', s
+          assert s['transaction_read_only'] is True, s
+          assert s['production_writes'] == 0, s
+          assert s['forbidden_mismatches']['wrong_exact_gold_predictions'] == 0, s
+          assert s['forbidden_mismatches']['duplicate_catalog_idProduct'] == 0, s
+          assert s['forbidden_mismatches']['cross_game_resolver_writes'] == 0, s
+          exact = int(s['exact_resolvable_pending_print_rows'])
+          assert 150000 <= exact <= 250000, exact
+          print(json.dumps({
+              'status': s['status'],
+              'pending_before': s['pending_missing_current_cardmarket_price'],
+              'certified_exact_rows': exact,
+              'high_confidence_review_rows': s['high_confidence_review_pending_print_rows'],
+              'wrong_exact_gold_predictions': s['forbidden_mismatches']['wrong_exact_gold_predictions'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Exact-link preflight with contradiction quarantine - rollback only
+        run: |
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
+            --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
+            --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
+            --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply-preflight.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/exact-apply-preflight.json').read_text())
+          p = r['preflight']
+          assert r['mode'] == 'dry_run', r
+          assert r['production_writes'] == 0, r
+          assert p['write_ready'] is True, r
+          assert p['missing_or_cross_game_prints'] == 0, r
+          assert p['missing_external_products'] == 0, r
+          assert p['safe_rows'] >= 150000, r
+          # The quarantine is deliberately conservative: it may include legacy
+          # collector/variant aliases. Keep every such row excluded; only guard
+          # against an unexpected explosion in the size of the excluded set.
+          assert p['quarantined_rows'] <= 10000, r
+          print(json.dumps({
+              'certified_exact_rows': r['certified_exact_rows'],
+              'safe_rows': p['safe_rows'],
+              'candidate_links': p['candidate_links'],
+              'already_exact_same_pair': p['already_exact_same_pair'],
+              'quarantined_rows': p['quarantined_rows'],
+              'quarantined_rows_by_game': p['quarantined_rows_by_game'],
+              'quarantined_target_conflict_prints': p['quarantined_target_conflict_prints'],
+              'quarantined_incompatible_products': p['quarantined_incompatible_products'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: APPLY collision-free certified EXACT Cardmarket identities
+        run: |
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
+            --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
+            --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
+            --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply.json \
+            --apply
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/exact-apply.json').read_text())
+          assert r['preflight']['write_ready'] is True, r
+          assert r['apply']['safe_pairs_after'] == r['preflight']['safe_rows'], r
+          assert r['apply']['ambiguous_safe_prints_after'] == 0, r
+          assert r['apply']['applied_to_quarantined'] == 0, r
+          print(json.dumps({
+              'safe_rows': r['preflight']['safe_rows'],
+              'affected_rows': r['apply']['affected_rows'],
+              'safe_pairs_after': r['apply']['safe_pairs_after'],
+              'quarantined_rows': r['preflight']['quarantined_rows'],
+              'ambiguous_safe_prints_after': r['apply']['ambiguous_safe_prints_after'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Prove exact-link idempotence
+        run: |
+          python scripts/apply_cardmarket_identity_resolver_v1_exact_safe.py \
+            --proposed artifacts/cardmarket-identity-resolver-v1-live/proposed_print_links.csv \
+            --summary artifacts/cardmarket-identity-resolver-v1-live/summary.json \
+            --report artifacts/cardmarket-identity-resolver-v1-live/exact-apply-second-pass.json \
+            --apply
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/exact-apply-second-pass.json').read_text())
+          assert r['preflight']['write_ready'] is True, r
+          assert r['preflight']['candidate_links'] == 0, r
+          assert r['apply']['affected_rows'] == 0, r
+          assert r['apply']['safe_pairs_after'] == r['preflight']['safe_rows'], r
+          assert r['apply']['ambiguous_safe_prints_after'] == 0, r
+          assert r['apply']['applied_to_quarantined'] == 0, r
+          print(json.dumps(r, indent=2, sort_keys=True))
+          PY
+
+      - name: Sync current Cardmarket source-level Price Guides
+        run: |
+          mkdir -p artifacts/cardmarket-identity-resolver-v1-live/prices
+          for spec in \
+            'mtg artifacts/cardmarket-inputs/price_guide_1.json' \
+            'yugioh artifacts/cardmarket-inputs/price_guide_3.json' \
+            'pokemon artifacts/cardmarket-inputs/price_guide_6.json' \
+            'onepiece artifacts/cardmarket-inputs/price_guide_18.json'; do
+            set -- $spec
+            game="$1"; guide="$2"
+            python scripts/sync_cardmarket_external_prices.py "$guide" --game "$game" \
+              --report "artifacts/cardmarket-identity-resolver-v1-live/prices/${game}-external-preflight.json"
+            python scripts/sync_cardmarket_external_prices.py "$guide" --game "$game" --apply \
+              --report "artifacts/cardmarket-identity-resolver-v1-live/prices/${game}-external-apply.json"
+          done
+
+      - name: Project current prices through accepted exact links
+        run: |
+          for game in mtg yugioh pokemon onepiece; do
+            python scripts/project_cardmarket_link_prices.py --game "$game" \
+              --report "artifacts/cardmarket-identity-resolver-v1-live/prices/${game}-projection-preflight.json"
+            python scripts/project_cardmarket_link_prices.py --game "$game" --apply \
+              --report "artifacts/cardmarket-identity-resolver-v1-live/prices/${game}-projection-apply.json"
+          done
+
+      - name: Post-apply resolver recertification - READ ONLY
+        env:
+          PGOPTIONS: -c default_transaction_read_only=on
+        run: |
+          rm -rf artifacts/cardmarket-identity-resolver-v1-post
+          python scripts/audit_cardmarket_identity_resolver_v1.py \
+            --catalog mtg=artifacts/cardmarket-inputs/products_singles_1.json \
+            --catalog yugioh=artifacts/cardmarket-inputs/products_singles_3.json \
+            --catalog pokemon=artifacts/cardmarket-inputs/products_singles_6.json \
+            --catalog onepiece=artifacts/cardmarket-inputs/products_singles_18.json \
+            --price-guide mtg=artifacts/cardmarket-inputs/price_guide_1.json \
+            --price-guide yugioh=artifacts/cardmarket-inputs/price_guide_3.json \
+            --price-guide pokemon=artifacts/cardmarket-inputs/price_guide_6.json \
+            --price-guide onepiece=artifacts/cardmarket-inputs/price_guide_18.json \
+            --outdir artifacts/cardmarket-identity-resolver-v1-post
+
+      - name: Assert post-apply safety and material reduction
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          before = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-live/summary.json').read_text())
+          after = json.loads(Path('artifacts/cardmarket-identity-resolver-v1-post/summary.json').read_text())
+          assert after['status'] == 'pass', after
+          assert after['mode'] == 'READ_ONLY', after
+          assert after['transaction_read_only'] is True, after
+          assert after['production_writes'] == 0, after
+          assert after['forbidden_mismatches']['wrong_exact_gold_predictions'] == 0, after
+          assert after['forbidden_mismatches']['cross_game_resolver_writes'] == 0, after
+          assert after['pending_missing_current_cardmarket_price'] < before['pending_missing_current_cardmarket_price'], (before, after)
+          print(json.dumps({
+              'status': 'pass',
+              'pending_before': before['pending_missing_current_cardmarket_price'],
+              'pending_after': after['pending_missing_current_cardmarket_price'],
+              'reduced_by': before['pending_missing_current_cardmarket_price'] - after['pending_missing_current_cardmarket_price'],
+              'exact_pending_after': after['exact_resolvable_pending_print_rows'],
+              'high_confidence_review_after': after['high_confidence_review_pending_print_rows'],
+              'ambiguous_after': after['print_row_results'].get('AMBIGUOUS', 0),
+              'unmatched_after': after['print_row_results'].get('UNMATCHED', 0),
+          }, indent=2, sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-identity-resolver-v1-live-${{ github.run_id }}
+          path: |
+            backend/artifacts/cardmarket-identity-resolver-v1-live/
+            backend/artifacts/cardmarket-identity-resolver-v1-post/
+          retention-days: 90
+          if-no-files-found: warn

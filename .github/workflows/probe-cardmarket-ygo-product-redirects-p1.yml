@@ -1,0 +1,39 @@
+name: Probe Cardmarket YGO Product Redirects P1
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - '.github/workflows/probe-cardmarket-ygo-product-redirects-p1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests==2.33.0
+      - name: Probe bounded Cardmarket redirects
+        run: |
+          python - <<'PY'
+          import json, requests, time
+          ids=[101902,250185,101974,250186,102590,250187]
+          s=requests.Session()
+          s.headers.update({'User-Agent':'Mozilla/5.0 DontRipIt/1.0 (+https://dontripit.com)'})
+          out=[]
+          for pid in ids:
+              url=f'https://www.cardmarket.com/en/YuGiOh/Products?idProduct={pid}'
+              try:
+                  r=s.get(url,allow_redirects=False,timeout=15)
+                  out.append({'idProduct':pid,'status':r.status_code,'location':r.headers.get('Location'),'content_type':r.headers.get('Content-Type')})
+              except Exception as exc:
+                  out.append({'idProduct':pid,'error':type(exc).__name__+': '+str(exc)})
+              time.sleep(1.0)
+          print('CARDMARKET_REDIRECT_PROBE='+json.dumps(out,separators=(',',':')))
+          PY

@@ -1,0 +1,37 @@
+name: Audit YGO Cardmarket Exact Product Dimensions P1
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - '.github/workflows/audit-ygo-cardmarket-exact-product-dimensions-p1.yml'
+      - 'backend/scripts/audit_yugioh_cardmarket_exact_product_dimensions.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - working-directory: backend
+        run: python -m py_compile scripts/audit_yugioh_cardmarket_exact_product_dimensions.py
+      - working-directory: backend
+        run: python scripts/audit_yugioh_cardmarket_exact_product_dimensions.py --report /tmp/ygo-exact-product-dimensions.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-exact-product-dimensions-${{ github.run_id }}
+          path: /tmp/ygo-exact-product-dimensions.json
+          retention-days: 30
+          if-no-files-found: error

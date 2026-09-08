@@ -1,0 +1,94 @@
+name: Audit YGO Cardmarket Konami Bridge V4
+
+on:
+  push:
+    branches: [p1/cardmarket-identity-resolver-v1]
+    paths:
+      - 'backend/scripts/audit_yugioh_cardmarket_expansion_composition_v4.py'
+      - 'backend/scripts/certify_yugioh_cardmarket_expansion_composition_v4.py'
+      - 'backend/scripts/audit_yugioh_cardmarket_konami_bridge_v4.py'
+      - '.github/workflows/audit-ygo-cardmarket-konami-bridge-v4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Compile V4 resolver paths
+        working-directory: backend
+        run: >-
+          python -m py_compile
+          scripts/audit_yugioh_cardmarket_expansion_composition_v4.py
+          scripts/certify_yugioh_cardmarket_expansion_composition_v4.py
+          scripts/audit_yugioh_cardmarket_konami_bridge_v4.py
+
+      - name: Fresh composition calibration
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_expansion_composition_v4.py
+          --min-linked 5
+          --min-informative 5
+          --min-support 5
+          --min-evidence-coverage 0.25
+          --min-purity 0.95
+          --min-margin 3
+          --report /tmp/ygo-v4-composition-calibration.json
+
+      - name: Fresh fixed-profile expansion certification
+        working-directory: backend
+        run: >-
+          python scripts/certify_yugioh_cardmarket_expansion_composition_v4.py
+          /tmp/ygo-v4-composition-calibration.json
+          --report /tmp/ygo-v4-expansion-cert.json
+
+      - name: Read-only deterministic product resolver V4
+        working-directory: backend
+        run: >-
+          python scripts/audit_yugioh_cardmarket_konami_bridge_v4.py
+          /tmp/ygo-v4-expansion-cert.json
+          --report /tmp/ygo-v4-product-audit.json
+
+      - name: Assert V4 product certification safety
+        run: |
+          python - <<'PY'
+          import json
+          exp=json.load(open('/tmp/ygo-v4-expansion-cert.json'))['summary']
+          d=json.load(open('/tmp/ygo-v4-product-audit.json'))['summary']
+          assert exp['certification_passed'] is True, exp
+          assert exp['fixed_profile_gold_wrong'] == 0, exp
+          assert d['production_writes'] == 0, d
+          assert d['masked_backtest_predictable'] >= 100, d
+          assert d['masked_backtest_wrong'] == 0, d
+          assert d['masked_backtest_precision'] == 1.0, d
+          assert d['safe_candidate_external_products'] > 0, d
+          assert d['safe_candidate_link_rows'] >= d['safe_candidate_external_products'], d
+          assert d['certification_ready'] is True, d
+          print('YGO_KONAMI_BRIDGE_V4_CERT_GATE=PASS')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-cardmarket-konami-bridge-v4-${{ github.run_id }}
+          path: |
+            /tmp/ygo-v4-composition-calibration.json
+            /tmp/ygo-v4-expansion-cert.json
+            /tmp/ygo-v4-product-audit.json
+          retention-days: 90
+          if-no-files-found: error

@@ -1,0 +1,63 @@
+name: Audit YGO OCG Public Contract Inventory V5
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_public_contract_inventory_v5.py
+      - .github/workflows/audit-ygo-ocg-public-contract-inventory-v5.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile public contract inventory
+        run: python -m py_compile scripts/audit_yugioh_ocg_public_contract_inventory_v5.py
+
+      - name: Inventory public version contracts READ ONLY
+        env:
+          YGO_OCG_PUBLIC_CONTRACT_INVENTORY_V5_OUTPUT: /tmp/yugioh-ocg-public-contract-inventory-v5.json
+        run: python scripts/audit_yugioh_ocg_public_contract_inventory_v5.py
+
+      - name: Gate zero-write inventory
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-public-contract-inventory-v5.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert sum(v['rows'] for v in d['methods'].values())==101, d
+          print('YGO_OCG_PUBLIC_CONTRACT_INVENTORY_V5_GATE=PASS')
+          for method,value in d['methods'].items():
+              print(method, 'rows=', value['rows'], 'groups=', value['groups'], 'arities=', value['arity_distribution'])
+          PY
+
+      - name: Upload public contract inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-public-contract-inventory-v5-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-public-contract-inventory-v5.json
+          if-no-files-found: warn
+          retention-days: 90
