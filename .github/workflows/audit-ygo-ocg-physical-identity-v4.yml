@@ -1,0 +1,67 @@
+name: Audit YGO OCG Physical Identity V4
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_physical_identity_v4.py
+      - .github/workflows/audit-ygo-ocg-physical-identity-v4.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile aggregate certificate
+        run: python -m py_compile scripts/audit_yugioh_ocg_physical_identity_v4.py
+
+      - name: Aggregate current OCG physical identity READ ONLY
+        env:
+          YGO_OCG_PHYSICAL_IDENTITY_V4_OUTPUT: /tmp/yugioh-ocg-physical-identity-v4.json
+        run: python scripts/audit_yugioh_ocg_physical_identity_v4.py
+
+      - name: Gate aggregate certificate
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-physical-identity-v4.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert d['accepted_ygo']['exact_reviewed_ja_links']==6105, d
+          assert d['certified']['links']==3925, d
+          assert d['certified']['unique_products']==3925, d
+          assert d['certified']['unique_prints']==3925, d
+          assert d['remaining_unreproduced_exact_reviewed_ja']==2180, d
+          print('YGO_OCG_PHYSICAL_IDENTITY_V4_GATE=PASS')
+          print('coverage=', d['certified']['coverage_of_exact_reviewed_ja_pct'])
+          print('remaining_by_mapping_method=', d['remaining_by_mapping_method'])
+          PY
+
+      - name: Upload aggregate certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-physical-identity-v4-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-physical-identity-v4.json
+          if-no-files-found: warn
+          retention-days: 90
