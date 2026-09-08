@@ -1,0 +1,73 @@
+name: Audit YGO OCG Physical Identity V3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_physical_identity_v2.py
+      - backend/scripts/audit_yugioh_ocg_structural_replay_v4.py
+      - backend/scripts/audit_yugioh_ocg_physical_identity_v3.py
+      - .github/workflows/audit-ygo-ocg-physical-identity-v3.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile Physical Identity V3
+        run: python -m py_compile scripts/audit_yugioh_ocg_physical_identity_v3.py
+
+      - name: Aggregate YGO OCG Physical Identity READ ONLY
+        env:
+          YGO_OCG_PHYSICAL_IDENTITY_V3_OUTPUT: /tmp/yugioh-ocg-physical-identity-v3.json
+        run: python scripts/audit_yugioh_ocg_physical_identity_v3.py
+
+      - name: Gate global zero-write physical identity
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-physical-identity-v3.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert d['children']['physical_identity_v2']['status']=='PASS', d
+          assert d['children']['structural_replay_v4']['status']=='PASS', d
+          assert d['accepted_ygo']['exact_reviewed_ja_product_conflicts']==0, d
+          assert d['accepted_ygo']['exact_reviewed_ja_print_conflicts']==0, d
+          c=d['certified']
+          assert c['links']==c['unique_products']==c['unique_prints'], d
+          assert c['links']==c['expected_disjoint_union'], d
+          assert all(v['status']=='PASS' for v in c['methods'].values()), d
+          print('YGO_OCG_PHYSICAL_IDENTITY_V3_GATE=PASS')
+          print('CERTIFIED_LINKS=', c['links'])
+          print('COVERAGE_PCT=', c['coverage_of_exact_reviewed_ja_pct'])
+          print('REMAINING_UNREPRODUCED=', d['remaining_unreproduced_exact_reviewed_ja'])
+          PY
+
+      - name: Upload Physical Identity V3 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-physical-identity-v3-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-physical-identity-v3.json
+          if-no-files-found: warn
+          retention-days: 90
