@@ -1,16 +1,6 @@
 name: Overnight Physical Identity V2 - 108 Shards
 
 on:
-  push:
-    branches: [p0/physical-identity-ingest-v2]
-    paths:
-      - 'backend/app/physical_identity_v2.py'
-      - 'backend/app/identity_sources/**'
-      - 'backend/scripts/prepare_physical_identity_v2_shards.py'
-      - 'backend/scripts/run_physical_identity_v2_shard.py'
-      - 'backend/scripts/certify_physical_identity_v2_shards.py'
-      - 'backend/tests/test_*physical_identity_v2.py'
-      - '.github/workflows/overnight-physical-identity-v2-sharded.yml'
   workflow_dispatch:
 
 permissions:
