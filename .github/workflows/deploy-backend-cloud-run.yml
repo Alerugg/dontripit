@@ -29,11 +29,9 @@ jobs:
           RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
-          ADMIN_USER: ${{ secrets.ADMIN_CONSOLE_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_CONSOLE_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in PROJECT_ID WIF_PROVIDER DEPLOYER_SA RUNTIME_SA DATABASE_URL INTERNAL_API_KEY ADMIN_USER ADMIN_PASSWORD; do
+          for name in PROJECT_ID WIF_PROVIDER DEPLOYER_SA RUNTIME_SA DATABASE_URL INTERNAL_API_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub variable/secret: ${name}" >&2
               exit 1
@@ -68,8 +66,8 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
-          ADMIN_USER: ${{ secrets.ADMIN_CONSOLE_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_CONSOLE_PASSWORD }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
         run: |
@@ -83,9 +81,13 @@ jobs:
               "SOURCE_VERSION": os.environ["GITHUB_SHA"],
               "DATABASE_URL": os.environ["DATABASE_URL"],
               "INTERNAL_API_KEY": os.environ["INTERNAL_API_KEY"],
-              "ADMIN_CONSOLE_USERNAME": os.environ["ADMIN_USER"],
-              "ADMIN_CONSOLE_PASSWORD": os.environ["ADMIN_PASSWORD"],
               "PUBLIC_SITE_URL": "https://dontripit.com",
+              "PUBLIC_HUB_CATALOG_ENABLED": "true",
+              "PUBLIC_API_ENABLED": "true",
+              "PUBLIC_IP_RATE_LIMIT_RPM": "30",
+              "API_REQUEST_METRICS_DB_ENABLED": "false",
+              "ADMIN_TOKEN": os.environ.get("ADMIN_TOKEN", ""),
+              "ADMIN_API_KEY": os.environ.get("ADMIN_API_KEY", ""),
               "RESEND_API_KEY": os.environ.get("RESEND_API_KEY", ""),
               "AUTH_EMAIL_FROM": os.environ.get("AUTH_EMAIL_FROM", ""),
           }
