@@ -192,11 +192,20 @@ def main() -> int:
             legacy_exact[(game, product_id)].add(int(row["print_id"]))
 
     current_product_ids = {(game, pid) for game, items in products_by_game.items() for pid in items}
-    stale_direct_ids = sorted([
-        {"game": game, "product_id": product_id, "relationship": row["relationship"]}
-        for (game, product_id), row in direct_evidence.items()
-        if (game, product_id) not in current_product_ids
-    ], key=lambda x: (x["game"], int(x["product_id"]) if x["product_id"].isdigit() else x["product_id"]))
+    stale_direct_ids: list[dict] = []
+    cross_game_direct_ids: list[dict] = []
+    for (game, product_id), row in direct_evidence.items():
+        if (game, product_id) in current_product_ids:
+            continue
+        item = {"game": game, "product_id": product_id, "relationship": row["relationship"]}
+        current_owner = global_owner.get(product_id)
+        if current_owner and current_owner != game:
+            item["current_owner"] = current_owner
+            cross_game_direct_ids.append(item)
+        else:
+            stale_direct_ids.append(item)
+    stale_direct_ids.sort(key=lambda x: (x["game"], int(x["product_id"]) if x["product_id"].isdigit() else x["product_id"]))
+    cross_game_direct_ids.sort(key=lambda x: (x["game"], int(x["product_id"]) if x["product_id"].isdigit() else x["product_id"]))
 
     fingerprint_set_to_products: dict[tuple[str, tuple[str, ...]], list[str]] = defaultdict(list)
     for (game, product_id), row in direct_evidence.items():
@@ -239,7 +248,7 @@ def main() -> int:
                 reason = "certified_market_product_groups_multiple_physical_variants"
             elif direct:
                 classification = "AMBIGUOUS"
-                gate_bucket = "AMBIGUOUS"
+                gate_bucket = "V2_AMBIGUOUS"
                 reason = "invalid_or_conflicting_direct_v2_relationship"
             elif modern_prints:
                 classification = "EXACT_CANONICAL_PENDING_V2"
@@ -253,7 +262,7 @@ def main() -> int:
                 evidence_sources = ["legacy:print_identifier"]
             else:
                 classification = "UNRESOLVED"
-                gate_bucket = "UNRESOLVED"
+                gate_bucket = "V2_UNRESOLVED"
                 reason = "no_direct_v2_or_accepted_exact_evidence"
 
             if alias_peers:
@@ -266,7 +275,7 @@ def main() -> int:
                 price_counts[classification] += 1
                 price_counts[gate_bucket] += 1
 
-            if gate_bucket in {"AMBIGUOUS", "UNRESOLVED", "PROVISIONAL_ONLY"}:
+            if gate_bucket in {"V2_AMBIGUOUS", "V2_UNRESOLVED", "PROVISIONAL_ONLY"}:
                 expansion_gaps[(game, str(product.expansion_id or ""))][reason] += 1
 
             product_rows.append({
@@ -288,8 +297,8 @@ def main() -> int:
         total = len(current)
         direct_accounted = counts["DIRECT_V2_ACCOUNTED"]
         provisional_only = counts["PROVISIONAL_ONLY"]
-        ambiguous = counts["AMBIGUOUS"]
-        unresolved = counts["UNRESOLVED"]
+        ambiguous = counts["V2_AMBIGUOUS"]
+        unresolved = counts["V2_UNRESOLVED"]
         games_summary[game] = {
             "cardmarket_current_products": total,
             "direct_v2_accounted": direct_accounted,
@@ -300,7 +309,7 @@ def main() -> int:
             "ambiguous": ambiguous,
             "unresolved": unresolved,
             "alias_candidates_not_promoted": counts["alias_candidates"],
-            "classification_counts": {k: v for k, v in sorted(counts.items()) if k not in {"DIRECT_V2_ACCOUNTED","PROVISIONAL_ONLY","AMBIGUOUS","UNRESOLVED","alias_candidates"}},
+            "classification_counts": {k: v for k, v in sorted(counts.items()) if k not in {"DIRECT_V2_ACCOUNTED","PROVISIONAL_ONLY","V2_AMBIGUOUS","V2_UNRESOLVED","alias_candidates"}},
             "current_price_guide_products": len(priceable_by_game.get(game, set()) & set(current)),
             "direct_v2_accounted_with_current_price": price_counts["DIRECT_V2_ACCOUNTED"],
         }
@@ -325,7 +334,7 @@ def main() -> int:
     forbidden = {
         "duplicate_current_catalog_idProduct": len(duplicate_catalog_ids),
         "direct_v2_evidence_conflicts": len(evidence_conflicts),
-        "direct_v2_cross_game_or_stale_ids": len(stale_direct_ids),
+        "direct_v2_cross_game_ids": len(cross_game_direct_ids),
     }
 
     summary = {
@@ -346,7 +355,8 @@ def main() -> int:
             "unresolved": total_unresolved,
         },
         "forbidden_mismatches": forbidden,
-        "stale_direct_evidence_sample": stale_direct_ids[:100],
+        "stale_direct_evidence": {"count": len(stale_direct_ids), "sample": stale_direct_ids[:100]},
+        "cross_game_direct_evidence_sample": cross_game_direct_ids[:100],
         "price_guides": price_manifest,
     }
 
