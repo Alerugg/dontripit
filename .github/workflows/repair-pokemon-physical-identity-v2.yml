@@ -1,0 +1,148 @@
+name: Repair Pokemon Physical Identity V2 - 48 Shards
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - '.github/workflows/repair-pokemon-physical-identity-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physical-identity-v2-pokemon-repair-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+jobs:
+  validate:
+    name: Validate Pokemon identity repair
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Compile repaired adapter and shard runner
+        run: >-
+          python -m py_compile
+          app/identity_sources/tcgdex_pokemon_v2.py
+          scripts/run_physical_identity_v2_shard.py
+          scripts/prepare_physical_identity_v2_shards.py
+          scripts/certify_physical_identity_v2_shards.py
+        working-directory: backend
+      - name: Run Pokemon identity tests
+        run: pytest -q tests/test_physical_identity_v2.py tests/test_tcgdex_pokemon_physical_identity_v2.py
+        working-directory: backend
+
+  prepare:
+    name: Prepare Pokemon 48-way manifest
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Enumerate EN ES JA once and partition deterministically
+        run: python scripts/prepare_physical_identity_v2_shards.py --game pokemon --shard-count 48 --out-dir /tmp/manifests
+        working-directory: backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-repair-manifest-pokemon-${{ github.run_id }}
+          path: /tmp/manifests/pokemon
+          compression-level: 0
+          retention-days: 7
+
+  ingest:
+    name: Pokemon repair shard ${{ matrix.shard }}/48
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-repair-manifest-pokemon-${{ github.run_id }}
+          path: /tmp/manifest
+      - name: Fetch full TCGdex cards with bounded retries and unresolved 404 handling
+        run: >-
+          python scripts/run_physical_identity_v2_shard.py
+          --game pokemon
+          --shard-index ${{ matrix.shard }}
+          --shard-count 48
+          --manifest-root /tmp/manifest
+          --out-dir /tmp/result
+          --retry-passes 3
+          --pokemon-throttle-seconds 0.12
+        working-directory: backend
+      - name: Preserve shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-repair-shard-pokemon-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/result
+          if-no-files-found: warn
+          retention-days: 30
+
+  certify:
+    name: Certify Pokemon 48-shard repair
+    needs: ingest
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: mkdir -p /tmp/results /tmp/cert
+      - name: Download all Pokemon repair shard artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: identity-v2-repair-shard-pokemon-*-${{ github.run_id }}
+          path: /tmp/results
+          merge-multiple: false
+      - name: Reconcile Pokemon repair and fail on any loss or identity conflict
+        run: >-
+          python backend/scripts/certify_physical_identity_v2_shards.py
+          --results-root /tmp/results
+          --out-dir /tmp/cert
+          --expected-json '{"pokemon":48}'
+      - name: Upload Pokemon repair certification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: identity-v2-repair-cert-pokemon-${{ github.run_id }}
+          path: /tmp/cert
+          if-no-files-found: warn
+          retention-days: 90
