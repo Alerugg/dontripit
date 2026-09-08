@@ -50,6 +50,41 @@ def _treatment(*, subtype: str, foil: str) -> IdentityValue:
     return IdentityValue.known(*values) if values else IdentityValue.not_applicable()
 
 
+def _variant_source_key(
+    *,
+    variant_id: str,
+    variant_type: str,
+    subtype: str,
+    foil: str,
+    size: str,
+    stamps: tuple[str, ...],
+) -> str:
+    """Return a stable source-object key for one TCGdex physical variant.
+
+    TCGdex currently emits the opaque placeholder ``generated`` for multiple
+    distinct variants of the same card. Treating that placeholder as a unique
+    source id collapses normal/reverse/holo or edition/stamp variants into one
+    source key and creates false identity conflicts.
+
+    For real variant ids we preserve the upstream id. For ``generated`` we
+    derive a deterministic key only from physical variant facts that TCGdex
+    supplied. Marketplace ids are deliberately excluded from this identity key.
+    """
+    normalized_variant_id = normalize_token(variant_id)
+    if normalized_variant_id and normalized_variant_id != "generated":
+        return variant_id
+
+    normalized_stamps = sorted({normalize_token(value) for value in stamps if normalize_token(value)})
+    parts = (
+        f"type={normalize_token(variant_type) or 'unknown'}",
+        f"subtype={normalize_token(subtype) or 'none'}",
+        f"foil={normalize_token(foil) or 'none'}",
+        f"size={normalize_token(size) or 'unknown'}",
+        f"stamps={','.join(normalized_stamps) if normalized_stamps else 'none'}",
+    )
+    return "generated|" + "|".join(parts)
+
+
 def claims_from_card(card: dict, *, language: str = "en", region: str = "international") -> list[PokemonVariantClaim]:
     """Convert one full TCGdex Card response into physical variant claims.
 
@@ -85,14 +120,25 @@ def claims_from_card(card: dict, *, language: str = "en", region: str = "interna
         third_party = variant.get("thirdParty") or {}
         cm_id = str(third_party.get("cardmarket") or "").strip() if isinstance(third_party, dict) else ""
         tcgplayer_id = str(third_party.get("tcgplayer") or "").strip() if isinstance(third_party, dict) else ""
+        variant_source_key = _variant_source_key(
+            variant_id=variant_id,
+            variant_type=variant_type,
+            subtype=subtype,
+            foil=foil,
+            size=size,
+            stamps=stamps,
+        )
+        generated_variant = normalize_token(variant_id) == "generated"
 
         descriptor = PhysicalIdentityDescriptor(
             game="pokemon",
             source="tcgdex",
             # TCGdex card/variant ids can collide across locale catalogs (notably JA).
             # Qualify the source object so shard/global certification cannot merge
-            # different regional physical objects merely because the opaque ids match.
-            source_print_id=f"{language}:{region}:{card_id}:{variant_id}",
+            # different regional physical objects merely because opaque ids match.
+            # The placeholder variantId="generated" is not unique, so its source
+            # key is derived from supplied physical facts instead.
+            source_print_id=f"{language}:{region}:{card_id}:{variant_source_key}",
             card_concept=name,
             release=release_id,
             collector_number=IdentityValue.known(local_id),
@@ -102,7 +148,10 @@ def claims_from_card(card: dict, *, language: str = "en", region: str = "interna
             # TCGdex variant type is physical finish family: normal/reverse/holo.
             finish=IdentityValue.known(variant_type),
             edition=_edition(subtype=subtype, stamps=stamps),
-            version=IdentityValue.known(variant_id),
+            # "generated" is an upstream placeholder, not evidence for a physical
+            # version such as V.1/V.2. Preserve real ids as existing evidence but
+            # never invent a version dimension from that placeholder.
+            version=IdentityValue.unknown() if generated_variant else IdentityValue.known(variant_id),
             stamp=_stamps_without_edition(stamps),
             treatment=_treatment(subtype=subtype, foil=foil),
             artwork=IdentityValue.unknown(),
@@ -113,6 +162,7 @@ def claims_from_card(card: dict, *, language: str = "en", region: str = "interna
             source_facts={
                 "tcgdex_card_id": card_id,
                 "tcgdex_variant_id": variant_id,
+                "tcgdex_variant_source_key": variant_source_key,
                 "language": language,
                 "region": region,
                 "variant_type": variant_type,
@@ -147,7 +197,7 @@ def classify_cardmarket_claims(claims: Iterable[PokemonVariantClaim]) -> list[Ma
         if not claim.cardmarket_id:
             continue
         fp = claim.descriptor.fingerprint()
-        by_cardmarket[claim.cardmarket_id][fp].add(claim.variant_id)
+        by_cardmarket[claim.cardmarket_id][fp].add(claim.descriptor.source_print_id)
 
     evidence: list[MarketIdentityEvidence] = []
     for cm_id, fingerprints in sorted(by_cardmarket.items(), key=lambda item: int(item[0]) if item[0].isdigit() else item[0]):
@@ -160,7 +210,7 @@ def classify_cardmarket_claims(claims: Iterable[PokemonVariantClaim]) -> list[Ma
         reason = (
             "TCGdex variants_detailed supplies direct thirdParty.cardmarket for one physical variant"
             if relationship == MarketRelationship.EXACT_ONE_PHYSICAL
-            else "TCGdex variants_detailed assigns one Cardmarket idProduct to multiple distinct physical variantIds"
+            else "TCGdex variants_detailed assigns one Cardmarket idProduct to multiple distinct physical variants"
         )
         evidence.append(
             MarketIdentityEvidence(
