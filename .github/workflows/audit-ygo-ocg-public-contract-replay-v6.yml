@@ -1,0 +1,70 @@
+name: Audit YGO OCG Public Contract Replay V6
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_public_contract_replay_v6.py
+      - .github/workflows/audit-ygo-ocg-public-contract-replay-v6.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile independent public contract replay
+        run: python -m py_compile scripts/audit_yugioh_ocg_public_contract_replay_v6.py
+
+      - name: Replay public contracts READ ONLY
+        env:
+          YGO_OCG_PUBLIC_CONTRACT_REPLAY_V6_OUTPUT: /tmp/yugioh-ocg-public-contract-replay-v6.json
+        run: python scripts/audit_yugioh_ocg_public_contract_replay_v6.py
+
+      - name: Gate independent replay
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-public-contract-replay-v6.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert d['expected_rows']==101, d
+          assert d['independently_replayed_rows']==101, d
+          assert d['unique_idProducts']==101, d
+          assert d['unique_prints']==101, d
+          assert d['product_to_print_conflicts']==0, d
+          assert d['print_to_product_conflicts']==0, d
+          assert d['contract']['historical_pair_used_for_derivation'] is False, d
+          assert d['contract']['historical_pair_compared_only_after_derivation'] is True, d
+          print('YGO_OCG_PUBLIC_CONTRACT_REPLAY_V6_GATE=PASS')
+          for method,value in d['methods'].items():
+              print(method, value)
+          PY
+
+      - name: Upload replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-public-contract-replay-v6-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-public-contract-replay-v6.json
+          if-no-files-found: warn
+          retention-days: 90
