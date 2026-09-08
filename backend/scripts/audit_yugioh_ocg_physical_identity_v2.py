@@ -20,6 +20,25 @@ def _db_url() -> str:
     return url
 
 
+def _conflicts(rows: list[dict]) -> tuple[dict, dict]:
+    by_product = defaultdict(list)
+    by_print = defaultdict(list)
+    for r in rows:
+        by_product[int(r["external_product_id"])].append(r)
+        by_print[int(r["print_id"])].append(r)
+    product_conflicts = {
+        pid: vals
+        for pid, vals in by_product.items()
+        if len({int(x["print_id"]) for x in vals}) > 1
+    }
+    print_conflicts = {
+        pid: vals
+        for pid, vals in by_print.items()
+        if len({int(x["external_product_id"]) for x in vals}) > 1
+    }
+    return product_conflicts, print_conflicts
+
+
 def _current_state() -> dict:
     conn = psycopg2.connect(
         _db_url(),
@@ -34,7 +53,6 @@ def _current_state() -> dict:
             if not row:
                 raise RuntimeError("Yu-Gi-Oh game missing")
             gid = int(row["id"])
-
             cur.execute(
                 "SELECT max(last_seen_at) capture FROM external_catalog_products "
                 "WHERE source='cardmarket' AND game_id=%s AND product_group='single'",
@@ -43,7 +61,6 @@ def _current_state() -> dict:
             capture = cur.fetchone()["capture"]
             if capture is None:
                 raise RuntimeError("Cardmarket YGO capture missing")
-
             cur.execute(
                 """
                 SELECT l.mapping_method,l.confidence,l.reviewed,l.link_status,
@@ -65,32 +82,22 @@ def _current_state() -> dict:
     finally:
         conn.close()
 
-    by_product = defaultdict(list)
-    by_print = defaultdict(list)
-    for r in links:
-        by_product[int(r["external_product_id"])].append(r)
-        by_print[int(r["print_id"])].append(r)
-
-    product_conflicts = {
-        pid: rows
-        for pid, rows in by_product.items()
-        if len({int(x["print_id"]) for x in rows}) > 1
-    }
-    print_conflicts = {
-        pid: rows
-        for pid, rows in by_print.items()
-        if len({int(x["external_product_id"]) for x in rows}) > 1
-    }
-
     ja = [r for r in links if str(r.get("language") or "").lower() == "ja"]
     exact_reviewed_ja = [
         r
         for r in ja
         if str(r.get("confidence") or "") == "exact" and bool(r.get("reviewed"))
     ]
+
+    # Cardmarket idProduct is intentionally market-grouped across canonical
+    # language Prints. Multi-print products in the all-language graph are not
+    # physical conflicts. The V2 gate is scoped to the exact JA/OCG surface,
+    # where one market product must identify at most one Japanese physical Print.
+    all_market_group_product_conflicts, _ = _conflicts(links)
+    product_conflicts, print_conflicts = _conflicts(exact_reviewed_ja)
+
     methods = Counter(str(r.get("mapping_method") or "") for r in exact_reviewed_ja)
     current_ja = sum(r.get("last_seen_at") == capture for r in exact_reviewed_ja)
-
     return {
         "gid": gid,
         "capture": capture,
@@ -99,6 +106,7 @@ def _current_state() -> dict:
         "method_counts": methods,
         "product_conflicts": product_conflicts,
         "print_conflicts": print_conflicts,
+        "all_market_group_multi_print_products": len(all_market_group_product_conflicts),
         "current_exact_reviewed_ja": current_ja,
     }
 
@@ -114,7 +122,6 @@ def _safe_error(exc: BaseException) -> dict:
 
 def _replay_full_bijection(current_capture: str) -> dict:
     from app.scripts import apply_yugioh_ocg_full_bijection_cohort_v2 as mod
-
     old_capture = mod.v1.EXPECTED_CAPTURE
     try:
         mod.v1.EXPECTED_CAPTURE = current_capture
@@ -126,7 +133,6 @@ def _replay_full_bijection(current_capture: str) -> dict:
 
 def _replay_singleton_heavy_v1(current_capture: str) -> dict:
     from app.scripts import apply_yugioh_ocg_singleton_heavy_cohort_v1 as mod
-
     old_capture = mod.EXPECTED_CAPTURE
     try:
         mod.EXPECTED_CAPTURE = current_capture
@@ -137,10 +143,7 @@ def _replay_singleton_heavy_v1(current_capture: str) -> dict:
 
 
 def _replay_singleton_heavy_v2(current_capture: str) -> dict:
-    # Importing the v2 wrapper intentionally configures the shared v1 engine
-    # with the separately frozen V2 target geometry/hash.
     from app.scripts import apply_yugioh_ocg_next_singleton_heavy_cohort223_v2 as wrapper
-
     mod = wrapper.base
     old_capture = mod.EXPECTED_CAPTURE
     try:
@@ -188,9 +191,7 @@ def _run_replays(current_capture: str) -> list[dict]:
                     "basis": basis,
                     "mapping_method": str(report.get("mapping_method") or ""),
                     "certified_pairs": int(report.get("certified_pairs") or 0),
-                    "already_accepted_same_pair": int(
-                        report.get("already_accepted_same_pair") or 0
-                    ),
+                    "already_accepted_same_pair": int(report.get("already_accepted_same_pair") or 0),
                     "new_links_ready": int(report.get("new_links_ready") or 0),
                     "production_writes": int(report.get("production_writes") or 0),
                     "stable_identity_sha256": report.get("stable_identity_sha256"),
@@ -198,7 +199,7 @@ def _run_replays(current_capture: str) -> list[dict]:
                     "sets": report.get("sets", []),
                 }
             )
-        except Exception as exc:  # audit must preserve failed evidence, not hide it
+        except Exception as exc:
             results.append(
                 {
                     "cohort": name,
@@ -216,7 +217,6 @@ def main() -> int:
     state = _current_state()
     capture = str(state["capture"])
     replays = _run_replays(capture)
-
     certified_methods = {
         r["mapping_method"]: int(r["certified_pairs"])
         for r in replays
@@ -225,9 +225,9 @@ def main() -> int:
 
     failures = []
     if state["product_conflicts"]:
-        failures.append("accepted_cardmarket_product_maps_to_multiple_prints")
+        failures.append("exact_reviewed_ja_product_maps_to_multiple_prints")
     if state["print_conflicts"]:
-        failures.append("accepted_print_maps_to_multiple_cardmarket_products")
+        failures.append("exact_reviewed_ja_print_maps_to_multiple_products")
 
     certified_rows = []
     method_validation = {}
@@ -261,11 +261,8 @@ def main() -> int:
         failures.append("cross_cohort_identity_collision")
 
     unreproduced_methods = {
-        k: v
-        for k, v in state["method_counts"].most_common()
-        if k not in certified_methods
+        k: v for k, v in state["method_counts"].most_common() if k not in certified_methods
     }
-
     report = {
         "status": "PASS" if not failures else "FAIL",
         "mode": "read_only",
@@ -274,15 +271,17 @@ def main() -> int:
         "cardmarket_capture": capture,
         "contract": {
             "region_policy": "JP/OCG remains physically distinct; no JP<->EN collector-code aliasing",
+            "market_group_policy": "Cardmarket idProduct may span canonical language Prints; conflicts are evaluated inside the exact JA physical surface",
             "promotion_policy": "only cohorts replaying current source geometry with frozen identity hashes count as Physical Identity V2",
             "writes_allowed": False,
         },
         "accepted_ygo": {
             "all_accepted_links": len(state["links"]),
+            "all_language_market_group_multi_print_products": state["all_market_group_multi_print_products"],
             "exact_reviewed_ja_links": len(state["exact_reviewed_ja"]),
             "exact_reviewed_ja_current_catalog": state["current_exact_reviewed_ja"],
-            "accepted_product_conflicts": len(state["product_conflicts"]),
-            "accepted_print_conflicts": len(state["print_conflicts"]),
+            "exact_reviewed_ja_product_conflicts": len(state["product_conflicts"]),
+            "exact_reviewed_ja_print_conflicts": len(state["print_conflicts"]),
         },
         "replays": replays,
         "replayed_certified": {
@@ -295,19 +294,9 @@ def main() -> int:
         "all_exact_reviewed_ja_method_counts": dict(state["method_counts"].most_common()),
         "failures": failures,
     }
-
-    out = Path(
-        os.getenv(
-            "YGO_OCG_PHYSICAL_IDENTITY_V2_OUTPUT",
-            "/tmp/yugioh-ocg-physical-identity-v2.json",
-        )
-    )
+    out = Path(os.getenv("YGO_OCG_PHYSICAL_IDENTITY_V2_OUTPUT", "/tmp/yugioh-ocg-physical-identity-v2.json"))
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-        + "\n",
-        encoding="utf-8",
-    )
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, default=str))
     return 0 if not failures else 2
 
