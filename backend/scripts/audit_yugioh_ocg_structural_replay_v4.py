@@ -21,6 +21,7 @@ EXPECTED_TOTALS = {
     "cardmarket_ocg_certified_public_code_singleton_v1": 219,
     "cardmarket_ocg_certified_public_code_singleton_v2": 168,
 }
+SINGLETON_SUBSET_METHOD = "cardmarket_ocg_certified_public_code_singleton_v2"
 
 
 def _norm(value: str | None) -> str:
@@ -150,11 +151,6 @@ def main() -> int:
                     product_names = Counter(_norm(r.get("name")) for r in products)
                     print_names = Counter(_norm(r.get("card_name")) for r in prints)
                     names_equal = product_names == print_names
-                    complete_geometry = (
-                        len(products) == historical_count
-                        and len(prints) == historical_count
-                        and names_equal
-                    )
 
                     products_by_meta: dict[str, list[dict]] = defaultdict(list)
                     prints_by_card: dict[int, list[dict]] = defaultdict(list)
@@ -210,9 +206,31 @@ def main() -> int:
                         and str(r.get("expansion_external_id") or "") == expansion_id
                     }
                     intersection = set_pairs & historical_set_pairs
+
+                    if method == SINGLETON_SUBSET_METHOD:
+                        remainder = len(products) - historical_count
+                        subset_geometry = (
+                            names_equal
+                            and len(products) == len(prints)
+                            and remainder >= 0
+                            and len(set_pairs) == historical_count
+                            and set(unresolved) <= {"non_singleton_product_metacard"}
+                            and int(unresolved.get("non_singleton_product_metacard", 0)) == remainder
+                        )
+                        geometry_ok = subset_geometry
+                        surface_mode = "singleton_subset_of_complete_multiversion_surface"
+                    else:
+                        geometry_ok = (
+                            len(products) == historical_count
+                            and len(prints) == historical_count
+                            and names_equal
+                        )
+                        remainder = 0
+                        surface_mode = "complete_surface_bijection"
+
                     set_status = (
                         "CERTIFIED"
-                        if complete_geometry and one_to_one
+                        if geometry_ok and one_to_one
                         and len(set_pairs) == historical_count
                         and set_pairs == historical_set_pairs
                         else "REJECTED"
@@ -223,9 +241,11 @@ def main() -> int:
                         {
                             "set_code": set_code,
                             "idExpansion": expansion_id,
+                            "surface_mode": surface_mode,
                             "historical_pairs": historical_count,
                             "current_products": len(products),
                             "canonical_ja_prints": len(prints),
+                            "excluded_multiversion_products": remainder,
                             "name_multiset_equal": names_equal,
                             "independently_rederived_pairs": len(set_pairs),
                             "same_historical_pairs": len(intersection),
@@ -272,7 +292,9 @@ def main() -> int:
             "historical_method_is_cohort_locator_only": True,
             "target_method_rows_excluded_from_metacard_support": True,
             "current_product_and_canonical_name_multisets_must_match_exactly": True,
-            "product_metacard_must_be_singleton_inside_expansion": True,
+            "complete_surface_methods_require_full_bijection": True,
+            "public_code_singleton_v2_requires_complete_name_surface_and_excludes_only_non_singleton_metacards": True,
+            "product_metacard_must_be_singleton_for_certified_subset": True,
             "resolved_card_must_have_one_exact_JA_print_inside_set": True,
             "strict_name_match": True,
             "global_one_to_one": True,
