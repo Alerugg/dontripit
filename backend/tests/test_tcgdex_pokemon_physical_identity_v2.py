@@ -105,3 +105,41 @@ def test_foil_treatment_is_not_collapsed_into_variant_type():
     claim = claims_from_card(card)[0]
     assert claim.descriptor.finish.values == ("normal",)
     assert claim.descriptor.treatment.values == ("galaxy",)
+
+
+def test_generated_variant_ids_are_disambiguated_by_physical_signature():
+    card = {
+        "id": "swsh1-34",
+        "localId": "34",
+        "name": "Example Generated Variant",
+        "rarity": "Rare",
+        "set": {"id": "swsh1", "name": "Sword & Shield"},
+        "variants_detailed": [
+            {
+                "type": "normal",
+                "size": "standard",
+                "variantId": "generated",
+                "thirdParty": {"cardmarket": 1001},
+            },
+            {
+                "type": "reverse",
+                "size": "standard",
+                "variantId": "generated",
+                "thirdParty": {"cardmarket": 1001},
+            },
+        ],
+    }
+    claims = claims_from_card(card)
+    assert len(claims) == 2
+    first, second = claims
+    assert first.descriptor.source_print_id != second.descriptor.source_print_id
+    assert "generated|type=normal" in first.descriptor.source_print_id
+    assert "generated|type=reverse" in second.descriptor.source_print_id
+    assert first.descriptor.version.state is KnowledgeState.UNKNOWN
+    assert second.descriptor.version.state is KnowledgeState.UNKNOWN
+    assert first.descriptor.fingerprint() != second.descriptor.fingerprint()
+
+    evidence = classify_cardmarket_claims(claims)
+    assert len(evidence) == 1
+    assert evidence[0].relationship is MarketRelationship.GROUPED_PHYSICAL
+    assert len(evidence[0].physical_fingerprints) == 2
