@@ -230,6 +230,7 @@ def main() -> int:
         "production_writes": 0,
         "expected_shards": args.expected_shards,
         "descriptor_shard_files": len(descriptor_files),
+        "yugioh_shadow_descriptor_files": len(descriptor_files),
         "input_complete": input_complete,
         "yugioh_shadow_descriptors": len(descriptors),
         "canonical_prints": len(print_rows),
