@@ -334,7 +334,10 @@ def main() -> int:
     forbidden = {
         "duplicate_current_catalog_idProduct": len(duplicate_catalog_ids),
         "direct_v2_evidence_conflicts": len(evidence_conflicts),
-        "direct_v2_cross_game_ids": len(cross_game_direct_ids),
+    }
+    warnings = {
+        "stale_direct_evidence_ids": len(stale_direct_ids),
+        "quarantined_source_id_reused_by_other_current_game": len(cross_game_direct_ids),
     }
 
     summary = {
@@ -355,6 +358,7 @@ def main() -> int:
             "unresolved": total_unresolved,
         },
         "forbidden_mismatches": forbidden,
+        "warnings": warnings,
         "stale_direct_evidence": {"count": len(stale_direct_ids), "sample": stale_direct_ids[:100]},
         "cross_game_direct_evidence_sample": cross_game_direct_ids[:100],
         "price_guides": price_manifest,
