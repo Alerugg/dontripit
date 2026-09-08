@@ -20,6 +20,10 @@ from app.physical_identity_v2 import PhysicalIdentityDescriptor
 USER_AGENT = "DontRipIt-PhysicalIdentityV2/1.0 (+https://github.com/Alerugg/dontripit)"
 
 
+class UnresolvedSourceData(RuntimeError):
+    """Source explicitly says an object is unavailable; do not retry as transport failure."""
+
+
 def _find_manifest(root: Path, shard_index: int, shard_count: int) -> Path:
     name = f"shard-{shard_index:05d}-of-{shard_count:05d}.ndjson.gz"
     matches = list(root.rglob(name))
@@ -76,6 +80,8 @@ def _request_json(session: requests.Session, url: str, *, attempts: int = 5) -> 
     for attempt in range(1, attempts + 1):
         try:
             response = session.get(url, timeout=45)
+            if response.status_code in {404, 410}:
+                raise UnresolvedSourceData(f"source object unavailable HTTP {response.status_code}: {url}")
             if response.status_code in retry_status:
                 raise requests.HTTPError(f"retryable HTTP {response.status_code}", response=response)
             response.raise_for_status()
@@ -83,6 +89,8 @@ def _request_json(session: requests.Session, url: str, *, attempts: int = 5) -> 
             if not isinstance(payload, dict):
                 raise RuntimeError(f"Expected object JSON from {url}, got {type(payload).__name__}")
             return payload
+        except UnresolvedSourceData:
+            raise
         except (requests.RequestException, ValueError, RuntimeError) as exc:
             last_error = exc
             if attempt >= attempts:
@@ -126,7 +134,7 @@ def _pokemon_object(row: dict, session: requests.Session) -> tuple[list, list[di
                     external_product_id=claim.cardmarket_id,
                     fingerprint=claim.descriptor.fingerprint(),
                     source="tcgdex:variants_detailed",
-                    source_object_id=claim.variant_id,
+                    source_object_id=claim.descriptor.source_print_id,
                 )
             )
     return claims, market, None
@@ -168,6 +176,17 @@ def _unresolved_local(game: str, row: dict) -> dict:
         "source": source,
         "game": game,
         "source_object": row,
+    }
+
+
+def _unresolved_unavailable_source(game: str, row: dict, exc: UnresolvedSourceData) -> dict:
+    return {
+        "type": "unresolved_source_data",
+        "reason": "source_object_not_found_or_gone",
+        "source": "tcgdex" if game == "pokemon" else game,
+        "game": game,
+        "source_object": row,
+        "detail": str(exc),
     }
 
 
@@ -276,6 +295,12 @@ def main() -> int:
                         direct_market_ids.add(str(market_claim["external_product_id"]))
                         market_claim_count += 1
 
+                    completed_objects += 1
+                except UnresolvedSourceData as exc:
+                    unresolved = _unresolved_unavailable_source(args.game, row, exc)
+                    unresolved.update({"row_index": row_index, "shard_index": args.shard_index})
+                    unresolved_file.write(json.dumps(unresolved, ensure_ascii=False, separators=(",", ":"), default=str) + "\n")
+                    unresolved_objects += 1
                     completed_objects += 1
                 except Exception as exc:  # technical/source transport errors retry; source incompleteness does not
                     failure = {
