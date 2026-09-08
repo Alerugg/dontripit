@@ -41,7 +41,64 @@ jobs:
         run: python -m py_compile scripts/audit_yugioh_physical_identity_corroboration_v2.py
         working-directory: backend
 
-      - name: Download all certified YGO shadow shard evidence
+      # The source run has >100 artifacts. actions/download-artifact's pattern lookup
+      # only returns the first artifacts page, which omitted YGO shards 0-5. Fetch
+      # those six exact names explicitly, then fetch the visible 6-23 set by pattern.
+      - name: Download YGO shard 0
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-0-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-0-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shard 1
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-1-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-1-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shard 2
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-2-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-2-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shard 3
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-3-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-3-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shard 4
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-4-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-4-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shard 5
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-shard-yugioh-5-34169156875
+          path: /tmp/ygo-shards/identity-v2-shard-yugioh-5-34169156875
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download YGO shards 6-23 from visible artifact page
         uses: actions/download-artifact@v4
         with:
           pattern: identity-v2-shard-yugioh-*-34169156875
@@ -50,6 +107,30 @@ jobs:
           github-token: ${{ github.token }}
           repository: Alerugg/dontripit
           run-id: 34169156875
+
+      - name: Assert complete 24-shard YGO evidence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path('/tmp/ygo-shards')
+          files = sorted(root.rglob('descriptors.ndjson'))
+          print('descriptor_files', len(files))
+          for path in files:
+              print(path)
+          assert len(files) == 24, f'expected 24 YGO descriptor shards, found {len(files)}'
+
+          expected = {
+              f'identity-v2-shard-yugioh-{i}-34169156875'
+              for i in range(24)
+          }
+          found = {
+              path.parent.name
+              for path in files
+          }
+          missing = sorted(expected - found)
+          assert not missing, f'missing YGO shards: {missing}'
+          PY
 
       - name: Download current official Cardmarket YGO universe
         run: |
@@ -86,7 +167,7 @@ jobs:
             --outdir artifacts/yugioh-physical-identity-corroboration-v2
         working-directory: backend
 
-      - name: Assert read-only safety
+      - name: Assert read-only safety and useful corroboration result
         if: always()
         run: |
           python - <<'PY'
@@ -98,6 +179,9 @@ jobs:
               assert s['mode'] == 'READ_ONLY'
               assert s['transaction_read_only'] is True
               assert s['production_writes'] == 0
+              assert s['yugioh_shadow_descriptor_files'] == 24
+              assert s['yugioh_shadow_descriptors'] > 0
+              assert s['descriptor_status_counts'].get('NO_CANONICAL_MATCH', 0) < s['yugioh_shadow_descriptors']
               print(json.dumps(s, indent=2, sort_keys=True))
           PY
         working-directory: backend
