@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import inspect
 import json
 import os
 import traceback
@@ -26,23 +28,15 @@ def _conflicts(rows: list[dict]) -> tuple[dict, dict]:
     for r in rows:
         by_product[int(r["external_product_id"])].append(r)
         by_print[int(r["print_id"])].append(r)
-    product_conflicts = {
-        pid: vals
-        for pid, vals in by_product.items()
-        if len({int(x["print_id"]) for x in vals}) > 1
-    }
-    print_conflicts = {
-        pid: vals
-        for pid, vals in by_print.items()
-        if len({int(x["external_product_id"]) for x in vals}) > 1
-    }
-    return product_conflicts, print_conflicts
+    return (
+        {k: v for k, v in by_product.items() if len({int(x["print_id"]) for x in v}) > 1},
+        {k: v for k, v in by_print.items() if len({int(x["external_product_id"]) for x in v}) > 1},
+    )
 
 
 def _current_state() -> dict:
     conn = psycopg2.connect(
-        _db_url(),
-        connect_timeout=30,
+        _db_url(), connect_timeout=30,
         application_name="dontripit_ygo_ocg_physical_identity_v2",
     )
     conn.set_session(readonly=True, autocommit=False)
@@ -84,18 +78,11 @@ def _current_state() -> dict:
 
     ja = [r for r in links if str(r.get("language") or "").lower() == "ja"]
     exact_reviewed_ja = [
-        r
-        for r in ja
+        r for r in ja
         if str(r.get("confidence") or "") == "exact" and bool(r.get("reviewed"))
     ]
-
-    # Cardmarket idProduct is intentionally market-grouped across canonical
-    # language Prints. Multi-print products in the all-language graph are not
-    # physical conflicts. The V2 gate is scoped to the exact JA/OCG surface,
-    # where one market product must identify at most one Japanese physical Print.
     all_market_group_product_conflicts, _ = _conflicts(links)
     product_conflicts, print_conflicts = _conflicts(exact_reviewed_ja)
-
     methods = Counter(str(r.get("mapping_method") or "") for r in exact_reviewed_ja)
     current_ja = sum(r.get("last_seen_at") == capture for r in exact_reviewed_ja)
     return {
@@ -120,15 +107,42 @@ def _safe_error(exc: BaseException) -> dict:
     }
 
 
+def _normalize_report(name: str, basis: str, report: dict) -> dict:
+    certified = int(report.get("certified_pairs") or report.get("expected_total") or 0)
+    existing = int(report.get("already_accepted_same_pair") or 0)
+    new = int(report.get("new_links_ready") or 0)
+    ok = (
+        report.get("status") == "pass"
+        and int(report.get("production_writes") or 0) == 0
+        and certified > 0
+        and existing == certified
+        and new == 0
+    )
+    return {
+        "cohort": name,
+        "status": "CERTIFIED" if ok else "REJECTED",
+        "basis": basis,
+        "mapping_method": str(report.get("mapping_method") or ""),
+        "certified_pairs": certified if ok else 0,
+        "observed_pairs": certified,
+        "already_accepted_same_pair": existing,
+        "new_links_ready": new,
+        "production_writes": int(report.get("production_writes") or 0),
+        "stable_identity_sha256": report.get("stable_identity_sha256"),
+        "frozen_proposal_sha256": report.get("frozen_proposal_sha256"),
+        "cardmarket_capture": report.get("cardmarket_capture"),
+        "sets": report.get("sets", []),
+    }
+
+
 def _replay_full_bijection(current_capture: str) -> dict:
     from app.scripts import apply_yugioh_ocg_full_bijection_cohort_v2 as mod
     old_capture = mod.v1.EXPECTED_CAPTURE
     try:
         mod.v1.EXPECTED_CAPTURE = current_capture
-        report = mod.run(False, "")
+        return mod.run(False, "")
     finally:
         mod.v1.EXPECTED_CAPTURE = old_capture
-    return report
 
 
 def _replay_singleton_heavy_v1(current_capture: str) -> dict:
@@ -136,10 +150,9 @@ def _replay_singleton_heavy_v1(current_capture: str) -> dict:
     old_capture = mod.EXPECTED_CAPTURE
     try:
         mod.EXPECTED_CAPTURE = current_capture
-        report = mod.run(False, "")
+        return mod.run(False, "")
     finally:
         mod.EXPECTED_CAPTURE = old_capture
-    return report
 
 
 def _replay_singleton_heavy_v2(current_capture: str) -> dict:
@@ -148,68 +161,52 @@ def _replay_singleton_heavy_v2(current_capture: str) -> dict:
     old_capture = mod.EXPECTED_CAPTURE
     try:
         mod.EXPECTED_CAPTURE = current_capture
-        report = mod.run(False, "")
+        return mod.run(False, "")
     finally:
         mod.EXPECTED_CAPTURE = old_capture
-    return report
+
+
+def _replay_current_module(module_name: str) -> dict:
+    mod = importlib.import_module(module_name)
+    sig = inspect.signature(mod.run)
+    kwargs = {"apply": False}
+    if "confirm" in sig.parameters:
+        kwargs["confirm"] = ""
+    return mod.run(**kwargs)
 
 
 def _run_replays(current_capture: str) -> list[dict]:
     runners = [
-        (
-            "full_logical_bijection_715",
-            _replay_full_bijection,
-            "full-current-catalog physical/logical bijection + unique metacard bridge + frozen identity hash",
-        ),
-        (
-            "singleton_heavy_445",
-            _replay_singleton_heavy_v1,
-            "full physical multiplicity bijection; only 1-product/1-print groups promoted; frozen identity hash",
-        ),
-        (
-            "singleton_heavy_v2_223",
-            _replay_singleton_heavy_v2,
-            "separate frozen singleton-heavy cohort using the same full physical bijection contract",
-        ),
+        ("full_logical_bijection_715", lambda: _replay_full_bijection(current_capture),
+         "current catalog full logical/physical bijection + unique metacard bridge + frozen identity hash"),
+        ("singleton_heavy_445", lambda: _replay_singleton_heavy_v1(current_capture),
+         "full physical multiplicity bijection; singleton products only; frozen identity hash"),
+        ("singleton_heavy_v2_223", lambda: _replay_singleton_heavy_v2(current_capture),
+         "second frozen singleton-heavy geometry; later variant claims are not auto-trusted"),
     ]
+    for version in range(1, 7):
+        runners.append((
+            f"certified_unique_physical_v{version + 2}",
+            lambda version=version: _replay_current_module(
+                f"app.scripts.apply_yugioh_ocg_certified_singletons_v{version}"
+            ),
+            "current OCG regional expansion surface + certified Cardmarket region/image evidence + unique product/metacard + one canonical JA physical print + strict name + one-to-one",
+        ))
+
     results = []
     for name, runner, basis in runners:
         try:
-            report = runner(current_capture)
-            ok = (
-                report.get("status") == "pass"
-                and int(report.get("production_writes") or 0) == 0
-                and str(report.get("cardmarket_capture")) == current_capture
-                and int(report.get("new_links_ready") or 0) == 0
-                and int(report.get("already_accepted_same_pair") or 0)
-                == int(report.get("certified_pairs") or 0)
-            )
-            results.append(
-                {
-                    "cohort": name,
-                    "status": "CERTIFIED" if ok else "REJECTED",
-                    "basis": basis,
-                    "mapping_method": str(report.get("mapping_method") or ""),
-                    "certified_pairs": int(report.get("certified_pairs") or 0),
-                    "already_accepted_same_pair": int(report.get("already_accepted_same_pair") or 0),
-                    "new_links_ready": int(report.get("new_links_ready") or 0),
-                    "production_writes": int(report.get("production_writes") or 0),
-                    "stable_identity_sha256": report.get("stable_identity_sha256"),
-                    "frozen_proposal_sha256": report.get("frozen_proposal_sha256"),
-                    "sets": report.get("sets", []),
-                }
-            )
+            report = runner()
+            results.append(_normalize_report(name, basis, report))
         except Exception as exc:
-            results.append(
-                {
-                    "cohort": name,
-                    "status": "UNREPRODUCIBLE",
-                    "basis": basis,
-                    "certified_pairs": 0,
-                    "production_writes": 0,
-                    "error": _safe_error(exc),
-                }
-            )
+            results.append({
+                "cohort": name,
+                "status": "UNREPRODUCIBLE",
+                "basis": basis,
+                "certified_pairs": 0,
+                "production_writes": 0,
+                "error": _safe_error(exc),
+            })
     return results
 
 
@@ -233,8 +230,7 @@ def main() -> int:
     method_validation = {}
     for method, expected in certified_methods.items():
         rows = [
-            r
-            for r in state["exact_reviewed_ja"]
+            r for r in state["exact_reviewed_ja"]
             if str(r.get("mapping_method") or "") == method
         ]
         products = {int(r["external_product_id"]) for r in rows}
@@ -272,7 +268,7 @@ def main() -> int:
         "contract": {
             "region_policy": "JP/OCG remains physically distinct; no JP<->EN collector-code aliasing",
             "market_group_policy": "Cardmarket idProduct may span canonical language Prints; conflicts are evaluated inside the exact JA physical surface",
-            "promotion_policy": "only cohorts replaying current source geometry with frozen identity hashes count as Physical Identity V2",
+            "promotion_policy": "only cohorts replaying current source geometry and original physical contracts count as Physical Identity V2",
             "writes_allowed": False,
         },
         "accepted_ygo": {
@@ -288,6 +284,7 @@ def main() -> int:
             "links": len(certified_rows),
             "unique_products": len(certified_products),
             "unique_prints": len(certified_prints),
+            "coverage_of_exact_reviewed_ja_pct": round(100 * len(certified_rows) / len(state["exact_reviewed_ja"]), 4) if state["exact_reviewed_ja"] else 0,
             "methods": method_validation,
         },
         "unreproduced_exact_reviewed_ja_methods": unreproduced_methods,
