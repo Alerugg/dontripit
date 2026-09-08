@@ -1,0 +1,66 @@
+name: Audit YGO OCG Structural Replay V4
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_structural_replay_v4.py
+      - .github/workflows/audit-ygo-ocg-structural-replay-v4.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile structural replay
+        run: python -m py_compile scripts/audit_yugioh_ocg_structural_replay_v4.py
+
+      - name: Replay YGO OCG structural cohorts READ ONLY
+        env:
+          YGO_OCG_STRUCTURAL_REPLAY_V4_OUTPUT: /tmp/yugioh-ocg-structural-replay-v4.json
+        run: python scripts/audit_yugioh_ocg_structural_replay_v4.py
+
+      - name: Gate zero-write structural replay
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-structural-replay-v4.json'))
+          assert d['mode']=='read_only', d
+          assert d['production_writes']==0, d
+          assert d['status']=='PASS', d
+          assert d['certified_pairs'] > 0, d
+          assert d['certified_pairs']==d['unique_products']==d['unique_prints'], d
+          assert all(v['status'] in {'CERTIFIED','PARTIAL','UNREPRODUCIBLE'} for v in d['methods'].values()), d
+          print('YGO_OCG_STRUCTURAL_REPLAY_V4_GATE=PASS')
+          print('CERTIFIED_PAIRS=', d['certified_pairs'])
+          for method,value in d['methods'].items():
+              print(method, value['status'], value['certified_pairs'], '/', value['expected_historical_pairs'])
+          PY
+
+      - name: Upload structural replay artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-structural-replay-v4-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-structural-replay-v4.json
+          if-no-files-found: warn
+          retention-days: 90
