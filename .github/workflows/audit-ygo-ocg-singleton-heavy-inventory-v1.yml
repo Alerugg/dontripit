@@ -1,0 +1,70 @@
+name: Audit YGO OCG Singleton Heavy Inventory V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_singleton_heavy_inventory_v1.py
+      - .github/workflows/audit-ygo-ocg-singleton-heavy-inventory-v1.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile inventory audit
+        run: python -m py_compile scripts/audit_yugioh_ocg_singleton_heavy_inventory_v1.py
+
+      - name: Inventory singleton-heavy cohort READ ONLY
+        env:
+          YGO_OCG_SINGLETON_HEAVY_INVENTORY_V1_OUTPUT: /tmp/yugioh-ocg-singleton-heavy-inventory-v1.json
+        run: python scripts/audit_yugioh_ocg_singleton_heavy_inventory_v1.py
+
+      - name: Gate inventory contract
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-singleton-heavy-inventory-v1.json'))
+          assert d['status']=='PASS', d
+          assert d['mode']=='read_only_inventory', d
+          assert d['production_writes']==0, d
+          assert d['cohort']['rows']==445, d
+          assert d['cohort']['unique_products']==445, d
+          assert d['cohort']['unique_historical_prints']==445, d
+          assert d['contract']['historical_print_id_used_for_derivation'] is False, d
+          assert d['contract']['historical_print_metadata_used_for_derivation'] is False, d
+          assert d['contract']['mapping_promotion_allowed'] is False, d
+          assert d['current_product_surface']['cohort_product_membership_failures']==0, d
+          assert d['replayability']['certified_rows']==0, d
+          print('YGO_OCG_SINGLETON_HEAVY_INVENTORY_V1_GATE=PASS')
+          print('evidence=', d['evidence'])
+          print('product_surface=', {k:v for k,v in d['current_product_surface'].items() if k!='group_inventory'})
+          PY
+
+      - name: Upload inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-singleton-heavy-inventory-v1-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-singleton-heavy-inventory-v1.json
+          if-no-files-found: warn
+          retention-days: 90
