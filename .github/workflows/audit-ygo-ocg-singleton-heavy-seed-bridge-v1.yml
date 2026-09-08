@@ -1,0 +1,72 @@
+name: Audit YGO OCG Singleton Heavy Seed Bridge V1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - p1/cardmarket-identity-resolver-v1
+    paths:
+      - backend/scripts/audit_yugioh_ocg_singleton_heavy_seed_bridge_v1.py
+      - .github/workflows/audit-ygo-ocg-singleton-heavy-seed-bridge-v1.yml
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p1/cardmarket-identity-resolver-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - name: Compile certified-seed bridge audit
+        run: python -m py_compile scripts/audit_yugioh_ocg_singleton_heavy_seed_bridge_v1.py
+
+      - name: Test certified-seed bridge READ ONLY
+        env:
+          YGO_OCG_SINGLETON_HEAVY_SEED_BRIDGE_V1_OUTPUT: /tmp/yugioh-ocg-singleton-heavy-seed-bridge-v1.json
+        run: python scripts/audit_yugioh_ocg_singleton_heavy_seed_bridge_v1.py
+
+      - name: Gate inventory-only bridge contract
+        run: |
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/yugioh-ocg-singleton-heavy-seed-bridge-v1.json'))
+          assert d['status']=='PASS', d
+          assert d['mode']=='read_only_inventory', d
+          assert d['production_writes']==0, d
+          assert d['base_v4']['status']=='PASS', d
+          assert d['base_v4']['certified_pairs']==3925, d
+          assert d['target']['rows']==445, d
+          assert d['contract']['target_method_allowed_as_seed'] is False, d
+          assert d['contract']['target_evidence_used_for_derivation'] is False, d
+          assert d['contract']['historical_target_print_used_for_derivation'] is False, d
+          assert d['contract']['historical_target_print_compared_only_after_derivation'] is True, d
+          assert d['contract']['mapping_promotion_allowed'] is False, d
+          assert d['hypothetical_union']['product_collisions']==0, d
+          assert d['hypothetical_union']['print_collisions']==0, d
+          print('YGO_OCG_SINGLETON_HEAVY_SEED_BRIDGE_V1_GATE=PASS')
+          print('TARGET=', d['target'])
+          print('HYPOTHETICAL_UNION=', d['hypothetical_union'])
+          PY
+
+      - name: Upload bridge evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygo-ocg-singleton-heavy-seed-bridge-v1-${{ github.run_id }}
+          path: /tmp/yugioh-ocg-singleton-heavy-seed-bridge-v1.json
+          if-no-files-found: warn
+          retention-days: 90
