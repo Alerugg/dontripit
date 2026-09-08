@@ -40,15 +40,17 @@ jobs:
           assert d['mode']=='read_only', d
           assert d['production_writes']==0, d
           assert d['status']=='PASS', d
-          assert d['accepted_ygo']['accepted_product_conflicts']==0, d
-          assert d['accepted_ygo']['accepted_print_conflicts']==0, d
+          assert d['accepted_ygo']['exact_reviewed_ja_product_conflicts']==0, d
+          assert d['accepted_ygo']['exact_reviewed_ja_print_conflicts']==0, d
           assert d['replayed_certified']['links'] > 0, d
           assert all(x['production_writes']==0 for x in d['replays']), d
           print('YGO_OCG_PHYSICAL_IDENTITY_V2_GATE=PASS')
           print('REPLAYED_CERTIFIED_LINKS=', d['replayed_certified']['links'])
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ygo-ocg-physical-identity-v2-${{ github.run_id }}
           path: /tmp/yugioh-ocg-physical-identity-v2.json
+          if-no-files-found: warn
           retention-days: 90
