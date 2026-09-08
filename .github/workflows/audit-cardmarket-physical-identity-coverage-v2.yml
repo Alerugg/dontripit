@@ -59,6 +59,33 @@ jobs:
           repository: Alerugg/dontripit
           run-id: 34206020026
 
+      - name: Download certified YGO physical corroboration evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: ygo-physical-identity-corroboration-v2-34230844229
+          path: /tmp/identity/ygo-cert
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34230844229
+
+      - name: Verify certified YGO evidence contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/identity/ygo-cert')
+          summary = json.loads((root / 'summary.json').read_text())
+          assert summary['status'] == 'pass'
+          assert summary['mode'] == 'READ_ONLY'
+          assert summary['transaction_read_only'] is True
+          assert summary['production_writes'] == 0
+          assert summary['descriptor_shard_files'] == 24
+          assert summary['multi_product_conflicts_quarantined'] == 0
+          assert summary['physically_corroborated_current_products'] == 26732
+          assert (root / 'market_evidence.ndjson').is_file()
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
       - name: Download current official Cardmarket universes and price guides
         run: |
           mkdir -p artifacts/cardmarket-physical-v2-inputs
@@ -111,6 +138,7 @@ jobs:
             --price-guide onepiece=artifacts/cardmarket-physical-v2-inputs/price_guide_18.json \
             --market-evidence mtg=/tmp/identity/mtg-cert/market_evidence.ndjson \
             --market-evidence pokemon=/tmp/identity/pokemon-cert/market_evidence.ndjson \
+            --market-evidence yugioh=/tmp/identity/ygo-cert/market_evidence.ndjson \
             --outdir artifacts/cardmarket-physical-identity-coverage-v2
         working-directory: backend
 
@@ -126,6 +154,7 @@ jobs:
           assert s['production_writes'] == 0
           assert s['forbidden_mismatches']['duplicate_current_catalog_idProduct'] == 0
           assert s['forbidden_mismatches']['direct_v2_evidence_conflicts'] == 0
+          assert s['games']['yugioh']['direct_v2_accounted'] == 26732
           print(json.dumps({'global': s['global'], 'games': s['games'], 'forbidden': s['forbidden_mismatches']}, indent=2, sort_keys=True))
           PY
         working-directory: backend
