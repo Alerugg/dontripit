@@ -25,9 +25,10 @@ def _descriptor_key(card_id: object, collector: object, rarity: object) -> tuple
     return (str(card_id or "").strip(), _collector_key(collector), rarity_family(str(rarity or "")))
 
 
-def _load_descriptors(root: Path) -> list[dict]:
+def _load_descriptors(root: Path) -> tuple[list[dict], list[Path]]:
     rows: list[dict] = []
-    for path in sorted(root.rglob("descriptors.ndjson")):
+    files = sorted(root.rglob("descriptors.ndjson"))
+    for path in files:
         with path.open("r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, 1):
                 line = line.strip()
@@ -39,7 +40,7 @@ def _load_descriptors(root: Path) -> list[dict]:
                 row["_source_path"] = str(path)
                 row["_line"] = line_number
                 rows.append(row)
-    return rows
+    return rows, files
 
 
 def _write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
@@ -52,14 +53,16 @@ def _write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="READ ONLY YGO Physical Identity V2 corroboration against accepted exact Cardmarket links")
     parser.add_argument("--shards-root", type=Path, required=True)
+    parser.add_argument("--expected-shards", type=int, default=24)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, default=Path("artifacts/yugioh-physical-identity-corroboration-v2"))
     args = parser.parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    descriptors = _load_descriptors(args.shards_root)
+    descriptors, descriptor_files = _load_descriptors(args.shards_root)
     if not descriptors:
         raise SystemExit(f"No YGO descriptors found under {args.shards_root}")
+    input_complete = len(descriptor_files) == args.expected_shards
 
     catalog_products = build_catalog_products("yugioh", load_product_list_file(args.catalog))
     current_catalog_ids = {p.product_id for p in catalog_products}
@@ -77,12 +80,13 @@ def main() -> int:
 
         print_rows = [dict(row) for row in session.execute(text("""
             SELECT p.id AS print_id,
-                   p.yugioh_id,
+                   p.yugioh_id AS synthetic_yugioh_print_id,
                    p.collector_number,
                    p.rarity,
                    p.language,
                    p.variant,
                    c.name AS card_name,
+                   c.yugoprodeck_id AS card_yugoprodeck_id,
                    s.name AS set_name,
                    s.code AS set_code
             FROM prints p
@@ -120,7 +124,9 @@ def main() -> int:
 
     prints_by_key: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for row in print_rows:
-        key = _descriptor_key(row.get("yugioh_id"), row.get("collector_number"), row.get("rarity"))
+        # Print.yugioh_id is a synthetic per-print key (cardId::setCode::ordinal).
+        # The actual YGOPRODeck card id lives on Card.yugoprodeck_id.
+        key = _descriptor_key(row.get("card_yugoprodeck_id"), row.get("collector_number"), row.get("rarity"))
         if key[0] and key[1]:
             prints_by_key[key].append(row)
 
@@ -141,7 +147,10 @@ def main() -> int:
         key = _descriptor_key(card_id, collector, rarity)
         matched_prints = prints_by_key.get(key, [])
         matched_print_ids = {int(row["print_id"]) for row in matched_prints}
-        linked_products = sorted({pid for print_id in matched_print_ids for pid in products_by_print.get(print_id, set())}, key=lambda x: int(x) if x.isdigit() else x)
+        linked_products = sorted(
+            {pid for print_id in matched_print_ids for pid in products_by_print.get(print_id, set())},
+            key=lambda x: int(x) if x.isdigit() else x,
+        )
         current_products = [pid for pid in linked_products if pid in current_catalog_ids]
         stale_products = [pid for pid in linked_products if pid not in current_catalog_ids]
 
@@ -196,15 +205,32 @@ def main() -> int:
             "mapping_methods": sorted(product_sources.get(product_id, set())),
         })
 
-    accepted_current_products = {product_id for products in products_by_print.values() for product_id in products if product_id in current_catalog_ids}
+    accepted_current_products = {
+        product_id
+        for products in products_by_print.values()
+        for product_id in products
+        if product_id in current_catalog_ids
+    }
     corroborated_products = set(product_to_fps)
     pending_products = accepted_current_products - corroborated_products
 
+    if not input_complete:
+        status = "incomplete_input"
+    elif not transaction_read_only:
+        status = "unsafe"
+    elif not corroborated_products:
+        status = "no_corroboration"
+    else:
+        status = "pass"
+
     summary = {
-        "status": "pass" if transaction_read_only and not conflict_rows else "review_required",
+        "status": status,
         "mode": "READ_ONLY",
         "transaction_read_only": transaction_read_only,
         "production_writes": 0,
+        "expected_shards": args.expected_shards,
+        "descriptor_shard_files": len(descriptor_files),
+        "input_complete": input_complete,
         "yugioh_shadow_descriptors": len(descriptors),
         "canonical_prints": len(print_rows),
         "accepted_exact_current_cardmarket_products": len(accepted_current_products),
@@ -213,7 +239,7 @@ def main() -> int:
         "accepted_exact_pending_physical_corroboration": len(pending_products),
         "descriptor_status_counts": dict(counters),
         "market_relationships": dict(relationship_counts),
-        "multi_product_conflicts": len(conflict_rows),
+        "multi_product_conflicts_quarantined": len(conflict_rows),
         "current_cardmarket_products": len(current_catalog_ids),
     }
 
@@ -226,7 +252,10 @@ def main() -> int:
         "matched_print_count","matched_print_ids","current_product_ids","stale_product_ids",
     ])
     _write_csv(args.outdir / "conflicts.csv", conflict_rows, ["fingerprint","card_id","collector","rarity","product_ids","matched_print_ids"])
-    (args.outdir / "pending_existing_exact_product_ids.json").write_text(json.dumps(sorted(pending_products, key=lambda x: int(x) if x.isdigit() else x), indent=2) + "\n", encoding="utf-8")
+    (args.outdir / "pending_existing_exact_product_ids.json").write_text(
+        json.dumps(sorted(pending_products, key=lambda x: int(x) if x.isdigit() else x), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     print("YGO_PHYSICAL_IDENTITY_CORROBORATION_V2=" + json.dumps(summary, separators=(",", ":"), sort_keys=True))
     return 0 if summary["status"] == "pass" else 2
