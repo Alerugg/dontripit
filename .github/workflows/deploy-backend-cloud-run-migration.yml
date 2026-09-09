@@ -2,6 +2,11 @@ name: Deploy backend to Cloud Run (migration)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-backend-cloud-run-migration.yml'
 
 permissions:
   contents: read
@@ -32,7 +37,7 @@ jobs:
           WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           DEPLOYER_SA: ${{ vars.GCP_SERVICE_ACCOUNT }}
           RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
-          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
         run: |
           set -euo pipefail
@@ -69,7 +74,7 @@ jobs:
 
       - name: Prepare Cloud Run environment file
         env:
-          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL_UNPOOLED || secrets.DATABASE_URL }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
