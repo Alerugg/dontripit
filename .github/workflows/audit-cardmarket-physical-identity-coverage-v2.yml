@@ -1,0 +1,168 @@
+name: Audit Cardmarket Physical Identity Coverage V2
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - 'backend/scripts/audit_cardmarket_physical_identity_coverage_v2.py'
+      - '.github/workflows/audit-cardmarket-physical-identity-coverage-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+jobs:
+  coverage-v2-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+        working-directory: backend
+
+      - name: Compile coverage audit
+        run: python -m py_compile scripts/audit_cardmarket_physical_identity_coverage_v2.py
+        working-directory: backend
+
+      - name: Download certified MTG shadow market evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-global-cert-34169156875
+          path: /tmp/identity/mtg-cert
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34169156875
+
+      - name: Download repaired certified Pokemon shadow market evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: identity-v2-repair-cert-pokemon-34206020026
+          path: /tmp/identity/pokemon-cert
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34206020026
+
+      - name: Download certified YGO physical corroboration evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: ygo-physical-identity-corroboration-v2-34230844229
+          path: /tmp/identity/ygo-cert
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34230844229
+
+      - name: Verify certified YGO evidence contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/identity/ygo-cert')
+          summary = json.loads((root / 'summary.json').read_text())
+          assert summary['status'] == 'pass'
+          assert summary['mode'] == 'READ_ONLY'
+          assert summary['transaction_read_only'] is True
+          assert summary['production_writes'] == 0
+          assert summary['descriptor_shard_files'] == 24
+          assert summary['multi_product_conflicts_quarantined'] == 0
+          assert summary['physically_corroborated_current_products'] == 26732
+          assert (root / 'market_evidence.ndjson').is_file()
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Download current official Cardmarket universes and price guides
+        run: |
+          mkdir -p artifacts/cardmarket-physical-v2-inputs
+          python - <<'PY'
+          from pathlib import Path
+          from urllib import request
+          import json, time
+
+          root = Path('artifacts/cardmarket-physical-v2-inputs')
+          sources = {
+              'products_singles_1.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json',
+              'products_singles_3.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_3.json',
+              'products_singles_6.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_6.json',
+              'products_singles_18.json': 'https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json',
+              'price_guide_1.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json',
+              'price_guide_3.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_3.json',
+              'price_guide_6.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_6.json',
+              'price_guide_18.json': 'https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json',
+          }
+          headers = {'User-Agent': 'DontRipIt-PhysicalIdentityV2/1.0 (+read-only coverage audit)'}
+          for filename, url in sources.items():
+              for attempt in range(1, 4):
+                  try:
+                      req = request.Request(url, headers=headers)
+                      with request.urlopen(req, timeout=90) as response:
+                          content = response.read()
+                      if len(content) < 100:
+                          raise RuntimeError(f'{filename} unexpectedly small')
+                      json.loads(content.decode('utf-8-sig'))
+                      (root / filename).write_bytes(content)
+                      print(filename, len(content))
+                      break
+                  except Exception:
+                      if attempt == 3:
+                          raise
+                      time.sleep(attempt * 2)
+          PY
+        working-directory: backend
+
+      - name: Audit current Cardmarket coverage against certified Physical Identity V2 evidence
+        run: |
+          python scripts/audit_cardmarket_physical_identity_coverage_v2.py \
+            --catalog mtg=artifacts/cardmarket-physical-v2-inputs/products_singles_1.json \
+            --catalog yugioh=artifacts/cardmarket-physical-v2-inputs/products_singles_3.json \
+            --catalog pokemon=artifacts/cardmarket-physical-v2-inputs/products_singles_6.json \
+            --catalog onepiece=artifacts/cardmarket-physical-v2-inputs/products_singles_18.json \
+            --price-guide mtg=artifacts/cardmarket-physical-v2-inputs/price_guide_1.json \
+            --price-guide yugioh=artifacts/cardmarket-physical-v2-inputs/price_guide_3.json \
+            --price-guide pokemon=artifacts/cardmarket-physical-v2-inputs/price_guide_6.json \
+            --price-guide onepiece=artifacts/cardmarket-physical-v2-inputs/price_guide_18.json \
+            --market-evidence mtg=/tmp/identity/mtg-cert/market_evidence.ndjson \
+            --market-evidence pokemon=/tmp/identity/pokemon-cert/market_evidence.ndjson \
+            --market-evidence yugioh=/tmp/identity/ygo-cert/market_evidence.ndjson \
+            --outdir artifacts/cardmarket-physical-identity-coverage-v2
+        working-directory: backend
+
+      - name: Assert read-only safety and print coverage dashboard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('artifacts/cardmarket-physical-identity-coverage-v2/summary.json')
+          s = json.loads(p.read_text())
+          assert s['mode'] == 'READ_ONLY'
+          assert s['transaction_read_only'] is True
+          assert s['production_writes'] == 0
+          assert s['forbidden_mismatches']['duplicate_current_catalog_idProduct'] == 0
+          assert s['forbidden_mismatches']['direct_v2_evidence_conflicts'] == 0
+          assert s['games']['yugioh']['direct_v2_accounted'] == 26732
+          print(json.dumps({'global': s['global'], 'games': s['games'], 'forbidden': s['forbidden_mismatches']}, indent=2, sort_keys=True))
+          PY
+        working-directory: backend
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cardmarket-physical-identity-coverage-v2-${{ github.run_id }}
+          path: backend/artifacts/cardmarket-physical-identity-coverage-v2/
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,84 @@
+name: Audit YGO Physical Identity Residual V2
+
+on:
+  push:
+    branches: [p0/physical-identity-ingest-v2]
+    paths:
+      - 'backend/scripts/audit_yugioh_physical_identity_residual_v2.py'
+      - '.github/workflows/audit-ygo-physical-identity-residual-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+jobs:
+  residual-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      DATABASE_URL: ''
+      PGOPTIONS: -c default_transaction_read_only=on
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p0/physical-identity-ingest-v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+        working-directory: backend
+
+      - name: Compile residual audit
+        run: python -m py_compile scripts/audit_yugioh_physical_identity_residual_v2.py
+        working-directory: backend
+
+      - name: Download certified YGO corroboration artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ygo-physical-identity-corroboration-v2-34230844229
+          path: /tmp/ygo-corroboration
+          github-token: ${{ github.token }}
+          repository: Alerugg/dontripit
+          run-id: 34230844229
+
+      - name: Diagnose pending exact YGO products
+        run: |
+          python scripts/audit_yugioh_physical_identity_residual_v2.py \
+            --corroboration-root /tmp/ygo-corroboration \
+            --outdir artifacts/yugioh-physical-identity-residual-v2
+        working-directory: backend
+
+      - name: Assert read-only safety and complete residual accounting
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('artifacts/yugioh-physical-identity-residual-v2/summary.json')
+          if p.exists():
+              s = json.loads(p.read_text())
+              assert s['mode'] == 'READ_ONLY'
+              assert s['transaction_read_only'] is True
+              assert s['production_writes'] == 0
+              assert s['input_pending_products'] == 6288
+              assert sum(s['reason_counts'].values()) == s['input_pending_products']
+              print(json.dumps(s, indent=2, sort_keys=True))
+          PY
+        working-directory: backend
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ygo-physical-identity-residual-v2-${{ github.run_id }}
+          path: backend/artifacts/yugioh-physical-identity-residual-v2/
+          if-no-files-found: warn
+          retention-days: 90
