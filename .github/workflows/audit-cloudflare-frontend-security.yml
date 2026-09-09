@@ -1,0 +1,60 @@
+name: Audit Cloudflare frontend migration security
+
+on:
+  push:
+    branches:
+      - infra/cloudflare-frontend-production-parity
+    paths:
+      - '.github/workflows/audit-cloudflare-frontend-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: infra/cloudflare-frontend-production-parity
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Production dependency audit
+        working-directory: frontend
+        shell: bash
+        run: |
+          set +e
+          npm audit --omit=dev --json > /tmp/audit-prod.json
+          code=$?
+          node - <<'NODE'
+          const fs = require('fs');
+          const a = JSON.parse(fs.readFileSync('/tmp/audit-prod.json','utf8'));
+          console.log('PROD_AUDIT_COUNTS=' + JSON.stringify(a.metadata?.vulnerabilities || {}));
+          for (const [name,v] of Object.entries(a.vulnerabilities || {})) {
+            console.log(`PROD ${name} severity=${v.severity} direct=${v.isDirect} via=${JSON.stringify(v.via)}`);
+          }
+          NODE
+          exit 0
+      - name: Full dependency audit
+        working-directory: frontend
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > /tmp/audit-full.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const a = JSON.parse(fs.readFileSync('/tmp/audit-full.json','utf8'));
+          console.log('FULL_AUDIT_COUNTS=' + JSON.stringify(a.metadata?.vulnerabilities || {}));
+          for (const [name,v] of Object.entries(a.vulnerabilities || {})) {
+            console.log(`FULL ${name} severity=${v.severity} direct=${v.isDirect} via=${JSON.stringify(v.via)}`);
+          }
+          NODE
+          exit 0
