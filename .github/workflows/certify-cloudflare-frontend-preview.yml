@@ -2,6 +2,11 @@ name: Certify Cloudflare frontend preview
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/cloudflare-preview-cert-trigger'
 
 permissions:
   contents: read
@@ -121,6 +126,33 @@ jobs:
           NODE
           done
 
+      - name: Canonical physical metadata contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 45 "$PREVIEW/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0" -o /tmp/catalog.json
+          node <<'NODE'
+          const fs = require('fs');
+          const j = JSON.parse(fs.readFileSync('/tmp/catalog.json','utf8'));
+          const items = j.items || [];
+          const placeholders = new Set(['', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined']);
+          const fields = ['set_code', 'set_name', 'collector_number', 'rarity', 'language', 'finish', 'variant_family', 'exact_variant'];
+          for (const item of items) {
+            for (const field of fields) {
+              const value = item?.[field];
+              if (typeof value === 'string' && placeholders.has(value.trim().toLowerCase())) {
+                throw new Error(`Placeholder leaked: card=${item.card_id} field=${field} value=${value}`);
+              }
+            }
+          }
+          const base = items.find(x => Number(x.card_id) === 1);
+          if (!base) throw new Error('Base Set Pikachu card_id=1 missing');
+          if (Number(base.matched_print_id) !== 571) throw new Error(`Representative print drift: ${base.matched_print_id}`);
+          if (base.rarity !== null && base.rarity !== undefined) throw new Error(`Expected null rarity, got ${base.rarity}`);
+          if (String(base.set_code).toLowerCase() !== 'bs' || String(base.collector_number) !== '58') throw new Error('Base Set Pikachu identity drift');
+          console.log('metadata_contract=green ' + JSON.stringify({card_id:base.card_id,set_code:base.set_code,collector_number:base.collector_number,rarity:base.rarity,matched_print_id:base.matched_print_id}));
+          NODE
+
       - name: Preview isolation guard
         shell: bash
         run: |
@@ -137,4 +169,5 @@ jobs:
           echo '- Static assets: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Frontend API health: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Search parity probes: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Canonical metadata contract: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production domain: unchanged' >> "$GITHUB_STEP_SUMMARY"
