@@ -28,12 +28,20 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Patch Next.js security release
+      - name: Ensure patched Next.js and sharp
         working-directory: frontend
-        run: npm install --save-exact --legacy-peer-deps next@16.3.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --save-exact --legacy-peer-deps next@16.3.3
+          npm pkg set overrides.sharp=0.35.4
+          npm install --package-lock-only --legacy-peer-deps
       - name: Prove clean install
         working-directory: frontend
         run: npm ci --legacy-peer-deps
+      - name: Show resolved sharp tree
+        working-directory: frontend
+        run: npm ls sharp || true
       - name: Rebuild Cloudflare target
         working-directory: frontend
         run: npm run build:vinext
@@ -54,7 +62,7 @@ jobs:
           for (const [name,v] of Object.entries(a.vulnerabilities || {})) {
             console.log(`PROD ${name} severity=${v.severity} direct=${v.isDirect} via=${JSON.stringify(v.via)}`);
           }
-          if ((counts.critical || 0) > 0) process.exit(2);
+          if ((counts.critical || 0) > 0 || (counts.high || 0) > 0) process.exit(2);
           NODE
       - name: Full dependency audit
         working-directory: frontend
@@ -81,5 +89,5 @@ jobs:
             echo 'Security patch already persisted.'
             exit 0
           fi
-          git commit -m 'fix(frontend): patch Next.js security release'
+          git commit -m 'fix(frontend): pin patched sharp runtime'
           git push origin HEAD:infra/cloudflare-frontend-production-parity
