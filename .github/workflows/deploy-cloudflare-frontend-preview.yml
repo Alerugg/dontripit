@@ -121,7 +121,7 @@ jobs:
           const fs = require('fs');
           const h = JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
           console.log('preview_health=' + JSON.stringify(h));
-          if (!h || h.ok !== true) process.exit(5);
+          if (!h || h.status !== 'ok') process.exit(5);
           NODE
           curl -fsS --max-time 30 "$PREVIEW_URL/api/search-v2?q=Pikachu&limit=1" -o /tmp/search.json
           node - <<'NODE'
