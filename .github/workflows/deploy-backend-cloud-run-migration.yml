@@ -23,10 +23,10 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout migration branch
+      - name: Checkout production-parity migration branch
         uses: actions/checkout@v4
         with:
-          ref: infra/exit-vercel-cloud-run
+          ref: infra/cloud-run-production-parity
 
       - name: Record migration source revision
         run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
