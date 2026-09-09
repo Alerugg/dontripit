@@ -2,16 +2,27 @@ import Link from 'next/link'
 import FallbackImage from '../common/FallbackImage'
 import { getCardHref, getPrintHref, getSetHref } from '../../lib/catalog/routes'
 
+const PLACEHOLDER_METADATA = new Set(['', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined'])
+
+function cleanDisplayValue(value) {
+  if (value === null || value === undefined) return null
+  const text = String(value).trim()
+  if (PLACEHOLDER_METADATA.has(text.toLowerCase())) return null
+  return text
+}
+
 function releaseCode(item) {
   const release = Array.isArray(item?.physical_releases) ? item.physical_releases[0] : null
-  if (release?.code) return String(release.code).toUpperCase()
-  const releaseName = item?.physical_release_names?.[0] || release?.name || ''
+  const directCode = cleanDisplayValue(release?.code)
+  if (directCode) return directCode.toUpperCase()
+  const releaseName = cleanDisplayValue(item?.physical_release_names?.[0] || release?.name) || ''
   const match = String(releaseName).match(/\[([^\]]+)\]/)
   return match?.[1] ? match[1].toUpperCase() : null
 }
 
 function setCode(item) {
-  return releaseCode(item) || item.set_code?.toUpperCase?.() || item.code?.toUpperCase?.() || item.set_code || item.code || null
+  const code = releaseCode(item) || cleanDisplayValue(item.set_code) || cleanDisplayValue(item.code)
+  return code ? code.toUpperCase() : null
 }
 
 function formatCurrency(value, currency = 'EUR') {
@@ -44,23 +55,25 @@ function formatMarketDate(value) {
 }
 
 function buildSubtitle(item) {
-  const collectorLabel = item.collector_number ? `#${item.collector_number}` : null
+  const collectorNumber = cleanDisplayValue(item.collector_number)
+  const collectorLabel = collectorNumber ? `#${collectorNumber}` : null
 
   if (item.type === 'card') {
-    const identity = [collectorLabel, setCode(item), item.rarity].filter(Boolean).join(' · ')
+    const identity = [collectorLabel, setCode(item), cleanDisplayValue(item.rarity)].filter(Boolean).join(' · ')
     if (identity) return identity
     return 'Carta canónica · elige después la impresión física exacta'
   }
 
   if (item.type === 'set') {
-    return [setCode(item), item.year || item.release_year, item.region].filter(Boolean).join(' · ') || 'Set del catálogo'
+    return [setCode(item), cleanDisplayValue(item.year || item.release_year), cleanDisplayValue(item.region)].filter(Boolean).join(' · ') || 'Set del catálogo'
   }
 
+  const language = cleanDisplayValue(item.language)
   return [
     collectorLabel,
     setCode(item),
-    item.language?.toUpperCase?.() || item.language,
-    item.region,
+    language?.toUpperCase?.() || language,
+    cleanDisplayValue(item.region),
   ].filter(Boolean).join(' · ')
 }
 
@@ -68,13 +81,14 @@ function buildMetaChips(item) {
   if (item.type === 'card') return []
 
   if (item.type === 'set') {
-    return [item.region].filter(Boolean)
+    return [cleanDisplayValue(item.region)].filter(Boolean)
   }
 
+  const finish = cleanDisplayValue(item.finish)
   return [
-    item.rarity,
-    item.finish && item.finish !== 'default' ? item.finish : null,
-    item.variant_label || item.variant,
+    cleanDisplayValue(item.rarity),
+    finish && finish !== 'default' ? finish : null,
+    cleanDisplayValue(item.variant_label || item.variant),
   ].filter(Boolean)
 }
 
@@ -184,7 +198,7 @@ function SetCover({ item, title }) {
     <div className="v13-set-cover" aria-hidden="true">
       <span>{code || 'SET'}</span>
       <strong>{title}</strong>
-      <small>{item.year || item.release_year || item.region || 'Don’tRipIt'}</small>
+      <small>{cleanDisplayValue(item.year || item.release_year || item.region) || 'Don’tRipIt'}</small>
     </div>
   )
 }
