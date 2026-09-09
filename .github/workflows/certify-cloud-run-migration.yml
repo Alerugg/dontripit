@@ -1,13 +1,7 @@
 name: Certify Cloud Run migration
-# Certification v3: production-parity Cloud Run revision.
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/certify-cloud-run-migration.yml'
 
 permissions:
   contents: read
@@ -38,69 +32,29 @@ jobs:
           SERVICE_URL="$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')"
           test -n "$SERVICE_URL"
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
-          echo "Cloud Run URL resolved"
 
-      - name: Compare Cloud Run with current production API
+      - name: Enforce Cloud Run parity with current production API
         run: |
           python - <<'PY'
           import json
           import os
-          import time
-          import urllib.error
           import urllib.parse
           import urllib.request
 
-          targets = {
-              'cloud_run': os.environ['SERVICE_URL'].rstrip('/'),
-              'production': 'https://api.dontripit.com',
-          }
+          cloud_run = os.environ['SERVICE_URL'].rstrip('/')
+          production = 'https://api.dontripit.com'
 
-          def get(base, path, params=None, timeout=30):
+          def get(base, path, params=None):
               url = base + path
               if params:
                   url += '?' + urllib.parse.urlencode(params)
-              started = time.perf_counter()
-              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/3.0'})
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout) as response:
-                      body = response.read().decode('utf-8')
-                      status = response.status
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode('utf-8', errors='replace')
-                  status = exc.code
-              elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-              try:
-                  payload = json.loads(body)
-              except Exception:
-                  payload = {'raw': body[:1000]}
-              return status, elapsed_ms, payload
+              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-parity/1.0'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return response.status, json.loads(response.read().decode('utf-8'))
 
-          def summarize(payload):
-              items = payload.get('items') or []
-              first = items[0] if items else {}
-              matched = first.get('matched_print') or first
-              return {
-                  'count': int(payload.get('count') or 0),
-                  'total': payload.get('total'),
-                  'total_prints': payload.get('total_prints'),
-                  'pagination_mode': payload.get('pagination_mode'),
-                  'first_name': first.get('name'),
-                  'first_game': first.get('game'),
-                  'first_collector_number': matched.get('collector_number'),
-                  'first_set_code': matched.get('set_code'),
-                  'error': payload.get('error'),
-              }
-
-          report = {'status': 'diagnostic', 'targets': {}, 'comparisons': []}
-          for label, base in targets.items():
-              status, ms, payload = get(base, '/api/health')
-              report['targets'][label] = {
-                  'health_status': status,
-                  'health_ms': ms,
-                  'health_ok': payload.get('ok'),
-                  'runtime': payload.get('runtime'),
-                  'revision': payload.get('revision'),
-              }
+          status, health = get(cloud_run, '/api/health')
+          if status != 200 or health.get('ok') is not True or health.get('runtime') != 'cloud_run':
+              raise SystemExit(f'Cloud Run health failed: status={status} body={health}')
 
           probes = [
               ('P-150', None),
@@ -114,25 +68,37 @@ jobs:
               ('Pikachu', 'pokemon'),
           ]
 
+          report = []
+          failures = []
           for query, game in probes:
-              row = {'query': query, 'game': game}
               params = {'q': query, 'limit': 24}
               if game:
                   params['game'] = game
-              for label, base in targets.items():
-                  status, ms, payload = get(base, '/api/v2/search', params)
-                  row[label] = {'status': status, 'ms': ms, **summarize(payload)}
-              row['same_count'] = row['cloud_run']['count'] == row['production']['count']
-              row['same_first'] = (
-                  row['cloud_run']['first_name'],
-                  row['cloud_run']['first_collector_number'],
-                  row['cloud_run']['first_set_code'],
-              ) == (
-                  row['production']['first_name'],
-                  row['production']['first_collector_number'],
-                  row['production']['first_set_code'],
-              )
-              report['comparisons'].append(row)
+              cr_status, cr = get(cloud_run, '/api/v2/search', params)
+              prod_status, prod = get(production, '/api/v2/search', params)
 
-          print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
+              def identity(payload):
+                  items = payload.get('items') or []
+                  first = items[0] if items else {}
+                  matched = first.get('matched_print') or first
+                  return (
+                      int(payload.get('count') or 0),
+                      payload.get('total'),
+                      payload.get('total_prints'),
+                      payload.get('pagination_mode'),
+                      first.get('name'),
+                      first.get('game'),
+                      matched.get('collector_number'),
+                      matched.get('set_code'),
+                  )
+
+              same = cr_status == prod_status == 200 and identity(cr) == identity(prod)
+              row = {'query': query, 'game': game, 'parity': same, 'cloud_run': identity(cr), 'production': identity(prod)}
+              report.append(row)
+              if not same:
+                  failures.append(row)
+
+          print(json.dumps({'health': health, 'probes': report}, indent=2, ensure_ascii=False, default=list))
+          if failures:
+              raise SystemExit(f'Cloud Run parity failed for {len(failures)} probe(s)')
           PY
