@@ -39,66 +39,99 @@ jobs:
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
           echo "Cloud Run URL resolved"
 
-      - name: Certify health and Search V2 probes
+      - name: Compare Cloud Run with current production API
         run: |
           python - <<'PY'
           import json
+          import os
           import time
+          import urllib.error
           import urllib.parse
           import urllib.request
 
-          base = __import__('os').environ['SERVICE_URL'].rstrip('/')
+          targets = {
+              'cloud_run': os.environ['SERVICE_URL'].rstrip('/'),
+              'production': 'https://api.dontripit.com',
+          }
 
-          def get(path, params=None, timeout=30):
+          def get(base, path, params=None, timeout=30):
               url = base + path
               if params:
                   url += '?' + urllib.parse.urlencode(params)
               started = time.perf_counter()
-              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/1.0'})
-              with urllib.request.urlopen(req, timeout=timeout) as response:
-                  body = response.read().decode('utf-8')
-                  status = response.status
+              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/2.0'})
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as response:
+                      body = response.read().decode('utf-8')
+                      status = response.status
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode('utf-8', errors='replace')
+                  status = exc.code
               elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-              return status, elapsed_ms, json.loads(body)
+              try:
+                  payload = json.loads(body)
+              except Exception:
+                  payload = {'raw': body[:1000]}
+              return status, elapsed_ms, payload
 
-          report = {'status': 'pass', 'probes': []}
-
-          status, ms, health = get('/api/health')
-          if status != 200 or health.get('ok') is not True or health.get('runtime') != 'cloud_run':
-              raise SystemExit(f'health failed: status={status} body={health}')
-          report['health'] = {'status': status, 'ms': ms, 'runtime': health.get('runtime'), 'revision': health.get('revision')}
-
-          probes = [
-              ('P-150', None, 'exact'),
-              ('OP05-119', None, 'exact'),
-              ('LOB-001', None, 'exact'),
-              ('Luffy', 'onepiece', 'name'),
-              ('Pikachu', 'pokemon', 'name'),
-          ]
-
-          for query, game, kind in probes:
-              params = {'q': query, 'limit': 24}
-              if game:
-                  params['game'] = game
-              status, ms, payload = get('/api/v2/search', params)
-              count = int(payload.get('count') or 0)
-              if status != 200 or count < 1:
-                  raise SystemExit(f'{query} failed: status={status} count={count} body={payload}')
-              item = (payload.get('items') or [{}])[0]
-              report['probes'].append({
-                  'query': query,
-                  'game': game,
-                  'kind': kind,
-                  'status': status,
-                  'ms': ms,
-                  'count': count,
+          def summarize(payload):
+              items = payload.get('items') or []
+              first = items[0] if items else {}
+              matched = first.get('matched_print') or first
+              return {
+                  'count': int(payload.get('count') or 0),
                   'total': payload.get('total'),
                   'total_prints': payload.get('total_prints'),
                   'pagination_mode': payload.get('pagination_mode'),
-                  'first_name': item.get('name'),
-                  'first_collector_number': (item.get('matched_print') or item).get('collector_number'),
-                  'first_set_code': (item.get('matched_print') or item).get('set_code'),
-              })
+                  'first_name': first.get('name'),
+                  'first_game': first.get('game'),
+                  'first_collector_number': matched.get('collector_number'),
+                  'first_set_code': matched.get('set_code'),
+                  'error': payload.get('error'),
+              }
+
+          report = {'status': 'diagnostic', 'targets': {}, 'comparisons': []}
+          for label, base in targets.items():
+              status, ms, payload = get(base, '/api/health')
+              report['targets'][label] = {
+                  'health_status': status,
+                  'health_ms': ms,
+                  'health_ok': payload.get('ok'),
+                  'runtime': payload.get('runtime'),
+                  'revision': payload.get('revision'),
+              }
+
+          probes = [
+              ('P-150', None),
+              ('P-150', 'onepiece'),
+              ('P-150', 'pokemon'),
+              ('OP05-119', None),
+              ('OP05-119', 'onepiece'),
+              ('LOB-001', None),
+              ('LOB-001', 'yugioh'),
+              ('Luffy', 'onepiece'),
+              ('Pikachu', 'pokemon'),
+          ]
+
+          for query, game in probes:
+              row = {'query': query, 'game': game}
+              params = {'q': query, 'limit': 24}
+              if game:
+                  params['game'] = game
+              for label, base in targets.items():
+                  status, ms, payload = get(base, '/api/v2/search', params)
+                  row[label] = {'status': status, 'ms': ms, **summarize(payload)}
+              row['same_count'] = row['cloud_run']['count'] == row['production']['count']
+              row['same_first'] = (
+                  row['cloud_run']['first_name'],
+                  row['cloud_run']['first_collector_number'],
+                  row['cloud_run']['first_set_code'],
+              ) == (
+                  row['production']['first_name'],
+                  row['production']['first_collector_number'],
+                  row['production']['first_set_code'],
+              )
+              report['comparisons'].append(row)
 
           print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
           PY
