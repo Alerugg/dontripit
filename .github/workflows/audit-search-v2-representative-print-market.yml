@@ -1,0 +1,171 @@
+name: Audit Search V2 representative print market semantics
+
+on:
+  push:
+    branches:
+      - audit/search-v2-representative-print-market
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BASE: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
+    steps:
+      - name: Audit Pikachu representative-print metadata and sibling consensus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/audit.mjs <<'NODE'
+          const BASE = process.env.BASE;
+          const unknowns = new Set(['', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined']);
+          const clean = v => {
+            if (v === null || v === undefined) return null;
+            const t = String(v).trim();
+            return unknowns.has(t.toLowerCase()) ? null : t;
+          };
+          const json = async (url) => {
+            const r = await fetch(url, {headers:{accept:'application/json'}});
+            if (!r.ok) throw new Error(`${r.status} ${url}`);
+            return r.json();
+          };
+          const marketOf = p => p?.market || p?.cardmarket || p?.market_data || null;
+          const marketSig = p => {
+            const m = marketOf(p);
+            if (!m) return null;
+            return JSON.stringify({
+              print_id: m.print_id ?? null,
+              external_product_id: m.external_product_id ?? m.product_id ?? null,
+              mapping_confidence: m.mapping_confidence ?? null,
+              display_price: m.display_price ?? null,
+              price_low: m.price_low ?? null,
+              currency: m.currency ?? null,
+            });
+          };
+          const pages = [];
+          for (let offset=0; offset<240; offset+=24) {
+            const page = await json(`${BASE}/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=${offset}`);
+            pages.push(...(page.items || []));
+            if (!page.has_more) break;
+          }
+          const cards = [...new Map(pages.map(x => [Number(x.card_id ?? x.id), x])).values()];
+          console.log(`canonical_cards=${cards.length}`);
+
+          let cursor = 0;
+          const details = new Array(cards.length);
+          const workers = Array.from({length: 8}, async () => {
+            while (true) {
+              const i = cursor++;
+              if (i >= cards.length) return;
+              const c = cards[i];
+              const cardId = Number(c.card_id ?? c.id);
+              const payload = await json(`${BASE}/api/catalog/cards/${cardId}/prints?limit=100&offset=0`);
+              const prints = payload.items || payload.results || (Array.isArray(payload) ? payload : []);
+              details[i] = {c, prints};
+            }
+          });
+          await Promise.all(workers);
+
+          const report = {
+            cards: cards.length,
+            representative_missing_rarity: 0,
+            missing_with_no_known_sibling: 0,
+            missing_with_single_rarity_consensus: 0,
+            missing_with_conflicting_rarities: 0,
+            representative_has_exact_market: 0,
+            consensus_cases_same_set_number_language: 0,
+            consensus_cases_market_would_change_if_rep_swapped: 0,
+            consensus_cases_market_same_if_rep_swapped: 0,
+          };
+          const examples = {safeMetadata:[], marketRisk:[], noSource:[], conflicts:[]};
+
+          for (const {c, prints} of details) {
+            const repId = Number(c.matched_print_id ?? c.print_id ?? 0) || null;
+            const rep = prints.find(p => Number(p.id ?? p.print_id) === repId) || null;
+            const repRarity = clean(c.rarity ?? rep?.rarity);
+            const repSet = clean(c.set_code ?? rep?.set_code)?.toLowerCase() || null;
+            const repNo = clean(c.collector_number ?? rep?.collector_number);
+            const repLang = clean(c.language ?? rep?.language)?.toLowerCase() || null;
+            const repMarket = c.card_market || marketOf(rep);
+            if (repMarket?.mapping_confidence === 'exact') report.representative_has_exact_market++;
+            if (repRarity) continue;
+            report.representative_missing_rarity++;
+
+            const comparable = prints.filter(p => {
+              const set = clean(p.set_code)?.toLowerCase() || null;
+              const no = clean(p.collector_number);
+              const lang = clean(p.language)?.toLowerCase() || null;
+              return (!repSet || set === repSet) && (!repNo || no === repNo) && (!repLang || lang === repLang);
+            });
+            const known = comparable.filter(p => clean(p.rarity));
+            const rarities = [...new Set(known.map(p => clean(p.rarity)))];
+            if (!rarities.length) {
+              report.missing_with_no_known_sibling++;
+              if (examples.noSource.length < 8) examples.noSource.push({card_id:c.card_id,name:c.name,set_code:c.set_code,collector_number:c.collector_number,rep:repId,prints:prints.length});
+              continue;
+            }
+            if (rarities.length > 1) {
+              report.missing_with_conflicting_rarities++;
+              if (examples.conflicts.length < 8) examples.conflicts.push({card_id:c.card_id,name:c.name,set_code:c.set_code,collector_number:c.collector_number,rep:repId,rarities});
+              continue;
+            }
+            report.missing_with_single_rarity_consensus++;
+            report.consensus_cases_same_set_number_language++;
+
+            const candidates = known.filter(p => clean(p.rarity) === rarities[0]);
+            const repSig = repMarket ? JSON.stringify({
+              external_product_id: repMarket.external_product_id ?? repMarket.product_id ?? null,
+              mapping_confidence: repMarket.mapping_confidence ?? null,
+              display_price: repMarket.display_price ?? null,
+              price_low: repMarket.price_low ?? null,
+              currency: repMarket.currency ?? null,
+            }) : null;
+            const candidateMarkets = candidates.map(p => ({
+              id:Number(p.id ?? p.print_id),
+              rarity:clean(p.rarity),
+              market: marketOf(p),
+            }));
+            const exactComparable = candidateMarkets.filter(x => x.market?.mapping_confidence === 'exact');
+            const same = exactComparable.some(x => {
+              const m = x.market;
+              const sig = JSON.stringify({
+                external_product_id: m.external_product_id ?? m.product_id ?? null,
+                mapping_confidence: m.mapping_confidence ?? null,
+                display_price: m.display_price ?? null,
+                price_low: m.price_low ?? null,
+                currency: m.currency ?? null,
+              });
+              return repSig && sig === repSig;
+            });
+            if (same) report.consensus_cases_market_same_if_rep_swapped++;
+            else if (exactComparable.length || repMarket) report.consensus_cases_market_would_change_if_rep_swapped++;
+
+            const ex = {
+              card_id:c.card_id,
+              name:c.name,
+              set_code:c.set_code,
+              collector_number:c.collector_number,
+              rep:repId,
+              consensus_rarity:rarities[0],
+              sibling_ids:candidates.slice(0,8).map(p => Number(p.id ?? p.print_id)),
+              rep_market: repMarket ? {mapping_confidence:repMarket.mapping_confidence,external_product_id:repMarket.external_product_id ?? repMarket.product_id ?? null,display_price:repMarket.display_price ?? null} : null,
+              sibling_exact_markets: exactComparable.slice(0,5).map(x => ({id:x.id,external_product_id:x.market.external_product_id ?? x.market.product_id ?? null,display_price:x.market.display_price ?? null})),
+            };
+            if (same && examples.safeMetadata.length < 8) examples.safeMetadata.push(ex);
+            if (!same && examples.marketRisk.length < 12) examples.marketRisk.push(ex);
+          }
+
+          console.log('REPORT=' + JSON.stringify(report));
+          console.log('SAFE_METADATA_EXAMPLES=' + JSON.stringify(examples.safeMetadata));
+          console.log('MARKET_RISK_EXAMPLES=' + JSON.stringify(examples.marketRisk));
+          console.log('NO_SOURCE_EXAMPLES=' + JSON.stringify(examples.noSource));
+          console.log('CONFLICT_EXAMPLES=' + JSON.stringify(examples.conflicts));
+
+          if (report.representative_missing_rarity !== report.missing_with_no_known_sibling + report.missing_with_single_rarity_consensus + report.missing_with_conflicting_rarities) {
+            throw new Error('audit accounting mismatch');
+          }
+          NODE
+          node /tmp/audit.mjs
