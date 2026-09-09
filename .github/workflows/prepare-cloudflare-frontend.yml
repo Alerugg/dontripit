@@ -36,6 +36,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Bootstrap Vite for vinext initializer
+        working-directory: frontend
+        run: npm install --no-save vite
+
       - name: Initialize vinext for Cloudflare
         working-directory: frontend
         env:
