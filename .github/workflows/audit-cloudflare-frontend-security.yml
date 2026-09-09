@@ -28,9 +28,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Regenerate deterministic lockfile
+      - name: Patch Next.js security release
         working-directory: frontend
-        run: npm install --package-lock-only --legacy-peer-deps
+        run: npm install --save-exact --legacy-peer-deps next@16.3.3
       - name: Prove clean install
         working-directory: frontend
         run: npm ci --legacy-peer-deps
@@ -49,12 +49,13 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const a = JSON.parse(fs.readFileSync('/tmp/audit-prod.json','utf8'));
-          console.log('PROD_AUDIT_COUNTS=' + JSON.stringify(a.metadata?.vulnerabilities || {}));
+          const counts = a.metadata?.vulnerabilities || {};
+          console.log('PROD_AUDIT_COUNTS=' + JSON.stringify(counts));
           for (const [name,v] of Object.entries(a.vulnerabilities || {})) {
             console.log(`PROD ${name} severity=${v.severity} direct=${v.isDirect} via=${JSON.stringify(v.via)}`);
           }
+          if ((counts.critical || 0) > 0) process.exit(2);
           NODE
-          exit 0
       - name: Full dependency audit
         working-directory: frontend
         shell: bash
@@ -70,15 +71,15 @@ jobs:
           }
           NODE
           exit 0
-      - name: Persist repaired lockfile if changed
+      - name: Persist validated security patch
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add frontend/package-lock.json
+          git add frontend/package.json frontend/package-lock.json
           if git diff --cached --quiet; then
-            echo 'Lockfile already synchronized.'
+            echo 'Security patch already persisted.'
             exit 0
           fi
-          git commit -m 'infra(cloudflare): synchronize frontend lockfile'
+          git commit -m 'fix(frontend): patch Next.js security release'
           git push origin HEAD:infra/cloudflare-frontend-production-parity
