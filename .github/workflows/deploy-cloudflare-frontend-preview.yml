@@ -2,6 +2,11 @@ name: Deploy frontend preview to Cloudflare
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/cloudflare-preview-trigger'
 
 permissions:
   contents: write
@@ -45,6 +50,10 @@ jobs:
       - name: Clean install
         working-directory: frontend
         run: npm ci --legacy-peer-deps
+
+      - name: Build traditional Next target
+        working-directory: frontend
+        run: npm run build
 
       - name: Create or reuse vinext KV cache
         working-directory: frontend
@@ -111,6 +120,7 @@ jobs:
             sleep 5
           done
           test -s /tmp/home.html
+
           curl -fsS --max-time 30 "$PREVIEW_URL/api/health" -o /tmp/health.json
           node - <<'NODE'
           const fs = require('fs');
@@ -118,11 +128,36 @@ jobs:
           console.log('preview_health=' + JSON.stringify(h));
           if (!h || h.status !== 'ok') process.exit(5);
           NODE
+
           curl -fsS --max-time 30 "$PREVIEW_URL/api/search-v2?q=Pikachu&limit=1" -o /tmp/search.json
           node - <<'NODE'
           const fs = require('fs');
           const j = JSON.parse(fs.readFileSync('/tmp/search.json','utf8'));
           console.log('preview_search_keys=' + Object.keys(j).join(','));
+          NODE
+
+          curl -fsS --max-time 45 "$PREVIEW_URL/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0" -o /tmp/catalog.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const j = JSON.parse(fs.readFileSync('/tmp/catalog.json','utf8'));
+          const items = j.items || [];
+          const placeholders = new Set(['', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined']);
+          const fields = ['set_code', 'set_name', 'collector_number', 'rarity', 'language', 'finish', 'variant_family', 'exact_variant'];
+          for (const item of items) {
+            for (const field of fields) {
+              const value = item?.[field];
+              if (typeof value === 'string' && placeholders.has(value.trim().toLowerCase())) {
+                console.error(`Placeholder leaked: card=${item.card_id} field=${field} value=${value}`);
+                process.exit(6);
+              }
+            }
+          }
+          const base = items.find(x => Number(x.card_id) === 1);
+          if (!base) throw new Error('Base Set Pikachu card_id=1 missing from first page');
+          console.log('base_pikachu=' + JSON.stringify({card_id:base.card_id,set_code:base.set_code,collector_number:base.collector_number,rarity:base.rarity,matched_print_id:base.matched_print_id}));
+          if (Number(base.matched_print_id) !== 571) throw new Error(`Representative print changed unexpectedly: ${base.matched_print_id}`);
+          if (base.rarity !== null && base.rarity !== undefined) throw new Error(`Expected missing rarity to be null/undefined, got ${base.rarity}`);
+          if (String(base.set_code).toLowerCase() !== 'bs' || String(base.collector_number) !== '58') throw new Error('Base Set Pikachu identity drifted');
           NODE
 
       - name: Persist KV binding after successful preview
@@ -145,4 +180,6 @@ jobs:
           echo '' >> "$GITHUB_STEP_SUMMARY"
           echo "- Preview: $PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
           echo '- Source: infra/cloudflare-frontend-production-parity' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Traditional Next build: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Placeholder metadata contract: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production domain unchanged.' >> "$GITHUB_STEP_SUMMARY"
