@@ -40,7 +40,12 @@ jobs:
         working-directory: frontend
         env:
           CI: '1'
+          NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
         run: npx --yes vinext init --skip-check --platform=cloudflare
+
+      - name: Pin React server runtime to production React line
+        working-directory: frontend
+        run: npm install --save-exact react-server-dom-webpack@19.2.8
 
       - name: Convert Next config to ESM without changing behavior
         working-directory: frontend
