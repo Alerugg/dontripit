@@ -1,0 +1,149 @@
+name: Deploy frontend preview to Cloudflare
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cloudflare-frontend-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+      INTERNAL_API_BASE_URL: https://api.dontripit.com
+      NEXT_PUBLIC_SITE_NAME: Don’tRipIt
+      PREVIEW_URL: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
+    steps:
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Missing CLOUDFLARE_API_TOKEN'; exit 2; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Missing CLOUDFLARE_ACCOUNT_ID'; exit 2; }
+          test -n "$INTERNAL_API_KEY" || { echo 'Missing INTERNAL_API_KEY'; exit 2; }
+
+      - name: Checkout production-parity migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: infra/cloudflare-frontend-production-parity
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Clean install
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Create or reuse vinext KV cache
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='dontripit-web-preview-VINEXT_KV_CACHE'
+          npx wrangler kv namespace list > /tmp/kv-list.json
+          kv_id=$(node - "$expected" <<'NODE'
+          const fs = require('fs');
+          const expected = process.argv[2];
+          const rows = JSON.parse(fs.readFileSync('/tmp/kv-list.json','utf8'));
+          const exact = rows.filter(x => x.title === expected);
+          if (exact.length > 1) process.exit(3);
+          if (exact.length === 1) process.stdout.write(exact[0].id);
+          NODE
+          )
+          if [ -z "$kv_id" ]; then
+            echo "Creating KV namespace $expected"
+            npx wrangler kv namespace create VINEXT_KV_CACHE
+            npx wrangler kv namespace list > /tmp/kv-list.json
+            kv_id=$(node - "$expected" <<'NODE'
+          const fs = require('fs');
+          const expected = process.argv[2];
+          const rows = JSON.parse(fs.readFileSync('/tmp/kv-list.json','utf8'));
+          const exact = rows.filter(x => x.title === expected);
+          if (exact.length !== 1) {
+            console.error(`Expected exactly one ${expected}, found ${exact.length}`);
+            process.exit(4);
+          }
+          process.stdout.write(exact[0].id);
+          NODE
+            )
+          fi
+          echo "Using KV namespace id $kv_id"
+          KV_ID="$kv_id" node <<'NODE'
+          const fs = require('fs');
+          const p = 'wrangler.jsonc';
+          let s = fs.readFileSync(p,'utf8');
+          s = s.replace('<your-kv-namespace-id>', process.env.KV_ID);
+          if (s.includes('<your-kv-namespace-id>')) throw new Error('KV placeholder still present');
+          fs.writeFileSync(p,s);
+          NODE
+
+      - name: Build Cloudflare target
+        working-directory: frontend
+        run: npm run build:vinext
+
+      - name: Deploy isolated preview Worker
+        working-directory: frontend
+        run: npm run deploy:vinext
+
+      - name: Install runtime API secret on preview Worker
+        working-directory: frontend
+        shell: bash
+        run: printf '%s' "$INTERNAL_API_KEY" | npx wrangler secret put INTERNAL_API_KEY --name dontripit-web-preview
+
+      - name: Smoke test preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 20 "$PREVIEW_URL/" -o /tmp/home.html; then break; fi
+            sleep 5
+          done
+          test -s /tmp/home.html
+          curl -fsS --max-time 30 "$PREVIEW_URL/api/health" -o /tmp/health.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const h = JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
+          console.log('preview_health=' + JSON.stringify(h));
+          if (!h || h.ok !== true) process.exit(5);
+          NODE
+          curl -fsS --max-time 30 "$PREVIEW_URL/api/search-v2?q=Pikachu&limit=1" -o /tmp/search.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const j = JSON.parse(fs.readFileSync('/tmp/search.json','utf8'));
+          console.log('preview_search_keys=' + Object.keys(j).join(','));
+          NODE
+
+      - name: Persist KV binding after successful preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/wrangler.jsonc
+          if git diff --cached --quiet; then
+            echo 'KV binding already persisted.'
+          else
+            git commit -m 'infra(cloudflare): pin preview KV namespace'
+            git push origin HEAD:infra/cloudflare-frontend-production-parity
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo '### Cloudflare frontend preview' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preview: $PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Source: infra/cloudflare-frontend-production-parity' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Production domain unchanged.' >> "$GITHUB_STEP_SUMMARY"
