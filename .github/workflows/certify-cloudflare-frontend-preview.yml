@@ -1,0 +1,145 @@
+name: Certify Cloudflare frontend preview
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/cloudflare-preview-cert-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PREVIEW: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
+      PROD: https://dontripit.com
+    steps:
+      - name: Page and public-route parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths=(
+            /
+            /pokemon
+            /onepiece
+            /yugioh
+            /riftbound
+            /explorer
+            /login
+            /register
+            /forgot-password
+            /privacy
+            /terms
+            /cookies
+          )
+          for path in "${paths[@]}"; do
+            p_code=$(curl -L -sS -o /tmp/preview.html -w '%{http_code}' --max-time 30 "$PREVIEW$path")
+            r_code=$(curl -L -sS -o /tmp/prod.html -w '%{http_code}' --max-time 30 "$PROD$path")
+            echo "$path preview=$p_code prod=$r_code preview_bytes=$(wc -c </tmp/preview.html) prod_bytes=$(wc -c </tmp/prod.html)"
+            test "$p_code" = "200"
+            test "$r_code" = "200"
+            test -s /tmp/preview.html
+            grep -Eqi '<html|<!doctype' /tmp/preview.html
+          done
+
+      - name: Static asset delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 30 "$PREVIEW/" -o /tmp/home.html
+          node <<'NODE' >/tmp/assets.txt
+          const fs = require('fs');
+          const html = fs.readFileSync('/tmp/home.html','utf8');
+          const matches = [...html.matchAll(/(?:src|href)=["']([^"']*\/_next\/static\/[^"']+\.(?:js|css|woff2))["']/gi)].map(m => m[1]);
+          const unique = [...new Set(matches)].slice(0, 8);
+          if (unique.length < 2) {
+            console.error('Too few static assets discovered:', unique);
+            process.exit(2);
+          }
+          process.stdout.write(unique.join('\n'));
+          NODE
+          while IFS= read -r asset; do
+            case "$asset" in
+              http*) url="$asset" ;;
+              *) url="$PREVIEW$asset" ;;
+            esac
+            code=$(curl -L -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")
+            echo "asset=$asset status=$code"
+            test "$code" = "200"
+          done </tmp/assets.txt
+
+      - name: Frontend API health parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 "$PREVIEW/api/health" -o /tmp/preview-health.json
+          curl -fsS --max-time 30 "$PROD/api/health" -o /tmp/prod-health.json
+          node <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('/tmp/preview-health.json','utf8'));
+          const r = JSON.parse(fs.readFileSync('/tmp/prod-health.json','utf8'));
+          console.log('preview_health=' + JSON.stringify(p));
+          console.log('prod_health=' + JSON.stringify(r));
+          if (p?.status !== 'ok' || r?.status !== 'ok') process.exit(2);
+          NODE
+
+      - name: Same-origin search parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          queries=('Pikachu' 'Luffy' 'P-150' 'OP05-119' 'LOB-001')
+          for q in "${queries[@]}"; do
+            encoded=$(node -p "encodeURIComponent(process.argv[1])" "$q")
+            curl -fsS --max-time 45 "$PREVIEW/api/search-v2?q=$encoded&limit=20" -o /tmp/preview-search.json
+            curl -fsS --max-time 45 "$PROD/api/search-v2?q=$encoded&limit=20" -o /tmp/prod-search.json
+            QUERY="$q" node <<'NODE'
+          const fs = require('fs');
+          const q = process.env.QUERY;
+          const p = JSON.parse(fs.readFileSync('/tmp/preview-search.json','utf8'));
+          const r = JSON.parse(fs.readFileSync('/tmp/prod-search.json','utf8'));
+          const pickArray = (j) => {
+            if (Array.isArray(j)) return j;
+            for (const key of ['results','items','data']) {
+              if (Array.isArray(j?.[key])) return j[key];
+              if (Array.isArray(j?.[key]?.results)) return j[key].results;
+              if (Array.isArray(j?.[key]?.items)) return j[key].items;
+            }
+            return null;
+          };
+          const identity = (x) => String(x?.print_id ?? x?.printId ?? x?.id ?? x?.card_id ?? x?.cardId ?? x?.external_id ?? x?.code ?? x?.name ?? '');
+          const pa = pickArray(p);
+          const ra = pickArray(r);
+          if (!pa || !ra) {
+            console.error(q, 'unrecognized search shapes', Object.keys(p || {}), Object.keys(r || {}));
+            process.exit(3);
+          }
+          const pIds = pa.slice(0, 5).map(identity);
+          const rIds = ra.slice(0, 5).map(identity);
+          console.log(`${q} preview_results=${pa.length} prod_results=${ra.length} preview_top=${JSON.stringify(pIds)} prod_top=${JSON.stringify(rIds)}`);
+          if (pa.length !== ra.length) process.exit(4);
+          if (JSON.stringify(pIds) !== JSON.stringify(rIds)) process.exit(5);
+          NODE
+          done
+
+      - name: Preview isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PREVIEW" != "$PROD"
+          curl -fsSI --max-time 30 "$PREVIEW/" | tr -d '\r' | tee /tmp/headers.txt
+          grep -Eqi '^server: cloudflare$|^cf-ray:' /tmp/headers.txt
+
+      - name: Certification summary
+        run: |
+          echo '### Cloudflare frontend preview certification' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Public pages: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Static assets: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Frontend API health: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Search parity probes: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Production domain: unchanged' >> "$GITHUB_STEP_SUMMARY"
