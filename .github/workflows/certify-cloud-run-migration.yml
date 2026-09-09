@@ -1,4 +1,5 @@
 name: Certify Cloud Run migration
+# Certification v3: production-parity Cloud Run revision.
 
 on:
   workflow_dispatch:
@@ -59,7 +60,7 @@ jobs:
               if params:
                   url += '?' + urllib.parse.urlencode(params)
               started = time.perf_counter()
-              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/2.0'})
+              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/3.0'})
               try:
                   with urllib.request.urlopen(req, timeout=timeout) as response:
                       body = response.read().decode('utf-8')
