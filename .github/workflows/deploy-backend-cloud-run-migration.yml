@@ -23,6 +23,9 @@ jobs:
         with:
           ref: infra/exit-vercel-cloud-run
 
+      - name: Record migration source revision
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
       - name: Validate required configuration
         env:
           PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -59,7 +62,7 @@ jobs:
           PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
-          IMAGE="${GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${GCP_ARTIFACT_REPOSITORY}/dontripit-api:${GITHUB_SHA}"
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${GCP_ARTIFACT_REPOSITORY}/dontripit-api:${SOURCE_SHA}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           docker build --pull -t "${IMAGE}" ./backend
           docker push "${IMAGE}"
@@ -80,7 +83,7 @@ jobs:
           from pathlib import Path
 
           payload = {
-              "SOURCE_VERSION": os.environ["GITHUB_SHA"],
+              "SOURCE_VERSION": os.environ["SOURCE_SHA"],
               "DATABASE_URL": os.environ["DATABASE_URL"],
               "INTERNAL_API_KEY": os.environ["INTERNAL_API_KEY"],
               "PUBLIC_SITE_URL": "https://dontripit.com",
