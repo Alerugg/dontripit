@@ -9,12 +9,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      INTERNAL_API_BASE_URL: https://api.dontripit.com
+      INTERNAL_API_KEY: migration-build-placeholder
+      NEXT_PUBLIC_SITE_NAME: Don’tRipIt
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,16 +28,24 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install locked dependencies
+      - name: Regenerate deterministic lockfile
         working-directory: frontend
-        run: npm ci
+        run: npm install --package-lock-only --legacy-peer-deps
+      - name: Prove clean install
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+      - name: Rebuild Cloudflare target
+        working-directory: frontend
+        run: npm run build:vinext
+      - name: Rebuild traditional Next target
+        working-directory: frontend
+        run: npm run build
       - name: Production dependency audit
         working-directory: frontend
         shell: bash
         run: |
           set +e
           npm audit --omit=dev --json > /tmp/audit-prod.json
-          code=$?
           node - <<'NODE'
           const fs = require('fs');
           const a = JSON.parse(fs.readFileSync('/tmp/audit-prod.json','utf8'));
@@ -58,3 +70,15 @@ jobs:
           }
           NODE
           exit 0
+      - name: Persist repaired lockfile if changed
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo 'Lockfile already synchronized.'
+            exit 0
+          fi
+          git commit -m 'infra(cloudflare): synchronize frontend lockfile'
+          git push origin HEAD:infra/cloudflare-frontend-production-parity
