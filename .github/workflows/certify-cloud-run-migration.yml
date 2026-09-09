@@ -1,0 +1,104 @@
+name: Certify Cloud Run migration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/certify-cloud-run-migration.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Resolve Cloud Run URL
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION || 'europe-southwest1' }}
+          SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE || 'dontripit-api' }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')"
+          test -n "$SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          echo "Cloud Run URL resolved"
+
+      - name: Certify health and Search V2 probes
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+
+          base = __import__('os').environ['SERVICE_URL'].rstrip('/')
+
+          def get(path, params=None, timeout=30):
+              url = base + path
+              if params:
+                  url += '?' + urllib.parse.urlencode(params)
+              started = time.perf_counter()
+              req = urllib.request.Request(url, headers={'User-Agent': 'dontripit-cloud-run-certifier/1.0'})
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  body = response.read().decode('utf-8')
+                  status = response.status
+              elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+              return status, elapsed_ms, json.loads(body)
+
+          report = {'status': 'pass', 'probes': []}
+
+          status, ms, health = get('/api/health')
+          if status != 200 or health.get('ok') is not True or health.get('runtime') != 'cloud_run':
+              raise SystemExit(f'health failed: status={status} body={health}')
+          report['health'] = {'status': status, 'ms': ms, 'runtime': health.get('runtime'), 'revision': health.get('revision')}
+
+          probes = [
+              ('P-150', None, 'exact'),
+              ('OP05-119', None, 'exact'),
+              ('LOB-001', None, 'exact'),
+              ('Luffy', 'onepiece', 'name'),
+              ('Pikachu', 'pokemon', 'name'),
+          ]
+
+          for query, game, kind in probes:
+              params = {'q': query, 'limit': 24}
+              if game:
+                  params['game'] = game
+              status, ms, payload = get('/api/v2/search', params)
+              count = int(payload.get('count') or 0)
+              if status != 200 or count < 1:
+                  raise SystemExit(f'{query} failed: status={status} count={count} body={payload}')
+              item = (payload.get('items') or [{}])[0]
+              report['probes'].append({
+                  'query': query,
+                  'game': game,
+                  'kind': kind,
+                  'status': status,
+                  'ms': ms,
+                  'count': count,
+                  'total': payload.get('total'),
+                  'total_prints': payload.get('total_prints'),
+                  'pagination_mode': payload.get('pagination_mode'),
+                  'first_name': item.get('name'),
+                  'first_collector_number': (item.get('matched_print') or item).get('collector_number'),
+                  'first_set_code': (item.get('matched_print') or item).get('set_code'),
+              })
+
+          print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
+          PY
