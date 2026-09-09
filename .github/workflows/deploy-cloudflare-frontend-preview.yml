@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected='dontripit-web-preview-VINEXT_KV_CACHE'
+          expected='VINEXT_KV_CACHE'
           npx wrangler kv namespace list > /tmp/kv-list.json
           kv_id=$(node - "$expected" <<'NODE'
           const fs = require('fs');
