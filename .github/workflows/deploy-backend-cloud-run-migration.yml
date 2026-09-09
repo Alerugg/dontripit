@@ -1,0 +1,135 @@
+name: Deploy backend to Cloud Run (migration)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_REGION: ${{ vars.GCP_REGION || 'europe-southwest1' }}
+  GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY || 'dontripit' }}
+  GCP_CLOUD_RUN_SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE || 'dontripit-api' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: infra/exit-vercel-cloud-run
+
+      - name: Validate required configuration
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOYER_SA: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: |
+          set -euo pipefail
+          for name in PROJECT_ID WIF_PROVIDER DEPLOYER_SA RUNTIME_SA DATABASE_URL INTERNAL_API_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub variable/secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Artifact Registry auth
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend image
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${GCP_ARTIFACT_REPOSITORY}/dontripit-api:${GITHUB_SHA}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          docker build --pull -t "${IMAGE}" ./backend
+          docker push "${IMAGE}"
+
+      - name: Prepare Cloud Run environment file
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "SOURCE_VERSION": os.environ["GITHUB_SHA"],
+              "DATABASE_URL": os.environ["DATABASE_URL"],
+              "INTERNAL_API_KEY": os.environ["INTERNAL_API_KEY"],
+              "PUBLIC_SITE_URL": "https://dontripit.com",
+              "PUBLIC_HUB_CATALOG_ENABLED": "true",
+              "PUBLIC_API_ENABLED": "true",
+              "PUBLIC_IP_RATE_LIMIT_RPM": "30",
+              "API_REQUEST_METRICS_DB_ENABLED": "false",
+              "ADMIN_TOKEN": os.environ.get("ADMIN_TOKEN", ""),
+              "ADMIN_API_KEY": os.environ.get("ADMIN_API_KEY", ""),
+              "RESEND_API_KEY": os.environ.get("RESEND_API_KEY", ""),
+              "AUTH_EMAIL_FROM": os.environ.get("AUTH_EMAIL_FROM", ""),
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "cloudrun-env.json"
+          path.write_text(json.dumps(payload), encoding="utf-8")
+          path.chmod(0o600)
+          print(f"Wrote Cloud Run environment file to {path}")
+          PY
+
+      - name: Deploy Cloud Run revision
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          gcloud run deploy "${GCP_CLOUD_RUN_SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --platform=managed \
+            --image="${IMAGE}" \
+            --service-account="${RUNTIME_SA}" \
+            --allow-unauthenticated \
+            --port=8080 \
+            --cpu=1 \
+            --memory=512Mi \
+            --min=0 \
+            --max=2 \
+            --concurrency=20 \
+            --timeout=120 \
+            --env-vars-file="${RUNNER_TEMP}/cloudrun-env.json"
+
+      - name: Verify health endpoint
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="$(gcloud run services describe "${GCP_CLOUD_RUN_SERVICE}" --project="${PROJECT_ID}" --region="${GCP_REGION}" --format='value(status.url)')"
+          echo "Cloud Run URL: ${SERVICE_URL}"
+          curl --fail --show-error --silent --retry 5 --retry-delay 3 "${SERVICE_URL}/api/health"
+
+      - name: Remove temporary environment file
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/cloudrun-env.json"
