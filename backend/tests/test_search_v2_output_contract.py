@@ -90,8 +90,11 @@ def test_sanitize_search_item_does_not_change_physical_identity():
     assert result["score"] == 5000.0
 
 
-def test_search_v2_returns_null_not_unknown_for_missing_rarity(client):
+def test_search_v2_returns_null_not_unknown_for_missing_rarity(client, monkeypatch):
     _, print_id = _seed_pikachu(rarity="unknown")
+    # SQLite unit tests cannot execute the PostgreSQL-only exact-identifier
+    # pre-check. Isolate the canonical-name path being tested here.
+    monkeypatch.setattr("app.routes.search_v2._exact_identifier_for_game", lambda *args, **kwargs: None)
 
     response = _public_get(client, "/api/v2/search?q=Pikachu&game=pokemon")
     assert response.status_code == 200
@@ -104,8 +107,9 @@ def test_search_v2_returns_null_not_unknown_for_missing_rarity(client):
     assert item["matched_print"]["rarity"] is None
 
 
-def test_search_v2_preserves_known_rarity(client):
+def test_search_v2_preserves_known_rarity(client, monkeypatch):
     _, print_id = _seed_pikachu(rarity="Common")
+    monkeypatch.setattr("app.routes.search_v2._exact_identifier_for_game", lambda *args, **kwargs: None)
 
     response = _public_get(client, "/api/v2/search?q=Pikachu&game=pokemon")
     assert response.status_code == 200
