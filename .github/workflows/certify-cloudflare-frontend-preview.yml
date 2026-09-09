@@ -1,11 +1,6 @@
 name: Certify Cloudflare frontend preview
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/cloudflare-preview-cert-trigger'
   workflow_dispatch:
 
 permissions:
