@@ -4,6 +4,7 @@ from sqlalchemy import func, select, text
 
 from app.models import Card, Game, Print, PrintImage, Set
 from app.search_v2.normalization import normalize_search_text
+from app.search_v2.physical_metadata import enrich_representative_rarity_by_consensus
 from app.search_v2_models import PrintSearchProfile
 
 
@@ -106,6 +107,7 @@ def _sqlite_page(session, *, query: str, game: str | None, limit: int, offset: i
             }
         )
 
+    items = enrich_representative_rarity_by_consensus(session, items)
     next_offset = offset + len(items) if offset + len(items) < total else None
     return {
         "items": items,
@@ -341,6 +343,7 @@ def exhaustive_name_page(
         }
         for row in rows
     ]
+    items = enrich_representative_rarity_by_consensus(session, items)
     next_offset = offset + len(items) if offset + len(items) < total else None
     return {
         "items": items,
