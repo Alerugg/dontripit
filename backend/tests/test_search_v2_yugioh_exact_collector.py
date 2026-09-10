@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import app.routes.search_v2 as search_route
 from app.search_v2.yugioh_exact_collector import _collector_code, exact_yugioh_collector_search
 
 
@@ -56,3 +57,43 @@ def test_yugioh_exact_collector_fails_closed_and_preserves_language_filter():
     assert result == []
     assert session.params["q_code"] == "lob-001"
     assert session.params["display_language"] == "es,ja"
+
+
+def test_http_exact_identifier_fast_path_promotes_yugioh_before_generic_search(monkeypatch):
+    calls = []
+    expected = [{"card_id": 136130, "game": "yugioh"}]
+
+    monkeypatch.setattr(
+        search_route,
+        "exact_onepiece_collector_search",
+        lambda session, **kwargs: None,
+    )
+
+    def fake_yugioh(session, **kwargs):
+        calls.append(kwargs)
+        return expected
+
+    monkeypatch.setattr(search_route, "exact_yugioh_collector_search", fake_yugioh)
+
+    def generic_must_not_run(*args, **kwargs):
+        raise AssertionError("generic structured resolver must not run after a Yu-Gi-Oh exact match")
+
+    monkeypatch.setattr(search_route, "exact_structured_identifier_search", generic_must_not_run)
+
+    result = search_route._exact_identifier_for_game(
+        object(),
+        query="LOB-001",
+        game="yugioh",
+        limit=24,
+        language="es,ja",
+    )
+
+    assert result == expected
+    assert calls == [
+        {
+            "query": "LOB-001",
+            "game": "yugioh",
+            "limit": 24,
+            "language": "es,ja",
+        }
+    ]
