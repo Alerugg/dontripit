@@ -2,6 +2,11 @@ name: Certify Cloudflare frontend preview
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/cloudflare-cert-v2-trigger'
 
 permissions:
   contents: read
@@ -9,7 +14,7 @@ permissions:
 jobs:
   certify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PREVIEW: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
       PROD: https://dontripit.com
@@ -24,6 +29,7 @@ jobs:
             /onepiece
             /yugioh
             /riftbound
+            /magic
             /explorer
             /login
             /register
@@ -83,6 +89,36 @@ jobs:
           if (p?.status !== 'ok' || r?.status !== 'ok') process.exit(2);
           NODE
 
+      - name: Anonymous auth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/preview.cookies /tmp/prod.cookies
+          p_code=$(curl -sS -o /tmp/preview-me.json -D /tmp/preview-me.headers -w '%{http_code}' --max-time 30 "$PREVIEW/api/auth/me")
+          r_code=$(curl -sS -o /tmp/prod-me.json -D /tmp/prod-me.headers -w '%{http_code}' --max-time 30 "$PROD/api/auth/me")
+          echo "anonymous_auth preview=$p_code prod=$r_code"
+          test "$p_code" = "401"
+          test "$r_code" = "401"
+          PREVIEW_CODE="$p_code" PROD_CODE="$r_code" node <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('/tmp/preview-me.json','utf8'));
+          const r = JSON.parse(fs.readFileSync('/tmp/prod-me.json','utf8'));
+          const errorOf = (x) => String(x?.error || x?.code || '').toLowerCase();
+          console.log('anonymous_preview=' + JSON.stringify(p));
+          console.log('anonymous_prod=' + JSON.stringify(r));
+          if (process.env.PREVIEW_CODE !== process.env.PROD_CODE) throw new Error('Anonymous auth status drift');
+          if (!errorOf(p).includes('auth')) throw new Error('Preview anonymous auth did not return an authentication error');
+          if (!errorOf(r).includes('auth')) throw new Error('Production anonymous auth did not return an authentication error');
+          NODE
+
+          for path in /api/library/collection /api/library/wishlist; do
+            p=$(curl -sS -o /tmp/p.json -w '%{http_code}' --max-time 30 "$PREVIEW$path")
+            r=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 30 "$PROD$path")
+            echo "$path anonymous preview=$p prod=$r"
+            test "$p" = "$r"
+            test "$p" = "401"
+          done
+
       - name: Same-origin search parity
         shell: bash
         run: |
@@ -120,6 +156,56 @@ jobs:
           if (JSON.stringify(pIds) !== JSON.stringify(rIds)) process.exit(5);
           NODE
           done
+
+      - name: Search latency regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          queries=('Pikachu' 'Luffy' 'P-150' 'OP05-119' 'LOB-001')
+          : >/tmp/latency.tsv
+          for q in "${queries[@]}"; do
+            encoded=$(node -p "encodeURIComponent(process.argv[1])" "$q")
+            p_url="$PREVIEW/api/search-v2?q=$encoded&limit=20"
+            r_url="$PROD/api/search-v2?q=$encoded&limit=20"
+
+            # Warm both paths once so the comparison is about steady-state migration overhead.
+            curl -fsS -o /dev/null --max-time 30 "$p_url"
+            curl -fsS -o /dev/null --max-time 30 "$r_url"
+
+            for i in 1 2 3; do
+              p_time=$(curl -fsS -o /dev/null -w '%{time_total}' --max-time 30 "$p_url")
+              r_time=$(curl -fsS -o /dev/null -w '%{time_total}' --max-time 30 "$r_url")
+              printf '%s\tpreview\t%s\n' "$q" "$p_time" >>/tmp/latency.tsv
+              printf '%s\tprod\t%s\n' "$q" "$r_time" >>/tmp/latency.tsv
+            done
+          done
+          cat /tmp/latency.tsv
+          node <<'NODE'
+          const fs = require('fs');
+          const rows = fs.readFileSync('/tmp/latency.tsv','utf8').trim().split(/\n+/).map(line => {
+            const [q, side, seconds] = line.split('\t');
+            return {q, side, ms: Number(seconds) * 1000};
+          });
+          const median = (xs) => {
+            const a = [...xs].sort((a,b) => a-b);
+            return a[Math.floor(a.length / 2)];
+          };
+          for (const q of [...new Set(rows.map(r => r.q))]) {
+            const p = rows.filter(r => r.q === q && r.side === 'preview').map(r => r.ms);
+            const prod = rows.filter(r => r.q === q && r.side === 'prod').map(r => r.ms);
+            if (p.length !== 3 || prod.length !== 3 || [...p, ...prod].some(x => !Number.isFinite(x))) {
+              throw new Error(`${q}: incomplete latency samples`);
+            }
+            const p50 = median(p);
+            const prod50 = median(prod);
+            const pMax = Math.max(...p);
+            const allowedP50 = prod50 * 1.5 + 500;
+            const allowedMax = Math.max(20000, Math.max(...prod) * 2 + 1000);
+            console.log(`${q} preview_p50=${p50.toFixed(0)}ms prod_p50=${prod50.toFixed(0)}ms allowed_preview_p50=${allowedP50.toFixed(0)}ms preview_max=${pMax.toFixed(0)}ms`);
+            if (p50 > allowedP50) throw new Error(`${q}: Cloudflare preview p50 materially regressed vs production`);
+            if (pMax > allowedMax) throw new Error(`${q}: Cloudflare preview produced an extreme latency regression`);
+          }
+          NODE
 
       - name: Canonical physical metadata contract
         shell: bash
@@ -163,6 +249,8 @@ jobs:
           echo '- Public pages: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Static assets: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Frontend API health: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Anonymous auth contract: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Search parity probes: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Search latency regression gate: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Canonical metadata contract: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production domain: unchanged' >> "$GITHUB_STEP_SUMMARY"
