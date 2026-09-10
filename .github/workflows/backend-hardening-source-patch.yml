@@ -22,139 +22,26 @@ jobs:
       - name: Apply exact fail-closed source patches
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
-
-          ygo_path = Path('backend/app/ingest/connectors/ygoprodeck_yugioh.py')
-          ygo = ygo_path.read_text()
-
-          anchor = '''        images_by_print_source_key = {
-            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
-        }
-        normalized_prints_by_ygo_id: dict[str, object] = {}
-'''
-          replacement = '''        images_by_print_source_key = {
-            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
-        }
-        # SessionLocal intentionally runs with autoflush=False. Multiple source
-        # variants can resolve to the same canonical Print inside one payload,
-        # so a primary image staged earlier in this loop is not visible to a SQL
-        # query until the final flush. Track that staged identity explicitly to
-        # keep primary-image creation idempotent without a flush per variant.
-        primary_image_by_print_id: dict[int, PrintImage] = {}
-        normalized_prints_by_ygo_id: dict[str, object] = {}
-'''
-          if ygo.count(anchor) != 1:
-              raise SystemExit(f'YGO image-map anchor count={ygo.count(anchor)}; refusing patch')
-          ygo = ygo.replace(anchor, replacement, 1)
-
-          old = '''            image = images_by_print_source_key.get(item.source_key)
-            if image and image.url:
-                if print_row.id is None:
-                    session.flush()
-                primary_images = session.execute(
-                    select(PrintImage).where(
-                        PrintImage.print_id == print_row.id,
-                        PrintImage.is_primary.is_(True),
-                    ).order_by(PrintImage.id.asc())
-                ).scalars().all()
-                primary_image = self._choose_first(
-                    primary_images,
-                    label="print_images",
-                    context=f"print_id={print_row.id}",
-                )
-                if primary_image is None:
-                    session.add(
-                        PrintImage(
-                            print_id=print_row.id,
-                            url=image.url,
-                            is_primary=True,
-                            source="ygoprodeck",
-                        )
-                    )
-                    stats.records_inserted += 1
-                elif primary_image.url != image.url:
-                    primary_image.url = image.url
-                    if primary_image.source != "ygoprodeck":
-                        primary_image.source = "ygoprodeck"
-                    stats.records_updated += 1
-
-                for extra_primary in primary_images[1:]:
-                    if extra_primary.is_primary:
-                        extra_primary.is_primary = False
-                        stats.records_updated += 1
-'''
-          new = '''            image = images_by_print_source_key.get(item.source_key)
-            if image and image.url:
-                if print_row.id is None:
-                    session.flush()
-                print_id = int(print_row.id)
-                primary_image = primary_image_by_print_id.get(print_id)
-                primary_images: list[PrintImage] = []
-                if primary_image is None:
-                    primary_images = session.execute(
-                        select(PrintImage).where(
-                            PrintImage.print_id == print_id,
-                            PrintImage.is_primary.is_(True),
-                        ).order_by(PrintImage.id.asc())
-                    ).scalars().all()
-                    primary_image = self._choose_first(
-                        primary_images,
-                        label="print_images",
-                        context=f"print_id={print_id}",
-                    )
-                    if primary_image is None:
-                        primary_image = PrintImage(
-                            print_id=print_id,
-                            url=image.url,
-                            is_primary=True,
-                            source="ygoprodeck",
-                        )
-                        session.add(primary_image)
-                        stats.records_inserted += 1
-                    primary_image_by_print_id[print_id] = primary_image
-
-                changed_primary = False
-                if primary_image.url != image.url:
-                    primary_image.url = image.url
-                    changed_primary = True
-                if primary_image.source != "ygoprodeck":
-                    primary_image.source = "ygoprodeck"
-                    changed_primary = True
-                if not primary_image.is_primary:
-                    primary_image.is_primary = True
-                    changed_primary = True
-                if changed_primary and primary_image not in session.new:
-                    stats.records_updated += 1
-
-                # Existing historical duplicates are self-healed whenever the
-                # physical Print is touched. Newly staged duplicates cannot be
-                # created because primary_image_by_print_id owns the identity.
-                for extra_primary in primary_images[1:]:
-                    if extra_primary.is_primary:
-                        extra_primary.is_primary = False
-                        stats.records_updated += 1
-'''
-          if ygo.count(old) != 1:
-              raise SystemExit(f'YGO primary-image block count={ygo.count(old)}; refusing patch')
-          ygo = ygo.replace(old, new, 1)
-          ygo_path.write_text(ygo)
-
-          model_path = Path('backend/app/models.py')
-          models = model_path.read_text()
-          old_model = '''class PrintIdentifier(Base):
-    __tablename__ = "print_identifiers"
-    __table_args__ = (UniqueConstraint("print_id", "source", name="uq_identifier_source"),)
-'''
-          new_model = '''class PrintIdentifier(Base):
-    __tablename__ = "print_identifiers"
-    __table_args__ = (
-        UniqueConstraint("print_id", "source", name="uq_identifier_source"),
-        UniqueConstraint("source", "external_id", name="uq_print_identifiers_source_external_id"),
-    )
-'''
-          if models.count(old_model) != 1:
-              raise SystemExit(f'PrintIdentifier model anchor count={models.count(old_model)}; refusing patch')
-          model_path.write_text(models.replace(old_model, new_model, 1))
+          def d(value):
+              return base64.b64decode(value).decode()
+          anchor=d('ICAgICAgICBpbWFnZXNfYnlfcHJpbnRfc291cmNlX2tleSA9IHsKICAgICAgICAgICAgaW1nLnByaW50X3NvdXJjZV9rZXk6IGltZyBmb3IgaW1nIGluIG5vcm1hbGl6ZWQubm9ybWFsaXplZF9pbWFnZXMgaWYgaW1nLmlzX3ByaW1hcnkKICAgICAgICB9CiAgICAgICAgbm9ybWFsaXplZF9wcmludHNfYnlfeWdvX2lkOiBkaWN0W3N0ciwgb2JqZWN0XSA9IHt9Cg==')
+          replacement=d('ICAgICAgICBpbWFnZXNfYnlfcHJpbnRfc291cmNlX2tleSA9IHsKICAgICAgICAgICAgaW1nLnByaW50X3NvdXJjZV9rZXk6IGltZyBmb3IgaW1nIGluIG5vcm1hbGl6ZWQubm9ybWFsaXplZF9pbWFnZXMgaWYgaW1nLmlzX3ByaW1hcnkKICAgICAgICB9CiAgICAgICAgIyBTZXNzaW9uTG9jYWwgaW50ZW50aW9uYWxseSBydW5zIHdpdGggYXV0b2ZsdXNoPUZhbHNlLiBNdWx0aXBsZSBzb3VyY2UKICAgICAgICAjIHZhcmlhbnRzIGNhbiByZXNvbHZlIHRvIHRoZSBzYW1lIGNhbm9uaWNhbCBQcmludCBpbnNpZGUgb25lIHBheWxvYWQsCiAgICAgICAgIyBzbyBhIHByaW1hcnkgaW1hZ2Ugc3RhZ2VkIGVhcmxpZXIgaW4gdGhpcyBsb29wIGlzIG5vdCB2aXNpYmxlIHRvIGEgU1FMCiAgICAgICAgIyBxdWVyeSB1bnRpbCB0aGUgZmluYWwgZmx1c2guIFRyYWNrIHRoYXQgc3RhZ2VkIGlkZW50aXR5IGV4cGxpY2l0bHkgdG8KICAgICAgICAjIGtlZXAgcHJpbWFyeS1pbWFnZSBjcmVhdGlvbiBpZGVtcG90ZW50IHdpdGhvdXQgYSBmbHVzaCBwZXIgdmFyaWFudC4KICAgICAgICBwcmltYXJ5X2ltYWdlX2J5X3ByaW50X2lkOiBkaWN0W2ludCwgUHJpbnRJbWFnZV0gPSB7fQogICAgICAgIG5vcm1hbGl6ZWRfcHJpbnRzX2J5X3lnb19pZDogZGljdFtzdHIsIG9iamVjdF0gPSB7fQo=')
+          old=d('ICAgICAgICAgICAgaW1hZ2UgPSBpbWFnZXNfYnlfcHJpbnRfc291cmNlX2tleS5nZXQoaXRlbS5zb3VyY2Vfa2V5KQogICAgICAgICAgICBpZiBpbWFnZSBhbmQgaW1hZ2UudXJsOgogICAgICAgICAgICAgICAgaWYgcHJpbnRfcm93LmlkIGlzIE5vbmU6CiAgICAgICAgICAgICAgICAgICAgc2Vzc2lvbi5mbHVzaCgpCiAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlcyA9IHNlc3Npb24uZXhlY3V0ZSgKICAgICAgICAgICAgICAgICAgICBzZWxlY3QoUHJpbnRJbWFnZSkud2hlcmUoCiAgICAgICAgICAgICAgICAgICAgICAgIFByaW50SW1hZ2UucHJpbnRfaWQgPT0gcHJpbnRfcm93LmlkLAogICAgICAgICAgICAgICAgICAgICAgICBQcmludEltYWdlLmlzX3ByaW1hcnkuaXNfKFRydWUpLAogICAgICAgICAgICAgICAgICAgICkub3JkZXJfYnkoUHJpbnRJbWFnZS5pZC5hc2MoKSkKICAgICAgICAgICAgICAgICkuc2NhbGFycygpLmFsbCgpCiAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlID0gc2VsZi5fY2hvb3NlX2ZpcnN0KAogICAgICAgICAgICAgICAgICAgIHByaW1hcnlfaW1hZ2VzLAogICAgICAgICAgICAgICAgICAgIGxhYmVsPSJwcmludF9pbWFnZXMiLAogICAgICAgICAgICAgICAgICAgIGNvbnRleHQ9ZiJwcmludF9pZD17cHJpbnRfcm93LmlkfSIsCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICBpZiBwcmltYXJ5X2ltYWdlIGlzIE5vbmU6CiAgICAgICAgICAgICAgICAgICAgc2Vzc2lvbi5hZGQoCiAgICAgICAgICAgICAgICAgICAgICAgIFByaW50SW1hZ2UoCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwcmludF9pZD1wcmludF9yb3cuaWQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICB1cmw9aW1hZ2UudXJsLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgaXNfcHJpbWFyeT1UcnVlLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgc291cmNlPSJ5Z29wcm9kZWNrIiwKICAgICAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgICAgICBzdGF0cy5yZWNvcmRzX2luc2VydGVkICs9IDEKICAgICAgICAgICAgICAgIGVsaWYgcHJpbWFyeV9pbWFnZS51cmwgIT0gaW1hZ2UudXJsOgogICAgICAgICAgICAgICAgICAgIHByaW1hcnlfaW1hZ2UudXJsID0gaW1hZ2UudXJsCiAgICAgICAgICAgICAgICAgICAgaWYgcHJpbWFyeV9pbWFnZS5zb3VyY2UgIT0gInlnb3Byb2RlY2siOgogICAgICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlLnNvdXJjZSA9ICJ5Z29wcm9kZWNrIgogICAgICAgICAgICAgICAgICAgIHN0YXRzLnJlY29yZHNfdXBkYXRlZCArPSAxCgogICAgICAgICAgICAgICAgZm9yIGV4dHJhX3ByaW1hcnkgaW4gcHJpbWFyeV9pbWFnZXNbMTpdOgogICAgICAgICAgICAgICAgICAgIGlmIGV4dHJhX3ByaW1hcnkuaXNfcHJpbWFyeToKICAgICAgICAgICAgICAgICAgICAgICAgZXh0cmFfcHJpbWFyeS5pc19wcmltYXJ5ID0gRmFsc2UKICAgICAgICAgICAgICAgICAgICAgICAgc3RhdHMucmVjb3Jkc191cGRhdGVkICs9IDEK')
+          new=d('ICAgICAgICAgICAgaW1hZ2UgPSBpbWFnZXNfYnlfcHJpbnRfc291cmNlX2tleS5nZXQoaXRlbS5zb3VyY2Vfa2V5KQogICAgICAgICAgICBpZiBpbWFnZSBhbmQgaW1hZ2UudXJsOgogICAgICAgICAgICAgICAgaWYgcHJpbnRfcm93LmlkIGlzIE5vbmU6CiAgICAgICAgICAgICAgICAgICAgc2Vzc2lvbi5mbHVzaCgpCiAgICAgICAgICAgICAgICBwcmludF9pZCA9IGludChwcmludF9yb3cuaWQpCiAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlID0gcHJpbWFyeV9pbWFnZV9ieV9wcmludF9pZC5nZXQocHJpbnRfaWQpCiAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlczogbGlzdFtQcmludEltYWdlXSA9IFtdCiAgICAgICAgICAgICAgICBpZiBwcmltYXJ5X2ltYWdlIGlzIE5vbmU6CiAgICAgICAgICAgICAgICAgICAgcHJpbWFyeV9pbWFnZXMgPSBzZXNzaW9uLmV4ZWN1dGUoCiAgICAgICAgICAgICAgICAgICAgICAgIHNlbGVjdChQcmludEltYWdlKS53aGVyZSgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIFByaW50SW1hZ2UucHJpbnRfaWQgPT0gcHJpbnRfaWQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBQcmludEltYWdlLmlzX3ByaW1hcnkuaXNfKFRydWUpLAogICAgICAgICAgICAgICAgICAgICAgICApLm9yZGVyX2J5KFByaW50SW1hZ2UuaWQuYXNjKCkpCiAgICAgICAgICAgICAgICAgICAgKS5zY2FsYXJzKCkuYWxsKCkKICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlID0gc2VsZi5fY2hvb3NlX2ZpcnN0KAogICAgICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlcywKICAgICAgICAgICAgICAgICAgICAgICAgbGFiZWw9InByaW50X2ltYWdlcyIsCiAgICAgICAgICAgICAgICAgICAgICAgIGNvbnRleHQ9ZiJwcmludF9pZD17cHJpbnRfaWR9IiwKICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgaWYgcHJpbWFyeV9pbWFnZSBpcyBOb25lOgogICAgICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlID0gUHJpbnRJbWFnZSgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50X2lkPXByaW50X2lkLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgdXJsPWltYWdlLnVybCwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlzX3ByaW1hcnk9VHJ1ZSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHNvdXJjZT0ieWdvcHJvZGVjayIsCiAgICAgICAgICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgICAgICAgICAgc2Vzc2lvbi5hZGQocHJpbWFyeV9pbWFnZSkKICAgICAgICAgICAgICAgICAgICAgICAgc3RhdHMucmVjb3Jkc19pbnNlcnRlZCArPSAxCiAgICAgICAgICAgICAgICAgICAgcHJpbWFyeV9pbWFnZV9ieV9wcmludF9pZFtwcmludF9pZF0gPSBwcmltYXJ5X2ltYWdlCgogICAgICAgICAgICAgICAgY2hhbmdlZF9wcmltYXJ5ID0gRmFsc2UKICAgICAgICAgICAgICAgIGlmIHByaW1hcnlfaW1hZ2UudXJsICE9IGltYWdlLnVybDoKICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlLnVybCA9IGltYWdlLnVybAogICAgICAgICAgICAgICAgICAgIGNoYW5nZWRfcHJpbWFyeSA9IFRydWUKICAgICAgICAgICAgICAgIGlmIHByaW1hcnlfaW1hZ2Uuc291cmNlICE9ICJ5Z29wcm9kZWNrIjoKICAgICAgICAgICAgICAgICAgICBwcmltYXJ5X2ltYWdlLnNvdXJjZSA9ICJ5Z29wcm9kZWNrIgogICAgICAgICAgICAgICAgICAgIGNoYW5nZWRfcHJpbWFyeSA9IFRydWUKICAgICAgICAgICAgICAgIGlmIG5vdCBwcmltYXJ5X2ltYWdlLmlzX3ByaW1hcnk6CiAgICAgICAgICAgICAgICAgICAgcHJpbWFyeV9pbWFnZS5pc19wcmltYXJ5ID0gVHJ1ZQogICAgICAgICAgICAgICAgICAgIGNoYW5nZWRfcHJpbWFyeSA9IFRydWUKICAgICAgICAgICAgICAgIGlmIGNoYW5nZWRfcHJpbWFyeSBhbmQgcHJpbWFyeV9pbWFnZSBub3QgaW4gc2Vzc2lvbi5uZXc6CiAgICAgICAgICAgICAgICAgICAgc3RhdHMucmVjb3Jkc191cGRhdGVkICs9IDEKCiAgICAgICAgICAgICAgICAjIEV4aXN0aW5nIGhpc3RvcmljYWwgZHVwbGljYXRlcyBhcmUgc2VsZi1oZWFsZWQgd2hlbmV2ZXIgdGhlCiAgICAgICAgICAgICAgICAjIHBoeXNpY2FsIFByaW50IGlzIHRvdWNoZWQuIE5ld2x5IHN0YWdlZCBkdXBsaWNhdGVzIGNhbm5vdCBiZQogICAgICAgICAgICAgICAgIyBjcmVhdGVkIGJlY2F1c2UgcHJpbWFyeV9pbWFnZV9ieV9wcmludF9pZCBvd25zIHRoZSBpZGVudGl0eS4KICAgICAgICAgICAgICAgIGZvciBleHRyYV9wcmltYXJ5IGluIHByaW1hcnlfaW1hZ2VzWzE6XToKICAgICAgICAgICAgICAgICAgICBpZiBleHRyYV9wcmltYXJ5LmlzX3ByaW1hcnk6CiAgICAgICAgICAgICAgICAgICAgICAgIGV4dHJhX3ByaW1hcnkuaXNfcHJpbWFyeSA9IEZhbHNlCiAgICAgICAgICAgICAgICAgICAgICAgIHN0YXRzLnJlY29yZHNfdXBkYXRlZCArPSAxCg==')
+          old_model=d('Y2xhc3MgUHJpbnRJZGVudGlmaWVyKEJhc2UpOgogICAgX190YWJsZW5hbWVfXyA9ICJwcmludF9pZGVudGlmaWVycyIKICAgIF9fdGFibGVfYXJnc19fID0gKFVuaXF1ZUNvbnN0cmFpbnQoInByaW50X2lkIiwgInNvdXJjZSIsIG5hbWU9InVxX2lkZW50aWZpZXJfc291cmNlIiksKQo=')
+          new_model=d('Y2xhc3MgUHJpbnRJZGVudGlmaWVyKEJhc2UpOgogICAgX190YWJsZW5hbWVfXyA9ICJwcmludF9pZGVudGlmaWVycyIKICAgIF9fdGFibGVfYXJnc19fID0gKAogICAgICAgIFVuaXF1ZUNvbnN0cmFpbnQoInByaW50X2lkIiwgInNvdXJjZSIsIG5hbWU9InVxX2lkZW50aWZpZXJfc291cmNlIiksCiAgICAgICAgVW5pcXVlQ29uc3RyYWludCgic291cmNlIiwgImV4dGVybmFsX2lkIiwgbmFtZT0idXFfcHJpbnRfaWRlbnRpZmllcnNfc291cmNlX2V4dGVybmFsX2lkIiksCiAgICApCg==')
+          ygo_path=Path('backend/app/ingest/connectors/ygoprodeck_yugioh.py')
+          ygo=ygo_path.read_text()
+          if ygo.count(anchor)!=1 or ygo.count(old)!=1:
+              raise SystemExit(f'YGO anchors changed: map={ygo.count(anchor)} block={ygo.count(old)}')
+          ygo_path.write_text(ygo.replace(anchor,replacement,1).replace(old,new,1))
+          model_path=Path('backend/app/models.py')
+          models=model_path.read_text()
+          if models.count(old_model)!=1:
+              raise SystemExit(f'PrintIdentifier anchor changed: {models.count(old_model)}')
+          model_path.write_text(models.replace(old_model,new_model,1))
           PY
       - name: Compile patched modules
         run: python -m py_compile backend/app/models.py backend/app/ingest/connectors/ygoprodeck_yugioh.py
