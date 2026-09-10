@@ -46,7 +46,7 @@ jobs:
               'duplicate_print_external_identity': '''
                   SELECT source, external_id, count(*)::int AS rows,
                          count(DISTINCT print_id)::int AS distinct_prints,
-                         array_agg(print_id ORDER BY print_id)[:10] AS sample_print_ids
+                         (array_agg(print_id ORDER BY print_id))[1:10] AS sample_print_ids
                   FROM print_identifiers
                   WHERE trim(coalesce(source, '')) <> ''
                     AND trim(coalesce(external_id, '')) <> ''
@@ -57,7 +57,7 @@ jobs:
               ''',
               'duplicate_primary_images': '''
                   SELECT print_id, count(*)::int AS primary_count,
-                         array_agg(id ORDER BY id)[:10] AS image_ids
+                         (array_agg(id ORDER BY id))[1:10] AS image_ids
                   FROM print_images
                   WHERE is_primary IS TRUE
                   GROUP BY print_id
