@@ -1,0 +1,65 @@
+name: Cloudflare metadata diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/cloudflare-metadata-diagnostic-trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare Pikachu catalog metadata across origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          bases=(
+            'apex|https://dontripit.com'
+            'vercel|https://dontripit.vercel.app'
+            'production-worker|https://dontripit-web-production.alejandro-ruggeri-l.workers.dev'
+            'preview-worker|https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev'
+          )
+          for entry in "${bases[@]}"; do
+            label=${entry%%|*}
+            base=${entry#*|}
+            out="/tmp/${label}.json"
+            code=$(curl -sS -o "$out" -w '%{http_code}' --max-time 60 "$base/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0")
+            echo "=== $label status=$code sha256=$(sha256sum "$out"|awk '{print $1}') bytes=$(wc -c <"$out") ==="
+            test "$code" = "200"
+            LABEL="$label" FILE="$out" node <<'NODE'
+          const fs=require('fs');
+          const label=process.env.LABEL;
+          const j=JSON.parse(fs.readFileSync(process.env.FILE,'utf8'));
+          const items=j.items||j.results||j.data?.items||j.data?.results||[];
+          const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']);
+          const fields=['set_code','set_name','collector_number','rarity','language','finish','variant_family','exact_variant'];
+          const badRows=[];
+          for(const x of items){
+            const badFields={};
+            for(const f of fields){
+              const v=x?.[f];
+              if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) badFields[f]=v;
+            }
+            if(Object.keys(badFields).length){
+              badRows.push({card_id:x.card_id,matched_print_id:x.matched_print_id,name:x.name,set_code:x.set_code,set_name:x.set_name,collector_number:x.collector_number,rarity:x.rarity,language:x.language,finish:x.finish,variant_family:x.variant_family,exact_variant:x.exact_variant,badFields});
+            }
+          }
+          const base=items.find(x=>Number(x.card_id)===1);
+          console.log(`${label} item_count=${items.length} placeholder_rows=${badRows.length}`);
+          console.log(`${label} placeholders=${JSON.stringify(badRows)}`);
+          console.log(`${label} base_pikachu=${JSON.stringify(base && {card_id:base.card_id,matched_print_id:base.matched_print_id,name:base.name,set_code:base.set_code,set_name:base.set_name,collector_number:base.collector_number,rarity:base.rarity,language:base.language,finish:base.finish,variant_family:base.variant_family,exact_variant:base.exact_variant})}`);
+          NODE
+          done
+
+          echo '=== canonical JSON equality ==='
+          node <<'NODE'
+          const fs=require('fs');
+          const names=['apex','vercel','production-worker','preview-worker'];
+          const norm=p=>JSON.stringify(JSON.parse(fs.readFileSync(`/tmp/${p}.json`,'utf8')));
+          for(let i=1;i<names.length;i++) console.log(`apex_vs_${names[i]}=${norm('apex')===norm(names[i])}`);
+          NODE
