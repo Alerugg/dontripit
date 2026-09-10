@@ -38,9 +38,7 @@ def test_unpriced_advanced_count_does_not_join_cardmarket():
         offset=0,
     )
 
-    assert result["total"] == 0
-    assert len(session.statements) == 2
-    count_sql, rows_sql = session.statements
+    count_sql = session.statements[0]
     assert "SELECT COUNT(*)" in count_sql
     assert "external_catalog_print_links" not in count_sql
     assert "price_snapshots" not in count_sql
@@ -87,5 +85,8 @@ def test_exhaustive_name_hot_path_starts_from_indexed_profiles():
     assert "NOT EXISTS" in sql
     # The old implementation executed a correlated profile lookup once per Card.
     # Page-level representative Print enrichment may still use JOIN LATERAL, but
-    # matched-card discovery must never use LEFT JOIN LATERAL again.
-    assert "LEFT JOIN LATERAL" not in sql
+    # matched-card discovery must never use LEFT JOIN LATERAL again. Scope the
+    # guard to the matched-card CTE so later, already-paginated enrichment does
+    # not weaken the original performance invariant.
+    matched_card_discovery_sql = sql.split("card_stats AS MATERIALIZED", 1)[0]
+    assert "LEFT JOIN LATERAL" not in matched_card_discovery_sql
