@@ -1,0 +1,54 @@
+name: Backend Perfection Hardening CI
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - 'backend/app/search_v2/**'
+      - 'backend/app/routes/search_v2.py'
+      - 'backend/app/ingest/**'
+      - 'backend/app/scripts/audit_search_v2_production_latency_v1.py'
+      - 'backend/tests/test_search_v2_*.py'
+      - 'backend/tests/test_yugioh_search_v2_performance.py'
+      - 'backend/tests/test_ingest_*.py'
+      - '.github/workflows/backend-perfection-hardening-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-perfection-hardening-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Compile changed search/certifier modules
+        run: |
+          python -m py_compile \
+            app/routes/search_v2.py \
+            app/search_v2/yugioh_exact_collector.py \
+            app/scripts/audit_search_v2_production_latency_v1.py
+      - name: Run Search V2 hardening regression suite
+        run: |
+          pytest -q \
+            tests/test_search_v2_yugioh_exact_collector.py \
+            tests/test_search_v2_exact_identifier.py \
+            tests/test_search_v2_api.py \
+            tests/test_search_v2_performance.py \
+            tests/test_yugioh_search_v2_performance.py
