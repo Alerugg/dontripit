@@ -10,6 +10,7 @@ on:
       - 'backend/app/scripts/audit_search_v2_rarity_consensus_live_v1.py'
       - 'backend/tests/test_search_v2_output_contract.py'
       - 'backend/tests/test_search_v2_rarity_consensus.py'
+      - 'backend/tests/test_search_v2_performance.py'
       - '.github/workflows/certify-search-v2-rarity-consensus-v1.yml'
   workflow_dispatch:
 
