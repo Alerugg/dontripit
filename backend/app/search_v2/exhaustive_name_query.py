@@ -20,7 +20,15 @@ def _empty(limit: int, offset: int) -> dict:
     }
 
 
-def _sqlite_page(session, *, query: str, game: str | None, limit: int, offset: int) -> dict:
+def _sqlite_page(
+    session,
+    *,
+    query: str,
+    game: str | None,
+    limit: int,
+    offset: int,
+    enrich_rarity: bool,
+) -> dict:
     q_norm = normalize_search_text(query)
     if not q_norm:
         return _empty(limit, offset)
@@ -107,7 +115,8 @@ def _sqlite_page(session, *, query: str, game: str | None, limit: int, offset: i
             }
         )
 
-    items = enrich_representative_rarity_by_consensus(session, items)
+    if enrich_rarity:
+        items = enrich_representative_rarity_by_consensus(session, items)
     next_offset = offset + len(items) if offset + len(items) < total else None
     return {
         "items": items,
@@ -127,6 +136,7 @@ def exhaustive_name_page(
     game: str | None,
     limit: int,
     offset: int,
+    enrich_rarity: bool = True,
 ) -> dict:
     """Page every logical Card whose canonical normalized name contains query.
 
@@ -137,13 +147,23 @@ def exhaustive_name_page(
     negative searches especially expensive for large games such as Yu-Gi-Oh.
 
     Totals travel with the page via window aggregates. Representative Print and
-    image enrichment happens only after LIMIT/OFFSET.
+    image enrichment happens only after LIMIT/OFFSET. On PostgreSQL, strict
+    sibling rarity consensus is computed inside the same database round-trip as
+    the representative lookup so metadata enrichment never swaps print identity
+    and does not add a second Neon request.
     """
     q_norm = normalize_search_text(query)
     if not q_norm:
         return _empty(limit, offset)
     if session.bind.dialect.name != "postgresql":
-        return _sqlite_page(session, query=query, game=game, limit=limit, offset=offset)
+        return _sqlite_page(
+            session,
+            query=query,
+            game=game,
+            limit=limit,
+            offset=offset,
+            enrich_rarity=enrich_rarity,
+        )
 
     canonical_fallback = "%" + "%".join(q_norm.split()) + "%"
     params = {
@@ -155,6 +175,7 @@ def exhaustive_name_page(
         "word": f"% {q_norm} %",
         "limit": int(limit),
         "offset": int(offset),
+        "enrich_rarity": bool(enrich_rarity),
     }
 
     matched_cards_cte = """
@@ -242,6 +263,8 @@ def exhaustive_name_page(
           chosen.collector_number,
           chosen.language,
           chosen.rarity,
+          chosen.rarity_source,
+          chosen.rarity_evidence_count,
           chosen.exact_variant,
           chosen.variant_family,
           chosen.primary_image_url,
@@ -257,7 +280,30 @@ def exhaustive_name_page(
             s.name AS set_name,
             p.collector_number,
             p.language,
-            p.rarity,
+            CASE
+              WHEN lower(trim(COALESCE(p.rarity, ''))) NOT IN
+                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+                THEN trim(p.rarity)
+              WHEN :enrich_rarity AND rarity_consensus.distinct_rarity_count = 1
+                THEN rarity_consensus.consensus_rarity
+              ELSE p.rarity
+            END AS rarity,
+            CASE
+              WHEN :enrich_rarity
+               AND lower(trim(COALESCE(p.rarity, ''))) IN
+                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+               AND rarity_consensus.distinct_rarity_count = 1
+                THEN 'sibling_consensus_v1'
+              ELSE NULL
+            END AS rarity_source,
+            CASE
+              WHEN :enrich_rarity
+               AND lower(trim(COALESCE(p.rarity, ''))) IN
+                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+               AND rarity_consensus.distinct_rarity_count = 1
+                THEN rarity_consensus.evidence_count
+              ELSE NULL
+            END AS rarity_evidence_count,
             psp.exact_variant,
             psp.variant_family,
             (
@@ -270,6 +316,24 @@ def exhaustive_name_page(
           FROM prints p
           JOIN sets s ON s.id = p.set_id
           LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
+          LEFT JOIN LATERAL (
+            SELECT
+              MIN(trim(p2.rarity)) AS consensus_rarity,
+              COUNT(*)::int AS evidence_count,
+              COUNT(DISTINCT lower(trim(p2.rarity)))::int AS distinct_rarity_count
+            FROM prints p2
+            WHERE :enrich_rarity
+              AND lower(trim(COALESCE(p.rarity, ''))) IN
+                  ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+              AND p2.card_id = p.card_id
+              AND p2.set_id = p.set_id
+              AND COALESCE(trim(p2.collector_number), '') =
+                  COALESCE(trim(p.collector_number), '')
+              AND lower(COALESCE(trim(p2.language), '')) =
+                  lower(COALESCE(trim(p.language), ''))
+              AND lower(trim(COALESCE(p2.rarity, ''))) NOT IN
+                  ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+          ) rarity_consensus ON TRUE
           WHERE p.card_id = pc.card_id
           ORDER BY
             CASE WHEN lower(COALESCE(p.variant, '')) IN ('default', 'base', '') THEN 0 ELSE 1 END,
@@ -319,31 +383,35 @@ def exhaustive_name_page(
 
     total = int(rows[0]["total_cards"] or 0)
     total_prints = int(rows[0]["total_prints"] or 0)
-    items = [
-        {
-            "type": "card",
-            "card_id": row["card_id"],
-            "card_key": row["card_key"],
-            "name": row["name"],
-            "game": row["game"],
-            "matched_print": {
-                "print_id": row["print_id"],
-                "set_code": row["set_code"],
-                "set_name": row["set_name"],
-                "collector_number": row["collector_number"],
-                "language": row["language"],
-                "rarity": row["rarity"],
-                "exact_variant": row["exact_variant"],
-                "variant_family": row["variant_family"],
-                "primary_image_url": row["primary_image_url"],
-            },
-            "variant_count": int(row["variant_count"] or 0),
-            "attributes": row["attributes_json"] or {},
-            "score": round(float(row["score"] or 0), 4),
+    items: list[dict] = []
+    for row in rows:
+        matched_print = {
+            "print_id": row["print_id"],
+            "set_code": row["set_code"],
+            "set_name": row["set_name"],
+            "collector_number": row["collector_number"],
+            "language": row["language"],
+            "rarity": row["rarity"],
+            "exact_variant": row["exact_variant"],
+            "variant_family": row["variant_family"],
+            "primary_image_url": row["primary_image_url"],
         }
-        for row in rows
-    ]
-    items = enrich_representative_rarity_by_consensus(session, items)
+        if row["rarity_source"]:
+            matched_print["rarity_source"] = row["rarity_source"]
+            matched_print["rarity_evidence_count"] = int(row["rarity_evidence_count"] or 0)
+        items.append(
+            {
+                "type": "card",
+                "card_id": row["card_id"],
+                "card_key": row["card_key"],
+                "name": row["name"],
+                "game": row["game"],
+                "matched_print": matched_print,
+                "variant_count": int(row["variant_count"] or 0),
+                "attributes": row["attributes_json"] or {},
+                "score": round(float(row["score"] or 0), 4),
+            }
+        )
     next_offset = offset + len(items) if offset + len(items) < total else None
     return {
         "items": items,
