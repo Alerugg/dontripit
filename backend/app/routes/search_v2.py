@@ -18,6 +18,7 @@ from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
 from app.search_v2.query import facet_definitions, normal_search
 from app.search_v2.yugioh_advanced import advanced_yugioh_search
+from app.search_v2.yugioh_exact_collector import exact_yugioh_collector_search
 from app.search_v2.yugioh_facet_values import yugioh_facet_values
 from app.search_v2.yugioh_query import normal_yugioh_search
 
@@ -78,7 +79,14 @@ def _yugioh_display_language(value) -> str | None:
     return ",".join(normalized_values) or None
 
 
-def _exact_identifier_for_game(session, *, query: str, game: str | None, limit: int):
+def _exact_identifier_for_game(
+    session,
+    *,
+    query: str,
+    game: str | None,
+    limit: int,
+    language: str | None = None,
+):
     exact_onepiece = exact_onepiece_collector_search(
         session,
         query=query,
@@ -87,6 +95,21 @@ def _exact_identifier_for_game(session, *, query: str, game: str | None, limit: 
     )
     if exact_onepiece is not None:
         return exact_onepiece
+
+    # Yu-Gi-Oh already has a dedicated exact collector resolver. Calling it at
+    # the HTTP fast-path boundary avoids paying the exhaustive-name probe before
+    # queries such as LOB-001 reach that resolver, while preserving the physical
+    # display-language filter.
+    exact_yugioh = exact_yugioh_collector_search(
+        session,
+        query=query,
+        game=game,
+        limit=limit,
+        language=language,
+    )
+    if exact_yugioh is not None:
+        return exact_yugioh
+
     return exact_structured_identifier_search(
         session,
         query=query,
@@ -101,6 +124,7 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
         query=query,
         game=game,
         limit=limit,
+        language=language,
     )
     if exact_identifier is not None:
         return exact_identifier
@@ -150,13 +174,14 @@ def search_v2():
     with db.SessionLocal() as session:
         # Structured identifiers are the cheapest and most deterministic path.
         # Resolve them before canonical-name/fuzzy search so codes such as
-        # P-135 or base1-4 never return unrelated text matches.
+        # P-135, base1-4 or LOB-001 never pay for unrelated text matching.
         exact_fetch_limit = min(MAX_SEARCH_LIMIT, offset + limit + 1)
         exact = _exact_identifier_for_game(
             session,
             query=q,
             game=game,
             limit=exact_fetch_limit,
+            language=language,
         )
         if exact is not None:
             items = exact[offset : offset + limit]
