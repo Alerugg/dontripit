@@ -60,12 +60,11 @@ jobs:
         id: creds
         env:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
         run: |
           set -euo pipefail
           missing=0
-          for item in CF_TOKEN CF_ACCOUNT INTERNAL_API_KEY; do
+          for item in CF_TOKEN INTERNAL_API_KEY; do
             if [ -n "${!item:-}" ]; then
               echo "${item}=PRESENT"
             else
@@ -79,12 +78,11 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify Cloudflare identity
+      - name: Verify Cloudflare identity and auto-discover account
         if: steps.creds.outputs.ready == 'true'
         working-directory: frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
         run: npx wrangler whoami
 
       - name: Deploy workers.dev preview
@@ -92,7 +90,6 @@ jobs:
         working-directory: frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
         run: npm run deploy:vinext
 
       - name: Attach internal API key as Worker secret
@@ -100,7 +97,6 @@ jobs:
         working-directory: frontend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
           INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
         run: printf '%s' "$INTERNAL_API_KEY" | npx wrangler secret put INTERNAL_API_KEY --config dist/server/wrangler.json
 
@@ -118,4 +114,4 @@ jobs:
 
       - name: Record build-only outcome when credentials are absent
         if: steps.creds.outputs.ready != 'true'
-        run: echo 'Cloudflare bundle is green; deployment skipped because one or more required repository credentials are absent.'
+        run: echo 'Cloudflare bundle is green; deployment skipped because token or INTERNAL_API_KEY is absent.'
