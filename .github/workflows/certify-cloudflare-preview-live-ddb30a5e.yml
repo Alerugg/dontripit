@@ -22,8 +22,11 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/cf-preview-cert
           for path in / /pokemon /onepiece /yugioh /riftbound /magic /login /register /forgot-password /privacy /terms; do
-            slug="$(printf '%s' "$path" | tr '/?' '__' | tr -cd '[:alnum:]_-')"
-            [ -n "$slug" ] || slug=root
+            if [ "$path" = "/" ]; then
+              slug=root
+            else
+              slug="$(printf '%s' "$path" | tr '/?' '__' | tr -cd '[:alnum:]_-')"
+            fi
             code="$(curl --fail-with-body --silent --show-error --location --retry 3 --retry-delay 2 -D "/tmp/cf-preview-cert/${slug}.headers" -o "/tmp/cf-preview-cert/${slug}.html" -w '%{http_code}' "${PREVIEW}${path}")"
             echo "PAGE ${path} ${code}"
             test "$code" = 200
