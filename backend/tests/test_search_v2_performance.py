@@ -38,7 +38,7 @@ def test_unpriced_advanced_count_does_not_join_cardmarket():
         offset=0,
     )
 
-    count_sql = session.statements[0]
+    count_sql, rows_sql = session.statements
     assert "SELECT COUNT(*)" in count_sql
     assert "external_catalog_print_links" not in count_sql
     assert "price_snapshots" not in count_sql
