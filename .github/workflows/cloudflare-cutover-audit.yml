@@ -17,7 +17,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
     steps:
-      - name: Inspect Cloudflare permissions and current Worker routes
+      - name: Inspect public DNS and Cloudflare domain state
         shell: bash
         run: |
           set -euo pipefail
@@ -28,30 +28,27 @@ jobs:
           echo "zone_lookup_http=$zone_code"
           test "$zone_code" = "200"
           zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json)
-          test -n "$zone_id" || exit 2
+          test -n "$zone_id"
 
-          apex_code=$(curl -sS "${auth[@]}" -o /tmp/apex.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=dontripit.com")
-          www_code=$(curl -sS "${auth[@]}" -o /tmp/www.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=www.dontripit.com")
-          routes_code=$(curl -sS "${auth[@]}" -o /tmp/routes.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/workers/routes")
-          scripts_code=$(curl -sS "${auth[@]}" -o /tmp/scripts.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")
+          echo '--- public DNS apex ---'
+          dig +short A dontripit.com || true
+          dig +short AAAA dontripit.com || true
+          dig +short CNAME dontripit.com || true
+          echo '--- public DNS www ---'
+          dig +short A www.dontripit.com || true
+          dig +short AAAA www.dontripit.com || true
+          dig +short CNAME www.dontripit.com || true
 
-          echo "dns_apex_http=$apex_code"
-          echo "dns_www_http=$www_code"
-          echo "worker_routes_http=$routes_code"
-          echo "worker_scripts_http=$scripts_code"
+          echo '--- current apex headers ---'
+          curl -sSI --max-time 30 https://dontripit.com/ | tr -d '\r' | grep -Ei '^(HTTP/|server:|cf-ray:|x-vercel-id:|location:)' || true
+          echo '--- current www headers ---'
+          curl -sSI --max-time 30 https://www.dontripit.com/ | tr -d '\r' | grep -Ei '^(HTTP/|server:|cf-ray:|x-vercel-id:|location:)' || true
 
-          if [ "$routes_code" = "200" ]; then
-            echo '--- worker routes touching dontripit ---'
-            jq -c '.result[] | select((.pattern // "") | contains("dontripit.com")) | {id,pattern,script,environment}' /tmp/routes.json || true
+          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          echo "workers_custom_domains_http=$domains_code"
+          if [ "$domains_code" = "200" ]; then
+            jq -c '.result[] | select((.hostname // "") | contains("dontripit.com")) | {id,hostname,service,environment,zone_id,zone_name}' /tmp/domains.json || true
           else
-            jq -c '{success,errors}' /tmp/routes.json || true
+            jq -c '{success,errors}' /tmp/domains.json || true
           fi
-
-          if [ "$scripts_code" = "200" ]; then
-            echo '--- relevant workers ---'
-            jq -c '.result[] | select((.id // "") | startswith("dontripit-web")) | {id,created_on,modified_on}' /tmp/scripts.json || true
-          else
-            jq -c '{success,errors}' /tmp/scripts.json || true
-          fi
-
-          test "$routes_code" = "200"
+          test "$domains_code" = "200"
