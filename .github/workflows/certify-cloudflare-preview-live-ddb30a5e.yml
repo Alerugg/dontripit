@@ -64,9 +64,9 @@ jobs:
           base=os.environ['PREVIEW']
           cases=[
             ('pikachu','Pikachu','pokemon','pikachu'),
-            ('luffy','Luffy','one_piece','luffy'),
+            ('luffy','Luffy','onepiece','luffy'),
             ('blueeyes','Blue-Eyes White Dragon','yugioh','blue-eyes'),
-            ('op05119','OP05-119','one_piece','op05-119'),
+            ('op05119','OP05-119','onepiece','op05-119'),
           ]
           summary=[]
           for label,q,game,needle in cases:
