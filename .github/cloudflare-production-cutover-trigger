@@ -1,0 +1,3 @@
+approved_by_user=true
+source=infra/cloudflare-frontend-production-parity
+mode=reversible-worker-routes
