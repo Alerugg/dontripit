@@ -1,3 +1,4 @@
-triggered_at=2026-09-10T22:42:00+02:00
-purpose=final-auth-latency-certification
+triggered_at=2026-09-10T22:50:00+02:00
+purpose=final-auth-latency-metadata-certification
 preview=dontripit-web-preview
+contract=base-set-pikachu-common
