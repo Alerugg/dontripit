@@ -1,0 +1,168 @@
+name: Backend Hardening Source Patch
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-hardening-source-patch'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: backend/perfection-hardening-20260911
+          fetch-depth: 0
+      - name: Apply exact fail-closed source patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          ygo_path = Path('backend/app/ingest/connectors/ygoprodeck_yugioh.py')
+          ygo = ygo_path.read_text()
+
+          anchor = '''        images_by_print_source_key = {
+            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
+        }
+        normalized_prints_by_ygo_id: dict[str, object] = {}
+'''
+          replacement = '''        images_by_print_source_key = {
+            img.print_source_key: img for img in normalized.normalized_images if img.is_primary
+        }
+        # SessionLocal intentionally runs with autoflush=False. Multiple source
+        # variants can resolve to the same canonical Print inside one payload,
+        # so a primary image staged earlier in this loop is not visible to a SQL
+        # query until the final flush. Track that staged identity explicitly to
+        # keep primary-image creation idempotent without a flush per variant.
+        primary_image_by_print_id: dict[int, PrintImage] = {}
+        normalized_prints_by_ygo_id: dict[str, object] = {}
+'''
+          if ygo.count(anchor) != 1:
+              raise SystemExit(f'YGO image-map anchor count={ygo.count(anchor)}; refusing patch')
+          ygo = ygo.replace(anchor, replacement, 1)
+
+          old = '''            image = images_by_print_source_key.get(item.source_key)
+            if image and image.url:
+                if print_row.id is None:
+                    session.flush()
+                primary_images = session.execute(
+                    select(PrintImage).where(
+                        PrintImage.print_id == print_row.id,
+                        PrintImage.is_primary.is_(True),
+                    ).order_by(PrintImage.id.asc())
+                ).scalars().all()
+                primary_image = self._choose_first(
+                    primary_images,
+                    label="print_images",
+                    context=f"print_id={print_row.id}",
+                )
+                if primary_image is None:
+                    session.add(
+                        PrintImage(
+                            print_id=print_row.id,
+                            url=image.url,
+                            is_primary=True,
+                            source="ygoprodeck",
+                        )
+                    )
+                    stats.records_inserted += 1
+                elif primary_image.url != image.url:
+                    primary_image.url = image.url
+                    if primary_image.source != "ygoprodeck":
+                        primary_image.source = "ygoprodeck"
+                    stats.records_updated += 1
+
+                for extra_primary in primary_images[1:]:
+                    if extra_primary.is_primary:
+                        extra_primary.is_primary = False
+                        stats.records_updated += 1
+'''
+          new = '''            image = images_by_print_source_key.get(item.source_key)
+            if image and image.url:
+                if print_row.id is None:
+                    session.flush()
+                print_id = int(print_row.id)
+                primary_image = primary_image_by_print_id.get(print_id)
+                primary_images: list[PrintImage] = []
+                if primary_image is None:
+                    primary_images = session.execute(
+                        select(PrintImage).where(
+                            PrintImage.print_id == print_id,
+                            PrintImage.is_primary.is_(True),
+                        ).order_by(PrintImage.id.asc())
+                    ).scalars().all()
+                    primary_image = self._choose_first(
+                        primary_images,
+                        label="print_images",
+                        context=f"print_id={print_id}",
+                    )
+                    if primary_image is None:
+                        primary_image = PrintImage(
+                            print_id=print_id,
+                            url=image.url,
+                            is_primary=True,
+                            source="ygoprodeck",
+                        )
+                        session.add(primary_image)
+                        stats.records_inserted += 1
+                    primary_image_by_print_id[print_id] = primary_image
+
+                changed_primary = False
+                if primary_image.url != image.url:
+                    primary_image.url = image.url
+                    changed_primary = True
+                if primary_image.source != "ygoprodeck":
+                    primary_image.source = "ygoprodeck"
+                    changed_primary = True
+                if not primary_image.is_primary:
+                    primary_image.is_primary = True
+                    changed_primary = True
+                if changed_primary and primary_image not in session.new:
+                    stats.records_updated += 1
+
+                # Existing historical duplicates are self-healed whenever the
+                # physical Print is touched. Newly staged duplicates cannot be
+                # created because primary_image_by_print_id owns the identity.
+                for extra_primary in primary_images[1:]:
+                    if extra_primary.is_primary:
+                        extra_primary.is_primary = False
+                        stats.records_updated += 1
+'''
+          if ygo.count(old) != 1:
+              raise SystemExit(f'YGO primary-image block count={ygo.count(old)}; refusing patch')
+          ygo = ygo.replace(old, new, 1)
+          ygo_path.write_text(ygo)
+
+          model_path = Path('backend/app/models.py')
+          models = model_path.read_text()
+          old_model = '''class PrintIdentifier(Base):
+    __tablename__ = "print_identifiers"
+    __table_args__ = (UniqueConstraint("print_id", "source", name="uq_identifier_source"),)
+'''
+          new_model = '''class PrintIdentifier(Base):
+    __tablename__ = "print_identifiers"
+    __table_args__ = (
+        UniqueConstraint("print_id", "source", name="uq_identifier_source"),
+        UniqueConstraint("source", "external_id", name="uq_print_identifiers_source_external_id"),
+    )
+'''
+          if models.count(old_model) != 1:
+              raise SystemExit(f'PrintIdentifier model anchor count={models.count(old_model)}; refusing patch')
+          model_path.write_text(models.replace(old_model, new_model, 1))
+          PY
+      - name: Compile patched modules
+        run: python -m py_compile backend/app/models.py backend/app/ingest/connectors/ygoprodeck_yugioh.py
+      - name: Commit exact patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/models.py backend/app/ingest/connectors/ygoprodeck_yugioh.py
+          git diff --cached --check
+          git commit -m "fix(ingest): make YGO primary images transaction-idempotent"
+          git push origin HEAD:backend/perfection-hardening-20260911
