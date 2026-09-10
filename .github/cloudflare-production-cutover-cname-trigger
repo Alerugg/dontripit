@@ -1,0 +1,5 @@
+approved_by_user=true
+expected_apex=bc5bf74c5be387d6.vercel-dns-017.com
+production_worker=dontripit-web-production
+rollback_worker=dontripit-vercel-fallback
+run_nonce=20260911T0032CEST
