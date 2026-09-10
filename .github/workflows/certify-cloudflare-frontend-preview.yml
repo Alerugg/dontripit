@@ -93,7 +93,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f /tmp/preview.cookies /tmp/prod.cookies
           p_code=$(curl -sS -o /tmp/preview-me.json -D /tmp/preview-me.headers -w '%{http_code}' --max-time 30 "$PREVIEW/api/auth/me")
           r_code=$(curl -sS -o /tmp/prod-me.json -D /tmp/prod-me.headers -w '%{http_code}' --max-time 30 "$PROD/api/auth/me")
           echo "anonymous_auth preview=$p_code prod=$r_code"
@@ -168,7 +167,6 @@ jobs:
             p_url="$PREVIEW/api/search-v2?q=$encoded&limit=20"
             r_url="$PROD/api/search-v2?q=$encoded&limit=20"
 
-            # Warm both paths once so the comparison is about steady-state migration overhead.
             curl -fsS -o /dev/null --max-time 30 "$p_url"
             curl -fsS -o /dev/null --max-time 30 "$r_url"
 
@@ -229,7 +227,7 @@ jobs:
           const base = items.find(x => Number(x.card_id) === 1);
           if (!base) throw new Error('Base Set Pikachu card_id=1 missing');
           if (Number(base.matched_print_id) !== 571) throw new Error(`Representative print drift: ${base.matched_print_id}`);
-          if (base.rarity !== null && base.rarity !== undefined) throw new Error(`Expected null rarity, got ${base.rarity}`);
+          if (String(base.rarity || '').toLowerCase() !== 'common') throw new Error(`Expected proven Common rarity, got ${base.rarity}`);
           if (String(base.set_code).toLowerCase() !== 'bs' || String(base.collector_number) !== '58') throw new Error('Base Set Pikachu identity drift');
           console.log('metadata_contract=green ' + JSON.stringify({card_id:base.card_id,set_code:base.set_code,collector_number:base.collector_number,rarity:base.rarity,matched_print_id:base.matched_print_id}));
           NODE
@@ -252,5 +250,5 @@ jobs:
           echo '- Anonymous auth contract: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Search parity probes: green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Search latency regression gate: green' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Canonical metadata contract: green' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Canonical metadata contract (Base Set Pikachu Common): green' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production domain: unchanged' >> "$GITHUB_STEP_SUMMARY"
