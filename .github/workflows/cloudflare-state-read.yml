@@ -1,0 +1,35 @@
+name: Cloudflare live state read
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/cloudflare-state-read-trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
+    steps:
+      - name: Read DNS Custom Domain and public edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          curl -fsS "${auth[@]}" 'https://api.cloudflare.com/client/v4/zones?name=dontripit.com&status=active' -o /tmp/z
+          zid=$(jq -r '.result[0].id' /tmp/z)
+          echo '--- apex dns ---'
+          curl -fsS "${auth[@]}" "https://api.cloudflare.com/client/v4/zones/$zid/dns_records?name=dontripit.com&per_page=100" | jq -c '.result[]|{type,name,content,ttl,proxied}'
+          echo '--- custom domain ---'
+          curl -fsS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" | jq -c '.result[]|select(.hostname=="dontripit.com")|{id,hostname,service,zone_name}'
+          echo '--- public headers ---'
+          curl -sSI --max-time 20 https://dontripit.com/ | tr -d '\r' | grep -Ei '^(HTTP/|server:|cf-ray:|x-vinext-build-id:|x-dontripit-fallback:|x-vercel-id:|location:)' || true
+          echo '--- public health ---'
+          curl -sS -o /tmp/h -w 'status=%{http_code}\n' --max-time 20 https://dontripit.com/api/health || true
+          cat /tmp/h || true
