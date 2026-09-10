@@ -1,0 +1,121 @@
+name: Cloudflare frontend preview ddb30a5e
+
+on:
+  push:
+    branches:
+      - infra/cloudflare-preview-ddb30a5e
+    paths:
+      - '.github/workflows/cloudflare-frontend-preview-ddb30a5e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TARGET_SHA: ddb30a5e1298b3dd4c9e29871be9f2284ad5d69d
+    steps:
+      - name: Checkout exact frontend candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install vinext dependency tree
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Cloudflare Worker bundle
+        working-directory: frontend
+        run: npm run build:vinext
+
+      - name: Validate generated Worker contract
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          test -f dist/server/wrangler.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+          const txt = JSON.stringify(p);
+          for (const required of ['VINEXT_KV_CACHE','INTERNAL_API_BASE_URL']) {
+            if (!txt.includes(required)) throw new Error(`Missing generated binding/config: ${required}`);
+          }
+          console.log('Generated Worker contract OK');
+          NODE
+
+      - name: Check deployment credentials
+        id: creds
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for item in CF_TOKEN CF_ACCOUNT INTERNAL_API_KEY; do
+            if [ -n "${!item:-}" ]; then
+              echo "${item}=PRESENT"
+            else
+              echo "${item}=MISSING"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify Cloudflare identity
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+        run: npx wrangler whoami
+
+      - name: Deploy workers.dev preview
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+        run: npm run deploy:vinext
+
+      - name: Attach internal API key as Worker secret
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: printf '%s' "$INTERNAL_API_KEY" | npx wrangler secret put INTERNAL_API_KEY --config dist/server/wrangler.json
+
+      - name: Smoke test public preview
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          URL='https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev'
+          for path in / /robots.txt; do
+            code="$(curl --silent --show-error --location --retry 5 --retry-delay 3 -o /tmp/preview-body -w '%{http_code}' "${URL}${path}")"
+            echo "${path} -> ${code}"
+            test "$code" -ge 200 -a "$code" -lt 400
+          done
+          echo "PREVIEW_URL=${URL}"
+
+      - name: Record build-only outcome when credentials are absent
+        if: steps.creds.outputs.ready != 'true'
+        run: echo 'Cloudflare bundle is green; deployment skipped because one or more required repository credentials are absent.'
