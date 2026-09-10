@@ -1,0 +1,132 @@
+name: Certify Cloudflare frontend preview ddb30a5e
+
+on:
+  push:
+    branches:
+      - audit/cloudflare-preview-live-ddb30a5e
+    paths:
+      - '.github/workflows/certify-cloudflare-preview-live-ddb30a5e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PREVIEW: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
+    steps:
+      - name: Certify public pages and static assets
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cf-preview-cert
+          for path in / /pokemon /onepiece /yugioh /riftbound /magic /login /register /forgot-password /privacy /terms; do
+            slug="$(printf '%s' "$path" | tr '/?' '__' | tr -cd '[:alnum:]_-')"
+            [ -n "$slug" ] || slug=root
+            code="$(curl --fail-with-body --silent --show-error --location --retry 3 --retry-delay 2 -D "/tmp/cf-preview-cert/${slug}.headers" -o "/tmp/cf-preview-cert/${slug}.html" -w '%{http_code}' "${PREVIEW}${path}")"
+            echo "PAGE ${path} ${code}"
+            test "$code" = 200
+            grep -qi '^content-type:.*text/html' "/tmp/cf-preview-cert/${slug}.headers"
+            grep -qi '<html' "/tmp/cf-preview-cert/${slug}.html"
+          done
+          asset="$(grep -oE '/_next/static/[^\" ]+\.(js|css)' /tmp/cf-preview-cert/root.html | head -n 1)"
+          test -n "$asset"
+          code="$(curl --fail-with-body --silent --show-error --location -o /tmp/cf-preview-cert/asset.bin -w '%{http_code}' "${PREVIEW}${asset}")"
+          echo "ASSET ${asset} ${code}"
+          test "$code" = 200
+          test -s /tmp/cf-preview-cert/asset.bin
+
+      - name: Certify Worker-local API routes
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "${PREVIEW}/api/health" -o /tmp/cf-preview-cert/frontend-health.json
+          curl --fail --silent --show-error "${PREVIEW}/api/build-info" -o /tmp/cf-preview-cert/build-info.json
+          python - <<'PY'
+          import json
+          h=json.load(open('/tmp/cf-preview-cert/frontend-health.json'))
+          b=json.load(open('/tmp/cf-preview-cert/build-info.json'))
+          assert h == {'status':'ok'}, h
+          assert b.get('service') == 'frontend', b
+          assert b.get('build_contract') == 'catalog-v2-search-v2', b
+          print('FRONTEND_HEALTH', h)
+          print('BUILD_INFO', b)
+          PY
+
+      - name: Certify BFF searches through Cloudflare to Cloud Run
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, subprocess, urllib.parse, os
+          base=os.environ['PREVIEW']
+          cases=[
+            ('pikachu','Pikachu','pokemon','pikachu'),
+            ('luffy','Luffy','one_piece','luffy'),
+            ('blueeyes','Blue-Eyes White Dragon','yugioh','blue-eyes'),
+            ('op05119','OP05-119','one_piece','op05-119'),
+          ]
+          summary=[]
+          for label,q,game,needle in cases:
+            url=f"{base}/api/search-v2?"+urllib.parse.urlencode({'q':q,'game':game,'limit':5})
+            out=subprocess.check_output(['curl','--fail','--silent','--show-error','--location','--retry','3',url], text=True)
+            payload=json.loads(out)
+            items=payload.get('items') or payload.get('cards') or payload.get('results') or []
+            count=payload.get('count')
+            if count is None: count=len(items)
+            assert items or int(count or 0)>0, (label,payload)
+            lower=out.casefold()
+            assert needle.casefold() in lower, (label,needle,out[:1000])
+            row={'case':label,'game':game,'count':count,'items_on_page':len(items)}
+            summary.append(row)
+            open(f'/tmp/cf-preview-cert/search-{label}.json','w').write(out)
+            print('SEARCH', row)
+          json.dump(summary, open('/tmp/cf-preview-cert/search-summary.json','w'), indent=2)
+          PY
+
+      - name: Certify anonymous auth path without writes
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --location -o /tmp/cf-preview-cert/auth-me.json -w '%{http_code}' "${PREVIEW}/api/auth/me")"
+          echo "AUTH_ME ${code}"
+          test "$code" = 401
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/cf-preview-cert/auth-me.json'))
+          assert isinstance(p, dict), p
+          assert 'error' in p or 'message' in p, p
+          print('AUTH_ANON_OK', p)
+          PY
+
+      - name: Certify Cloudflare response headers and latency envelope
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import subprocess, statistics, os, json
+          base=os.environ['PREVIEW']
+          urls=[base+'/', base+'/api/health', base+'/api/search-v2?q=Pikachu&game=pokemon&limit=5']
+          rows=[]
+          for url in urls:
+            samples=[]
+            header=''
+            for i in range(3):
+              raw=subprocess.check_output(['curl','--silent','--show-error','--location','-D','-','-o','/dev/null','-w','\n__TIME__%{time_total}',url], text=True)
+              header, timing=raw.rsplit('\n__TIME__',1)
+              samples.append(float(timing)*1000)
+            low=header.casefold()
+            assert 'server: cloudflare' in low, header
+            assert 'cf-ray:' in low, header
+            row={'url':url,'median_ms':round(statistics.median(samples),2),'max_ms':round(max(samples),2)}
+            assert row['max_ms'] < 5000, row
+            rows.append(row)
+            print('LATENCY', row)
+          json.dump(rows, open('/tmp/cf-preview-cert/latency.json','w'), indent=2)
+          PY
+
+      - name: Upload preview certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-preview-ddb30a5e-${{ github.run_id }}
+          path: /tmp/cf-preview-cert/*
+          retention-days: 90
+          if-no-files-found: warn
