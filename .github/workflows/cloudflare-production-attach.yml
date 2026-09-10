@@ -16,7 +16,7 @@ concurrency:
 jobs:
   attach:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
@@ -26,6 +26,7 @@ jobs:
       FALLBACK_URL: https://dontripit-vercel-fallback.alejandro-ruggeri-l.workers.dev
       APEX: https://dontripit.com
       WWW: https://www.dontripit.com
+
     steps:
       - name: Re-certify isolated production and rollback Workers
         shell: bash
@@ -33,17 +34,22 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           for entry in "production|$WORKER_URL" "fallback|$FALLBACK_URL"; do
-            label=${entry%%|*}; base=${entry#*|}
+            label=${entry%%|*}
+            base=${entry#*|}
             home=$(curl -L -sS -o /tmp/home -w '%{http_code}' --max-time 30 "$base/")
             health=$(curl -sS -o /tmp/health -w '%{http_code}' --max-time 30 "$base/api/health")
             auth=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$base/api/auth/me")
             search=$(curl -sS -o /tmp/search -w '%{http_code}' --max-time 45 "$base/api/search-v2?q=P-150&limit=20")
             echo "$label home=$home health=$health auth=$auth search=$search"
-            test "$home" = "200"; test "$health" = "200"; test "$auth" = "401"; test "$search" = "200"
+            test "$home" = "200"
+            test "$health" = "200"
+            test "$auth" = "401"
+            test "$search" = "200"
             jq -e '.status=="ok"' /tmp/health >/dev/null
             jq -e '.error=="authentication_required"' /tmp/me >/dev/null
             node <<'NODE'
-          const fs=require('fs'); const j=JSON.parse(fs.readFileSync('/tmp/search','utf8'));
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/search','utf8'));
           const a=Array.isArray(j)?j:(j.results||j.items||j.data||j.data?.results||j.data?.items||[]);
           const ids=a.map(x=>String(x?.print_id??x?.printId??x?.id??x?.card_id??x?.cardId??x?.external_id??x?.code??x?.name??''));
           if(ids.length!==1||ids[0]!=='710107') throw new Error(`P-150 drift ${JSON.stringify(ids)}`);
@@ -55,21 +61,48 @@ jobs:
           curl -fsSI --max-time 30 "$FALLBACK_URL/" | tr -d '\r' | grep -qi '^x-dontripit-fallback: vercel$'
           echo "worker_build=$(cat /tmp/worker-build-id)"
 
-      - name: Attach dontripit.com to production Worker with automatic fallback
+      - name: Atomic DNS cutover to production Custom Domain
         shell: bash
         run: |
           set -euo pipefail
           auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+
           zone_code=$(curl -sS "${auth[@]}" -o /tmp/zone.json -w '%{http_code}' 'https://api.cloudflare.com/client/v4/zones?name=dontripit.com&status=active')
           test "$zone_code" = "200"
-          zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json); test -n "$zone_id"
+          zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json)
+          test -n "$zone_id"
 
-          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          # Permission gate: nothing destructive happens until DNS read succeeds.
+          dns_code=$(curl -sS "${auth[@]}" -o /tmp/dns-before.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=dontripit.com&per_page=100")
+          echo "dns_read_http=$dns_code"
+          if [ "$dns_code" != "200" ]; then
+            jq -c '{success,errors}' /tmp/dns-before.json || true
+            echo 'DNS read/edit permission is required; production remains unchanged.'
+            exit 10
+          fi
+
+          jq -c '.result[] | {id,type,name,content,ttl,proxied}' /tmp/dns-before.json
+          jq '[.result[] | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | {id,type,name,content,ttl,proxied}]' /tmp/dns-before.json > /tmp/conflicting-records.json
+          conflict_count=$(jq 'length' /tmp/conflicting-records.json)
+          unexpected=$(jq -r '[.[] | select(.type!="A" or (.content!="216.198.79.65" and .content!="64.29.17.65"))] | length' /tmp/conflicting-records.json)
+          echo "conflicting_apex_records=$conflict_count unexpected=$unexpected"
+          if [ "$unexpected" != "0" ]; then
+            echo 'Unexpected apex address/CNAME record found; refusing automatic mutation.'
+            cat /tmp/conflicting-records.json
+            exit 11
+          fi
+          if [ "$conflict_count" != "0" ] && [ "$conflict_count" != "2" ]; then
+            echo 'Expected exactly the two known Vercel A records; refusing partial or ambiguous state.'
+            exit 12
+          fi
+
+          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains-before.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
           test "$domains_code" = "200"
-          current=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains.json | head -1)
+          current=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains-before.json | head -1)
           echo "current_custom_domain_service=${current:-none}"
           if [ -n "$current" ] && [ "$current" != "$WORKER_NAME" ] && [ "$current" != "$FALLBACK_NAME" ]; then
-            echo "Unexpected existing Custom Domain service=$current"; exit 4
+            echo "Unexpected existing Custom Domain service=$current"
+            exit 13
           fi
 
           put_domain() {
@@ -78,71 +111,124 @@ jobs:
             code=$(curl -sS -X PUT "${auth[@]}" -d "$body" -o /tmp/domain.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
             echo "custom_domain_put service=$service http=$code"
             jq -c '{success,result:{id:.result.id,hostname:.result.hostname,service:.result.service,zone_name:.result.zone_name},errors}' /tmp/domain.json || true
-            test "$code" = "200"; jq -e '.success==true' /tmp/domain.json >/dev/null
+            case "$code" in 200|201) ;; *) return 1 ;; esac
+            jq -e '.success==true' /tmp/domain.json >/dev/null
           }
 
-          touched=0; green=0
+          restore_original_dns() {
+            echo 'Restoring original Vercel apex DNS records.'
+            while IFS= read -r rec; do
+              [ -n "$rec" ] || continue
+              type=$(jq -r '.type' <<<"$rec")
+              name=$(jq -r '.name' <<<"$rec")
+              content=$(jq -r '.content' <<<"$rec")
+              ttl=$(jq -r '.ttl' <<<"$rec")
+              proxied=$(jq -r '.proxied' <<<"$rec")
+              body=$(jq -nc --arg type "$type" --arg name "$name" --arg content "$content" --argjson ttl "$ttl" --argjson proxied "$proxied" '{type:$type,name:$name,content:$content,ttl:$ttl,proxied:$proxied}')
+              rcode=$(curl -sS -X POST "${auth[@]}" -d "$body" -o /tmp/restore.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records")
+              echo "restore $type $content http=$rcode"
+              test "$rcode" = "200"
+              jq -e '.success==true' /tmp/restore.json >/dev/null
+            done < <(jq -c '.[]' /tmp/conflicting-records.json)
+          }
+
+          remove_custom_domain_if_present() {
+            curl -sS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" -o /tmp/domains-now.json || return 0
+            did=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .id // empty' /tmp/domains-now.json | head -1)
+            if [ -n "$did" ]; then
+              dcode=$(curl -sS -X DELETE "${auth[@]}" -o /tmp/domain-delete.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$did" || true)
+              echo "custom_domain_delete id=$did http=$dcode"
+            fi
+          }
+
+          dns_removed=0
+          domain_attached=0
+          green=0
           rollback() {
             rc=$?
-            if [ "$green" != "1" ] && [ "$touched" = "1" ]; then
-              echo 'Verification failed: switching apex to certified Vercel fallback Worker.'
-              put_domain "$FALLBACK_NAME" || true
-              sleep 2
-              curl -sSI --max-time 20 "$APEX/" | tr -d '\r' | grep -Ei '^(HTTP/|server:|x-dontripit-fallback:)' || true
+            if [ "$green" = "1" ]; then exit 0; fi
+            echo "CUTOVER_FAILED rc=$rc; starting automatic rollback."
+            if [ "$domain_attached" = "1" ]; then
+              echo 'Fast rollback: switching apex Custom Domain to certified Vercel fallback Worker.'
+              if put_domain "$FALLBACK_NAME"; then
+                sleep 2
+                echo 'rollback_mode=cloudflare_to_vercel_fallback'
+                exit "$rc"
+              fi
+              echo 'Fallback attach failed; restoring original Vercel DNS records.'
+              remove_custom_domain_if_present || true
+            fi
+            if [ "$dns_removed" = "1" ] && [ "$conflict_count" != "0" ]; then
+              restore_original_dns || true
             fi
             exit "$rc"
           }
           trap rollback EXIT
 
-          put_domain "$WORKER_NAME"
-          touched=1
+          if [ "$conflict_count" = "2" ]; then
+            while IFS= read -r id; do
+              [ -n "$id" ] || continue
+              code=$(curl -sS -X DELETE "${auth[@]}" -o /tmp/del.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$id")
+              echo "delete_apex_record id=$id http=$code"
+              test "$code" = "200"
+              jq -e '.success==true' /tmp/del.json >/dev/null
+            done < <(jq -r '.[].id' /tmp/conflicting-records.json)
+            dns_removed=1
+          fi
 
-          # API control-plane confirmation.
+          put_domain "$WORKER_NAME"
+          domain_attached=1
+
           curl -fsS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" -o /tmp/domains-after.json
           service=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains-after.json | head -1)
           id=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .id // empty' /tmp/domains-after.json | head -1)
           echo "apex_custom_domain_id=$id service=$service"
-          test "$service" = "$WORKER_NAME"; test -n "$id"
+          test "$service" = "$WORKER_NAME"
+          test -n "$id"
 
-          # Verify against authoritative DNS first, bypassing recursive-cache lag.
           auth_ns=$(dig +short NS dontripit.com | head -1)
           test -n "$auth_ns"
-          echo "authoritative_ns=$auth_ns"
-          cf_ip=''
-          for i in $(seq 1 20); do
-            cf_ip=$(dig +short A dontripit.com "@$auth_ns" | head -1)
-            echo "authoritative_apex_a=${cf_ip:-missing}"
-            if [ -n "$cf_ip" ]; then
-              build=$(curl -sSI --resolve "dontripit.com:443:$cf_ip" --max-time 20 "$APEX/" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' | tail -1)
-              [ "$build" = "$(cat /tmp/worker-build-id)" ] && break
-            fi
+          worker_build=$(cat /tmp/worker-build-id)
+          edge_build=''
+          for i in $(seq 1 30); do
+            for cf_ip in $(dig +short A dontripit.com "@$auth_ns"); do
+              edge_build=$(curl -sSI --resolve "dontripit.com:443:$cf_ip" --max-time 20 "$APEX/" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' | tail -1)
+              [ "$edge_build" = "$worker_build" ] && break 2
+            done
             sleep 3
           done
-          echo "authoritative_edge_build=${build:-missing}"
-          test "${build:-}" = "$(cat /tmp/worker-build-id)"
+          echo "authoritative_edge_build=${edge_build:-missing}"
+          test "$edge_build" = "$worker_build"
 
-          # Verify normal public resolution. Old Vercel DNS can remain cached briefly; require it to converge here.
           public_build=''
           for i in $(seq 1 60); do
             curl -sSI --max-time 20 "$APEX/" | tr -d '\r' > /tmp/apex.headers || true
             public_build=$(awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' /tmp/apex.headers | tail -1)
-            [ "$public_build" = "$(cat /tmp/worker-build-id)" ] && break
+            [ "$public_build" = "$worker_build" ] && break
             sleep 5
           done
           echo "public_apex_build=${public_build:-missing}"
-          test "$public_build" = "$(cat /tmp/worker-build-id)"
+          test "$public_build" = "$worker_build"
           grep -Eqi '^server: cloudflare$|^cf-ray:' /tmp/apex.headers
           ! grep -qi '^x-dontripit-fallback:' /tmp/apex.headers
 
           pages=(/ /pokemon /onepiece /yugioh /riftbound /magic /explorer /login /register /forgot-password /privacy /terms /cookies)
           for path in "${pages[@]}"; do
             code=$(curl -L -sS -o /tmp/page -w '%{http_code}' --max-time 30 "$APEX$path")
-            echo "$path status=$code bytes=$(wc -c </tmp/page)"; test "$code" = "200"; test -s /tmp/page
+            echo "$path status=$code bytes=$(wc -c </tmp/page)"
+            test "$code" = "200"
+            test -s /tmp/page
           done
 
-          curl -fsS --max-time 30 "$APEX/api/health" -o /tmp/health; jq -e '.status=="ok"' /tmp/health >/dev/null
-          auth_code=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$APEX/api/auth/me"); test "$auth_code" = "401"; jq -e '.error=="authentication_required"' /tmp/me >/dev/null
-          for path in /api/library/collection /api/library/wishlist; do code=$(curl -sS -o /tmp/p -w '%{http_code}' --max-time 30 "$APEX$path"); test "$code" = "401"; done
+          curl -fsS --max-time 30 "$APEX/api/health" -o /tmp/health
+          jq -e '.status=="ok"' /tmp/health >/dev/null
+          auth_code=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$APEX/api/auth/me")
+          test "$auth_code" = "401"
+          jq -e '.error=="authentication_required"' /tmp/me >/dev/null
+          for path in /api/library/collection /api/library/wishlist; do
+            code=$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 30 "$APEX$path")
+            test "$code" = "401"
+          done
 
           queries=('Pikachu' 'Luffy' 'P-150' 'OP05-119' 'LOB-001')
           for q in "${queries[@]}"; do
@@ -151,7 +237,8 @@ jobs:
             curl -fsS --max-time 45 "$WORKER_URL/api/search-v2?q=$encoded&limit=20" -o /tmp/worker-search
             QUERY="$q" node <<'NODE'
           const fs=require('fs'), q=process.env.QUERY;
-          const a=JSON.parse(fs.readFileSync('/tmp/apex-search','utf8')), w=JSON.parse(fs.readFileSync('/tmp/worker-search','utf8'));
+          const a=JSON.parse(fs.readFileSync('/tmp/apex-search','utf8'));
+          const w=JSON.parse(fs.readFileSync('/tmp/worker-search','utf8'));
           const arr=j=>Array.isArray(j)?j:(j.results||j.items||j.data||j.data?.results||j.data?.items||[]);
           const id=x=>String(x?.print_id??x?.printId??x?.id??x?.card_id??x?.cardId??x?.external_id??x?.code??x?.name??'');
           const aa=arr(a), wa=arr(w), ai=aa.slice(0,5).map(id), wi=wa.slice(0,5).map(id);
@@ -162,9 +249,14 @@ jobs:
 
           curl -fsS --max-time 45 "$APEX/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0" -o /tmp/catalog
           node <<'NODE'
-          const fs=require('fs'), j=JSON.parse(fs.readFileSync('/tmp/catalog','utf8')), items=j.items||[];
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/catalog','utf8'));
+          const items=j.items||[];
           const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']);
-          for(const item of items) for(const f of ['set_code','set_name','collector_number','rarity','language','finish','variant_family','exact_variant']) {const v=item?.[f]; if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) throw new Error(`placeholder ${f}=${v}`)}
+          for(const item of items) for(const f of ['set_code','set_name','collector_number','rarity','language','finish','variant_family','exact_variant']) {
+            const v=item?.[f];
+            if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) throw new Error(`placeholder ${f}=${v}`);
+          }
           const b=items.find(x=>Number(x.card_id)===1);
           if(!b||Number(b.matched_print_id)!==571||String(b.set_code).toLowerCase()!=='bs'||String(b.collector_number)!=='58'||String(b.rarity||'').toLowerCase()!=='common') throw new Error('Base Pikachu contract drift');
           console.log('metadata_contract=green');
@@ -172,7 +264,9 @@ jobs:
 
           www_code=$(curl -sS -o /dev/null -D /tmp/www.headers -w '%{http_code}' --max-time 30 "$WWW/")
           www_location=$(tr -d '\r' </tmp/www.headers | awk -F': ' 'tolower($1)=="location" {print $2}' | tail -1)
-          echo "www_status=$www_code location=$www_location"; test "$www_code" = "308"; test "$www_location" = "https://dontripit.com/"
+          echo "www_status=$www_code location=$www_location"
+          test "$www_code" = "308"
+          test "$www_location" = "https://dontripit.com/"
 
           for q in Pikachu Luffy P-150; do
             encoded=$(node -p "encodeURIComponent(process.argv[1])" "$q")
@@ -180,13 +274,15 @@ jobs:
             echo "$q production_time=${t}s"
           done
 
-          green=1; trap - EXIT
+          green=1
+          trap - EXIT
           echo 'CUTOVER_GREEN=yes'
 
       - name: Summary
         run: |
           echo '### Don’tRipIt frontend: Cloudflare production GREEN' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Replaced only the two known Vercel apex A records' >> "$GITHUB_STEP_SUMMARY"
           echo '- dontripit.com -> dontripit-web-production Custom Domain' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Emergency rollback -> dontripit-vercel-fallback' >> "$GITHUB_STEP_SUMMARY"
-          echo '- www keeps its existing 308 redirect to apex; Vercel CNAME untouched' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Emergency rollback -> dontripit-vercel-fallback; original Vercel DNS snapshot retained during run' >> "$GITHUB_STEP_SUMMARY"
+          echo '- www keeps its existing 308 redirect to apex; its Vercel CNAME is untouched' >> "$GITHUB_STEP_SUMMARY"
           echo '- Pages, health, auth, protected library, search and metadata certified' >> "$GITHUB_STEP_SUMMARY"
