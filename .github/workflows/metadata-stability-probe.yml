@@ -1,0 +1,56 @@
+name: Metadata stability probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/metadata-stability-probe-trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Probe Pikachu metadata repeatedly with cache-busting URLs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/probes
+          base='https://dontripit-web-production.alejandro-ruggeri-l.workers.dev/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0'
+          for i in $(seq 1 24); do
+            (
+              code=$(curl -sS -o "/tmp/probes/$i.json" -w '%{http_code}' --max-time 90 "$base&stability_probe=$i-$(date +%s%N)")
+              echo "$code" > "/tmp/probes/$i.code"
+            ) &
+          done
+          wait
+
+          node <<'NODE'
+          const fs=require('fs');
+          const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']);
+          const fields=['set_code','set_name','collector_number','rarity','language','finish','variant_family','exact_variant'];
+          let badResponses=0, failed=0;
+          const fingerprints=new Map();
+          for(let i=1;i<=24;i++){
+            const code=fs.readFileSync(`/tmp/probes/${i}.code`,'utf8').trim();
+            if(code!=='200'){console.log(`probe=${i} http=${code}`); failed++; continue;}
+            const j=JSON.parse(fs.readFileSync(`/tmp/probes/${i}.json`,'utf8'));
+            const items=j.items||j.results||j.data?.items||j.data?.results||[];
+            const rows=[];
+            for(const x of items){
+              const badFields={};
+              for(const f of fields){const v=x?.[f]; if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) badFields[f]=v;}
+              if(Object.keys(badFields).length) rows.push({card_id:x.card_id,id:x.id,matched_print_id:x.matched_print_id,name:x.name,title:x.title,set_code:x.set_code,set_name:x.set_name,collector_number:x.collector_number,rarity:x.rarity,language:x.language,variant_family:x.variant_family,exact_variant:x.exact_variant,badFields});
+            }
+            const sig=JSON.stringify(items.map(x=>[x.card_id,x.matched_print_id,x.set_code,x.collector_number,x.rarity]));
+            fingerprints.set(sig,(fingerprints.get(sig)||0)+1);
+            if(rows.length){badResponses++; console.log(`BAD probe=${i} rows=${JSON.stringify(rows)}`);}
+            else console.log(`GREEN probe=${i} items=${items.length}`);
+          }
+          console.log(`summary failed_http=${failed} bad_responses=${badResponses} distinct_fingerprints=${fingerprints.size}`);
+          let rank=0; for(const [sig,count] of [...fingerprints.entries()].sort((a,b)=>b[1]-a[1])) console.log(`fingerprint_${++rank} count=${count} ${sig}`);
+          if(failed) process.exit(2);
+          NODE
