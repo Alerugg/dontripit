@@ -13,42 +13,30 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
     steps:
-      - name: Inspect public DNS and Cloudflare domain state
+      - name: Probe preview, production-copy and fallback Workers
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
-
-          zone_code=$(curl -sS "${auth[@]}" -o /tmp/zone.json -w '%{http_code}' 'https://api.cloudflare.com/client/v4/zones?name=dontripit.com&status=active')
-          echo "zone_lookup_http=$zone_code"
-          test "$zone_code" = "200"
-          zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json)
-          test -n "$zone_id"
-
-          echo '--- public DNS apex ---'
-          dig +short A dontripit.com || true
-          dig +short AAAA dontripit.com || true
-          dig +short CNAME dontripit.com || true
-          echo '--- public DNS www ---'
-          dig +short A www.dontripit.com || true
-          dig +short AAAA www.dontripit.com || true
-          dig +short CNAME www.dontripit.com || true
-
-          echo '--- current apex headers ---'
-          curl -sSI --max-time 30 https://dontripit.com/ | tr -d '\r' | grep -Ei '^(HTTP/|server:|cf-ray:|x-vercel-id:|location:)' || true
-          echo '--- current www headers ---'
-          curl -sSI --max-time 30 https://www.dontripit.com/ | tr -d '\r' | grep -Ei '^(HTTP/|server:|cf-ray:|x-vercel-id:|location:)' || true
-
-          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
-          echo "workers_custom_domains_http=$domains_code"
-          if [ "$domains_code" = "200" ]; then
-            jq -c '.result[] | select((.hostname // "") | contains("dontripit.com")) | {id,hostname,service,environment,zone_id,zone_name}' /tmp/domains.json || true
-          else
-            jq -c '{success,errors}' /tmp/domains.json || true
-          fi
-          test "$domains_code" = "200"
+          bases=(
+            'preview|https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev'
+            'production|https://dontripit-web-production.alejandro-ruggeri-l.workers.dev'
+            'fallback|https://dontripit-vercel-fallback.alejandro-ruggeri-l.workers.dev'
+            'vercel-alias|https://dontripit.vercel.app'
+          )
+          for entry in "${bases[@]}"; do
+            label=${entry%%|*}
+            base=${entry#*|}
+            echo "--- $label ---"
+            for path in / /api/health /api/auth/me '/api/search-v2?q=P-150&limit=20'; do
+              code=$(curl -L -sS -o /tmp/body -D /tmp/headers -w '%{http_code}' --max-time 45 "$base$path" || true)
+              bytes=$(wc -c </tmp/body 2>/dev/null || echo 0)
+              server=$(tr -d '\r' </tmp/headers 2>/dev/null | awk -F': ' 'tolower($1)=="server" {print $2}' | tail -1)
+              fallback=$(tr -d '\r' </tmp/headers 2>/dev/null | awk -F': ' 'tolower($1)=="x-dontripit-fallback" {print $2}' | tail -1)
+              build=$(tr -d '\r' </tmp/headers 2>/dev/null | awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' | tail -1)
+              echo "$path status=$code bytes=$bytes server=${server:-none} fallback=${fallback:-none} build=${build:-none}"
+              if [ "$code" = "500" ]; then
+                head -c 500 /tmp/body | tr '\n' ' '; echo
+              fi
+            done
+          done
