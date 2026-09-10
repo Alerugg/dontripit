@@ -148,9 +148,10 @@ def exhaustive_name_page(
 
     Totals travel with the page via window aggregates. Representative Print and
     image enrichment happens only after LIMIT/OFFSET. On PostgreSQL, strict
-    sibling rarity consensus is computed inside the same database round-trip as
-    the representative lookup so metadata enrichment never swaps print identity
-    and does not add a second Neon request.
+    sibling rarity consensus is aggregated once for the already-selected page of
+    representative prints, inside the same database round-trip. This preserves
+    representative identity and avoids both a second Neon request and one
+    correlated sibling scan per result.
     """
     q_norm = normalize_search_text(query)
     if not q_norm:
@@ -250,98 +251,125 @@ def exhaustive_name_page(
           JOIN games g ON g.id = c.game_id
           ORDER BY cs.score DESC, lower(c.name) ASC, c.id ASC
           LIMIT :limit OFFSET :offset
+        ),
+        chosen_prints AS MATERIALIZED (
+          SELECT
+            pc.card_id,
+            pc.card_key,
+            pc.name,
+            pc.game,
+            pc.attributes_json,
+            pc.variant_count,
+            pc.score,
+            pc.total_cards,
+            pc.total_prints,
+            chosen.print_id,
+            chosen.set_id,
+            chosen.set_code,
+            chosen.set_name,
+            chosen.collector_number,
+            chosen.language,
+            chosen.rarity,
+            chosen.exact_variant,
+            chosen.variant_family,
+            chosen.primary_image_url
+          FROM paged_cards pc
+          JOIN LATERAL (
+            SELECT
+              p.id AS print_id,
+              p.set_id,
+              s.code AS set_code,
+              s.name AS set_name,
+              p.collector_number,
+              p.language,
+              p.rarity,
+              psp.exact_variant,
+              psp.variant_family,
+              (
+                SELECT pi.url
+                FROM print_images pi
+                WHERE pi.print_id = p.id
+                ORDER BY pi.is_primary DESC, pi.id ASC
+                LIMIT 1
+              ) AS primary_image_url
+            FROM prints p
+            JOIN sets s ON s.id = p.set_id
+            LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
+            WHERE p.card_id = pc.card_id
+            ORDER BY
+              CASE WHEN lower(COALESCE(p.variant, '')) IN ('default', 'base', '') THEN 0 ELSE 1 END,
+              (psp.print_id IS NOT NULL) DESC,
+              p.id ASC
+            LIMIT 1
+          ) chosen ON TRUE
+        ),
+        rarity_consensus AS MATERIALIZED (
+          SELECT
+            cp.print_id AS representative_print_id,
+            MIN(trim(sibling.rarity)) AS consensus_rarity,
+            COUNT(*)::int AS evidence_count,
+            COUNT(DISTINCT lower(trim(sibling.rarity)))::int AS distinct_rarity_count
+          FROM chosen_prints cp
+          JOIN prints sibling
+            ON sibling.card_id = cp.card_id
+           AND sibling.set_id = cp.set_id
+           AND COALESCE(trim(sibling.collector_number), '') =
+               COALESCE(trim(cp.collector_number), '')
+           AND lower(COALESCE(trim(sibling.language), '')) =
+               lower(COALESCE(trim(cp.language), ''))
+          WHERE :enrich_rarity
+            AND lower(trim(COALESCE(cp.rarity, ''))) IN
+                ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+            AND lower(trim(COALESCE(sibling.rarity, ''))) NOT IN
+                ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+          GROUP BY cp.print_id
         )
         SELECT
-          pc.card_id,
-          pc.card_key,
-          pc.name,
-          pc.game,
-          pc.attributes_json,
-          chosen.print_id,
-          chosen.set_code,
-          chosen.set_name,
-          chosen.collector_number,
-          chosen.language,
-          chosen.rarity,
-          chosen.rarity_source,
-          chosen.rarity_evidence_count,
-          chosen.exact_variant,
-          chosen.variant_family,
-          chosen.primary_image_url,
-          pc.variant_count,
-          pc.score,
-          pc.total_cards,
-          pc.total_prints
-        FROM paged_cards pc
-        JOIN LATERAL (
-          SELECT
-            p.id AS print_id,
-            s.code AS set_code,
-            s.name AS set_name,
-            p.collector_number,
-            p.language,
-            CASE
-              WHEN lower(trim(COALESCE(p.rarity, ''))) NOT IN
-                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
-                THEN trim(p.rarity)
-              WHEN :enrich_rarity AND rarity_consensus.distinct_rarity_count = 1
-                THEN rarity_consensus.consensus_rarity
-              ELSE p.rarity
-            END AS rarity,
-            CASE
-              WHEN :enrich_rarity
-               AND lower(trim(COALESCE(p.rarity, ''))) IN
-                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
-               AND rarity_consensus.distinct_rarity_count = 1
-                THEN 'sibling_consensus_v1'
-              ELSE NULL
-            END AS rarity_source,
-            CASE
-              WHEN :enrich_rarity
-               AND lower(trim(COALESCE(p.rarity, ''))) IN
-                   ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
-               AND rarity_consensus.distinct_rarity_count = 1
-                THEN rarity_consensus.evidence_count
-              ELSE NULL
-            END AS rarity_evidence_count,
-            psp.exact_variant,
-            psp.variant_family,
-            (
-              SELECT pi.url
-              FROM print_images pi
-              WHERE pi.print_id = p.id
-              ORDER BY pi.is_primary DESC, pi.id ASC
-              LIMIT 1
-            ) AS primary_image_url
-          FROM prints p
-          JOIN sets s ON s.id = p.set_id
-          LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
-          LEFT JOIN LATERAL (
-            SELECT
-              MIN(trim(p2.rarity)) AS consensus_rarity,
-              COUNT(*)::int AS evidence_count,
-              COUNT(DISTINCT lower(trim(p2.rarity)))::int AS distinct_rarity_count
-            FROM prints p2
-            WHERE :enrich_rarity
-              AND lower(trim(COALESCE(p.rarity, ''))) IN
-                  ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
-              AND p2.card_id = p.card_id
-              AND p2.set_id = p.set_id
-              AND COALESCE(trim(p2.collector_number), '') =
-                  COALESCE(trim(p.collector_number), '')
-              AND lower(COALESCE(trim(p2.language), '')) =
-                  lower(COALESCE(trim(p.language), ''))
-              AND lower(trim(COALESCE(p2.rarity, ''))) NOT IN
-                  ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
-          ) rarity_consensus ON TRUE
-          WHERE p.card_id = pc.card_id
-          ORDER BY
-            CASE WHEN lower(COALESCE(p.variant, '')) IN ('default', 'base', '') THEN 0 ELSE 1 END,
-            (psp.print_id IS NOT NULL) DESC,
-            p.id ASC
-          LIMIT 1
-        ) chosen ON TRUE
-        ORDER BY pc.score DESC, lower(pc.name) ASC, pc.card_id ASC
+          cp.card_id,
+          cp.card_key,
+          cp.name,
+          cp.game,
+          cp.attributes_json,
+          cp.print_id,
+          cp.set_code,
+          cp.set_name,
+          cp.collector_number,
+          cp.language,
+          CASE
+            WHEN lower(trim(COALESCE(cp.rarity, ''))) NOT IN
+                 ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+              THEN trim(cp.rarity)
+            WHEN :enrich_rarity AND rc.distinct_rarity_count = 1
+              THEN rc.consensus_rarity
+            ELSE cp.rarity
+          END AS rarity,
+          CASE
+            WHEN :enrich_rarity
+             AND lower(trim(COALESCE(cp.rarity, ''))) IN
+                 ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+             AND rc.distinct_rarity_count = 1
+              THEN 'sibling_consensus_v1'
+            ELSE NULL
+          END AS rarity_source,
+          CASE
+            WHEN :enrich_rarity
+             AND lower(trim(COALESCE(cp.rarity, ''))) IN
+                 ('', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined')
+             AND rc.distinct_rarity_count = 1
+              THEN rc.evidence_count
+            ELSE NULL
+          END AS rarity_evidence_count,
+          cp.exact_variant,
+          cp.variant_family,
+          cp.primary_image_url,
+          cp.variant_count,
+          cp.score,
+          cp.total_cards,
+          cp.total_prints
+        FROM chosen_prints cp
+        LEFT JOIN rarity_consensus rc
+          ON rc.representative_print_id = cp.print_id
+        ORDER BY cp.score DESC, lower(cp.name) ASC, cp.card_id ASC
         """
     )
     rows = session.execute(page_sql, params).mappings().all()
