@@ -141,7 +141,10 @@ class PrintImage(Base):
 
 class PrintIdentifier(Base):
     __tablename__ = "print_identifiers"
-    __table_args__ = (UniqueConstraint("print_id", "source", name="uq_identifier_source"),)
+    __table_args__ = (
+        UniqueConstraint("print_id", "source", name="uq_identifier_source"),
+        UniqueConstraint("source", "external_id", name="uq_print_identifiers_source_external_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     print_id: Mapped[int] = mapped_column(ForeignKey("prints.id"), nullable=False, index=True)

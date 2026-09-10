@@ -950,6 +950,12 @@ class YgoProDeckYugiohConnector(SourceConnector):
         images_by_print_source_key = {
             img.print_source_key: img for img in normalized.normalized_images if img.is_primary
         }
+        # SessionLocal intentionally runs with autoflush=False. Multiple source
+        # variants can resolve to the same canonical Print inside one payload,
+        # so a primary image staged earlier in this loop is not visible to a SQL
+        # query until the final flush. Track that staged identity explicitly to
+        # keep primary-image creation idempotent without a flush per variant.
+        primary_image_by_print_id: dict[int, PrintImage] = {}
         normalized_prints_by_ygo_id: dict[str, object] = {}
         for item in normalized.normalized_prints:
             ygo_print_id = next(
@@ -1063,33 +1069,48 @@ class YgoProDeckYugiohConnector(SourceConnector):
             if image and image.url:
                 if print_row.id is None:
                     session.flush()
-                primary_images = session.execute(
-                    select(PrintImage).where(
-                        PrintImage.print_id == print_row.id,
-                        PrintImage.is_primary.is_(True),
-                    ).order_by(PrintImage.id.asc())
-                ).scalars().all()
-                primary_image = self._choose_first(
-                    primary_images,
-                    label="print_images",
-                    context=f"print_id={print_row.id}",
-                )
+                print_id = int(print_row.id)
+                primary_image = primary_image_by_print_id.get(print_id)
+                primary_images: list[PrintImage] = []
                 if primary_image is None:
-                    session.add(
-                        PrintImage(
-                            print_id=print_row.id,
+                    primary_images = session.execute(
+                        select(PrintImage).where(
+                            PrintImage.print_id == print_id,
+                            PrintImage.is_primary.is_(True),
+                        ).order_by(PrintImage.id.asc())
+                    ).scalars().all()
+                    primary_image = self._choose_first(
+                        primary_images,
+                        label="print_images",
+                        context=f"print_id={print_id}",
+                    )
+                    if primary_image is None:
+                        primary_image = PrintImage(
+                            print_id=print_id,
                             url=image.url,
                             is_primary=True,
                             source="ygoprodeck",
                         )
-                    )
-                    stats.records_inserted += 1
-                elif primary_image.url != image.url:
+                        session.add(primary_image)
+                        stats.records_inserted += 1
+                    primary_image_by_print_id[print_id] = primary_image
+
+                changed_primary = False
+                if primary_image.url != image.url:
                     primary_image.url = image.url
-                    if primary_image.source != "ygoprodeck":
-                        primary_image.source = "ygoprodeck"
+                    changed_primary = True
+                if primary_image.source != "ygoprodeck":
+                    primary_image.source = "ygoprodeck"
+                    changed_primary = True
+                if not primary_image.is_primary:
+                    primary_image.is_primary = True
+                    changed_primary = True
+                if changed_primary and primary_image not in session.new:
                     stats.records_updated += 1
 
+                # Existing historical duplicates are self-healed whenever the
+                # physical Print is touched. Newly staged duplicates cannot be
+                # created because primary_image_by_print_id owns the identity.
                 for extra_primary in primary_images[1:]:
                     if extra_primary.is_primary:
                         extra_primary.is_primary = False
