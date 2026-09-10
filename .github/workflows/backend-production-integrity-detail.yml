@@ -1,0 +1,147 @@
+name: Backend Production Integrity Detail
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-production-integrity-detail'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+  PGOPTIONS: -c default_transaction_read_only=on
+
+jobs:
+  detail-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Inspect duplicate primaries and projection coverage
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          url = (os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url
+          conn = psycopg2.connect(url)
+          conn.autocommit = False
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  assert cur.fetchone()['transaction_read_only'] == 'on'
+
+                  cur.execute('''
+                      SELECT
+                        p.id AS print_id,
+                        g.slug AS game,
+                        c.id AS card_id,
+                        c.name AS card_name,
+                        s.id AS set_id,
+                        s.code AS set_code,
+                        s.name AS set_name,
+                        p.collector_number,
+                        p.language,
+                        p.variant,
+                        p.print_key,
+                        json_agg(
+                          json_build_object(
+                            'image_id', pi.id,
+                            'source', pi.source,
+                            'url', pi.url,
+                            'created_at', pi.created_at
+                          ) ORDER BY pi.id
+                        ) AS primary_images
+                      FROM print_images pi
+                      JOIN prints p ON p.id = pi.print_id
+                      JOIN cards c ON c.id = p.card_id
+                      JOIN sets s ON s.id = p.set_id
+                      JOIN games g ON g.id = c.game_id
+                      WHERE pi.is_primary IS TRUE
+                      GROUP BY p.id, g.slug, c.id, c.name, s.id, s.code, s.name,
+                               p.collector_number, p.language, p.variant, p.print_key
+                      HAVING count(*) > 1
+                      ORDER BY p.id
+                  ''')
+                  duplicate_primaries = [dict(row) for row in cur.fetchall()]
+
+                  cur.execute('''
+                      WITH card_stats AS (
+                        SELECT g.id AS game_id,
+                               count(*)::int AS cards,
+                               count(*) FILTER (WHERE csp.id IS NULL)::int AS cards_missing_profile
+                        FROM games g
+                        JOIN cards c ON c.game_id = g.id
+                        LEFT JOIN card_search_profiles csp ON csp.card_id = c.id
+                        GROUP BY g.id
+                      ), print_stats AS (
+                        SELECT g.id AS game_id,
+                               count(*)::int AS prints,
+                               count(*) FILTER (WHERE psp.id IS NULL)::int AS prints_missing_profile
+                        FROM games g
+                        JOIN cards c ON c.game_id = g.id
+                        JOIN prints p ON p.card_id = c.id
+                        LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
+                        GROUP BY g.id
+                      )
+                      SELECT g.slug AS game,
+                             coalesce(cs.cards, 0)::int AS cards,
+                             coalesce(cs.cards_missing_profile, 0)::int AS cards_missing_profile,
+                             coalesce(ps.prints, 0)::int AS prints,
+                             coalesce(ps.prints_missing_profile, 0)::int AS prints_missing_profile
+                      FROM games g
+                      LEFT JOIN card_stats cs ON cs.game_id = g.id
+                      LEFT JOIN print_stats ps ON ps.game_id = g.id
+                      ORDER BY g.slug
+                  ''')
+                  coverage_by_game = [dict(row) for row in cur.fetchall()]
+
+                  cur.execute('''
+                      SELECT
+                        g.slug AS game,
+                        min(p.id) FILTER (WHERE psp.id IS NULL) AS first_missing_print_id,
+                        max(p.id) FILTER (WHERE psp.id IS NULL) AS last_missing_print_id,
+                        min(p.created_at) FILTER (WHERE psp.id IS NULL) AS oldest_missing_created_at,
+                        max(p.created_at) FILTER (WHERE psp.id IS NULL) AS newest_missing_created_at
+                      FROM games g
+                      JOIN cards c ON c.game_id = g.id
+                      JOIN prints p ON p.card_id = c.id
+                      LEFT JOIN print_search_profiles psp ON psp.print_id = p.id
+                      GROUP BY g.slug
+                      ORDER BY g.slug
+                  ''')
+                  missing_profile_age = [dict(row) for row in cur.fetchall()]
+
+                  cur.execute('''
+                      SELECT conname, pg_get_constraintdef(oid) AS definition
+                      FROM pg_constraint
+                      WHERE conrelid = 'print_identifiers'::regclass
+                      ORDER BY conname
+                  ''')
+                  print_identifier_constraints = [dict(row) for row in cur.fetchall()]
+
+              conn.rollback()
+          finally:
+              conn.close()
+
+          report = {
+              'transaction_read_only': True,
+              'production_writes': 0,
+              'duplicate_primaries': duplicate_primaries,
+              'coverage_by_game': coverage_by_game,
+              'missing_profile_age': missing_profile_age,
+              'print_identifier_constraints': print_identifier_constraints,
+          }
+          print(json.dumps(report, indent=2, default=str))
+          PY
