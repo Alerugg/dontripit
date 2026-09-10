@@ -20,8 +20,10 @@ jobs:
         include:
           - label: vercel-baseline
             ref: 0bebbd754fff89352a3c4d636082803d609417a4
+            install_mode: strict
           - label: cloudflare-current
             ref: ddb30a5e1298b3dd4c9e29871be9f2284ad5d69d
+            install_mode: legacy-peer-deps
     steps:
       - name: Checkout ${{ matrix.label }}
         uses: actions/checkout@v4
@@ -38,7 +40,15 @@ jobs:
 
       - name: Install locked dependencies
         working-directory: frontend
-        run: npm ci
+        run: |
+          set -euo pipefail
+          if [ "${INSTALL_MODE}" = "legacy-peer-deps" ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm ci
+          fi
+        env:
+          INSTALL_MODE: ${{ matrix.install_mode }}
 
       - name: Capture dependency audit
         working-directory: frontend
