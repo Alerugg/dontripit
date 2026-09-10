@@ -1,0 +1,174 @@
+name: Backend Production Integrity Audit
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-production-integrity-audit'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+  PGOPTIONS: -c default_transaction_read_only=on
+
+jobs:
+  catalog-integrity-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install read-only audit dependency
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Audit production identity and physical integrity
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          url = (os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url, 'production database secret is missing'
+
+          checks = {
+              'duplicate_print_external_identity': '''
+                  SELECT source, external_id, count(*)::int AS rows,
+                         count(DISTINCT print_id)::int AS distinct_prints,
+                         array_agg(print_id ORDER BY print_id)[:10] AS sample_print_ids
+                  FROM print_identifiers
+                  WHERE trim(coalesce(source, '')) <> ''
+                    AND trim(coalesce(external_id, '')) <> ''
+                  GROUP BY source, external_id
+                  HAVING count(DISTINCT print_id) > 1
+                  ORDER BY count(DISTINCT print_id) DESC, source, external_id
+                  LIMIT 100
+              ''',
+              'duplicate_primary_images': '''
+                  SELECT print_id, count(*)::int AS primary_count,
+                         array_agg(id ORDER BY id)[:10] AS image_ids
+                  FROM print_images
+                  WHERE is_primary IS TRUE
+                  GROUP BY print_id
+                  HAVING count(*) > 1
+                  ORDER BY count(*) DESC, print_id
+                  LIMIT 100
+              ''',
+              'cross_game_print_identity': '''
+                  SELECT p.id AS print_id,
+                         c.id AS card_id, cg.slug AS card_game,
+                         s.id AS set_id, sg.slug AS set_game,
+                         p.collector_number
+                  FROM prints p
+                  JOIN cards c ON c.id = p.card_id
+                  JOIN sets s ON s.id = p.set_id
+                  JOIN games cg ON cg.id = c.game_id
+                  JOIN games sg ON sg.id = s.game_id
+                  WHERE c.game_id <> s.game_id
+                  ORDER BY p.id
+                  LIMIT 100
+              ''',
+              'blank_required_catalog_identity': '''
+                  SELECT entity, id, field
+                  FROM (
+                      SELECT 'set'::text AS entity, id, 'code'::text AS field FROM sets WHERE trim(coalesce(code, '')) = ''
+                      UNION ALL
+                      SELECT 'set', id, 'name' FROM sets WHERE trim(coalesce(name, '')) = ''
+                      UNION ALL
+                      SELECT 'card', id, 'name' FROM cards WHERE trim(coalesce(name, '')) = ''
+                      UNION ALL
+                      SELECT 'print', id, 'collector_number' FROM prints WHERE trim(coalesce(collector_number, '')) = ''
+                      UNION ALL
+                      SELECT 'print_identifier', id, 'source' FROM print_identifiers WHERE trim(coalesce(source, '')) = ''
+                      UNION ALL
+                      SELECT 'print_identifier', id, 'external_id' FROM print_identifiers WHERE trim(coalesce(external_id, '')) = ''
+                  ) q
+                  ORDER BY entity, id, field
+                  LIMIT 100
+              ''',
+              'orphaned_search_profiles': '''
+                  SELECT entity, profile_id, target_id
+                  FROM (
+                      SELECT 'card_search_profile'::text AS entity, csp.id AS profile_id, csp.card_id AS target_id
+                      FROM card_search_profiles csp
+                      LEFT JOIN cards c ON c.id = csp.card_id
+                      WHERE c.id IS NULL
+                      UNION ALL
+                      SELECT 'print_search_profile', psp.id, psp.print_id
+                      FROM print_search_profiles psp
+                      LEFT JOIN prints p ON p.id = psp.print_id
+                      WHERE p.id IS NULL
+                  ) q
+                  ORDER BY entity, profile_id
+                  LIMIT 100
+              ''',
+          }
+
+          conn = psycopg2.connect(url)
+          conn.autocommit = False
+          report = {
+              'generated_at': datetime.now(timezone.utc).isoformat(),
+              'transaction_read_only': None,
+              'production_writes': 0,
+              'checks': {},
+          }
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  mode = cur.fetchone()['transaction_read_only']
+                  report['transaction_read_only'] = mode == 'on'
+                  assert mode == 'on', f'expected transaction_read_only=on, got {mode}'
+
+                  for name, sql in checks.items():
+                      cur.execute(sql)
+                      rows = [dict(row) for row in cur.fetchall()]
+                      report['checks'][name] = {
+                          'status': 'pass' if not rows else 'fail',
+                          'violations_returned': len(rows),
+                          'rows': rows,
+                      }
+
+                  # Coverage is diagnostic, not a hard invariant: a just-ingested
+                  # physical row may briefly await targeted indexing inside the
+                  # same orchestrated refresh. Record the exact backlog instead.
+                  cur.execute('''
+                      SELECT
+                        (SELECT count(*) FROM cards)::int AS cards,
+                        (SELECT count(*) FROM card_search_profiles)::int AS card_profiles,
+                        (SELECT count(*) FROM prints)::int AS prints,
+                        (SELECT count(*) FROM print_search_profiles)::int AS print_profiles,
+                        (SELECT count(*) FROM cards c LEFT JOIN card_search_profiles csp ON csp.card_id=c.id WHERE csp.id IS NULL)::int AS cards_missing_profile,
+                        (SELECT count(*) FROM prints p LEFT JOIN print_search_profiles psp ON psp.print_id=p.id WHERE psp.id IS NULL)::int AS prints_missing_profile
+                  ''')
+                  report['search_projection_coverage'] = dict(cur.fetchone())
+              conn.rollback()
+          finally:
+              conn.close()
+
+          failed = [name for name, result in report['checks'].items() if result['status'] != 'pass']
+          report['status'] = 'pass' if not failed else 'fail'
+          report['failed_checks'] = failed
+          path = Path('artifacts/backend-production-integrity.json')
+          path.write_text(json.dumps(report, indent=2, default=str) + '\n')
+          print(json.dumps(report, indent=2, default=str))
+          if failed:
+              raise SystemExit('production integrity violations found: ' + ', '.join(failed))
+          PY
+      - name: Upload production integrity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-production-integrity-${{ github.run_id }}
+          path: artifacts/backend-production-integrity.json
+          retention-days: 90
