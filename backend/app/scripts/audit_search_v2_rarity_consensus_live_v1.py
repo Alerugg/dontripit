@@ -19,6 +19,7 @@ from app.search_v2.output_contract import clean_optional_metadata
 
 DEFAULT_BASE_URL = "https://api.dontripit.com"
 CONSENSUS_METHOD = "sibling_consensus_v1"
+CORE_MEDIAN_BUDGET_MS = 300.0
 HARD_SAMPLE_CEILING_MS = 1500.0
 
 CASES = [
@@ -66,37 +67,31 @@ def _collect_page_set(
     enriched: bool,
     page_size: int = 50,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    original = exhaustive.enrich_representative_rarity_by_consensus
-    exhaustive.enrich_representative_rarity_by_consensus = (
-        original if enriched else (lambda _session, items: items)
-    )
-    try:
-        offset = 0
-        items: list[dict[str, Any]] = []
-        meta: dict[str, Any] | None = None
-        while True:
-            page = exhaustive.exhaustive_name_page(
-                session,
-                query=query,
-                game=game,
-                limit=page_size,
-                offset=offset,
-            )
-            if meta is None:
-                meta = {
-                    "total": int(page["total"]),
-                    "total_prints": int(page["total_prints"]),
-                }
-            items.extend(copy.deepcopy(page["items"]))
-            if not page["has_more"]:
-                break
-            next_offset = page.get("next_offset")
-            if next_offset is None or int(next_offset) <= offset:
-                raise AssertionError(f"invalid pagination for {game}:{query}")
-            offset = int(next_offset)
-        return items, (meta or {"total": 0, "total_prints": 0})
-    finally:
-        exhaustive.enrich_representative_rarity_by_consensus = original
+    offset = 0
+    items: list[dict[str, Any]] = []
+    meta: dict[str, Any] | None = None
+    while True:
+        page = exhaustive.exhaustive_name_page(
+            session,
+            query=query,
+            game=game,
+            limit=page_size,
+            offset=offset,
+            enrich_rarity=enriched,
+        )
+        if meta is None:
+            meta = {
+                "total": int(page["total"]),
+                "total_prints": int(page["total_prints"]),
+            }
+        items.extend(copy.deepcopy(page["items"]))
+        if not page["has_more"]:
+            break
+        next_offset = page.get("next_offset")
+        if next_offset is None or int(next_offset) <= offset:
+            raise AssertionError(f"invalid pagination for {game}:{query}")
+        offset = int(next_offset)
+    return items, (meta or {"total": 0, "total_prints": 0})
 
 
 def _expected_consensus_by_rep(session, baseline_items: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -171,32 +166,33 @@ def _production_identities(base_url: str, *, query: str, game: str, limit: int =
     return [_identity(item) for item in (payload.get("items") or [])]
 
 
-def _measure_first_page(session, *, query: str, game: str, samples: int = 6) -> dict[str, Any]:
-    original = exhaustive.enrich_representative_rarity_by_consensus
+def _measure_first_page(session, *, query: str, game: str, samples: int = 8) -> dict[str, Any]:
     baseline_samples: list[float] = []
     enriched_samples: list[float] = []
 
-    # Warm both paths before measurements so connection setup and PostgreSQL
-    # plan/cache warmup do not dominate the comparison.
-    exhaustive.enrich_representative_rarity_by_consensus = lambda _session, items: items
-    exhaustive.exhaustive_name_page(session, query=query, game=game, limit=24, offset=0)
-    exhaustive.enrich_representative_rarity_by_consensus = original
-    exhaustive.exhaustive_name_page(session, query=query, game=game, limit=24, offset=0)
+    # Warm both query variants first. The only SQL difference is the guarded
+    # in-query consensus lateral, so the comparison has no second DB round-trip.
+    exhaustive.exhaustive_name_page(
+        session, query=query, game=game, limit=24, offset=0, enrich_rarity=False
+    )
+    exhaustive.exhaustive_name_page(
+        session, query=query, game=game, limit=24, offset=0, enrich_rarity=True
+    )
 
-    try:
-        for index in range(samples):
-            # Alternate which path runs first to reduce cache/order bias.
-            modes = (False, True) if index % 2 == 0 else (True, False)
-            for enriched in modes:
-                exhaustive.enrich_representative_rarity_by_consensus = (
-                    original if enriched else (lambda _session, items: items)
-                )
-                started = time.perf_counter()
-                exhaustive.exhaustive_name_page(session, query=query, game=game, limit=24, offset=0)
-                elapsed = (time.perf_counter() - started) * 1000.0
-                (enriched_samples if enriched else baseline_samples).append(round(elapsed, 3))
-    finally:
-        exhaustive.enrich_representative_rarity_by_consensus = original
+    for index in range(samples):
+        modes = (False, True) if index % 2 == 0 else (True, False)
+        for enriched in modes:
+            started = time.perf_counter()
+            exhaustive.exhaustive_name_page(
+                session,
+                query=query,
+                game=game,
+                limit=24,
+                offset=0,
+                enrich_rarity=enriched,
+            )
+            elapsed = (time.perf_counter() - started) * 1000.0
+            (enriched_samples if enriched else baseline_samples).append(round(elapsed, 3))
 
     baseline_median = float(statistics.median(baseline_samples))
     enriched_median = float(statistics.median(enriched_samples))
@@ -212,7 +208,7 @@ def _measure_first_page(session, *, query: str, game: str, samples: int = 6) -> 
     }
 
 
-def _audit_case(session, base_url: str, case: dict[str, Any]) -> dict[str, Any]:
+def _audit_case(session, base_url: str, case: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     query = case["query"]
     game = case["game"]
     baseline, baseline_meta = _collect_page_set(session, query=query, game=game, enriched=False)
@@ -262,7 +258,7 @@ def _audit_case(session, base_url: str, case: dict[str, Any]) -> dict[str, Any]:
             unresolved_after += 1
             continue
 
-        if after_rarity != expected_row["rarity"]:
+        if after_rarity is None or after_rarity.casefold() != str(expected_row["rarity"]).casefold():
             raise AssertionError(
                 f"wrong consensus rarity for rep {rep_id}: expected {expected_row['rarity']!r}, got {after_rarity!r}"
             )
@@ -285,6 +281,10 @@ def _audit_case(session, base_url: str, case: dict[str, Any]) -> dict[str, Any]:
         )
 
     latency = _measure_first_page(session, query=query, game=game) if baseline else None
+    if latency and latency["enriched_median_ms"] > CORE_MEDIAN_BUDGET_MS:
+        raise AssertionError(
+            f"core median latency budget exceeded for {game}:{query}: {latency['enriched_median_ms']}ms"
+        )
     if latency and latency["max_ms"] > HARD_SAMPLE_CEILING_MS:
         raise AssertionError(
             f"hard latency ceiling exceeded for {game}:{query}: {latency['max_ms']}ms"
@@ -304,7 +304,7 @@ def _audit_case(session, base_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "non_rarity_payload_drift": 0,
         "production_first_page_identity_match": bool(prod_ids == branch_first_ids) if baseline else None,
         "latency": latency,
-    }
+    }, enriched
 
 
 def main() -> int:
@@ -313,20 +313,36 @@ def main() -> int:
     parser.add_argument("--report", default="/tmp/search-v2-rarity-consensus-live-v1.json")
     args = parser.parse_args()
 
+    enriched_by_case: dict[tuple[str, str], list[dict[str, Any]]] = {}
     with db.SessionLocal() as session:
         if session.bind.dialect.name != "postgresql":
             raise SystemExit("live rarity-consensus audit requires PostgreSQL")
-        # Make the DB protection explicit: every database operation in this
-        # certifier runs inside a read-only transaction and is rolled back.
         session.execute(text("SET TRANSACTION READ ONLY"))
-        cases = [_audit_case(session, args.base_url, case) for case in CASES]
+        cases = []
+        for case in CASES:
+            row, enriched = _audit_case(session, args.base_url, case)
+            cases.append(row)
+            enriched_by_case[(case["game"], case["query"])] = enriched
         session.rollback()
+
+    pikachu_items = enriched_by_case.get(("pokemon", "Pikachu"), [])
+    base_pikachu = next((item for item in pikachu_items if int(item.get("card_id") or 0) == 1), None)
+    if base_pikachu is None:
+        raise AssertionError("Base Set Pikachu card_id=1 missing from exhaustive result")
+    base_matched = base_pikachu.get("matched_print") or {}
+    if int(base_matched.get("print_id") or 0) != 571:
+        raise AssertionError(f"Base Set Pikachu representative drifted: {base_matched.get('print_id')}")
+    if str(base_matched.get("rarity") or "").casefold() != "common":
+        raise AssertionError(f"Base Set Pikachu consensus rarity not Common: {base_matched.get('rarity')!r}")
+    if base_matched.get("rarity_source") != CONSENSUS_METHOD:
+        raise AssertionError("Base Set Pikachu missing consensus provenance")
 
     report = {
         "status": "pass",
         "production_writes": 0,
         "base_url": args.base_url,
         "consensus_method": CONSENSUS_METHOD,
+        "core_median_budget_ms": CORE_MEDIAN_BUDGET_MS,
         "hard_sample_ceiling_ms": HARD_SAMPLE_CEILING_MS,
         "cases": cases,
         "totals": {
@@ -337,19 +353,15 @@ def main() -> int:
             "identity_drift": 0,
             "non_rarity_payload_drift": 0,
         },
-    }
-
-    # Pin the historically problematic Base Set Pikachu semantics if the card
-    # is present: representative identity must remain 571 while consensus may
-    # enrich rarity around it. This is validated by the general identity gate;
-    # the explicit marker keeps the audit report easy to inspect.
-    pikachu = next((row for row in cases if row["game"] == "pokemon" and row["query"] == "Pikachu"), None)
-    if pikachu:
-        report["pikachu_contract"] = {
-            "expected_representative_print_id": 571,
-            "expected_consensus_rarity": "Common",
+        "pikachu_contract": {
+            "card_id": 1,
+            "representative_print_id": int(base_matched["print_id"]),
+            "rarity": base_matched["rarity"],
+            "rarity_source": base_matched["rarity_source"],
+            "rarity_evidence_count": int(base_matched.get("rarity_evidence_count") or 0),
             "identity_preserved": True,
-        }
+        },
+    }
 
     Path(args.report).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report, indent=2, sort_keys=True))
