@@ -1,0 +1,55 @@
+name: Catalog Cache Hardening Verify
+
+on:
+  push:
+    branches:
+      - infra/cloudflare-catalog-cache-hardening
+    paths:
+      - '.github/triggers/catalog-cache-hardening-verify*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify hardened route source
+        working-directory: frontend
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const src=fs.readFileSync('app/api/catalog/search/route.js','utf8');
+          if(!src.includes("CATALOG_CACHE_HEADERS, firstCleanMetadata")) throw new Error('metadata hardening import missing');
+          if(src.includes('stale-while-revalidate')) throw new Error('stale-while-revalidate remains in route');
+          const refs=(src.match(/CATALOG_CACHE_HEADERS/g)||[]).length;
+          if(refs!==4) throw new Error(`expected import + 3 cache references, got ${refs}`);
+          for(const field of ['set_code','set_name','collector_number','rarity']) {
+            if(!src.includes(`${field}: firstCleanMetadata(`)) throw new Error(`${field} sanitizer missing`);
+          }
+          const metadata=fs.readFileSync('lib/catalog/metadata.js','utf8');
+          if(!metadata.includes("public, s-maxage=15, must-revalidate")) throw new Error('fresh cache policy missing');
+          console.log('source_hardening=green cache_refs=3 swr=absent placeholders=sanitized');
+          NODE
+      - name: Install dependencies without rewriting lockfile
+        working-directory: frontend
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Run focused regressions
+        working-directory: frontend
+        run: node --test tests/catalogMetadataHardening.test.js tests/bffRoutesSyntax.test.mjs
+      - name: Build Next production bundle
+        working-directory: frontend
+        run: npm run build
+      - name: Build Vinext Cloudflare bundle
+        working-directory: frontend
+        run: npm run build:vinext
+      - name: Ensure source tree stayed clean
+        run: git diff --exit-code -- frontend/package-lock.json frontend/app/api/catalog/search/route.js frontend/lib/catalog/metadata.js
