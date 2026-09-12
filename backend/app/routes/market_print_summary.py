@@ -14,6 +14,100 @@ market_print_summary_bp = Blueprint("market_print_summary", __name__)
 _MAX_PRINT_IDS = 100
 _CARDMARKET_BASE = "https://www.cardmarket.com"
 
+# This endpoint is on the interactive catalog-search hot path. Do not derive
+# current Cardmarket captures by aggregating the entire historical price table:
+# production contains enough history for that shape to take tens of seconds and
+# hold scarce DB connections. Instead, start from the <=100 requested canonical
+# Prints, identify only their games, and resolve each game's newest catalog and
+# PriceGuide capture with descending index seeks. The query preserves the exact
+# previous visibility contract; a production read-only benchmark against the
+# former query produced an identical result hash while reducing warm execution
+# from ~36-56s to ~0.4-0.6s for the representative 24-Print search page.
+_MARKET_PRINT_SUMMARY_SQL = """
+WITH linked AS MATERIALIZED (
+  SELECT l.print_id,
+         e.id AS external_product_id,
+         e.external_id AS id_product,
+         e.game_id,
+         e.last_seen_at
+  FROM external_catalog_print_links l
+  JOIN external_catalog_products e ON e.id = l.external_product_id
+  WHERE l.print_id IN :print_ids
+    AND l.link_status IN ('accepted','mapped','exact')
+    AND e.source = 'cardmarket'
+    AND e.product_group = 'single'
+), requested_games AS MATERIALIZED (
+  SELECT DISTINCT game_id
+  FROM linked
+), latest_catalog_capture AS MATERIALIZED (
+  SELECT rg.game_id,
+         (
+           SELECT e2.last_seen_at
+           FROM external_catalog_products e2
+           WHERE e2.source = 'cardmarket'
+             AND e2.game_id = rg.game_id
+           ORDER BY e2.last_seen_at DESC
+           LIMIT 1
+         ) AS last_seen_at
+  FROM requested_games rg
+), accepted AS MATERIALIZED (
+  SELECT l.print_id,
+         MIN(l.id_product) AS id_product,
+         MIN(l.game_id) AS game_id
+  FROM linked l
+  JOIN latest_catalog_capture lc
+    ON lc.game_id = l.game_id
+   AND lc.last_seen_at = l.last_seen_at
+  GROUP BY l.print_id
+  HAVING COUNT(DISTINCT l.external_product_id) = 1
+), price_games AS MATERIALIZED (
+  SELECT DISTINCT game_id
+  FROM accepted
+), latest_game_capture AS MATERIALIZED (
+  SELECT pg.game_id,
+         (
+           SELECT mp.as_of
+           FROM external_market_price_snapshots mp
+           JOIN external_catalog_products ep ON ep.id = mp.external_product_id
+           WHERE ep.source = 'cardmarket'
+             AND ep.product_group = 'single'
+             AND ep.game_id = pg.game_id
+           ORDER BY mp.as_of DESC
+           LIMIT 1
+         ) AS as_of
+  FROM price_games pg
+), current_projection AS (
+  SELECT ps.*,
+         a.id_product,
+         ROW_NUMBER() OVER (
+           PARTITION BY ps.entity_id
+           ORDER BY ps.id DESC
+         ) AS row_rank
+  FROM price_snapshots ps
+  JOIN price_sources src ON src.id = ps.source_id
+  JOIN accepted a ON a.print_id = ps.entity_id
+  JOIN latest_game_capture lgc
+    ON lgc.game_id = a.game_id
+   AND lgc.as_of = ps.as_of
+  WHERE ps.entity_type = 'print'
+    AND lower(src.name) = 'cardmarket'
+    AND ps.entity_id IN :print_ids
+    AND COALESCE(ps.raw_json ->> 'idProduct', '') = a.id_product
+)
+SELECT entity_id AS print_id,
+       currency,
+       price_low,
+       price_mid,
+       price_high,
+       price_market,
+       price_last,
+       as_of,
+       raw_json
+FROM current_projection
+WHERE row_rank = 1
+ORDER BY entity_id ASC
+"""
+
 
 def _parse_ids(raw: str) -> list[int]:
     values: list[int] = []
@@ -87,67 +181,7 @@ def market_print_summary():
     if not print_ids:
         return jsonify({"items": []})
 
-    sql = text(
-        """
-        WITH accepted AS (
-          SELECT l.print_id,
-                 MIN(e.external_id) AS id_product,
-                 MIN(e.game_id) AS game_id,
-                 COUNT(DISTINCT e.id) AS product_count
-          FROM external_catalog_print_links l
-          JOIN external_catalog_products e ON e.id = l.external_product_id
-          WHERE e.source = 'cardmarket'
-            AND e.product_group = 'single'
-            AND l.link_status IN ('accepted','mapped','exact')
-            AND l.print_id IN :print_ids
-            AND e.last_seen_at = (
-              SELECT MAX(e2.last_seen_at)
-              FROM external_catalog_products e2
-              WHERE e2.source = 'cardmarket'
-                AND e2.game_id = e.game_id
-            )
-          GROUP BY l.print_id
-          HAVING COUNT(DISTINCT e.id) = 1
-        ), latest_game_capture AS (
-          SELECT e.game_id,
-                 MAX(mp.as_of) AS as_of
-          FROM external_market_price_snapshots mp
-          JOIN external_catalog_products e ON e.id = mp.external_product_id
-          WHERE e.source = 'cardmarket'
-            AND e.product_group = 'single'
-          GROUP BY e.game_id
-        ), current_projection AS (
-          SELECT ps.*,
-                 a.id_product,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY ps.entity_id
-                   ORDER BY ps.id DESC
-                 ) AS row_rank
-          FROM price_snapshots ps
-          JOIN price_sources src ON src.id = ps.source_id
-          JOIN accepted a ON a.print_id = ps.entity_id
-          JOIN latest_game_capture lgc
-            ON lgc.game_id = a.game_id
-           AND lgc.as_of = ps.as_of
-          WHERE ps.entity_type = 'print'
-            AND lower(src.name) = 'cardmarket'
-            AND ps.entity_id IN :print_ids
-            AND COALESCE(ps.raw_json ->> 'idProduct', '') = a.id_product
-        )
-        SELECT entity_id AS print_id,
-               currency,
-               price_low,
-               price_mid,
-               price_high,
-               price_market,
-               price_last,
-               as_of,
-               raw_json
-        FROM current_projection
-        WHERE row_rank = 1
-        ORDER BY entity_id ASC
-        """
-    ).bindparams(bindparam("print_ids", expanding=True))
+    sql = text(_MARKET_PRINT_SUMMARY_SQL).bindparams(bindparam("print_ids", expanding=True))
 
     try:
         with db.SessionLocal() as session:
