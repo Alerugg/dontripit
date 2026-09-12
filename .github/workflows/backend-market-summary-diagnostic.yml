@@ -1,0 +1,40 @@
+name: Backend Market Summary Diagnostic
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/backend-market-summary-diagnostic'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API: https://api.dontripit.com
+      INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+    steps:
+      - name: Measure Search V2 and current market summary separately
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$INTERNAL_API_KEY"
+          start=$(date +%s%3N)
+          code=$(curl -sS -H "X-API-Key: $INTERNAL_API_KEY" -o /tmp/search -w '%{http_code}' --max-time 45 "$API/api/v2/search?q=Pikachu&limit=24&offset=0")
+          end=$(date +%s%3N)
+          echo "search_status=$code search_ms=$((end-start))"
+          test "$code" = "200"
+          ids=$(node -e "const j=require('/tmp/search'); process.stdout.write((j.items||[]).map(x=>x.matched_print?.print_id).filter(Boolean).join(','))")
+          echo "ids=$ids"
+          test -n "$ids"
+          for i in $(seq 1 6); do
+            start=$(date +%s%3N)
+            code=$(curl -sS -H "X-API-Key: $INTERNAL_API_KEY" -o /tmp/market -w '%{http_code}' --max-time 45 "$API/api/v1/market/prints/summary?ids=$ids")
+            end=$(date +%s%3N)
+            count=$(jq '.items|length' /tmp/market 2>/dev/null || echo -1)
+            echo "market_probe=$i status=$code ms=$((end-start)) items=$count"
+            test "$code" = "200"
+          done
