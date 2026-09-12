@@ -130,6 +130,15 @@ class Print(Base):
 
 class PrintImage(Base):
     __tablename__ = "print_images"
+    __table_args__ = (
+        Index(
+            "uq_print_images_one_primary_per_print",
+            "print_id",
+            unique=True,
+            postgresql_where=text("is_primary IS TRUE"),
+            sqlite_where=text("is_primary = 1"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     print_id: Mapped[int] = mapped_column(ForeignKey("prints.id"), nullable=False, index=True)
