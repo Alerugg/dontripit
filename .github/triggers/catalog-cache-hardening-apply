@@ -1,2 +1,2 @@
-run=2026-09-12T23:10:00+02:00
-reason=remove-stale-cache-and-sanitize-optional-metadata
+run=2026-09-12T23:20:00+02:00
+reason=rerun-with-nondestructive-install
