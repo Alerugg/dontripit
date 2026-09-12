@@ -1,0 +1,97 @@
+name: Backend Market Summary Scoped Probe
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-market-summary-scoped-probe'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+  PGOPTIONS: -c default_transaction_read_only=on
+
+jobs:
+  scoped-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Measure proposed scoped query and indexes
+        run: |
+          python - <<'PY'
+          import json, os, time
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ids=[571,45462,45475,45487,45498,45509,45523,45544,45564,45578,45589,675,23645,680,705,706,683,45624,45963,46202,46607,46976,46999,47042]
+          url=(os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip(); assert url
+          sql='''
+          WITH accepted AS MATERIALIZED (
+            SELECT l.print_id,
+                   MIN(e.external_id) AS id_product,
+                   MIN(e.game_id) AS game_id,
+                   COUNT(DISTINCT e.id) AS product_count
+            FROM external_catalog_print_links l
+            JOIN external_catalog_products e ON e.id=l.external_product_id
+            WHERE e.source='cardmarket'
+              AND e.product_group='single'
+              AND l.link_status IN ('accepted','mapped','exact')
+              AND l.print_id = ANY(%(print_ids)s)
+              AND e.last_seen_at=(
+                SELECT MAX(e2.last_seen_at)
+                FROM external_catalog_products e2
+                WHERE e2.source='cardmarket' AND e2.game_id=e.game_id
+              )
+            GROUP BY l.print_id
+            HAVING COUNT(DISTINCT e.id)=1
+          ), requested_games AS MATERIALIZED (
+            SELECT DISTINCT game_id FROM accepted
+          ), latest_game_capture AS MATERIALIZED (
+            SELECT e.game_id, MAX(mp.as_of) AS as_of
+            FROM requested_games rg
+            JOIN external_catalog_products e
+              ON e.game_id=rg.game_id
+             AND e.source='cardmarket'
+             AND e.product_group='single'
+            JOIN external_market_price_snapshots mp ON mp.external_product_id=e.id
+            GROUP BY e.game_id
+          ), current_projection AS (
+            SELECT ps.entity_id, ps.currency, ps.price_low, ps.price_mid, ps.price_high,
+                   ps.price_market, ps.price_last, ps.as_of, ps.raw_json,
+                   ROW_NUMBER() OVER(PARTITION BY ps.entity_id ORDER BY ps.id DESC) AS row_rank
+            FROM price_snapshots ps
+            JOIN price_sources src ON src.id=ps.source_id
+            JOIN accepted a ON a.print_id=ps.entity_id
+            JOIN latest_game_capture lgc ON lgc.game_id=a.game_id AND lgc.as_of=ps.as_of
+            WHERE ps.entity_type='print'
+              AND lower(src.name)='cardmarket'
+              AND ps.entity_id = ANY(%(print_ids)s)
+              AND COALESCE(ps.raw_json ->> 'idProduct','')=a.id_product
+          )
+          SELECT entity_id AS print_id,currency,price_low,price_mid,price_high,price_market,price_last,as_of,raw_json
+          FROM current_projection WHERE row_rank=1 ORDER BY entity_id
+          '''
+          conn=psycopg2.connect(url); conn.autocommit=False
+          try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+              cur.execute('SHOW transaction_read_only'); assert cur.fetchone()['transaction_read_only']=='on'
+              cur.execute("SET LOCAL statement_timeout='30000ms'")
+              cur.execute("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename IN ('external_catalog_print_links','external_catalog_products','external_market_price_snapshots','price_snapshots') ORDER BY tablename,indexname")
+              indexes=[dict(r) for r in cur.fetchall()]
+              print('INDEXES='+json.dumps(indexes,default=str))
+              times=[]; rows=[]
+              for i in range(5):
+                t=time.perf_counter(); cur.execute(sql,{'print_ids':ids}); rows=[dict(r) for r in cur.fetchall()]; times.append(round((time.perf_counter()-t)*1000,2))
+              print(json.dumps({'samples_ms':times,'rows':len(rows),'print_ids':[r['print_id'] for r in rows]},indent=2,default=str))
+            conn.rollback()
+          finally: conn.close()
+          PY
