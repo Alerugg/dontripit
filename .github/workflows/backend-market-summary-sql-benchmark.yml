@@ -1,0 +1,173 @@
+name: Backend Market Summary SQL Benchmark
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-market-summary-sql-benchmark'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+  PGOPTIONS: -c default_transaction_read_only=on
+
+jobs:
+  benchmark-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependency
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Compare current and scoped market-summary SQL
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import time
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          ids = [571,45462,45475,45487,45498,45509,45523,45544,45564,45578,45589,675,23645,680,705,706,683,45624,45963,46202,46607,46976,46999,47042]
+          url = (os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url
+
+          accepted = '''
+            WITH accepted AS (
+              SELECT l.print_id,
+                     MIN(e.external_id) AS id_product,
+                     MIN(e.game_id) AS game_id,
+                     COUNT(DISTINCT e.id) AS product_count
+              FROM external_catalog_print_links l
+              JOIN external_catalog_products e ON e.id = l.external_product_id
+              WHERE e.source = 'cardmarket'
+                AND e.product_group = 'single'
+                AND l.link_status IN ('accepted','mapped','exact')
+                AND l.print_id = ANY(%(print_ids)s)
+                AND e.last_seen_at = (
+                  SELECT MAX(e2.last_seen_at)
+                  FROM external_catalog_products e2
+                  WHERE e2.source = 'cardmarket'
+                    AND e2.game_id = e.game_id
+                )
+              GROUP BY l.print_id
+              HAVING COUNT(DISTINCT e.id) = 1
+            ),
+          '''
+
+          latest_current = '''
+            latest_game_capture AS (
+              SELECT e.game_id, MAX(mp.as_of) AS as_of
+              FROM external_market_price_snapshots mp
+              JOIN external_catalog_products e ON e.id = mp.external_product_id
+              WHERE e.source = 'cardmarket'
+                AND e.product_group = 'single'
+              GROUP BY e.game_id
+            ),
+          '''
+
+          latest_scoped = '''
+            requested_games AS MATERIALIZED (
+              SELECT DISTINCT game_id FROM accepted
+            ),
+            latest_game_capture AS (
+              SELECT e.game_id, MAX(mp.as_of) AS as_of
+              FROM requested_games rg
+              JOIN external_catalog_products e
+                ON e.game_id = rg.game_id
+               AND e.source = 'cardmarket'
+               AND e.product_group = 'single'
+              JOIN external_market_price_snapshots mp
+                ON mp.external_product_id = e.id
+              GROUP BY e.game_id
+            ),
+          '''
+
+          tail = '''
+            current_projection AS (
+              SELECT ps.*,
+                     a.id_product,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY ps.entity_id
+                       ORDER BY ps.id DESC
+                     ) AS row_rank
+              FROM price_snapshots ps
+              JOIN price_sources src ON src.id = ps.source_id
+              JOIN accepted a ON a.print_id = ps.entity_id
+              JOIN latest_game_capture lgc
+                ON lgc.game_id = a.game_id
+               AND lgc.as_of = ps.as_of
+              WHERE ps.entity_type = 'print'
+                AND lower(src.name) = 'cardmarket'
+                AND ps.entity_id = ANY(%(print_ids)s)
+                AND COALESCE(ps.raw_json ->> 'idProduct', '') = a.id_product
+            )
+            SELECT entity_id AS print_id,
+                   currency,
+                   price_low,
+                   price_mid,
+                   price_high,
+                   price_market,
+                   price_last,
+                   as_of,
+                   raw_json
+            FROM current_projection
+            WHERE row_rank = 1
+            ORDER BY entity_id ASC
+          '''
+
+          queries = {
+              'current': accepted + latest_current + tail,
+              'scoped': accepted + latest_scoped + tail,
+          }
+
+          def normalize(rows):
+              clean = []
+              for row in rows:
+                  d = dict(row)
+                  for k, v in list(d.items()):
+                      if hasattr(v, 'isoformat'):
+                          d[k] = v.isoformat()
+                      elif not isinstance(v, (str, int, float, bool, dict, list, type(None))):
+                          d[k] = str(v)
+                  clean.append(d)
+              return clean
+
+          conn = psycopg2.connect(url)
+          conn.autocommit = False
+          out = {}
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  assert cur.fetchone()['transaction_read_only'] == 'on'
+                  cur.execute("SET LOCAL statement_timeout = '60000ms'")
+                  for name, sql in queries.items():
+                      samples = []
+                      rows = None
+                      for run in range(3):
+                          t0 = time.perf_counter()
+                          cur.execute(sql, {'print_ids': ids})
+                          rows = normalize(cur.fetchall())
+                          samples.append(round((time.perf_counter() - t0) * 1000, 2))
+                      payload = json.dumps(rows, sort_keys=True, default=str)
+                      out[name] = {
+                          'samples_ms': samples,
+                          'rows': len(rows),
+                          'sha256': hashlib.sha256(payload.encode()).hexdigest(),
+                      }
+                  assert out['current']['sha256'] == out['scoped']['sha256'], out
+                  out['same_results'] = True
+                  print(json.dumps(out, indent=2))
+              conn.rollback()
+          finally:
+              conn.close()
+          PY
