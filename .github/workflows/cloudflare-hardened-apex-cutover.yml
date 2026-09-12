@@ -1,0 +1,237 @@
+name: Cloudflare Hardened Apex Cutover
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/cloudflare-hardened-apex-cutover'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-hardened-apex-cutover
+  cancel-in-progress: false
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
+      WORKER_NAME: dontripit-web-production
+      WORKER_URL: https://dontripit-web-production.alejandro-ruggeri-l.workers.dev
+      FALLBACK_URL: https://dontripit-vercel-fallback.alejandro-ruggeri-l.workers.dev
+      APEX: https://dontripit.com
+      WWW: https://www.dontripit.com
+      EXPECTED_VERCEL_CNAME: bc5bf74c5be387d6.vercel-dns-017.com
+
+    steps:
+      - name: Preflight production Worker fallback and exact Vercel apex
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+
+          for entry in "production|$WORKER_URL" "fallback|$FALLBACK_URL"; do
+            label=${entry%%|*}; base=${entry#*|}
+            home=$(curl -L -sS -o /tmp/home -w '%{http_code}' --max-time 35 "$base/")
+            health=$(curl -sS -o /tmp/health -w '%{http_code}' --max-time 30 "$base/api/health")
+            auth=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$base/api/auth/me")
+            search=$(curl -sS -o /tmp/search -w '%{http_code}' --max-time 55 "$base/api/search-v2?q=P-150&limit=20")
+            echo "$label home=$home health=$health auth=$auth search=$search"
+            test "$home" = "200"; test "$health" = "200"; test "$auth" = "401"; test "$search" = "200"
+            jq -e '.status=="ok"' /tmp/health >/dev/null
+            jq -e '.error=="authentication_required"' /tmp/me >/dev/null
+          done
+
+          curl -fsSI --max-time 30 "$WORKER_URL/" | tr -d '\r' > /tmp/worker.headers
+          awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' /tmp/worker.headers | tail -1 > /tmp/worker-build-id
+          test -s /tmp/worker-build-id
+          curl -fsSI --max-time 30 "$FALLBACK_URL/" | tr -d '\r' | grep -qi '^x-dontripit-fallback: vercel$'
+          echo "production_worker_build=$(cat /tmp/worker-build-id)"
+
+          authh=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          zone_code=$(curl -sS "${authh[@]}" -o /tmp/zone.json -w '%{http_code}' 'https://api.cloudflare.com/client/v4/zones?name=dontripit.com&status=active')
+          test "$zone_code" = "200"
+          zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json); test -n "$zone_id"
+          echo "$zone_id" > /tmp/zone-id
+
+          dns_code=$(curl -sS "${authh[@]}" -o /tmp/dns-before.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=dontripit.com&per_page=100")
+          test "$dns_code" = "200"
+          jq '[.result[] | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | {id,type,name,content,ttl,proxied}]' /tmp/dns-before.json > /tmp/conflicting-records.json
+          conflict_count=$(jq 'length' /tmp/conflicting-records.json)
+          expected_count=$(jq --arg expected "$EXPECTED_VERCEL_CNAME" '[.[] | select(.type=="CNAME" and .name=="dontripit.com" and .content==$expected and .proxied==false)] | length' /tmp/conflicting-records.json)
+          echo "apex_address_records=$conflict_count expected_vercel_cname=$expected_count"
+          test "$conflict_count" = "1"; test "$expected_count" = "1"
+
+          mx_count=$(jq '[.result[] | select(.type=="MX")] | length' /tmp/dns-before.json)
+          spf_count=$(jq '[.result[] | select(.type=="TXT" and (.content|contains("include:_spf-eu.ionos.com")))] | length' /tmp/dns-before.json)
+          echo "mail_guard mx=$mx_count spf=$spf_count"
+          test "$mx_count" -ge 2; test "$spf_count" -ge 1
+
+          domains_code=$(curl -sS "${authh[@]}" -o /tmp/domains-before.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          test "$domains_code" = "200"
+          current=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains-before.json | head -1)
+          echo "current_custom_domain_service=${current:-none}"
+          test -z "$current"
+
+      - name: Atomic cutover with exact Vercel rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          zone_id=$(cat /tmp/zone-id)
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          dns_removed=0
+          green=0
+
+          current_domain_id() {
+            curl -sS "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" -o /tmp/domains-now.json || return 1
+            jq -r '.result[] | select(.hostname=="dontripit.com") | .id // empty' /tmp/domains-now.json | head -1
+          }
+
+          remove_custom_domain_if_present() {
+            did=$(current_domain_id || true)
+            if [ -n "$did" ]; then
+              dcode=$(curl -sS -X DELETE "${auth[@]}" -o /tmp/domain-delete.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains/$did" || true)
+              echo "rollback_custom_domain_delete id=$did http=$dcode"
+              case "$dcode" in 200|204) ;; *) return 1;; esac
+            fi
+          }
+
+          restore_original_dns() {
+            rec=$(jq -c '.[0]' /tmp/conflicting-records.json)
+            type=$(jq -r '.type' <<<"$rec"); name=$(jq -r '.name' <<<"$rec"); content=$(jq -r '.content' <<<"$rec")
+            ttl=$(jq -r '.ttl' <<<"$rec"); proxied=$(jq -r '.proxied' <<<"$rec")
+            body=$(jq -nc --arg type "$type" --arg name "$name" --arg content "$content" --argjson ttl "$ttl" --argjson proxied "$proxied" '{type:$type,name:$name,content:$content,ttl:$ttl,proxied:$proxied}')
+            rcode=$(curl -sS -X POST "${auth[@]}" -d "$body" -o /tmp/restore.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records")
+            echo "rollback_restore $type $content http=$rcode"
+            test "$rcode" = "200"; jq -e '.success==true' /tmp/restore.json >/dev/null
+          }
+
+          rollback() {
+            rc=$?
+            if [ "$green" = "1" ]; then exit 0; fi
+            echo "CUTOVER_FAILED rc=$rc; restoring exact pre-cutover Vercel state"
+            remove_custom_domain_if_present || true
+            if [ "$dns_removed" = "1" ]; then restore_original_dns || true; fi
+            for i in $(seq 1 24); do
+              code=$(curl -L -sS -o /tmp/rollback-home -w '%{http_code}' --max-time 20 "$APEX/" || true)
+              server=$(curl -sSI --max-time 20 "$APEX/" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="server" {print tolower($2)}' | tail -1)
+              echo "rollback_probe=$i status=$code server=${server:-unknown}"
+              if [ "$code" = "200" ] && [ "$server" = "vercel" ]; then break; fi
+              sleep 5
+            done
+            exit "$rc"
+          }
+          trap rollback EXIT
+
+          old_id=$(jq -r '.[0].id' /tmp/conflicting-records.json)
+          delete_code=$(curl -sS -X DELETE "${auth[@]}" -o /tmp/del.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$old_id")
+          echo "delete_vercel_cname id=$old_id http=$delete_code"
+          test "$delete_code" = "200"; jq -e '.success==true' /tmp/del.json >/dev/null
+          dns_removed=1
+
+          body=$(jq -nc --arg hostname dontripit.com --arg service "$WORKER_NAME" --arg zone_id "$zone_id" --arg zone_name dontripit.com '{hostname:$hostname,service:$service,zone_id:$zone_id,zone_name:$zone_name}')
+          put_code=$(curl -sS -X PUT "${auth[@]}" -d "$body" -o /tmp/domain-put.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          echo "custom_domain_put http=$put_code"
+          case "$put_code" in 200|201) ;; *) cat /tmp/domain-put.json; exit 31;; esac
+          jq -e '.success==true' /tmp/domain-put.json >/dev/null
+
+          expected_build=$(cat /tmp/worker-build-id)
+          public_build=''
+          for i in $(seq 1 72); do
+            curl -sSI --max-time 20 "$APEX/" | tr -d '\r' > /tmp/apex.headers || true
+            public_build=$(awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' /tmp/apex.headers | tail -1)
+            server=$(awk -F': ' 'tolower($1)=="server" {print tolower($2)}' /tmp/apex.headers | tail -1)
+            echo "attach_probe=$i build=${public_build:-missing} server=${server:-missing}"
+            if [ "$public_build" = "$expected_build" ] && [ "$server" = "cloudflare" ]; then break; fi
+            sleep 5
+          done
+          test "$public_build" = "$expected_build"
+          grep -Eqi '^server: cloudflare$|^cf-ray:' /tmp/apex.headers
+          ! grep -qi '^x-dontripit-fallback:' /tmp/apex.headers
+
+          pages=(/ /pokemon /onepiece /yugioh /riftbound /magic /explorer /login /register /forgot-password /privacy /terms /cookies)
+          for path in "${pages[@]}"; do
+            code=$(curl -L -sS -o /tmp/page -w '%{http_code}' --max-time 35 "$APEX$path")
+            echo "$path status=$code bytes=$(wc -c </tmp/page)"
+            test "$code" = "200"; test -s /tmp/page
+          done
+
+          code=$(curl -sS -o /tmp/health -w '%{http_code}' --max-time 30 "$APEX/api/health")
+          test "$code" = "200"; jq -e '.status=="ok"' /tmp/health >/dev/null
+          code=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$APEX/api/auth/me")
+          test "$code" = "401"; jq -e '.error=="authentication_required"' /tmp/me >/dev/null
+          for path in /api/library/collection /api/library/wishlist; do
+            code=$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 30 "$APEX$path"); test "$code" = "401"
+          done
+
+          declare -A expected
+          expected[Pikachu]='["1","38645","38658","38670","38681"]'
+          expected[Luffy]='["17537","16356","16316","16520","16164"]'
+          expected[P-150]='["710107"]'
+          expected[OP05-119]='["41758","704631","41759","704632","41760"]'
+          expected[LOB-001]='["136130","140014","69466","72296","116203"]'
+          for q in Pikachu Luffy P-150 OP05-119 LOB-001; do
+            enc=$(node -p "encodeURIComponent(process.argv[1])" "$q")
+            code=$(curl -sS -o /tmp/search -w '%{http_code}' --max-time 55 "$APEX/api/search-v2?q=$enc&limit=20")
+            test "$code" = "200"
+            QUERY="$q" EXPECTED="${expected[$q]}" node <<'NODE'
+          const fs=require('fs'); const q=process.env.QUERY, expected=JSON.parse(process.env.EXPECTED);
+          const j=JSON.parse(fs.readFileSync('/tmp/search','utf8')); const a=Array.isArray(j)?j:(j.results||j.items||j.data||j.data?.results||j.data?.items||[]);
+          const ids=a.slice(0,5).map(x=>String(x?.print_id??x?.printId??x?.id??x?.card_id??x?.cardId??x?.external_id??x?.code??x?.name??''));
+          const actual=expected.length===1?ids.slice(0,1):ids;
+          if(JSON.stringify(actual)!==JSON.stringify(expected)) throw new Error(`${q} drift ${JSON.stringify(ids)}`);
+          console.log(`${q} top=${JSON.stringify(ids)}`);
+          NODE
+          done
+
+          fingerprints=''; retryable=0
+          for i in $(seq 1 4); do
+            url="$APEX/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0&cutover_cert=$i"
+            ok=0
+            for attempt in 1 2 3; do
+              code=$(curl -sS -D /tmp/catalog.headers -o /tmp/catalog.json -w '%{http_code}' --max-time 55 "$url" || true)
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              if [ "$code" = "502" ] || [ "$code" = "503" ] || [ "$code" = "504" ] || [ "$code" = "000" ]; then retryable=$((retryable+1)); sleep $attempt; continue; fi
+              exit 41
+            done
+            test "$ok" = "1"
+            fp=$(node <<'NODE'
+          const fs=require('fs'), crypto=require('crypto'); const j=JSON.parse(fs.readFileSync('/tmp/catalog.json','utf8')), items=j.items||[];
+          if(items.length!==24) throw new Error(`expected 24, got ${items.length}`);
+          const top=items.slice(0,5).map(x=>String(x.card_id)); if(JSON.stringify(top)!==JSON.stringify(['1','38645','38658','38670','38681'])) throw new Error(`top drift ${JSON.stringify(top)}`);
+          const p=items[0]; if(String(p.card_id)!=='1'||String(p.matched_print_id)!=='571'||p.set_code!=='bs'||String(p.collector_number)!=='58'||p.rarity!=='Common') throw new Error(`Base Pikachu drift ${JSON.stringify(p)}`);
+          const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']); for(const item of items) for(const field of ['set_code','set_name','collector_number','rarity']) { const v=item[field]; if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) throw new Error(`placeholder ${field}=${v} card=${item.card_id}`); }
+          const canonical=JSON.stringify(items.map(x=>({card_id:x.card_id,matched_print_id:x.matched_print_id,set_code:x.set_code,set_name:x.set_name,collector_number:x.collector_number,rarity:x.rarity}))); process.stdout.write(crypto.createHash('sha256').update(canonical).digest('hex'));
+          NODE
+          )
+            fingerprints="$fingerprints $fp"
+            cache=$(awk -F': ' 'tolower($1)=="cache-control" {print $2}' /tmp/catalog.headers | tr -d '\r' | tail -1)
+            echo "apex_catalog_probe=$i fingerprint=$fp cache_control=$cache"
+            case "$cache" in "public, s-maxage=15, must-revalidate"|"no-store, must-revalidate"|"no-store") ;; *) exit 42;; esac
+          done
+          unique=$(tr ' ' '\n' <<<"$fingerprints" | sed '/^$/d' | sort -u | wc -l)
+          echo "apex_catalog_retryable=$retryable unique_fingerprints=$unique"
+          test "$unique" = "1"
+
+          curl -L -sS -o /tmp/www -w '%{http_code}\n' --max-time 30 "$WWW/" | grep -Eq '^200$'
+
+          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains-final.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          test "$domains_code" = "200"
+          service=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains-final.json | head -1)
+          echo "final_custom_domain_service=$service"
+          test "$service" = "$WORKER_NAME"
+
+          dns_code=$(curl -sS "${auth[@]}" -o /tmp/dns-final.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=dontripit.com&per_page=100")
+          test "$dns_code" = "200"
+          jq -e --arg old "$EXPECTED_VERCEL_CNAME" '[.result[] | select((.type=="CNAME" or .type=="A" or .type=="AAAA") and .content==$old)] | length == 0' /tmp/dns-final.json >/dev/null
+          mx_count=$(jq '[.result[] | select(.type=="MX")] | length' /tmp/dns-final.json)
+          spf_count=$(jq '[.result[] | select(.type=="TXT" and (.content|contains("include:_spf-eu.ionos.com")))] | length' /tmp/dns-final.json)
+          test "$mx_count" -ge 2; test "$spf_count" -ge 1
+
+          green=1
+          trap - EXIT
+          echo 'CLOUDFLARE_APEX_CUTOVER_GREEN=yes'
