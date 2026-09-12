@@ -17,7 +17,7 @@ test('catalog BFF routes keep valid error response structure', async () => {
     assert.match(source, /\.\.\.\(developerHint \? \{ developer_hint: developerHint \} : \{\}\)/, `${routeFile} should conditionally expose developer_hint`)
     assert.match(
       source,
-      /\{ status: upstream(?:\?\.)?status(?: \|\| 503)? \}/,
+      /\{ status: upstream(?:\.|\?\.)status(?: \|\| 503)? \}/,
       `${routeFile} should preserve upstream status with an optional safe fallback`,
     )
   }
