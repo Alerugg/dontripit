@@ -32,13 +32,28 @@ jobs:
           catalog_errors=0
           catalog_successes=0
 
+          json_field() {
+            file="$1"; expr="$2"
+            FILE="$file" EXPR="$expr" node <<'NODE'
+          const fs = require('fs')
+          const j = JSON.parse(fs.readFileSync(process.env.FILE, 'utf8'))
+          const first = (j.items || [])[0] || {}
+          let value
+          if (process.env.EXPR === 'raw_rarity') value = first.matched_print?.rarity
+          if (process.env.EXPR === 'raw_print') value = first.matched_print?.print_id
+          if (process.env.EXPR === 'cat_rarity') value = first.rarity
+          if (process.env.EXPR === 'cat_print') value = first.matched_print_id
+          process.stdout.write(String(value ?? (process.env.EXPR.includes('rarity') ? 'NULL' : 'NONE')))
+          NODE
+          }
+
           for i in $(seq 1 8); do
             raw_url="$WORKER_URL/api/search-v2?q=Pikachu&limit=24&diag_lane=${{ matrix.lane }}&diag_probe=$i"
             raw_code=$(curl -sS -D /tmp/raw.h -o /tmp/raw.j -w '%{http_code}' --max-time 35 "$raw_url" || true)
             raw_ray=$(awk -F': ' 'tolower($1)=="cf-ray" {print $2}' /tmp/raw.h | tr -d '\r' | tail -1)
             if [ "$raw_code" = "200" ]; then
-              raw_rarity=$(node -e "const j=require('/tmp/raw.j'); const i=(j.items||[])[0]||{}; process.stdout.write(String(i.matched_print?.rarity ?? 'NULL'))")
-              raw_print=$(node -e "const j=require('/tmp/raw.j'); const i=(j.items||[])[0]||{}; process.stdout.write(String(i.matched_print?.print_id ?? 'NONE'))")
+              raw_rarity=$(json_field /tmp/raw.j raw_rarity)
+              raw_print=$(json_field /tmp/raw.j raw_print)
               echo "lane=${{ matrix.lane }} raw_probe=$i status=200 ray=${raw_ray:-missing} print=$raw_print rarity=$raw_rarity"
               test "$raw_print" = "571"
               if [ "$raw_rarity" = "Common" ]; then raw_common=$((raw_common+1)); else raw_null=$((raw_null+1)); fi
@@ -52,8 +67,8 @@ jobs:
             cat_ray=$(awk -F': ' 'tolower($1)=="cf-ray" {print $2}' /tmp/cat.h | tr -d '\r' | tail -1)
             if [ "$cat_code" = "200" ]; then
               catalog_successes=$((catalog_successes+1))
-              cat_rarity=$(node -e "const j=require('/tmp/cat.j'); const i=(j.items||[])[0]||{}; process.stdout.write(String(i.rarity ?? 'NULL'))")
-              cat_print=$(node -e "const j=require('/tmp/cat.j'); const i=(j.items||[])[0]||{}; process.stdout.write(String(i.matched_print_id ?? 'NONE'))")
+              cat_rarity=$(json_field /tmp/cat.j cat_rarity)
+              cat_print=$(json_field /tmp/cat.j cat_print)
               echo "lane=${{ matrix.lane }} catalog_probe=$i status=200 ray=${cat_ray:-missing} print=$cat_print rarity=$cat_rarity"
               test "$cat_print" = "571"
               if [ "$cat_rarity" = "Common" ]; then catalog_common=$((catalog_common+1)); else catalog_null=$((catalog_null+1)); fi
