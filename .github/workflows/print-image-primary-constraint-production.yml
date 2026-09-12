@@ -1,0 +1,102 @@
+name: PrintImage Primary Constraint Production
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/print-image-primary-constraint-production'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify production preconditions
+        run: |
+          python - <<'PY'
+          import os, psycopg2
+          url=(os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url, 'production database URL is missing'
+          conn=psycopg2.connect(url)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT version_num FROM alembic_version')
+                  versions=[row[0] for row in cur.fetchall()]
+                  if versions != ['20260823_41']:
+                      raise RuntimeError(f'expected alembic version 20260823_41, got {versions}')
+                  cur.execute('''
+                      SELECT count(*) FROM (
+                        SELECT print_id FROM print_images
+                        WHERE is_primary IS TRUE
+                        GROUP BY print_id HAVING count(*) > 1
+                      ) q
+                  ''')
+                  duplicates=int(cur.fetchone()[0])
+                  if duplicates != 0:
+                      raise RuntimeError(f'refusing migration: duplicate primary prints={duplicates}')
+                  cur.execute("SELECT to_regclass('public.uq_print_images_one_primary_per_print')")
+                  if cur.fetchone()[0] is not None:
+                      raise RuntimeError('target unique index already exists while alembic is still at 41')
+          finally:
+              conn.rollback(); conn.close()
+          print('preconditions=green alembic=20260823_41 duplicates=0 index_absent=yes')
+          PY
+      - name: Apply Alembic revision 42
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: alembic upgrade 20260912_42
+      - name: Verify migration and invariant
+        run: |
+          python - <<'PY'
+          import os, psycopg2
+          url=(os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          conn=psycopg2.connect(url)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT version_num FROM alembic_version')
+                  versions=[row[0] for row in cur.fetchall()]
+                  if versions != ['20260912_42']:
+                      raise RuntimeError(f'postcondition alembic mismatch: {versions}')
+                  cur.execute('''
+                      SELECT indexdef FROM pg_indexes
+                      WHERE schemaname='public'
+                        AND tablename='print_images'
+                        AND indexname='uq_print_images_one_primary_per_print'
+                  ''')
+                  row=cur.fetchone()
+                  if not row:
+                      raise RuntimeError('partial unique index missing after migration')
+                  indexdef=row[0]
+                  normalized=indexdef.lower()
+                  if 'unique index' not in normalized or 'where (is_primary is true)' not in normalized:
+                      raise RuntimeError(f'unexpected index definition: {indexdef}')
+                  cur.execute('''
+                      SELECT count(*) FROM (
+                        SELECT print_id FROM print_images
+                        WHERE is_primary IS TRUE
+                        GROUP BY print_id HAVING count(*) > 1
+                      ) q
+                  ''')
+                  if int(cur.fetchone()[0]) != 0:
+                      raise RuntimeError('duplicate primary invariant violated after migration')
+          finally:
+              conn.rollback(); conn.close()
+          print('migration=green alembic=20260912_42 unique_partial_index=present duplicate_primary_prints=0')
+          PY
