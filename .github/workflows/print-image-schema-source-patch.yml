@@ -1,0 +1,65 @@
+name: PrintImage Schema Source Patch
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/print-image-schema-source-patch'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: backend/perfection-hardening-20260911
+          fetch-depth: 0
+      - name: Align ORM with partial unique primary-image invariant
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/app/models.py')
+          text = path.read_text()
+          old = '''class PrintImage(Base):
+    __tablename__ = "print_images"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+'''
+          new = '''class PrintImage(Base):
+    __tablename__ = "print_images"
+    __table_args__ = (
+        Index(
+            "uq_print_images_one_primary_per_print",
+            "print_id",
+            unique=True,
+            postgresql_where=text("is_primary IS TRUE"),
+            sqlite_where=text("is_primary = 1"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'PrintImage anchor count={count}; refusing patch')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Compile model and migration
+        run: |
+          python -m py_compile \
+            backend/app/models.py \
+            backend/alembic/versions/20260912_42_enforce_single_primary_print_image.py
+      - name: Commit model alignment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/models.py
+          git diff --cached --check
+          git commit -m "db: align PrintImage ORM primary uniqueness"
+          git push origin HEAD:backend/perfection-hardening-20260911
