@@ -1,0 +1,31 @@
+name: YGO Primary Image Regression
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - 'backend/tests/test_yugioh_primary_image_idempotency.py'
+      - 'backend/app/ingest/connectors/ygoprodeck_yugioh.py'
+      - '.github/triggers/ygo-primary-image-regression'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend test dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt pytest
+      - name: Run exact YGO primary-image regression
+        run: pytest -q tests/test_yugioh_primary_image_idempotency.py
