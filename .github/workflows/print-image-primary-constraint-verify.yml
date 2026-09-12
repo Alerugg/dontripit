@@ -1,0 +1,90 @@
+name: PrintImage Primary Constraint Verify
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/print-image-primary-constraint-verify'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+  PGOPTIONS: -c default_transaction_read_only=on
+
+jobs:
+  verify-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PostgreSQL driver
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Verify revision and invariant read-only
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          url=(os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          assert url, 'production database URL is missing'
+          conn=psycopg2.connect(url)
+          conn.autocommit=False
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  mode=cur.fetchone()['transaction_read_only']
+                  if mode != 'on':
+                      raise RuntimeError(f'expected read-only transaction, got {mode}')
+
+                  cur.execute('SELECT version_num FROM alembic_version')
+                  versions=[row['version_num'] for row in cur.fetchall()]
+
+                  cur.execute('''
+                      SELECT indexname, indexdef
+                      FROM pg_indexes
+                      WHERE schemaname='public'
+                        AND tablename='print_images'
+                        AND indexname='uq_print_images_one_primary_per_print'
+                  ''')
+                  index_rows=[dict(row) for row in cur.fetchall()]
+
+                  cur.execute('''
+                      SELECT print_id, count(*)::int AS primary_count
+                      FROM print_images
+                      WHERE is_primary IS TRUE
+                      GROUP BY print_id
+                      HAVING count(*) > 1
+                      ORDER BY print_id
+                  ''')
+                  duplicate_rows=[dict(row) for row in cur.fetchall()]
+
+                  report={
+                      'transaction_read_only': mode == 'on',
+                      'alembic_versions': versions,
+                      'index_rows': index_rows,
+                      'duplicate_primary_prints': duplicate_rows,
+                  }
+
+                  if versions != ['20260912_42']:
+                      raise RuntimeError(f'alembic revision mismatch: {versions}')
+                  if len(index_rows) != 1:
+                      raise RuntimeError(f'expected one primary-image index, got {index_rows}')
+                  normalized=index_rows[0]['indexdef'].lower()
+                  if 'unique index' not in normalized or 'where (is_primary is true)' not in normalized:
+                      raise RuntimeError(f'unexpected index definition: {index_rows[0]["indexdef"]}')
+                  if duplicate_rows:
+                      raise RuntimeError(f'duplicate primary images still exist: {duplicate_rows[:20]}')
+                  print(json.dumps(report, indent=2, default=str))
+              conn.rollback()
+          finally:
+              conn.close()
+          PY
