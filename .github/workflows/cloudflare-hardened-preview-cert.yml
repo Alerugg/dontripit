@@ -1,0 +1,118 @@
+name: Cloudflare Hardened Preview Cert
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/cloudflare-hardened-preview-cert'
+
+permissions:
+  contents: read
+
+jobs:
+  certify-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WORKER_URL: https://dontripit-web-preview.alejandro-ruggeri-l.workers.dev
+
+    steps:
+      - name: Certify preview routes and hardened catalog metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pages=(/ /pokemon /onepiece /yugioh /riftbound /magic /explorer /login /register /forgot-password /privacy /terms /cookies)
+          for path in "${pages[@]}"; do
+            code=$(curl -L -sS -o /tmp/page -w '%{http_code}' --max-time 35 "$WORKER_URL$path")
+            echo "$path status=$code bytes=$(wc -c </tmp/page)"
+            test "$code" = "200"
+            test -s /tmp/page
+          done
+
+          code=$(curl -sS -o /tmp/health -w '%{http_code}' --max-time 30 "$WORKER_URL/api/health")
+          test "$code" = "200"
+          jq -e '.status=="ok"' /tmp/health >/dev/null
+
+          code=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$WORKER_URL/api/auth/me")
+          test "$code" = "401"
+          jq -e '.error=="authentication_required"' /tmp/me >/dev/null
+
+          declare -A expected
+          expected[Pikachu]='["1","38645","38658","38670","38681"]'
+          expected[Luffy]='["17537","16356","16316","16520","16164"]'
+          expected[P-150]='["710107"]'
+          expected[OP05-119]='["41758","704631","41759","704632","41760"]'
+          expected[LOB-001]='["136130","140014","69466","72296","116203"]'
+
+          for q in Pikachu Luffy P-150 OP05-119 LOB-001; do
+            enc=$(node -p "encodeURIComponent(process.argv[1])" "$q")
+            code=$(curl -sS -o /tmp/search -w '%{http_code}' --max-time 55 "$WORKER_URL/api/search-v2?q=$enc&limit=20")
+            echo "search $q status=$code"
+            test "$code" = "200"
+            QUERY="$q" EXPECTED="${expected[$q]}" node <<'NODE'
+          const fs=require('fs');
+          const q=process.env.QUERY;
+          const expected=JSON.parse(process.env.EXPECTED);
+          const j=JSON.parse(fs.readFileSync('/tmp/search','utf8'));
+          const a=Array.isArray(j)?j:(j.results||j.items||j.data||j.data?.results||j.data?.items||[]);
+          const ids=a.slice(0,5).map(x=>String(x?.print_id??x?.printId??x?.id??x?.card_id??x?.cardId??x?.external_id??x?.code??x?.name??''));
+          const actual=expected.length===1?ids.slice(0,1):ids;
+          if(JSON.stringify(actual)!==JSON.stringify(expected)) throw new Error(`${q} drift ${JSON.stringify(ids)}`);
+          console.log(`${q} top=${JSON.stringify(ids)}`);
+          NODE
+          done
+
+          fingerprints=''
+          retryable=0
+          successful=0
+          for i in $(seq 1 8); do
+            url="$WORKER_URL/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0&cert_probe=$i"
+            ok=0
+            for attempt in 1 2 3; do
+              code=$(curl -sS -D /tmp/catalog.headers -o /tmp/catalog.json -w '%{http_code}' --max-time 55 "$url" || true)
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              if [ "$code" = "502" ] || [ "$code" = "503" ] || [ "$code" = "504" ] || [ "$code" = "000" ]; then
+                retryable=$((retryable+1))
+                sleep $attempt
+                continue
+              fi
+              echo "non-retryable catalog status=$code probe=$i attempt=$attempt"
+              exit 21
+            done
+            test "$ok" = "1"
+            successful=$((successful+1))
+
+            fp=$(node <<'NODE'
+          const fs=require('fs'), crypto=require('crypto');
+          const j=JSON.parse(fs.readFileSync('/tmp/catalog.json','utf8'));
+          const items=j.items||[];
+          if(items.length!==24) throw new Error(`expected 24 Pikachu cards, got ${items.length}`);
+          const top=items.slice(0,5).map(x=>String(x.card_id));
+          const expected=['1','38645','38658','38670','38681'];
+          if(JSON.stringify(top)!==JSON.stringify(expected)) throw new Error(`Pikachu top drift ${JSON.stringify(top)}`);
+          const p=items[0];
+          if(String(p.card_id)!=='1'||String(p.matched_print_id)!=='571'||p.set_code!=='bs'||String(p.collector_number)!=='58'||p.rarity!=='Common') throw new Error(`Base Pikachu drift ${JSON.stringify(p)}`);
+          const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']);
+          for(const item of items) for(const field of ['set_code','set_name','collector_number','rarity']) {
+            const v=item[field];
+            if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) throw new Error(`placeholder ${field}=${v} card=${item.card_id}`);
+          }
+          const canonical=JSON.stringify(items.map(x=>({card_id:x.card_id,matched_print_id:x.matched_print_id,set_code:x.set_code,set_name:x.set_name,collector_number:x.collector_number,rarity:x.rarity})));
+          process.stdout.write(crypto.createHash('sha256').update(canonical).digest('hex'));
+          NODE
+          )
+            fingerprints="$fingerprints $fp"
+            cache=$(awk -F': ' 'tolower($1)=="cache-control" {print $2}' /tmp/catalog.headers | tr -d '\r' | tail -1)
+            echo "catalog_probe=$i fingerprint=$fp cache_control=$cache"
+            case "$cache" in
+              "public, s-maxage=15, must-revalidate"|"no-store, must-revalidate"|"no-store") ;;
+              *) echo "unsafe/unexpected cache-control: $cache"; exit 22;;
+            esac
+          done
+
+          unique=$(tr ' ' '\n' <<<"$fingerprints" | sed '/^$/d' | sort -u | wc -l)
+          echo "catalog_successful=$successful retryable_failures=$retryable unique_fingerprints=$unique"
+          test "$successful" = "8"
+          test "$unique" = "1"
+          echo 'PREVIEW_HARDENING_GREEN=yes'
