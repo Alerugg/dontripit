@@ -1,0 +1,84 @@
+name: Backend Hardening Final CI
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-hardening-final-ci'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  search-certifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt pytest
+      - name: Compile hardened modules
+        run: |
+          python -m py_compile \
+            app/models.py \
+            app/ingest/connectors/ygoprodeck_yugioh.py \
+            app/search_v2/http_fast_path.py \
+            app/search_v2/yugioh_exact_collector.py \
+            alembic/versions/20260912_42_enforce_single_primary_print_image.py
+      - name: Run Search V2 and certifier regression suite
+        run: |
+          pytest -q \
+            tests/test_search_v2_api.py \
+            tests/test_search_v2_exact_identifier.py \
+            tests/test_search_v2_filter_contracts.py \
+            tests/test_search_v2_indexer.py \
+            tests/test_search_v2_models.py \
+            tests/test_search_v2_normalization.py \
+            tests/test_search_v2_performance.py \
+            tests/test_search_v2_production_certifier.py \
+            tests/test_search_v2_yugioh_exact_collector.py \
+            tests/test_pokemon_search_v2_performance.py \
+            tests/test_yugioh_search_v2_performance.py \
+            tests/test_yugioh_primary_image_idempotency.py
+
+  ingest-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: pip install --disable-pip-version-check -r requirements.txt pytest
+      - name: Run ingest integrity regressions
+        run: |
+          pytest -q \
+            tests/test_ingest_source_record_prefetch.py \
+            tests/test_ygoprodeck_incremental_v2.py \
+            tests/test_yugioh_v2_incremental_maintenance.py \
+            tests/test_yugioh_canonical_card_self_heal_v1.py \
+            tests/test_yugioh_canonical_print_self_heal_v1.py \
+            tests/test_yugioh_canonical_set_self_heal_v1.py \
+            tests/test_onepiece_canonical_connector.py \
+            tests/test_onepiece_incremental_self_heal.py \
+            tests/test_mtg_identity_v2.py \
+            tests/test_mtg_ingest_guardrails_v2.py \
+            tests/test_scryfall_bulk_v2.py \
+            tests/test_scryfall_incremental.py \
+            tests/test_tcgdex_certified_refresh.py \
+            tests/test_tcgdex_certified_refresh_db_fastpath.py \
+            tests/test_tcgdex_physical_scope.py \
+            tests/test_tcgdex_sharded_refresh.py \
+            tests/test_tcgdex_transport_retry.py
