@@ -7,9 +7,11 @@ on:
     paths:
       - 'backend/app/search_v2/**'
       - 'backend/app/routes/search_v2.py'
+      - 'backend/app/routes/market_print_summary.py'
       - 'backend/app/ingest/**'
       - 'backend/app/scripts/audit_search_v2_production_latency_v1.py'
       - 'backend/tests/test_search_v2_*.py'
+      - 'backend/tests/test_market_print_summary_hot_path.py'
       - 'backend/tests/test_yugioh_search_v2_performance.py'
       - 'backend/tests/test_ingest_*.py'
       - 'backend/tests/test_ygoprodeck_*.py'
@@ -50,9 +52,10 @@ jobs:
         run: |
           python -m py_compile \
             app/routes/search_v2.py \
+            app/routes/market_print_summary.py \
             app/search_v2/yugioh_exact_collector.py \
             app/scripts/audit_search_v2_production_latency_v1.py
-      - name: Run Search V2 and certifier hardening regression suite
+      - name: Run Search V2, market hot-path and certifier hardening regression suite
         run: |
           pytest -q \
             tests/test_search_v2_yugioh_exact_collector.py \
@@ -60,6 +63,7 @@ jobs:
             tests/test_search_v2_api.py \
             tests/test_search_v2_performance.py \
             tests/test_search_v2_production_certifier.py \
+            tests/test_market_print_summary_hot_path.py \
             tests/test_yugioh_search_v2_performance.py
 
   ingest-regression:
