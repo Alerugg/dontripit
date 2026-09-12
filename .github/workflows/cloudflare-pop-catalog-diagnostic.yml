@@ -1,0 +1,51 @@
+name: Cloudflare POP Catalog Diagnostic
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/cloudflare-pop-catalog-diagnostic'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WORKER_URL: https://dontripit-web-production.alejandro-ruggeri-l.workers.dev
+    steps:
+      - name: Probe catalog from independent runner/POP
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprints=''
+          for i in $(seq 1 4); do
+            url="$WORKER_URL/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0&pop_lane=${{ matrix.lane }}&pop_probe=$i"
+            code=$(curl -sS -D /tmp/h -o /tmp/j -w '%{http_code}' --max-time 55 "$url" || true)
+            ray=$(awk -F': ' 'tolower($1)=="cf-ray" {print $2}' /tmp/h | tr -d '\r' | tail -1)
+            cache=$(awk -F': ' 'tolower($1)=="cache-control" {print $2}' /tmp/h | tr -d '\r' | tail -1)
+            echo "lane=${{ matrix.lane }} probe=$i status=$code cf_ray=${ray:-missing} cache=$cache"
+            test "$code" = "200"
+            fp=$(node <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const j=JSON.parse(fs.readFileSync('/tmp/j','utf8')), items=j.items||[];
+          const p=items[0]||{};
+          console.log('FIRST='+JSON.stringify({card_id:p.card_id,matched_print_id:p.matched_print_id,set_code:p.set_code,collector_number:p.collector_number,rarity:p.rarity}));
+          const canonical=JSON.stringify(items.map(x=>({card_id:x.card_id,matched_print_id:x.matched_print_id,set_code:x.set_code,collector_number:x.collector_number,rarity:x.rarity})));
+          console.log('FP='+crypto.createHash('sha256').update(canonical).digest('hex'));
+          if(String(p.card_id)!=='1'||String(p.matched_print_id)!=='571'||p.set_code!=='bs'||String(p.collector_number)!=='58'||p.rarity!=='Common') process.exit(9);
+          NODE
+          )
+            echo "$fp"
+            hash=$(sed -n 's/^FP=//p' <<<"$fp")
+            fingerprints="$fingerprints $hash"
+          done
+          unique=$(tr ' ' '\n' <<<"$fingerprints" | sed '/^$/d' | sort -u | wc -l)
+          echo "lane=${{ matrix.lane }} unique_fingerprints=$unique"
+          test "$unique" = "1"
