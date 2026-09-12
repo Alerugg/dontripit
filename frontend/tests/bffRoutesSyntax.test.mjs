@@ -15,6 +15,10 @@ test('catalog BFF routes keep valid error response structure', async () => {
 
     assert.doesNotMatch(source, /\n\s*return NextResponse\.json\(\n\s*\{ error: 'catalog_/, `${routeFile} should not contain nested return in error block`)
     assert.match(source, /\.\.\.\(developerHint \? \{ developer_hint: developerHint \} : \{\}\)/, `${routeFile} should conditionally expose developer_hint`)
-    assert.match(source, /\{ status: upstream\.status \}/, `${routeFile} should preserve upstream status`)
+    assert.match(
+      source,
+      /\{ status: upstream(?:\?\.)?status(?: \|\| 503)? \}/,
+      `${routeFile} should preserve upstream status with an optional safe fallback`,
+    )
   }
 })
