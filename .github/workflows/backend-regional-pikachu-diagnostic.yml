@@ -1,0 +1,65 @@
+name: Backend Regional Pikachu Diagnostic
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/backend-regional-pikachu-diagnostic'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4, 5, 6]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      API: https://api.dontripit.com
+      INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+    steps:
+      - name: Probe Search V2 repeatedly from independent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$INTERNAL_API_KEY"
+          echo "lane=${{ matrix.lane }}"
+          fingerprints=''
+          bad=0
+          for i in $(seq 1 8); do
+            url="$API/api/v2/search?q=Pikachu&limit=24&offset=0&regional_lane=${{ matrix.lane }}&regional_probe=$i"
+            start=$(date +%s%3N)
+            code=$(curl -sS -D /tmp/h -H "X-API-Key: $INTERNAL_API_KEY" -o /tmp/j -w '%{http_code}' --max-time 45 "$url" || true)
+            end=$(date +%s%3N)
+            ms=$((end-start))
+            echo "lane=${{ matrix.lane }} probe=$i status=$code latency_ms=$ms"
+            test "$code" = "200"
+            fp=$(node <<'NODE'
+          const fs=require('fs'),crypto=require('crypto');
+          const j=JSON.parse(fs.readFileSync('/tmp/j','utf8'));
+          const items=j.items||j.results||[];
+          const first=items[0]||{};
+          const m=first.matched_print||{};
+          console.log(JSON.stringify({pagination_mode:j.pagination_mode,card_id:first.card_id,print_id:m.print_id,set_code:m.set_code,collector_number:m.collector_number,rarity:m.rarity}));
+          const canonical=JSON.stringify(items.map(x=>({card_id:x.card_id,print_id:x.matched_print?.print_id,rarity:x.matched_print?.rarity,set_code:x.matched_print?.set_code,collector_number:x.matched_print?.collector_number})));
+          process.stdout.write('\nFP='+crypto.createHash('sha256').update(canonical).digest('hex'));
+          NODE
+          )
+            echo "$fp"
+            first=$(head -1 <<<"$fp")
+            hash=$(sed -n 's/^FP=//p' <<<"$fp")
+            fingerprints="$fingerprints $hash"
+            FIRST="$first" node <<'NODE'
+          const r=JSON.parse(process.env.FIRST);
+          if(String(r.card_id)!=='1'||String(r.print_id)!=='571'||r.set_code!=='bs'||String(r.collector_number)!=='58'||r.rarity!=='Common') {
+            console.error('BAD_FIRST='+JSON.stringify(r));
+            process.exit(9);
+          }
+          NODE
+          done
+          unique=$(tr ' ' '\n' <<<"$fingerprints" | sed '/^$/d' | sort -u | wc -l)
+          echo "lane=${{ matrix.lane }} unique_fingerprints=$unique"
+          test "$unique" = "1"
