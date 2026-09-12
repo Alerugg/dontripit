@@ -1,2 +1,2 @@
-run=2026-09-12T23:32:00+02:00
-reason=syntax-gate-supports-safe-upstream-fallback
+run=2026-09-12T23:36:00+02:00
+reason=regex-accepts-upstream-dot-and-optional-chain
