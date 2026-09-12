@@ -1,0 +1,157 @@
+name: YGO Primary Image Production Cleanup
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/ygo-primary-image-production-cleanup'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROD_DB_URL_UNPOOLED: ${{ secrets.PROD_DB_URL_UNPOOLED }}
+      PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PostgreSQL driver
+        run: pip install --disable-pip-version-check psycopg2-binary==2.9.9
+      - name: Demote only audited duplicate YGO primaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          import psycopg2
+          from psycopg2.extras import RealDictCursor
+
+          expected = {
+              710188: 2,
+              710189: 2,
+              710190: 2,
+              710240: 3,
+              710243: 2,
+          }
+          expected_extra = sum(count - 1 for count in expected.values())
+          assert expected_extra == 6
+
+          url = (os.getenv('PROD_DB_URL_UNPOOLED') or os.getenv('PROD_DB_URL') or '').strip()
+          if not url:
+              raise SystemExit('production database URL is missing')
+
+          conn = psycopg2.connect(url)
+          conn.autocommit = False
+          report = {'expected': expected, 'expected_extra': expected_extra}
+          try:
+              with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                  cur.execute('SHOW transaction_read_only')
+                  if cur.fetchone()['transaction_read_only'] != 'off':
+                      raise RuntimeError('cleanup requires a writable transaction')
+
+                  cur.execute('''
+                      SELECT
+                        p.id AS print_id,
+                        g.slug AS game,
+                        array_agg(pi.id ORDER BY pi.id) AS image_ids,
+                        array_agg(pi.url ORDER BY pi.id) AS urls,
+                        array_agg(coalesce(pi.source, '') ORDER BY pi.id) AS sources,
+                        count(*)::int AS primary_count
+                      FROM print_images pi
+                      JOIN prints p ON p.id=pi.print_id
+                      JOIN cards c ON c.id=p.card_id
+                      JOIN games g ON g.id=c.game_id
+                      WHERE pi.is_primary IS TRUE
+                        AND p.id = ANY(%s)
+                      GROUP BY p.id, g.slug
+                      ORDER BY p.id
+                  ''', (list(expected),))
+                  rows = [dict(row) for row in cur.fetchall()]
+                  by_id = {int(row['print_id']): row for row in rows}
+
+                  if set(by_id) != set(expected):
+                      raise RuntimeError(f'precondition failed: expected prints={sorted(expected)} actual={sorted(by_id)}')
+
+                  keep_ids = []
+                  demote_ids = []
+                  for print_id, expected_count in expected.items():
+                      row = by_id[print_id]
+                      if row['game'] != 'yugioh':
+                          raise RuntimeError(f'precondition failed: print {print_id} game={row["game"]}')
+                      if int(row['primary_count']) != expected_count:
+                          raise RuntimeError(
+                              f'precondition failed: print {print_id} expected_count={expected_count} actual={row["primary_count"]}'
+                          )
+                      urls = list(row['urls'])
+                      sources = list(row['sources'])
+                      image_ids = [int(value) for value in row['image_ids']]
+                      if len(set(urls)) != 1:
+                          raise RuntimeError(f'precondition failed: print {print_id} primary URLs differ: {urls}')
+                      if any(source != 'ygoprodeck' for source in sources):
+                          raise RuntimeError(f'precondition failed: print {print_id} unexpected sources={sources}')
+                      keep_ids.append(image_ids[0])
+                      demote_ids.extend(image_ids[1:])
+
+                  if len(demote_ids) != expected_extra:
+                      raise RuntimeError(
+                          f'precondition failed: expected {expected_extra} demotions, got {len(demote_ids)} ids={demote_ids}'
+                      )
+
+                  cur.execute(
+                      'UPDATE print_images SET is_primary=FALSE WHERE id = ANY(%s) AND is_primary IS TRUE',
+                      (demote_ids,),
+                  )
+                  if cur.rowcount != expected_extra:
+                      raise RuntimeError(
+                          f'write count mismatch: expected {expected_extra}, updated {cur.rowcount}'
+                      )
+
+                  cur.execute('''
+                      SELECT print_id, count(*)::int AS primary_count
+                      FROM print_images
+                      WHERE is_primary IS TRUE
+                      GROUP BY print_id
+                      HAVING count(*) > 1
+                      ORDER BY print_id
+                  ''')
+                  remaining = [dict(row) for row in cur.fetchall()]
+                  if remaining:
+                      raise RuntimeError(f'global duplicate-primary invariant still violated: {remaining[:20]}')
+
+                  cur.execute('''
+                      SELECT print_id, count(*)::int AS primary_count
+                      FROM print_images
+                      WHERE print_id = ANY(%s) AND is_primary IS TRUE
+                      GROUP BY print_id
+                      ORDER BY print_id
+                  ''', (list(expected),))
+                  after = [dict(row) for row in cur.fetchall()]
+                  if {int(row['print_id']): int(row['primary_count']) for row in after} != {key: 1 for key in expected}:
+                      raise RuntimeError(f'postcondition failed for target prints: {after}')
+
+                  report.update({
+                      'kept_image_ids': keep_ids,
+                      'demoted_image_ids': demote_ids,
+                      'demoted_count': len(demote_ids),
+                      'remaining_duplicate_primary_prints': 0,
+                      'targets_after': after,
+                  })
+
+              conn.commit()
+              report['committed'] = True
+              print(json.dumps(report, indent=2, default=str))
+          except Exception:
+              conn.rollback()
+              report['committed'] = False
+              print(json.dumps(report, indent=2, default=str))
+              raise
+          finally:
+              conn.close()
+          PY
