@@ -1,0 +1,103 @@
+name: Cloudflare Post-cutover Independent Audit
+
+on:
+  push:
+    branches: [infra/cloudflare-catalog-cache-hardening]
+    paths:
+      - '.github/triggers/cloudflare-postcutover-audit'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 7fcca192ccc3d1f2f0d9d5843391a2f5
+      WORKER_NAME: dontripit-web-production
+      WORKER_URL: https://dontripit-web-production.alejandro-ruggeri-l.workers.dev
+      APEX: https://dontripit.com
+      WWW: https://www.dontripit.com
+      OLD_VERCEL_CNAME: bc5bf74c5be387d6.vercel-dns-017.com
+
+    steps:
+      - name: Independently verify public Cloudflare state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+
+          curl -fsSI --max-time 30 "$WORKER_URL/" | tr -d '\r' > /tmp/worker.headers
+          worker_build=$(awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' /tmp/worker.headers | tail -1)
+          test -n "$worker_build"
+
+          code=$(curl -L -sS -D /tmp/apex.headers -o /tmp/apex.body -w '%{http_code}' --max-time 35 "$APEX/")
+          echo "apex_http=$code bytes=$(wc -c </tmp/apex.body)"
+          test "$code" = "200"
+          grep -Eqi '^server: cloudflare$|^cf-ray:' /tmp/apex.headers
+          ! grep -qi '^x-dontripit-fallback:' /tmp/apex.headers
+          apex_build=$(awk -F': ' 'tolower($1)=="x-vinext-build-id" {print $2}' /tmp/apex.headers | tr -d '\r' | tail -1)
+          echo "worker_build=$worker_build apex_build=$apex_build"
+          test "$apex_build" = "$worker_build"
+
+          code=$(curl -sS -o /tmp/health -w '%{http_code}' --max-time 30 "$APEX/api/health")
+          echo "health_http=$code"
+          test "$code" = "200"
+          jq -e '.status=="ok"' /tmp/health >/dev/null
+
+          code=$(curl -sS -o /tmp/me -w '%{http_code}' --max-time 30 "$APEX/api/auth/me")
+          echo "auth_me_http=$code"
+          test "$code" = "401"
+          jq -e '.error=="authentication_required"' /tmp/me >/dev/null
+
+          code=$(curl -L -sS -o /tmp/www -w '%{http_code}' --max-time 35 "$WWW/")
+          echo "www_final_http=$code"
+          test "$code" = "200"
+
+          code=$(curl -sS -D /tmp/catalog.headers -o /tmp/catalog.json -w '%{http_code}' --max-time 55 "$APEX/api/catalog/search?q=Pikachu&type=card&include_counts=0&limit=24&offset=0&postcutover_audit=1")
+          echo "catalog_http=$code"
+          test "$code" = "200"
+          node <<'NODE'
+          const fs=require('fs'), crypto=require('crypto');
+          const j=JSON.parse(fs.readFileSync('/tmp/catalog.json','utf8')), items=j.items||[];
+          if(items.length!==24) throw new Error(`expected 24, got ${items.length}`);
+          const top=items.slice(0,5).map(x=>String(x.card_id));
+          if(JSON.stringify(top)!==JSON.stringify(['1','38645','38658','38670','38681'])) throw new Error(`top drift ${JSON.stringify(top)}`);
+          const p=items[0];
+          if(String(p.card_id)!=='1'||String(p.matched_print_id)!=='571'||p.set_code!=='bs'||String(p.collector_number)!=='58'||p.rarity!=='Common') throw new Error(`Base Pikachu drift ${JSON.stringify(p)}`);
+          const bad=new Set(['','-','?','n/a','na','none','null','unknown','undefined']);
+          for(const item of items) for(const field of ['set_code','set_name','collector_number','rarity']) {
+            const v=item[field];
+            if(typeof v==='string'&&bad.has(v.trim().toLowerCase())) throw new Error(`placeholder ${field}=${v} card=${item.card_id}`);
+          }
+          const canonical=JSON.stringify(items.map(x=>({card_id:x.card_id,matched_print_id:x.matched_print_id,set_code:x.set_code,set_name:x.set_name,collector_number:x.collector_number,rarity:x.rarity})));
+          console.log(`catalog_fingerprint=${crypto.createHash('sha256').update(canonical).digest('hex')}`);
+          NODE
+          cache=$(awk -F': ' 'tolower($1)=="cache-control" {print $2}' /tmp/catalog.headers | tr -d '\r' | tail -1)
+          echo "catalog_cache_control=$cache"
+          case "$cache" in "public, s-maxage=15, must-revalidate"|"no-store, must-revalidate"|"no-store") ;; *) exit 31;; esac
+
+          zone_code=$(curl -sS "${auth[@]}" -o /tmp/zone.json -w '%{http_code}' 'https://api.cloudflare.com/client/v4/zones?name=dontripit.com&status=active')
+          test "$zone_code" = "200"
+          zone_id=$(jq -r '.result[0].id // empty' /tmp/zone.json); test -n "$zone_id"
+
+          domains_code=$(curl -sS "${auth[@]}" -o /tmp/domains.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains")
+          test "$domains_code" = "200"
+          service=$(jq -r '.result[] | select(.hostname=="dontripit.com") | .service // empty' /tmp/domains.json | head -1)
+          echo "custom_domain_service=$service"
+          test "$service" = "$WORKER_NAME"
+
+          dns_code=$(curl -sS "${auth[@]}" -o /tmp/dns.json -w '%{http_code}' "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=dontripit.com&per_page=100")
+          test "$dns_code" = "200"
+          old_count=$(jq --arg old "$OLD_VERCEL_CNAME" '[.result[] | select((.type=="CNAME" or .type=="A" or .type=="AAAA") and .content==$old)] | length' /tmp/dns.json)
+          mx_count=$(jq '[.result[] | select(.type=="MX")] | length' /tmp/dns.json)
+          spf_count=$(jq '[.result[] | select(.type=="TXT" and (.content|contains("include:_spf-eu.ionos.com")))] | length' /tmp/dns.json)
+          echo "old_vercel_address_records=$old_count mx=$mx_count spf=$spf_count"
+          test "$old_count" = "0"
+          test "$mx_count" -ge 2
+          test "$spf_count" -ge 1
+
+          echo 'POSTCUTOVER_INDEPENDENT_AUDIT_GREEN=yes'
