@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { callInternalApi, getDeveloperErrorHint, getPublicErrorMessage } from '../../../../lib/catalog/internalApi'
+import { CATALOG_CACHE_HEADERS, firstCleanMetadata } from '../../../../lib/catalog/metadata'
 
 const SEARCH_BATCH = 100
 const MAX_KIND_RESULTS = 5000
 const MAX_PAGE_SIZE = 50
 const MARKET_BATCH = 100
-const PUBLIC_CACHE_HEADERS = { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120' }
 
 function boundedInt(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
@@ -28,10 +28,10 @@ function normalizeV2Card(item = {}) {
     title: item.name || item.title,
     name: item.name || item.title,
     game: item.game,
-    set_code: matched.set_code || item.set_code || null,
-    set_name: matched.set_name || item.set_name || null,
-    collector_number: matched.collector_number || item.collector_number || null,
-    rarity: matched.rarity || item.rarity || null,
+    set_code: firstCleanMetadata(matched.set_code, item.set_code),
+    set_name: firstCleanMetadata(matched.set_name, item.set_name),
+    collector_number: firstCleanMetadata(matched.collector_number, item.collector_number),
+    rarity: firstCleanMetadata(matched.rarity, item.rarity),
     primary_image_url: matched.primary_image_url || item.primary_image_url || item.image_url || null,
     matched_print_id: matched.print_id ?? matched.id ?? null,
     card_market: matched.market || null,
@@ -370,7 +370,7 @@ export async function GET(request) {
       next_offset: offset + selectedRows.length < selectedTotal ? offset + selectedRows.length : null,
       truncated,
       integrity: truncated ? `La búsqueda alcanzó el límite de seguridad de ${MAX_KIND_RESULTS.toLocaleString()} resultados por tipo.` : null,
-    }, { headers: PUBLIC_CACHE_HEADERS })
+    }, { headers: CATALOG_CACHE_HEADERS })
   }
 
   const needAllCards = type === '' || (type === 'card' && sort !== 'relevance')
@@ -413,7 +413,7 @@ export async function GET(request) {
       counts_complete: true,
       truncated,
       integrity,
-    }, { headers: PUBLIC_CACHE_HEADERS })
+    }, { headers: CATALOG_CACHE_HEADERS })
   }
 
   let selectedRows
@@ -452,5 +452,5 @@ export async function GET(request) {
     next_offset: offset + pageItems.length < selectedTotal ? offset + pageItems.length : null,
     truncated,
     integrity,
-  }, { headers: PUBLIC_CACHE_HEADERS })
+  }, { headers: CATALOG_CACHE_HEADERS })
 }
