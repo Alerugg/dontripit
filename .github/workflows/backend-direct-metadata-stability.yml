@@ -1,0 +1,165 @@
+name: Backend Direct Metadata Stability
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/backend-direct-metadata-stability'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+
+jobs:
+  pikachu-direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Probe Search V2 directly, bypassing frontend and edge cache
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          api_key = (os.getenv('INTERNAL_API_KEY') or '').strip()
+          if not api_key:
+              raise SystemExit('INTERNAL_API_KEY secret is missing')
+
+          base = 'https://api.dontripit.com/api/v2/search'
+          params = urllib.parse.urlencode({'q': 'Pikachu', 'limit': 24, 'offset': 0})
+          url = f'{base}?{params}'
+          transient = {502, 503, 504}
+          placeholders = {'', '-', '?', 'n/a', 'na', 'none', 'null', 'unknown', 'undefined'}
+          metadata_fields = ('set_code', 'set_name', 'collector_number', 'language', 'rarity')
+          expected_top = ['1', '38645', '38658', '38670', '38681']
+
+          def request_once():
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      'X-API-Key': api_key,
+                      'Accept': 'application/json',
+                      'User-Agent': 'dontripit-backend-metadata-certifier/1.0',
+                      'Cache-Control': 'no-cache',
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=35) as response:
+                  status = int(response.status)
+                  body = response.read().decode('utf-8')
+                  return status, json.loads(body)
+
+          def fetch_with_retry(sample):
+              last = None
+              for attempt in range(1, 4):
+                  started = time.monotonic()
+                  try:
+                      status, payload = request_once()
+                      elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+                      if status == 200:
+                          return payload, {'sample': sample, 'attempt': attempt, 'status': status, 'elapsed_ms': elapsed_ms}
+                      last = f'HTTP {status}'
+                  except urllib.error.HTTPError as exc:
+                      elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+                      if exc.code not in transient:
+                          detail = exc.read().decode('utf-8', errors='replace')[:500]
+                          raise RuntimeError(f'sample={sample} non-retryable HTTP {exc.code}: {detail}') from exc
+                      last = f'HTTP {exc.code} after {elapsed_ms}ms'
+                  except (urllib.error.URLError, TimeoutError) as exc:
+                      last = repr(exc)
+                  if attempt < 3:
+                      time.sleep(0.4 * attempt)
+              raise RuntimeError(f'sample={sample} exhausted retries: {last}')
+
+          fingerprints = []
+          evidence = []
+          bad_rows = []
+          for sample in range(1, 13):
+              payload, transport = fetch_with_retry(sample)
+              items = payload.get('items')
+              if not isinstance(items, list) or len(items) < 5:
+                  raise RuntimeError(f'sample={sample} invalid items contract count={None if not isinstance(items, list) else len(items)}')
+
+              top = [str(item.get('card_id')) for item in items[:5]]
+              if top != expected_top:
+                  raise RuntimeError(f'sample={sample} Pikachu top ids changed: {top}')
+
+              first = items[0]
+              matched = first.get('matched_print') or {}
+              base_contract = {
+                  'card_id': str(first.get('card_id')),
+                  'print_id': str(matched.get('print_id')),
+                  'set_code': matched.get('set_code'),
+                  'collector_number': str(matched.get('collector_number')),
+                  'rarity': matched.get('rarity'),
+              }
+              expected_base = {
+                  'card_id': '1',
+                  'print_id': '571',
+                  'set_code': 'bs',
+                  'collector_number': '58',
+                  'rarity': 'Common',
+              }
+              if base_contract != expected_base:
+                  raise RuntimeError(f'sample={sample} Base Set Pikachu contract drift: {base_contract}')
+
+              fingerprint_rows = []
+              for item in items:
+                  mp = item.get('matched_print') or {}
+                  for field in metadata_fields:
+                      value = mp.get(field)
+                      if isinstance(value, str) and value.strip().casefold() in placeholders:
+                          bad_rows.append({
+                              'sample': sample,
+                              'card_id': item.get('card_id'),
+                              'name': item.get('name'),
+                              'print_id': mp.get('print_id'),
+                              'field': field,
+                              'value': value,
+                              'matched_print': mp,
+                          })
+                  item_rarity = item.get('rarity')
+                  if isinstance(item_rarity, str) and item_rarity.strip().casefold() in placeholders:
+                      bad_rows.append({
+                          'sample': sample,
+                          'card_id': item.get('card_id'),
+                          'name': item.get('name'),
+                          'field': 'item.rarity',
+                          'value': item_rarity,
+                      })
+                  fingerprint_rows.append({
+                      'card_id': item.get('card_id'),
+                      'name': item.get('name'),
+                      'matched_print': {key: mp.get(key) for key in ('print_id', 'set_code', 'set_name', 'collector_number', 'language', 'rarity')},
+                  })
+
+              canonical = json.dumps(fingerprint_rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+              fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+              fingerprints.append(fingerprint)
+              evidence.append({**transport, 'count': len(items), 'fingerprint': fingerprint, 'base_contract': base_contract})
+              time.sleep(0.15)
+
+          report = {
+              'url': base,
+              'samples': len(evidence),
+              'unique_fingerprints': sorted(set(fingerprints)),
+              'fingerprint_count': len(set(fingerprints)),
+              'bad_rows': bad_rows,
+              'transport': evidence,
+              'status': 'pass' if len(set(fingerprints)) == 1 and not bad_rows else 'fail',
+          }
+          print(json.dumps(report, indent=2, default=str))
+          if bad_rows:
+              raise SystemExit(f'literal metadata placeholders found: {len(bad_rows)}')
+          if len(set(fingerprints)) != 1:
+              raise SystemExit(f'nondeterministic backend metadata fingerprints: {sorted(set(fingerprints))}')
+          PY
