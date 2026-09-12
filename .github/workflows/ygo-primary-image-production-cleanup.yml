@@ -11,13 +11,14 @@ on:
 permissions:
   contents: read
 
+env:
+  PROD_DB_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+  PROD_DB_URL: ${{ secrets.DATABASE_URL }}
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      PROD_DB_URL_UNPOOLED: ${{ secrets.PROD_DB_URL_UNPOOLED }}
-      PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
