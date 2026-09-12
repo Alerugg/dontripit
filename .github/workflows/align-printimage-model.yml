@@ -1,0 +1,34 @@
+name: Align PrintImage Model
+
+on:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/align-printimage-model'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: backend/perfection-hardening-20260911
+          fetch-depth: 0
+      - name: Apply one-shot ORM alignment
+        run: python backend/scripts/align_printimage_primary_index_model.py
+      - name: Compile model and migration
+        run: python -m py_compile backend/app/models.py backend/alembic/versions/20260912_42_enforce_single_primary_print_image.py
+      - name: Commit ORM alignment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/models.py
+          git diff --cached --check
+          git commit -m "db: align PrintImage ORM primary uniqueness"
+          git push origin HEAD:backend/perfection-hardening-20260911
