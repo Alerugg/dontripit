@@ -5,7 +5,7 @@ on:
     branches:
       - infra/cloudflare-catalog-cache-hardening
     paths:
-      - '.github/triggers/catalog-cache-hardening-apply'
+      - '.github/triggers/catalog-cache-hardening-apply*'
   workflow_dispatch:
 
 permissions:
