@@ -53,8 +53,22 @@ def exact_onepiece_collector_search(
     row_limit = _bounded_limit(limit)
     canonical_card_key = f"onepiece:{collector}"
 
+    # Keep image hydration inside the single collector query. The previous
+    # implementation executed one extra SELECT against print_images per returned
+    # physical edition; highly reprinted cards such as OP05-119 therefore paid
+    # up to 25 database round trips for a 24-row page.
+    image_url = (
+        select(PrintImage.url)
+        .where(PrintImage.print_id == Print.id)
+        .order_by(PrintImage.is_primary.desc(), PrintImage.id.asc())
+        .limit(1)
+        .correlate(Print)
+        .scalar_subquery()
+        .label("primary_image_url")
+    )
+
     stmt = (
-        select(Print, Card, Set, Game, PrintSearchProfile)
+        select(Print, Card, Set, Game, PrintSearchProfile, image_url)
         .join(Card, Card.id == Print.card_id)
         .join(Set, Set.id == Print.set_id)
         .join(Game, Game.id == Card.game_id)
@@ -73,13 +87,7 @@ def exact_onepiece_collector_search(
     )
 
     results: list[dict] = []
-    for print_row, card, set_row, game_row, profile in session.execute(stmt).all():
-        image_url = session.execute(
-            select(PrintImage.url)
-            .where(PrintImage.print_id == print_row.id)
-            .order_by(PrintImage.is_primary.desc(), PrintImage.id.asc())
-            .limit(1)
-        ).scalar_one_or_none()
+    for print_row, card, set_row, game_row, profile, primary_image_url in session.execute(stmt).all():
         results.append(
             {
                 "type": "print",
@@ -104,7 +112,7 @@ def exact_onepiece_collector_search(
                     if profile is not None and profile.variant_family
                     else ("default" if str(print_row.variant or "default") == "default" else print_row.variant)
                 ),
-                "primary_image_url": image_url,
+                "primary_image_url": primary_image_url,
                 "releases": profile.release_names_json or [] if profile is not None else [],
                 "attributes": profile.attributes_json or {} if profile is not None else {},
                 "score": 1.0,
