@@ -119,7 +119,6 @@ def _sqlite_page(session, *, query: str, game: str | None, limit: int, offset: i
 
 
 def _page_sql(matched_cards_cte: str):
-    """Build the PostgreSQL page query around an already-scoped card source."""
     return text(
         f"""
         WITH matched_cards AS MATERIALIZED (
@@ -219,37 +218,6 @@ def _page_sql(matched_cards_cte: str):
     )
 
 
-def _fallback_matched_cards_cte() -> str:
-    # Runtime fallback is deliberately cold. Search profiles are the certified
-    # production index; only when that index returns no card at all do we scan
-    # canonical Cards to rescue a missing/stale projection. Keeping this UNION
-    # out of the hot query removes a full canonical-card anti-scan from every
-    # successful name search while preserving a fail-safe for projection drift.
-    return """
-        SELECT
-          c.id AS card_id,
-          COALESCE(csp.normalized_name, lower(c.name)) AS normalized_name,
-          COALESCE(csp.attributes_json, '{}'::jsonb) AS attributes_json,
-          CASE
-            WHEN COALESCE(csp.normalized_name, lower(c.name)) = :q_norm THEN 5000.0
-            WHEN COALESCE(csp.normalized_name, lower(c.name)) LIKE :prefix THEN 3000.0
-            WHEN (' ' || COALESCE(csp.normalized_name, lower(c.name)) || ' ') LIKE :word THEN 2200.0
-            ELSE 1400.0
-          END AS score
-        FROM cards c
-        JOIN games g ON g.id = c.game_id
-        LEFT JOIN card_search_profiles csp ON csp.card_id = c.id
-        WHERE (:game = '' OR g.slug = :game)
-          AND lower(c.name) LIKE :canonical_fallback
-          AND NOT EXISTS (
-            SELECT 1
-            FROM card_search_profiles hit
-            WHERE hit.card_id = c.id
-              AND hit.normalized_name LIKE :contains
-          )
-    """
-
-
 def exhaustive_name_page(
     session,
     *,
@@ -258,14 +226,13 @@ def exhaustive_name_page(
     limit: int,
     offset: int,
 ) -> dict:
-    """Page canonical-name matches from the certified Card search projection.
+    """Page canonical-name matches from the certified card-search projection.
 
-    The hot path reads only CardSearchProfile and hydrates representative Prints
-    after LIMIT/OFFSET. A canonical-card rescue scan runs only when the indexed
-    projection yields no result, rather than being UNIONed into every successful
-    request. Missing representative rarity is resolved inline from strict sibling
-    consensus so the API does not pay a second database round trip for Pikachu-
-    style legacy rows.
+    Production Search V2 treats ``card_search_profiles`` as its maintained name
+    index. The request hot path never falls back to scanning the canonical card
+    table: an index miss stays a cheap miss and projection completeness is
+    handled by ingest/rebuild certification rather than by user-facing latency.
+    Representative Prints are hydrated only after the bounded card page.
     """
     q_norm = normalize_search_text(query)
     if not q_norm:
@@ -273,11 +240,9 @@ def exhaustive_name_page(
     if session.bind.dialect.name != "postgresql":
         return _sqlite_page(session, query=query, game=game, limit=limit, offset=offset)
 
-    canonical_fallback = "%" + "%".join(q_norm.split()) + "%"
     params = {
         "game": str(game or "").strip().lower(),
         "contains": f"%{q_norm}%",
-        "canonical_fallback": canonical_fallback,
         "q_norm": q_norm,
         "prefix": f"{q_norm}%",
         "word": f"% {q_norm} %",
@@ -303,9 +268,6 @@ def exhaustive_name_page(
     """
 
     rows = session.execute(_page_sql(profile_matched_cards_cte), params).mappings().all()
-
-    if not rows and offset == 0:
-        rows = session.execute(_page_sql(_fallback_matched_cards_cte()), params).mappings().all()
 
     if not rows:
         if offset == 0:
