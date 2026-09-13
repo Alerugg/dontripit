@@ -13,6 +13,8 @@ from app.search_v2.mtg_facet_values import mtg_facet_values
 from app.search_v2.mtg_query import normal_mtg_search
 from app.search_v2.normalization import normalize_language
 from app.search_v2.onepiece_exact_collector import exact_onepiece_collector_search
+from app.search_v2.output_contract import sanitize_search_items, sanitize_search_result
+from app.search_v2.physical_metadata import enrich_representative_rarity_by_consensus
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
 from app.search_v2.pokemon_facet_values import pokemon_facet_values
 from app.search_v2.pokemon_query import normal_pokemon_search
@@ -184,7 +186,7 @@ def search_v2():
             language=language,
         )
         if exact is not None:
-            items = exact[offset : offset + limit]
+            items = sanitize_search_items(exact[offset : offset + limit])
             has_more = len(exact) > offset + len(items)
             next_offset = offset + len(items) if has_more else None
             total = len(exact) if not has_more else None
@@ -220,13 +222,18 @@ def search_v2():
             )
 
         if page and page["total"] > 0:
+            # Read-only enrichment: fill a missing representative rarity only
+            # when all known physical siblings for the same exact identity
+            # agree. This never replaces print_id or changes ranking/pricing.
+            enriched = enrich_representative_rarity_by_consensus(session, page["items"])
+            items = sanitize_search_items(enriched)
             return jsonify(
                 {
                     "query": q,
                     "game": game,
                     "language": language or "all",
-                    "items": page["items"],
-                    "count": len(page["items"]),
+                    "items": items,
+                    "count": len(items),
                     "total": page["total"],
                     "total_prints": page["total_prints"],
                     "limit": page["limit"],
@@ -248,7 +255,7 @@ def search_v2():
             limit=fetch_limit,
             language=language,
         )
-        items = ranked[offset : offset + limit]
+        items = sanitize_search_items(ranked[offset : offset + limit])
         has_more = len(ranked) > offset + len(items)
         next_offset = offset + len(items) if has_more else None
         total = len(ranked) if not has_more else None
@@ -284,7 +291,9 @@ def search_v2_suggest():
         return jsonify({"error": "invalid_language", "detail": str(exc)}), 400
 
     with db.SessionLocal() as session:
-        rows = _normal_search_for_game(session, query=q, game=game, limit=limit, language=language)
+        rows = sanitize_search_items(
+            _normal_search_for_game(session, query=q, game=game, limit=limit, language=language)
+        )
 
     items = [_suggestion_row(row) for row in rows]
     return jsonify({"query": q, "game": game, "language": language or "all", "items": items})
@@ -381,7 +390,7 @@ def search_v2_advanced():
             }
             if game == "yugioh":
                 search_kwargs["language"] = language
-            result = search_fn(session, **search_kwargs)
+            result = sanitize_search_result(search_fn(session, **search_kwargs))
     except ValueError as exc:
         return jsonify({"error": "invalid_filters", "detail": str(exc)}), 400
 
