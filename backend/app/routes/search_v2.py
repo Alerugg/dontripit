@@ -13,6 +13,7 @@ from app.search_v2.mtg_facet_values import mtg_facet_values
 from app.search_v2.mtg_query import normal_mtg_search
 from app.search_v2.normalization import normalize_language
 from app.search_v2.onepiece_exact_collector import exact_onepiece_collector_search
+from app.search_v2.onepiece_query import fast_onepiece_name_search
 from app.search_v2.output_contract import sanitize_search_items, sanitize_search_result
 from app.search_v2.physical_metadata import enrich_representative_rarity_by_consensus
 from app.search_v2.pokemon_advanced import advanced_pokemon_search
@@ -22,6 +23,7 @@ from app.search_v2.query import facet_definitions, normal_search
 from app.search_v2.yugioh_advanced import advanced_yugioh_search
 from app.search_v2.yugioh_exact_collector import exact_yugioh_collector_search
 from app.search_v2.yugioh_facet_values import yugioh_facet_values
+from app.search_v2.yugioh_fast_query import fast_yugioh_name_search
 from app.search_v2.yugioh_query import normal_yugioh_search
 
 
@@ -133,9 +135,17 @@ def _normal_search_for_game(session, *, query: str, game: str | None, limit: int
     if game == "pokemon":
         return normal_pokemon_search(session, query=query, limit=limit)
     if game == "yugioh":
+        if language is None:
+            fast_yugioh = fast_yugioh_name_search(session, query=query, limit=limit)
+            if fast_yugioh is not None:
+                return fast_yugioh
         return normal_yugioh_search(session, query=query, limit=limit, language=language)
     if game == "mtg":
         return normal_mtg_search(session, query=query, limit=limit)
+    if game == "onepiece":
+        fast_onepiece = fast_onepiece_name_search(session, query=query, limit=limit)
+        if fast_onepiece is not None:
+            return fast_onepiece
     return normal_search(session, query=query, game_slug=game, limit=limit)
 
 
