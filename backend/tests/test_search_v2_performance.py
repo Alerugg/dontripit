@@ -84,7 +84,10 @@ def test_exhaustive_name_hot_path_starts_from_indexed_profiles():
     sql = session.statements[0]
     assert "FROM card_search_profiles csp" in sql
     assert "csp.normalized_name LIKE" in sql
-    assert "NOT EXISTS" in sql
+    # Production treats the maintained card-search projection as the request
+    # index. A miss must stay a single cheap indexed miss instead of invoking
+    # the old canonical-card anti-scan/fallback.
+    assert "NOT EXISTS" not in sql
     # The old implementation executed a correlated profile lookup once per Card.
     # Page-level representative Print enrichment may still use JOIN LATERAL, but
     # matched-card discovery must never use LEFT JOIN LATERAL again.
