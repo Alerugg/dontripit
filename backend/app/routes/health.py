@@ -14,6 +14,14 @@ from app.search_v2.contract import (
 health_bp = Blueprint("health", __name__)
 
 
+def _runtime_name() -> str:
+    if os.getenv("K_SERVICE"):
+        return "cloud_run"
+    if os.getenv("VERCEL") == "1":
+        return "vercel"
+    return "local"
+
+
 @health_bp.get("/api/health")
 @health_bp.get("/api/v1/health")
 def health():
@@ -21,7 +29,7 @@ def health():
         {
             "ok": True,
             "revision": os.getenv("VERCEL_GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION") or "unknown",
-            "runtime": "vercel" if os.getenv("VERCEL") == "1" else "local",
+            "runtime": _runtime_name(),
             "site_url": SEARCH_V2_SITE_URL,
             "search_v2_enabled": SEARCH_V2_ENABLED,
             "search_v2_engine": SEARCH_V2_ENGINE,
