@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 env:
-  TARGET_SHA: 4fddd2495ee7c60e5946a9158f08e3e6ad3f383f
+  TARGET_SHA: f0b7db373e80cd48957558c83715f0716d081da9
   GCP_REGION: ${{ vars.GCP_REGION || 'europe-southwest1' }}
   GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY || 'dontripit' }}
   GCP_CLOUD_RUN_SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE || 'dontripit-api' }}
