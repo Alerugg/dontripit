@@ -55,14 +55,20 @@ jobs:
             app/routes/market_print_summary.py \
             app/search_v2/output_contract.py \
             app/search_v2/physical_metadata.py \
+            app/search_v2/exhaustive_name_query.py \
+            app/search_v2/onepiece_exact_collector.py \
+            app/search_v2/onepiece_query.py \
+            app/search_v2/mtg_query.py \
             app/search_v2/yugioh_exact_collector.py \
+            app/search_v2/yugioh_fast_query.py \
             app/scripts/audit_search_v2_production_latency_v1.py
-      - name: Run Search V2, rarity, market hot-path and certifier hardening regression suite
+      - name: Run Search V2, routing, rarity, market hot-path and certifier hardening regression suite
         run: |
           pytest -q \
             tests/test_search_v2_yugioh_exact_collector.py \
             tests/test_search_v2_exact_identifier.py \
             tests/test_search_v2_api.py \
+            tests/test_search_v2_fast_routing.py \
             tests/test_search_v2_output_contract.py \
             tests/test_search_v2_rarity_consensus.py \
             tests/test_search_v2_performance.py \
