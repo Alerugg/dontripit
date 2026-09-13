@@ -2,6 +2,11 @@ name: Certify Search V2 Production Latency V1
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - backend/perfection-hardening-20260911
+    paths:
+      - '.github/triggers/certify-search-v2-production-latency-v1'
   pull_request:
     paths:
       - 'backend/app/scripts/audit_search_v2_production_latency_v1.py'
@@ -22,8 +27,6 @@ jobs:
       run:
         working-directory: backend
     steps:
-      # No explicit ref: PR runs test their merge commit; workflow_dispatch
-      # dispatched at catalog-v2 naturally checks out that exact production ref.
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
